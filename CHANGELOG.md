@@ -1,5 +1,18 @@
 # Changelog
 
+## 6.5 — Project Bootstrap & Unified CLI
+
+- Added `coding-orchestrator` / `coding-orchestrator.cmd` and `scripts/coding_orchestrator.py` as the stable human/agent front controller.
+- Added `init`, `discover`, `doctor`, `status`, `intake`, `resume`, `verify`, and `host install` commands.
+- Added conservative repository discovery for technology, SDD/state authority, host markers, CBM availability, and architecture evidence.
+- Added safe, idempotent project bootstrap that creates governance infrastructure without inventing an active work item.
+- Added first-intake creation of the canonical work item; the Decision Engine remains responsible for the real Flow classification.
+- Added fail-safe handling for OpenSpec/BMAD authority ambiguity and CI non-interactive failure semantics.
+- Added evidence-gated Spring layered-policy auto-enablement; Spring Boot identity alone no longer implies `web -> service -> dao`.
+- Added safe host auto-install semantics: repository-local host markers are high-confidence, binary-only detection is advisory.
+- Added bootstrap report, project config generation, Doctor health checks, closed-work archival, and unified resume/verification readiness views.
+- Added V6.5 bootstrap/CLI tests; full regression suite is 111 tests.
+
 ## 6.4 — Session Bootstrap & Handoff Context
 
 - Added `scripts/session_context.py` with canonical JSON Session Bootstrap and Task Handoff artifacts plus compact Markdown prompt projections.

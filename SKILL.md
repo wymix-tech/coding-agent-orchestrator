@@ -1,8 +1,8 @@
 ---
 name: orchestrating-sdd-coding
-version: 6.4
+version: 6.5
 alias: adaptive-sdd-coding-orchestrator
-description: Use when coding work should be routed through OpenSpec, BMAD, another SDD system, or Superpowers disciplines with deterministic evidence-backed classification, CBM semantic impact analysis, project Engineering Policy, durable execution state, snapshot-bound role-aware Context Packs, resumable Session Bootstrap/Handoff context, and Claude Code/Codex/Pi runtime enforcement adapters.
+description: Use when coding work should be bootstrapped and routed through OpenSpec, BMAD, another SDD system, or Superpowers disciplines with conservative project discovery, a unified CLI, deterministic evidence-backed classification, CBM semantic impact analysis, project Engineering Policy, durable execution state, snapshot-bound role-aware Context Packs, resumable Session Bootstrap/Handoff context, and Claude Code/Codex/Pi runtime enforcement adapters.
 ---
 
 # Adaptive SDD Coding Orchestrator
@@ -13,9 +13,23 @@ Act as the control plane for coding work. Keep the repository's SDD system autho
 
 Do not replace OpenSpec, BMAD, project policy, or native execution state. Do not let CBM or an external rule pack select process rigor or silently become a blocking project policy.
 
+## V6.5 Unified Bootstrap
+
+For a new repository, prefer the stable front controller:
+
+```bash
+./coding-orchestrator init
+./coding-orchestrator doctor
+./coding-orchestrator status
+```
+
+Use `scripts/project_discovery.py` and `scripts/project_bootstrap.py` only as internal/debugging entry points. Safe Auto MUST NOT invent SDD authority, architecture style, quality thresholds, or an active work item. The first canonical execution state is created by the first real `intake`. Existing project-owned policy/config MUST be preserved unless an explicit force/migration operation is requested.
+
+If multiple SDD authorities are detected, stop at `ACTION_REQUIRED`. If Spring Boot is detected but classic layered architecture is not proven from repository evidence, do not auto-enable the Spring layered blocking policy. Binary-only host discovery is advisory; install an adapter automatically only for a high-confidence repository-local host marker.
+
 ## Core Rules
 
-1. **Discover authorities first.** Read repository instructions, active SDD artifacts, Engineering Policy manifest, git state, quality policy, and native execution-status mechanisms.
+1. **Bootstrap conservatively.** On a new repository, use `coding-orchestrator init`; auto-create only safe infrastructure and configurations supported by evidence. Then discover authorities before creating execution state.
 2. **Load policy progressively.** Bootstrap loads the policy manifest and compact always-on MUST summaries; planning loads relevant summaries; implementation loads exact rules selected by semantic impact; review/verification load rule IDs plus evidence.
 3. **Project context, do not dump it.** Build a Context Manifest from SDD, Decision, State, Semantic Impact, Engineering Policy, Verification, and Evidence; give each role/stage only a snapshot-bound Context Pack. Full graph/history/rule corpora stay lazy-retrieved.
 4. **Project policy outranks external guidance.** ECC or other imported rules may supply defaults/reference material but MUST NOT lower project `MUST` rules or become blocking without explicit local promotion.
@@ -37,24 +51,26 @@ Do not replace OpenSpec, BMAD, project policy, or native execution state. Do not
 
 ## Orchestration
 
-1. `DISCOVER` using `references/orchestration-model.md`.
-2. `POLICY BOOTSTRAP` from `.orchestrator/policies/manifest.yaml` when present. Use packaged `policies/` only as starter templates.
-3. `EXTRACT` repository/request facts using `scripts/fact_extractor.py`.
-4. `IMPACT` code changes using CBM through `scripts/cbm_provider.py`; normalize to `semantic-impact.json`.
-5. `POLICY ROUTE` with `scripts/policy_engine.py`; produce `policy-plan.json`, compact `policy-context.md`, and policy enforcement requirements. Optional ECC rules are discovered through `scripts/ecc_rules_adapter.py` as non-authoritative guidance.
-6. `MAP` structural impact into Work Facts with `scripts/impact_mapper.py`.
-7. `RESOLVE` remaining semantic facts with provenance using `scripts/fact_resolver.py`.
-8. `CLASSIFY` with strict evidence using the Decision Engine.
-9. `PLAN VERIFICATION` using `scripts/verification_planner.py`; merge semantic-impact requirements with project Policy Gates.
-10. Select exactly one SDD adapter via `references/adapter-contract.md`.
-11. Detect execution-state provider and initialize/resume Canonical Execution State.
-12. Attach analysis + policy artifact refs to execution state; record applicable blocking Policy Gates.
-13. `CONTEXT` build/refresh `context-manifest.json` and the current role/stage Context Pack using `scripts/context_plane.py`; validate freshness before relying on an older pack.
-14. `SESSION CONTEXT` on cold start/resume/role handoff, build a JSON Session Bootstrap and inject its compact Markdown projection. At explicit task/role boundaries, persist a Task Handoff with snapshot bindings.
-15. Compose Superpowers via `references/superpowers-policy.md` and implement one traceable slice at a time.
-16. Record blockers, cursor, assignments, policy/quality gates, review, verification, snapshots, and current context refs durably.
-17. `ENFORCE` host lifecycle events through `scripts/enforcement_kernel.py`: inject context on session/prompt start, deny illegal code mutation before side effects, mark analysis/verification stale after material mutation, and guard completion claims.
-18. Close only after state guards, project MUST policy, quality gates, SDD alignment, and fresh final verification all pass.
+1. `BOOTSTRAP` once using `coding-orchestrator init` and `references/project-bootstrap.md`.
+2. `DISCOVER` using `references/orchestration-model.md`.
+3. `POLICY BOOTSTRAP` from `.orchestrator/policies/manifest.yaml` when present. Use packaged `policies/` only as starter templates.
+4. `EXTRACT` repository/request facts using `scripts/fact_extractor.py`.
+5. `IMPACT` code changes using CBM through `scripts/cbm_provider.py`; normalize to `semantic-impact.json`.
+6. `POLICY ROUTE` with `scripts/policy_engine.py`; produce `policy-plan.json`, compact `policy-context.md`, and policy enforcement requirements. Optional ECC rules are discovered through `scripts/ecc_rules_adapter.py` as non-authoritative guidance.
+7. `MAP` structural impact into Work Facts with `scripts/impact_mapper.py`.
+8. `RESOLVE` remaining semantic facts with provenance using `scripts/fact_resolver.py`.
+9. `CLASSIFY` with strict evidence using the Decision Engine.
+10. `PLAN VERIFICATION` using `scripts/verification_planner.py`; merge semantic-impact requirements with project Policy Gates.
+11. Select exactly one SDD adapter via `references/adapter-contract.md`.
+12. Detect execution-state provider and initialize/resume Canonical Execution State.
+13. Attach analysis + policy artifact refs to execution state; record applicable blocking Policy Gates.
+14. `CONTEXT` build/refresh `context-manifest.json` and the current role/stage Context Pack using `scripts/context_plane.py`; validate freshness before relying on an older pack.
+15. `SESSION CONTEXT` on cold start/resume/role handoff, build a JSON Session Bootstrap and inject its compact Markdown projection. At explicit task/role boundaries, persist a Task Handoff with snapshot bindings.
+16. Compose Superpowers via `references/superpowers-policy.md` and implement one traceable slice at a time.
+17. Record blockers, cursor, assignments, policy/quality gates, review, verification, snapshots, and current context refs durably.
+18. `ENFORCE` host lifecycle events through `scripts/enforcement_kernel.py`: inject context on session/prompt start, deny illegal code mutation before side effects, mark analysis/verification stale after material mutation, and guard completion claims.
+19. Close only after state guards, project MUST policy, quality gates, SDD alignment, and fresh final verification all pass.
+
 
 ## Engineering Policy
 
@@ -119,17 +135,17 @@ This creates/merges Claude Code and Codex hook configuration and installs the Pi
 
 Do not put heavy CBM indexing, PIT, full test suites, or broad scans in synchronous PreToolUse. Pre-tool checks must stay cheap; heavy proof belongs after a slice or at phase/final gates.
 
-## Preferred V6.4 entry point
+## Preferred V6.5 entry point
 
 ```bash
-python scripts/semantic_intake_pipeline.py \
-  --repo . \
-  --request-file request.md \
-  --resolutions .orchestrator/fact-resolutions.json \
-  --policy-manifest .orchestrator/policies/manifest.yaml \
-  --context-role implementer \
-  --context-stage implementation
+./coding-orchestrator init
+./coding-orchestrator intake "<requirement>"
+./coding-orchestrator status
+./coding-orchestrator resume
+./coding-orchestrator verify
 ```
+
+The V6.5 CLI delegates to the same underlying engines. For debugging or custom integrations, `scripts/semantic_intake_pipeline.py` remains available as the lower-level intake entry point.
 
 CBM is the only V6 code-intelligence provider. If it is unavailable, fail closed by default; never reinterpret provider absence as low impact.
 

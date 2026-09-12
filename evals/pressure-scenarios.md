@@ -396,3 +396,30 @@ Expected: extension stores the bootstrap, optionally shows a short UI notificati
 Old handoff says “next: review”, while current State says implementation was reopened due to a blocker.
 
 Expected: State/SDD authority wins. Bootstrap exposes current phase/blocker and marks/ignores conflicting stale handoff rather than steering the agent to review.
+
+
+## V6.5 Project Bootstrap pressure scenarios
+
+### 29. Fresh repository with no SDD
+Expected: `init` selects generic/orchestrator authority, creates config/policy/session infrastructure, does not create an active execution state, and returns `READY_FOR_INTAKE`.
+
+### 30. OpenSpec and BMAD both present
+Expected: Safe Auto returns `ACTION_REQUIRED`; CI mode is non-zero; no authority is guessed.
+
+### 31. Spring Boot without proven classic layers
+Expected: common policy is installed, but blocking `spring-boot-layered` is not auto-enabled.
+
+### 32. Proven Spring web/service/repository structure
+Expected: the classic Spring layered starter policy may be auto-enabled with repository evidence recorded.
+
+### 33. Host binary exists without repository marker
+Expected: host is reported as advisory discovery only; Safe Auto does not mutate `.claude`, `.codex`, or `.pi`.
+
+### 34. First real intake
+Expected: a canonical work item is created only now, starts from a neutral provisional floor, and production-code mutation stays blocked until Decision status is `CLASSIFIED`.
+
+### 35. Re-running init on a governed repository
+Expected: project-owned policy/config files are preserved unless an explicit force/migration path is requested.
+
+### 36. Completed work followed by a new intake
+Expected: completed canonical state/history are archived before a new active work item is initialized; prior evidence is not silently reused as fresh evidence for the new work item.
