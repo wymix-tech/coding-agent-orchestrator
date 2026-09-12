@@ -1,7 +1,7 @@
 {
-  "description": "Coding Agent Orchestrator V6.3 runtime enforcement",
+  "description": "Coding Agent Orchestrator V6.4 runtime enforcement + session bootstrap",
   "hooks": {
-    "SessionStart": [{"matcher": "startup|resume|clear|compact", "hooks": [{"type": "command", "command": "python3 \"__KERNEL__\" host --host codex", "statusMessage": "Loading orchestrator context", "additionalContextLimit": 6000, "timeout": 15}]}],
+    "SessionStart": [{"matcher": "startup|resume|clear|compact", "hooks": [{"type": "command", "command": "python3 \"__KERNEL__\" host --host codex", "statusMessage": "Loading orchestrator context", "additionalContextLimit": 8000, "timeout": 15}]}],
     "UserPromptSubmit": [{"hooks": [{"type": "command", "command": "python3 \"__KERNEL__\" host --host codex", "additionalContextLimit": 6000, "timeout": 10}]}],
     "PreToolUse": [{"matcher": "Bash|apply_patch|Edit|Write|mcp__.*", "hooks": [{"type": "command", "command": "python3 \"__KERNEL__\" host --host codex", "statusMessage": "Checking orchestrator constraints", "timeout": 15}]}],
     "PostToolUse": [{"matcher": "Bash|apply_patch|Edit|Write|mcp__.*", "hooks": [{"type": "command", "command": "python3 \"__KERNEL__\" host --host codex", "additionalContextLimit": 5000, "timeout": 15}]}],

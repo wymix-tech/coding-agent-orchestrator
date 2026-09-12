@@ -1,15 +1,16 @@
 {
   "name": "coding-agent-orchestrator",
-  "version": "6.3",
-  "focus": "CBM semantic impact + Engineering Policy + Context Plane + host runtime enforcement + durable execution state",
+  "version": "6.4",
+  "focus": "CBM semantic impact + Engineering Policy + Context Plane + Session Bootstrap/Handoff + host runtime enforcement + durable execution state",
   "code_intelligence_provider": "codebase-memory-mcp",
   "provider_count": 1,
   "policy_layer": "project-owned engineering policy with optional ECC external guidance",
   "governance_authority": "orchestrator",
-  "test_count": 87,
+  "test_count": 100,
   "key_entrypoints": [
     "scripts/install_host_adapter.py",
     "scripts/enforcement_kernel.py",
+    "scripts/session_context.py",
     "scripts/semantic_intake_pipeline.py",
     "scripts/context_plane.py",
     "scripts/policy_engine.py",
@@ -27,5 +28,6 @@
     "codex",
     "pi"
   ],
-  "enforcement_kernel": "scripts/enforcement_kernel.py"
+  "enforcement_kernel": "scripts/enforcement_kernel.py",
+  "session_context": "JSON canonical bootstrap/handoff + YAML config + Markdown prompt projection"
 }

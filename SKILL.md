@@ -1,15 +1,15 @@
 ---
 name: orchestrating-sdd-coding
-version: 6.3
+version: 6.4
 alias: adaptive-sdd-coding-orchestrator
-description: Use when coding work should be routed through OpenSpec, BMAD, another SDD system, or Superpowers disciplines with deterministic evidence-backed classification, CBM semantic impact analysis, project Engineering Policy, durable execution state, snapshot-bound role-aware Context Packs, and Claude Code/Codex/Pi runtime enforcement adapters.
+description: Use when coding work should be routed through OpenSpec, BMAD, another SDD system, or Superpowers disciplines with deterministic evidence-backed classification, CBM semantic impact analysis, project Engineering Policy, durable execution state, snapshot-bound role-aware Context Packs, resumable Session Bootstrap/Handoff context, and Claude Code/Codex/Pi runtime enforcement adapters.
 ---
 
 # Adaptive SDD Coding Orchestrator
 
 ## Purpose
 
-Act as the control plane for coding work. Keep the repository's SDD system authoritative for **what/why**, Engineering Policy authoritative for **what implementations are allowed**, Codebase Memory (CBM) authoritative only for structural evidence, the Decision Engine authoritative for **how much process**, Canonical Execution State authoritative for **where/what next**, the V6 Context Plane authoritative only for **which current sources a role should read**, the V6.3 Enforcement Kernel responsible only for **when host actions must be allowed/denied/refreshed**, and Superpowers authoritative for **how to work**.
+Act as the control plane for coding work. Keep the repository's SDD system authoritative for **what/why**, Engineering Policy authoritative for **what implementations are allowed**, Codebase Memory (CBM) authoritative only for structural evidence, the Decision Engine authoritative for **how much process**, Canonical Execution State authoritative for **where/what next**, the V6 Context Plane authoritative only for **which current sources a role should read**, the V6.4 Session Context layer responsible only for **compact cold-start/resume/handoff projections**, the V6.3 Enforcement Kernel responsible only for **when host actions must be allowed/denied/refreshed**, and Superpowers authoritative for **how to work**.
 
 Do not replace OpenSpec, BMAD, project policy, or native execution state. Do not let CBM or an external rule pack select process rigor or silently become a blocking project policy.
 
@@ -32,7 +32,8 @@ Do not replace OpenSpec, BMAD, project policy, or native execution state. Do not
 15. **Reassess deterministically.** Material discoveries update evidence, rerun semantic impact + policy routing + Decision Engine, and reconcile SDD depth/state.
 16. **Enforce at host boundaries, not only prompts.** Use V6.3 host adapters for cheap runtime checks; hooks MUST call the shared Enforcement Kernel and MUST NOT duplicate governance rules.
 17. **Keep a final enforcement boundary outside the host.** Host hooks are guardrails; V5 transition guards, CI, and branch/merge protection remain authoritative even when a host hook can be disabled or bypassed.
-18. **Preserve invariants.** Required gates, root-cause debugging, traceability, scope discipline, native authority, project MUST policy, and fresh final verification cannot be optimized away.
+18. **Bootstrap from state, not chat history.** Session Bootstrap/Handoff are projections of SDD/Decision/State/Impact/Policy/Evidence; they MUST NOT become a second source of truth or infer task completion from casual assistant claims.
+19. **Preserve invariants.** Required gates, root-cause debugging, traceability, scope discipline, native authority, project MUST policy, and fresh final verification cannot be optimized away.
 
 ## Orchestration
 
@@ -49,10 +50,11 @@ Do not replace OpenSpec, BMAD, project policy, or native execution state. Do not
 11. Detect execution-state provider and initialize/resume Canonical Execution State.
 12. Attach analysis + policy artifact refs to execution state; record applicable blocking Policy Gates.
 13. `CONTEXT` build/refresh `context-manifest.json` and the current role/stage Context Pack using `scripts/context_plane.py`; validate freshness before relying on an older pack.
-14. Compose Superpowers via `references/superpowers-policy.md` and implement one traceable slice at a time.
-15. Record blockers, cursor, assignments, policy/quality gates, review, verification, snapshots, and current context refs durably.
-16. `ENFORCE` host lifecycle events through `scripts/enforcement_kernel.py`: inject context on session/prompt start, deny illegal code mutation before side effects, mark analysis/verification stale after material mutation, and guard completion claims.
-17. Close only after state guards, project MUST policy, quality gates, SDD alignment, and fresh final verification all pass.
+14. `SESSION CONTEXT` on cold start/resume/role handoff, build a JSON Session Bootstrap and inject its compact Markdown projection. At explicit task/role boundaries, persist a Task Handoff with snapshot bindings.
+15. Compose Superpowers via `references/superpowers-policy.md` and implement one traceable slice at a time.
+16. Record blockers, cursor, assignments, policy/quality gates, review, verification, snapshots, and current context refs durably.
+17. `ENFORCE` host lifecycle events through `scripts/enforcement_kernel.py`: inject context on session/prompt start, deny illegal code mutation before side effects, mark analysis/verification stale after material mutation, and guard completion claims.
+18. Close only after state guards, project MUST policy, quality gates, SDD alignment, and fresh final verification all pass.
 
 ## Engineering Policy
 
@@ -76,6 +78,29 @@ ECC integration is optional. Read `references/ecc-rules-integration.md`; externa
 
 Read `references/context-plane.md`. `context-manifest.json` is an index of current truth; role/stage Context Packs are projections only. Regenerate a pack when its source hashes, execution revision, analysis snapshot, or policy snapshot changes. Never use a stale pack as evidence that the repository/state is unchanged.
 
+
+## V6.4 Session Bootstrap & Handoff
+
+Read `references/session-context.md`. Canonical session artifacts are JSON, project configuration is YAML, and the prompt-facing projection is Markdown. Do not use the rendered Markdown as authority.
+
+Cold start / resume:
+
+```bash
+python scripts/session_context.py --repo . bootstrap --role implementer --stdout markdown
+```
+
+Explicit task/role handoff:
+
+```bash
+python scripts/session_context.py --repo . handoff \
+  --from-role implementer \
+  --to-role reviewer \
+  --summary "Implemented the current task" \
+  --next-action "review_current_task"
+```
+
+Host `SessionStart` injects the bootstrap once. Later prompt events are delta-only. A fresh handoff may enrich the next bootstrap, but State/SDD/Evidence always win on conflict.
+
 ## V6.3 Host Enforcement
 
 Read `references/host-enforcement.md` and `references/host-capabilities.yaml`. Claude Code, Codex, and Pi adapters are thin translators over one kernel:
@@ -94,7 +119,7 @@ This creates/merges Claude Code and Codex hook configuration and installs the Pi
 
 Do not put heavy CBM indexing, PIT, full test suites, or broad scans in synchronous PreToolUse. Pre-tool checks must stay cheap; heavy proof belongs after a slice or at phase/final gates.
 
-## Preferred V6.3 entry point
+## Preferred V6.4 entry point
 
 ```bash
 python scripts/semantic_intake_pipeline.py \

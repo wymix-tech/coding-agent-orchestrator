@@ -1,8 +1,10 @@
-version: 1
+version: 2
 hosts:
   claude-code:
     session_context: true
-    prompt_context: true
+    session_bootstrap_once: true
+    task_handoff_context: true
+    prompt_context: delta_only_after_bootstrap
     pre_tool_block: true
     post_tool_feedback: true
     file_changed_observation: true
@@ -12,7 +14,9 @@ hosts:
     final_enforcement_strength: strong_runtime_plus_state_ci
   codex:
     session_context: true
-    prompt_context: true
+    session_bootstrap_once: true
+    task_handoff_context: true
+    prompt_context: delta_only_after_bootstrap
     pre_tool_block: true
     post_tool_feedback: true
     file_changed_observation: false
@@ -25,7 +29,9 @@ hosts:
     final_enforcement_strength: strong_runtime_plus_state_ci
   pi:
     session_context: true
-    prompt_context: true
+    session_bootstrap_once: true
+    task_handoff_context: true
+    prompt_context: pending_bootstrap_then_delta_only
     dynamic_context: true
     pre_tool_block: true
     post_tool_feedback: true
@@ -33,4 +39,4 @@ hosts:
     stop_continue: best_effort_via_sendMessage
     subagent_context: extension_defined
     final_enforcement_strength: tool_runtime_plus_state_ci
-principle: Host hooks are guardrails. Canonical state transition guards and CI remain the final enforcement boundary.
+principle: Session Bootstrap/Handoff are projections. Host hooks are guardrails. Canonical state, SDD, evidence, transition guards, and CI remain authoritative.

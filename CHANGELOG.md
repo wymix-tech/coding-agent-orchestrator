@@ -1,5 +1,17 @@
 # Changelog
 
+## 6.4 — Session Bootstrap & Handoff Context
+
+- Added `scripts/session_context.py` with canonical JSON Session Bootstrap and Task Handoff artifacts plus compact Markdown prompt projections.
+- Added YAML session-context configuration and explicit format separation: JSON for machine truth/projections, YAML for human config, Markdown for model injection; XML is not used by default.
+- Added `fresh_project`, `session_resume`, and `agent_handoff` bootstrap modes.
+- Added explicit handoff freshness binding to work item, execution snapshot, analysis snapshot, and Context snapshot.
+- Added latest-handoff persistence without treating casual assistant completion claims as authoritative task completion.
+- Updated Claude Code/Codex SessionStart integration and Pi pending-bootstrap injection so the full bootstrap is injected once; subsequent prompt events are delta-only.
+- Excluded generated `.orchestrator/session/` artifacts from material working-tree fingerprints to prevent self-induced staleness.
+- Added Session Bootstrap / Task Handoff JSON Schemas, examples, documentation, tests, and pressure scenarios.
+- Added 13 V6.4 session-context/enforcement tests; full regression suite is 100 tests.
+
 ## 6.3 — Host Enforcement Adapters
 
 - Added one host-neutral `scripts/enforcement_kernel.py` instead of duplicating governance logic in each coding agent.

@@ -148,6 +148,14 @@ class EnforcementKernelTests(unittest.TestCase):
             self.assertTrue(sm._load(fx.state_path)["enforcement"]["dirty"])
         finally: fx.close()
 
+
+    def test_task_level_completion_phrase_does_not_trigger_global_done_guard(self):
+        fx=EnforcementFixture()
+        try:
+            r=ek.handle(fx.repo,"claude-code","stop",{"session_id":"s1","last_assistant_message":"Task T4.2 completed; next I will prepare review."})
+            self.assertEqual("allow", r["decision"])
+        finally: fx.close()
+
     def test_host_format_pretool_deny(self):
         out=ek.format_host_output("codex","pre_tool",{"decision":"deny","reason":"x","additional_context":None})
         self.assertEqual("deny",out["hookSpecificOutput"]["permissionDecision"])

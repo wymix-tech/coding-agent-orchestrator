@@ -1,8 +1,8 @@
 # Coding Agent Orchestrator
 
-> Adaptive SDD + Evidence + Semantic Impact + Engineering Policy + Context Plane + Runtime Enforcement
+> Adaptive SDD + Evidence + Semantic Impact + Engineering Policy + Context Plane + Session Context + Runtime Enforcement
 
-**Current version: V6.3**
+**Current version: V6.4**
 
 Coding Agent Orchestrator 是一个面向 AI Coding Agent 的工程控制面。它不替代 OpenSpec、BMAD、Superpowers、CI 或代码图谱工具，而是把它们组织成一条可审计、可恢复、可动态调整、可在运行时强制执行的开发链路。
 
@@ -50,6 +50,9 @@ Context Plane
 Execution State Manager
         │
         ▼
+Session Bootstrap / Handoff
+        │
+        ▼
 Host Enforcement Kernel
         │
    ┌────┼────┐
@@ -78,6 +81,7 @@ Quality + Policy + Verification Gates
 | Engineering Policy | 允许怎么实现 | Project-owned policy |
 | Context Plane | 当前角色应该看什么 | Manifest + role/stage projection |
 | Execution State | 做到哪里，下一步是什么 | Native / Hybrid / Orchestrator state |
+| Session Context | 冷启动/恢复/交接时先看到什么 | State + Context Plane 的 JSON projection |
 | Host Enforcement | 当前动作是否允许 | Shared Enforcement Kernel |
 | Superpowers | Agent 应该怎样工作 | Execution discipline |
 | Quality Gates | 是否满足完成条件 | Tests / Static analysis / Review / Verification |
@@ -103,8 +107,9 @@ Coding Agent Orchestrator 从一个 SDD 编排 Skill 演进为完整的 Coding G
 | V6.1 | Engineering Policy Layer，项目级架构与开发约束 |
 | V6.2 | Context Manifest / Context Pack，统一项目上下文平面 |
 | V6.3 | Claude Code / Codex Hooks + Pi Extension Runtime Enforcement |
+| V6.4 | Session Bootstrap / Task Handoff，上下文冷启动、恢复和角色交接 |
 
-V6.3 的核心变化是从：
+V6.4 在 V6.3 Runtime Enforcement 基础上继续解决“新会话/新 Agent 怎么快速恢复当前工程现实”。V6.3 的核心变化是从：
 
 ```text
 “请 Agent 遵守规则”
@@ -292,6 +297,7 @@ coding-agent-orchestrator/
 │   ├── policy_engine.py
 │   ├── ecc_rules_adapter.py
 │   ├── context_plane.py
+│   ├── session_context.py
 │   ├── enforcement_kernel.py
 │   └── install_host_adapter.py
 │
@@ -313,6 +319,7 @@ coding-agent-orchestrator/
 │   ├── semantic-impact-engine.md
 │   ├── engineering-policy-layer.md
 │   ├── context-plane.md
+│   ├── session-context.md
 │   ├── execution-state-manager.md
 │   ├── host-enforcement.md
 │   ├── host-capabilities.yaml
@@ -321,6 +328,9 @@ coding-agent-orchestrator/
 ├── examples/
 │   ├── orchestrator-config.yaml
 │   ├── enforcement.yaml
+│   ├── session-context.yaml
+│   ├── session-bootstrap-example.json
+│   ├── task-handoff-example.json
 │   ├── work-facts-*.json
 │   ├── semantic-impact-cbm-example.json
 │   ├── context-manifest-example.json
@@ -337,6 +347,7 @@ coding-agent-orchestrator/
     ├── test_semantic_impact.py
     ├── test_policy_engine.py
     ├── test_context_plane.py
+    ├── test_session_context.py
     └── test_enforcement_kernel.py
 ```
 
@@ -372,7 +383,7 @@ V6 默认策略是：**CBM 不可用时 fail closed**，因为 Provider 不可�
 
 ### Host Enforcement 可选宿主
 
-V6.3 提供：
+V6.4 保留 V6.3 的宿主适配，并新增 Session Bootstrap/Handoff 注入：
 
 - Claude Code hooks
 - Codex hooks
@@ -451,7 +462,7 @@ python scripts/execution_state_manager.py \
 
 ### 6.4 运行完整 Semantic Intake
 
-推荐 V6.3 主入口：
+推荐 V6.4 主入口：
 
 ```bash
 python scripts/semantic_intake_pipeline.py \
@@ -518,7 +529,28 @@ python scripts/install_host_adapter.py --repo . --host codex --apply
 python scripts/install_host_adapter.py --repo . --host pi --apply
 ```
 
-安装器会创建或合并宿主配置，并在需要时创建备份。
+安装器会创建或合并宿主配置，并在需要时创建备份，同时创建 `.orchestrator/session-context.yaml`。
+
+### 6.6 生成冷启动 / Resume Context
+
+```bash
+python scripts/session_context.py --repo . bootstrap \
+  --role implementer \
+  --stdout markdown
+```
+
+受控任务/角色交接时生成 Handoff：
+
+```bash
+python scripts/session_context.py --repo . handoff \
+  --from-role implementer \
+  --to-role reviewer \
+  --completed-task-id T4.2 \
+  --summary "Implemented async report delivery" \
+  --next-action "review_task:T4.2"
+```
+
+格式约定：**JSON 是 canonical artifact，YAML 是配置，Markdown 是实际注入 Agent 的提示词投影。默认不使用 XML。**
 
 ---
 
@@ -1030,6 +1062,50 @@ Mandatory Context 永不因为预算不足被静默删除，低相关内容进�
 
 ---
 
+## 12.5 V6.4 Session Bootstrap / Handoff Context
+
+V6.4 解决的是：新会话、新 Agent、compact/resume 之后，不再依赖旧聊天历史重新拼项目状态。
+
+```text
+SDD / Decision / State / Semantic Impact / Policy / Evidence
+                         │
+                         ▼
+                  Session Bootstrap
+                         │
+              JSON canonical artifact
+                         │
+                         ▼
+               compact Markdown prompt
+                         │
+                         ▼
+                       Agent
+```
+
+三类启动模式：
+
+```text
+fresh_project  → 尚未初始化 State，只允许 discovery/intake
+session_resume → 已有 State，从当前 task/cursor/next action 恢复
+agent_handoff  → 有 fresh handoff，额外携带上一任务摘要、风险和交接动作
+```
+
+默认文件：
+
+```text
+.orchestrator/session/
+├── session-bootstrap.json
+├── session-bootstrap.md
+├── latest-handoff.json
+├── latest-handoff.md
+└── handoff-<id>.json/.md
+```
+
+Handoff 不能从“看起来完成了”之类自然语言自动制造完成事实。只有显式交接操作才能写入 `completed_task`。Handoff 会绑定 Work Item、Execution/Analysis snapshot 以及 Requirement/Decision/Policy/Evidence Authority Fingerprint；这些事实发生变化后旧 Handoff 会变 stale。
+
+完整规范见 `references/session-context.md`。
+
+---
+
 ## 13. Execution State Manager
 
 V5 提供 Durable Execution State，解决：
@@ -1174,9 +1250,9 @@ VERIFICATION_RECORDED
 
 ---
 
-## 14. V6.3 Host Enforcement
+## 14. Host Enforcement（V6.3 Runtime + V6.4 Session Context）
 
-V6.3 增加统一 Runtime Enforcement Kernel：
+V6.3 增加统一 Runtime Enforcement Kernel，V6.4 在相同生命周期上增加 Session Bootstrap/Handoff：
 
 ```text
 Host Event
@@ -1253,14 +1329,18 @@ Pi 的 `tool_call` 可以提供 mutation 前阻断，`agent_end` 更适合作为
 ```text
 detect project
   ↓
-load state
+load State / Context Manifest / current role Pack
   ↓
-check context freshness
+validate latest Handoff
   ↓
-load current Context Pack
+build Session Bootstrap JSON
   ↓
-inject compact context
+render compact Markdown
+  ↓
+inject once
 ```
+
+后续 `UserPromptSubmit` 默认只注入 delta context，不重复注入完整 Bootstrap。
 
 不会把所有历史、CBM 图或 Policy 全量塞进模型。
 
@@ -1768,7 +1848,7 @@ Native Done != Governance Done
 
 ### Q8：是否已经支持 Multi-Agent Scheduler？
 
-V6.3 已经为多 Agent 准备了 revision、assignment、role context、reviewer/verifier write separation 和 Subagent hook，但当前版本不包含完整 V7 Scheduler。
+V6.4 已经为多 Agent 准备了 revision、assignment、role context、reviewer/verifier write separation 和 Subagent hook，但当前版本不包含完整 V7 Scheduler。
 
 ---
 
@@ -1782,10 +1862,10 @@ python3 -m unittest discover \
   -p 'test_*.py'
 ```
 
-V6.3 当前包：
+V6.4 当前包：
 
 ```text
-87 tests
+100 tests
 ```
 
 覆盖范围包括：
@@ -1797,6 +1877,7 @@ Execution State
 CBM Semantic Impact
 Engineering Policy
 Context Plane
+Session Bootstrap / Handoff
 Host Enforcement
 ```
 
@@ -1872,7 +1953,7 @@ python scripts/context_plane.py validate \
 
 ## 28. 安全与治理边界
 
-V6.3 采用 defense-in-depth，而不是假设任意一个 Hook 永远不可绕过。
+V6.4 采用 defense-in-depth，而不是假设任意一个 Hook 永远不可绕过。
 
 推荐完整链路：
 
@@ -1893,7 +1974,7 @@ Layer 5  Merge / Branch Protection
          最终交付边界
 ```
 
-不要把 V6.3 Hook 当成唯一安全机制。
+不要把 V6.4 Host Adapter 当成唯一安全机制。
 
 ---
 
@@ -2023,9 +2104,9 @@ State + Gates
 
 ---
 
-## 33. 当前 V6.3 的边界
+## 33. 当前 V6.4 的边界
 
-V6.3 已经完成 Coding Governance 的主体闭环，但它不是：
+V6.4 已经完成 Coding Governance 的主体闭环与 Session Context 收口，但它不是：
 
 - Jira/Linear 替代品
 - CI/CD 替代品
@@ -2122,6 +2203,12 @@ python scripts/execution_state_manager.py \
 python scripts/context_plane.py validate \
   --repo . \
   --manifest .orchestrator/intake/context-manifest.json
+
+# Session bootstrap
+python scripts/session_context.py --repo . bootstrap --role implementer --stdout markdown
+
+# Task/role handoff
+python scripts/session_context.py --repo . handoff --from-role implementer --to-role reviewer --summary "Current task completed"
 
 # Host adapter dry-run
 python scripts/install_host_adapter.py --repo . --host all

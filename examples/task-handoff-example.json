@@ -1,0 +1,58 @@
+{
+  "schema_version": 1,
+  "kind": "task_handoff",
+  "generated_at": "2026-09-13T00:00:00Z",
+  "handoff_id": "handoff-example-44",
+  "from_role": "implementer",
+  "to_role": "reviewer",
+  "host": "claude-code",
+  "session_id": "example-session",
+  "work_item": {
+    "id": "AMS-LOGIN-003",
+    "title": "Login information reporting"
+  },
+  "phase": "implementation",
+  "flow_profile": "STANDARD",
+  "completed_task": {
+    "id": "4.2",
+    "title": "Implement async report delivery"
+  },
+  "summary": [
+    "Implemented async report delivery",
+    "Added retry handling"
+  ],
+  "changed_files": [
+    "src/main/java/com/acme/LoginReportService.java"
+  ],
+  "assumptions": [
+    "server contract is unchanged"
+  ],
+  "known_risks": [
+    "integration verification pending"
+  ],
+  "pending": {
+    "next_action": "review_task:4.2",
+    "required_gates_not_passed": [
+      "integration"
+    ],
+    "review": "pending",
+    "verification": {
+      "status": "pending",
+      "fresh": false
+    }
+  },
+  "next_action": "review_task:4.2",
+  "evidence_refs": [
+    "evidence://unit-test-42"
+  ],
+  "valid_for": {
+    "work_item_id": "AMS-LOGIN-003",
+    "execution_snapshot_id": "A44",
+    "analysis_snapshot_id": "A44",
+    "context_snapshot_id": "CTX44",
+    "state_revision_at_handoff": 17,
+    "authority_fingerprint": "AUTH44EXAMPLE"
+  },
+  "authority_refs": {},
+  "source_of_truth": "Handoff is a resumability projection. Execution State/SDD/Evidence remain authoritative."
+}

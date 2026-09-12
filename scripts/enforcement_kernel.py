@@ -26,6 +26,7 @@ except Exception:  # pragma: no cover
 import context_plane
 import execution_state_manager as sm
 import policy_engine
+import session_context
 
 DEFAULT_CONFIG = {
     "version": 1,
@@ -45,6 +46,15 @@ DEFAULT_CONFIG = {
 COMPLETION_PATTERNS = [
     r"\bdone\b", r"\bfinished\b", r"\bcompleted\b", r"\bready to merge\b", r"\bready for merge\b",
     r"已完成", r"完成了", r"全部完成", r"可以合并", r"可以提交", r"开发完成",
+]
+TASK_COMPLETION_PATTERNS = [
+    r"\b(task|step|story)\b.{0,60}\b(done|finished|completed)\b",
+    r"\b(done|finished|completed)\b.{0,60}\b(task|step|story)\b",
+    r"(任务|步骤|story).{0,40}(完成|已完成|结束)",
+]
+GLOBAL_COMPLETION_STRONG = [
+    r"\bready to merge\b", r"\bready for merge\b", r"\ball (done|finished|completed)\b",
+    r"\bimplementation (is )?(done|finished|completed)\b", r"全部完成", r"可以合并", r"可以提交", r"开发完成",
 ]
 READ_ONLY_SHELL = [
     r"^\s*(cat|head|tail|less|more|grep|rg|find|ls|pwd|git\s+(status|diff|log|show|branch)|mvn\s+.*test|gradle\s+.*test|./gradlew\s+.*test|npm\s+(test|run\s+test)|pytest|python\s+-m\s+pytest)\b"
@@ -121,7 +131,7 @@ def worktree_snapshot(repo: Path) -> str:
             if " -> " in path_text:
                 path_text = path_text.split(" -> ", 1)[1]
             rel = path_text.replace("\\", "/")
-            if rel.startswith(".orchestrator/intake/") or rel.startswith(".orchestrator/runtime/") or rel in {
+            if rel.startswith(".orchestrator/intake/") or rel.startswith(".orchestrator/runtime/") or rel.startswith(".orchestrator/session/") or rel in {
                 ".orchestrator/execution-state.yaml", ".orchestrator/execution-history.jsonl"
             }:
                 continue
@@ -206,8 +216,17 @@ def infer_role(state: dict[str, Any], raw: dict[str, Any]) -> str:
     return {"review": "reviewer", "verification": "verifier", "planning": "planner", "design": "planner", "specification": "planner"}.get(phase, "implementer")
 
 
+def is_task_completion_claim(text: str) -> bool:
+    low = (text or "").lower()
+    return any(re.search(p, low, flags=re.I) for p in TASK_COMPLETION_PATTERNS)
+
+
 def is_completion_claim(text: str) -> bool:
     low = (text or "").lower()
+    if any(re.search(p, low, flags=re.I) for p in GLOBAL_COMPLETION_STRONG):
+        return True
+    if is_task_completion_claim(low):
+        return False
     return any(re.search(p, low, flags=re.I) for p in COMPLETION_PATTERNS)
 
 
@@ -316,21 +335,42 @@ def handle(repo: Path, host: str, event: str, raw: dict[str, Any]) -> dict[str, 
 
     if event in {"session_start", "prompt_submit", "subagent_start"}:
         if state is None:
-            msg = "Orchestrator is installed but Canonical Execution State is not initialized. Reads are allowed; initialize/classify before production-code mutation."
+            if event in {"session_start", "subagent_start"}:
+                bootstrap = session_context.build_bootstrap(repo, role="implementer", host=host, session_id=str(raw.get("session_id") or raw.get("sessionId") or ""))
+                _, md_path = session_context.persist_bootstrap(repo, bootstrap)
+                msg = md_path.read_text(encoding="utf-8")
+            else:
+                msg = "Orchestrator is installed but Canonical Execution State is not initialized. Reads are allowed; initialize/classify before production-code mutation."
             save_runtime(repo, runtime)
             return canonical(event, context=msg, actions=["initialize_execution_state", "run_intake"])
         role = infer_role(state, raw)
+        if event in {"session_start", "subagent_start"}:
+            bootstrap = session_context.build_bootstrap(
+                repo, role=role, host=host, session_id=str(raw.get("session_id") or raw.get("sessionId") or "")
+            )
+            json_path, md_path = session_context.persist_bootstrap(repo, bootstrap)
+            runtime["last_bootstrap_ref"] = str(json_path.relative_to(repo))
+            runtime["last_bootstrap_snapshot_id"] = bootstrap.get("bootstrap_snapshot_id")
+            base = md_path.read_text(encoding="utf-8")
+            save_runtime(repo, runtime)
+            return canonical(event, context=base, metadata={"role": role, "bootstrap_snapshot_id": bootstrap.get("bootstrap_snapshot_id")})
+        # Prompt-submit is intentionally delta-only. Do not re-inject a full cold-start pack on every turn.
         base = _state_context(state)
         manifest_path, manifest = _manifest_from_state(repo, state)
         if manifest is not None:
             fresh = context_plane.validate_manifest(repo, manifest)
             if fresh.get("status") != "FRESH":
                 base += " Context Manifest is STALE; refresh semantic intake/context before relying on it for new mutations."
-        pack = _pack_text(repo, state, role)
-        if pack:
-            base += "\n\n" + pack[:7000]
+        handoff_path = repo / ".orchestrator" / "session" / "latest-handoff.json"
+        if handoff_path.exists():
+            try:
+                hs = session_context.validate_handoff(repo, json.loads(handoff_path.read_text(encoding="utf-8")), state)
+                if hs.get("status") == "STALE":
+                    base += " Latest handoff is stale and must not be treated as current truth."
+            except Exception:
+                base += " Latest handoff could not be validated; do not rely on it."
         save_runtime(repo, runtime)
-        return canonical(event, context=base, metadata={"role": role})
+        return canonical(event, context=base, metadata={"role": role, "context_mode": "delta_only"})
 
     if event == "pre_tool":
         info = mutation_info(raw)

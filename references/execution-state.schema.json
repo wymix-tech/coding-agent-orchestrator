@@ -292,6 +292,6 @@
     "review",
     "verification"
   ],
-  "title": "Adaptive SDD Coding Orchestrator Execution State v1 (V6.2 context extensions)",
+  "title": "Adaptive SDD Coding Orchestrator Execution State v1 (V6.4 compatible)",
   "type": "object"
 }

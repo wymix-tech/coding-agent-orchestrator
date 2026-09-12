@@ -13,15 +13,19 @@ function callKernel(eventName: string, payload: any, cwd: string): any {
 }
 
 export default function (pi: ExtensionAPI) {
+  let pendingBootstrap: string | null = null;
   pi.on("session_start", async (event, ctx) => {
     const r = callKernel("session_start", event, ctx.cwd);
-    if (r.additional_context) ctx.ui.notify(r.additional_context.slice(0, 500), "info");
+    pendingBootstrap = r.additional_context || null;
+    if (pendingBootstrap) ctx.ui.notify(pendingBootstrap.slice(0, 500), "info");
   });
 
   pi.on("before_agent_start", async (event, ctx) => {
     const r = callKernel("prompt_submit", event, ctx.cwd);
-    if (!r.additional_context) return;
-    return { message: { customType: "coding-orchestrator", content: r.additional_context, display: true } };
+    const parts = [pendingBootstrap, r.additional_context].filter(Boolean);
+    pendingBootstrap = null;
+    if (!parts.length) return;
+    return { message: { customType: "coding-orchestrator", content: parts.join("\n\n"), display: true } };
   });
 
   pi.on("tool_call", async (event, ctx) => {

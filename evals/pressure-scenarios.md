@@ -354,3 +354,45 @@ Expected: Stop is not blocked merely because the work item is not globally DONE.
 
 ### 36. Host hook is disabled/bypassed
 Expected: repository state transition guards and CI still reject illegal DONE. Runtime adapters are defense-in-depth, never the sole authority.
+
+## V6.4 Session Bootstrap / Handoff pressure scenarios
+
+### 37. Cold start with durable state but no chat history
+A new Claude/Codex/Pi session opens on an existing work item. Conversation history is unavailable.
+
+Expected: SessionStart builds a compact bootstrap from Canonical Execution State, Context Manifest/Pack, Decision, Policy, and Evidence. It identifies the current task/next action without reconstructing project truth from old chat.
+
+### 38. Casual “task looks done” statement
+An implementer says a task looks finished but has not recorded a controlled handoff or updated authoritative task state.
+
+Expected: V6.4 does not synthesize `completed_task`. Task completion becomes handoff content only through an explicit handoff operation backed by current State/snapshots.
+
+### 39. Handoff after code changes again
+Implementer creates a handoff at execution snapshot S44. Another mutation advances the execution/analysis snapshot to S45 before the reviewer starts.
+
+Expected: handoff validation reports `STALE`; the reviewer bootstrap must not present it as current truth.
+
+### 40. Assignment-only state revision after handoff
+A handoff is created at snapshot S44, then state revision changes only because an observer/reviewer is assigned; execution/analysis snapshots remain S44.
+
+Expected: the handoff remains fresh. Revision churn alone is not code/analysis staleness.
+
+### 41. Session artifact self-pollution
+SessionStart writes `.orchestrator/session/session-bootstrap.json` and `.md`.
+
+Expected: material-worktree fingerprint remains unchanged. Context generation cannot mark its own semantic evidence stale.
+
+### 42. Prompt inflation on every user turn
+Session bootstrap is 5 KB and the user sends twenty short follow-up prompts.
+
+Expected: full bootstrap is injected once per SessionStart/resume/compact; subsequent prompt events use delta-only state/freshness context.
+
+### 43. Pi SessionStart/UI vs model context
+Pi receives SessionStart before `before_agent_start`.
+
+Expected: extension stores the bootstrap, optionally shows a short UI notification, and injects the full bootstrap exactly once on the next agent start. Later turns receive deltas only.
+
+### 44. Handoff conflicts with current SDD/State
+Old handoff says “next: review”, while current State says implementation was reopened due to a blocker.
+
+Expected: State/SDD authority wins. Bootstrap exposes current phase/blocker and marks/ignores conflicting stale handoff rather than steering the agent to review.

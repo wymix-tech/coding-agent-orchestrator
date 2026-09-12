@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Install/merge V6.3 host enforcement adapters into a repository.
+"""Install/merge V6.4 host enforcement + session-context adapters into a repository.
 
 This script only mutates host configuration when --apply is provided. It creates a backup
 next to an existing JSON file before merging orchestrator hook groups.
@@ -61,6 +61,14 @@ def ensure_enforcement_config(repo: Path, apply: bool) -> str:
     return str(target)
 
 
+
+def ensure_session_context_config(repo: Path, apply: bool) -> str:
+    target = repo / ".orchestrator" / "session-context.yaml"
+    if apply and not target.exists():
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(ROOT / "examples" / "session-context.yaml", target)
+    return str(target)
+
 def main() -> int:
     p=argparse.ArgumentParser()
     p.add_argument("--repo", type=Path, default=Path.cwd())
@@ -68,7 +76,7 @@ def main() -> int:
     p.add_argument("--apply", action="store_true")
     args=p.parse_args(); repo=args.repo.resolve()
     selected=["claude-code","codex","pi"] if args.host=="all" else [args.host]
-    out={"apply":args.apply,"kernel":str(KERNEL),"enforcement_config":ensure_enforcement_config(repo,args.apply),"hosts":{}}
+    out={"apply":args.apply,"kernel":str(KERNEL),"enforcement_config":ensure_enforcement_config(repo,args.apply),"session_context_config":ensure_session_context_config(repo,args.apply),"hosts":{}}
     if "claude-code" in selected:
         frag=load_template(ROOT/"hosts"/"claude-code"/"hooks.template.json")
         target=repo/".claude"/"settings.json"

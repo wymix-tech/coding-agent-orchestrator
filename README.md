@@ -1,8 +1,8 @@
 # Coding Agent Orchestrator
 
-> Adaptive SDD + Evidence + Semantic Impact + Engineering Policy + Context Plane + Runtime Enforcement
+> Adaptive SDD + Evidence + Semantic Impact + Engineering Policy + Context Plane + Session Context + Runtime Enforcement
 
-**Current version: V6.3**
+**Current version: V6.4**
 
 Coding Agent Orchestrator is an engineering control plane for AI coding agents. It does not replace OpenSpec, BMAD, Superpowers, CI, or code-graph tools. Instead, it composes them into a development lifecycle that is auditable, resumable, adaptive, and enforceable at runtime.
 
@@ -50,6 +50,9 @@ Context Plane
 Execution State Manager
         │
         ▼
+Session Bootstrap / Handoff
+        │
+        ▼
 Host Enforcement Kernel
         │
    ┌────┼────┐
@@ -78,6 +81,7 @@ Each layer has a strict responsibility boundary:
 | Engineering Policy | What implementation patterns are allowed? | Project-owned policy |
 | Context Plane | What should this role see right now? | Manifest + role/stage projection |
 | Execution State | Where are we, and what happens next? | Native / Hybrid / Orchestrator state |
+| Session Context | What should a cold-start/resumed/handoff agent see first? | JSON projection over State + Context Plane |
 | Host Enforcement | Is the current action allowed? | Shared Enforcement Kernel |
 | Superpowers | How should the agent perform the work? | Execution discipline |
 | Quality Gates | Are completion conditions satisfied? | Tests / Static analysis / Review / Verification |
@@ -103,8 +107,9 @@ Coding Agent Orchestrator evolved from an SDD orchestration skill into a broader
 | V6.1 | Engineering Policy Layer: project-level architecture and development constraints |
 | V6.2 | Context Manifest / Context Pack: unified project context plane |
 | V6.3 | Claude Code / Codex hooks + Pi extension runtime enforcement |
+| V6.4 | Session Bootstrap / Task Handoff for cold start, resume, and role transfer |
 
-The defining V6.3 transition is from:
+V6.4 builds on V6.3 runtime enforcement by solving how a new session/agent reconstructs current engineering reality without relying on old chat history. The defining V6.3 transition is from:
 
 ```text
 "Please follow these rules"
@@ -292,6 +297,7 @@ coding-agent-orchestrator/
 │   ├── policy_engine.py
 │   ├── ecc_rules_adapter.py
 │   ├── context_plane.py
+│   ├── session_context.py
 │   ├── enforcement_kernel.py
 │   └── install_host_adapter.py
 │
@@ -313,6 +319,7 @@ coding-agent-orchestrator/
 │   ├── semantic-impact-engine.md
 │   ├── engineering-policy-layer.md
 │   ├── context-plane.md
+│   ├── session-context.md
 │   ├── execution-state-manager.md
 │   ├── host-enforcement.md
 │   ├── host-capabilities.yaml
@@ -321,6 +328,9 @@ coding-agent-orchestrator/
 ├── examples/
 │   ├── orchestrator-config.yaml
 │   ├── enforcement.yaml
+│   ├── session-context.yaml
+│   ├── session-bootstrap-example.json
+│   ├── task-handoff-example.json
 │   ├── work-facts-*.json
 │   ├── semantic-impact-cbm-example.json
 │   ├── context-manifest-example.json
@@ -337,6 +347,7 @@ coding-agent-orchestrator/
     ├── test_semantic_impact.py
     ├── test_policy_engine.py
     ├── test_context_plane.py
+    ├── test_session_context.py
     └── test_enforcement_kernel.py
 ```
 
@@ -372,7 +383,7 @@ The built-in V6 policy checker provides fast feedback. ArchUnit provides stronge
 
 ### Optional Host Enforcement Targets
 
-V6.3 provides integrations for:
+V6.4 retains the V6.3 host integrations and adds Session Bootstrap/Handoff injection for:
 
 - Claude Code hooks
 - Codex hooks
@@ -451,7 +462,7 @@ python scripts/execution_state_manager.py \
 
 ### 6.4 Run the Full Semantic Intake Pipeline
 
-Recommended V6.3 entry point:
+Recommended V6.4 entry point:
 
 ```bash
 python scripts/semantic_intake_pipeline.py \
@@ -1030,6 +1041,50 @@ Mandatory context is never silently dropped because of budget pressure. Lower-re
 
 ---
 
+## 12.5 V6.4 Session Bootstrap / Handoff Context
+
+V6.4 prevents new sessions, new agents, and compact/resume events from rebuilding project truth from chat history.
+
+```text
+SDD / Decision / State / Semantic Impact / Policy / Evidence
+                         │
+                         ▼
+                  Session Bootstrap
+                         │
+              JSON canonical artifact
+                         │
+                         ▼
+               compact Markdown prompt
+                         │
+                         ▼
+                       Agent
+```
+
+Bootstrap modes:
+
+```text
+fresh_project  → no State yet; discovery/intake only
+session_resume → durable State exists; resume current task/cursor/next action
+agent_handoff  → fresh handoff adds previous-task summary, risks, and transfer action
+```
+
+Default files:
+
+```text
+.orchestrator/session/
+├── session-bootstrap.json
+├── session-bootstrap.md
+├── latest-handoff.json
+├── latest-handoff.md
+└── handoff-<id>.json/.md
+```
+
+A handoff cannot manufacture task completion from casual natural-language claims. Only an explicit handoff operation may populate `completed_task`. Handoffs bind to Work Item, Execution/Analysis snapshots, and a Requirement/Decision/Policy/Evidence authority fingerprint; material authority changes make old handoffs stale.
+
+See `references/session-context.md`.
+
+---
+
 ## 13. Execution State Manager
 
 V5 provides durable execution state and answers:
@@ -1174,9 +1229,9 @@ History should be appended, not rewritten.
 
 ---
 
-## 14. V6.3 Host Enforcement
+## 14. Host Enforcement (V6.3 Runtime + V6.4 Session Context)
 
-V6.3 adds a shared Runtime Enforcement Kernel:
+V6.3 adds a shared Runtime Enforcement Kernel; V6.4 adds Session Bootstrap/Handoff on the same lifecycle events:
 
 ```text
 Host Event
@@ -1769,7 +1824,7 @@ Native Done != Governance Done
 
 No.
 
-V6.3 already contains foundations for multi-agent work, including revisions, assignments, role-aware context, reviewer/verifier write separation, and subagent hooks, but the complete V7 scheduler is not part of this version.
+V6.4 already contains foundations for multi-agent work, including revisions, assignments, role-aware context, reviewer/verifier write separation, and subagent hooks, but the complete V7 scheduler is not part of this version.
 
 ---
 
@@ -1783,10 +1838,10 @@ python3 -m unittest discover \
   -p 'test_*.py'
 ```
 
-Current V6.3 package:
+Current V6.4 package:
 
 ```text
-87 tests
+100 tests
 ```
 
 Coverage includes:
@@ -1798,6 +1853,7 @@ Execution State
 CBM Semantic Impact
 Engineering Policy
 Context Plane
+Session Bootstrap / Handoff
 Host Enforcement
 ```
 
@@ -1873,7 +1929,7 @@ If `ILLEGAL_DOWNGRADE` occurs, resolve the policy authority conflict rather than
 
 ## 28. Security and Governance Boundaries
 
-V6.3 uses defense in depth. It does not assume that any single hook is impossible to bypass.
+V6.4 uses defense in depth. It does not assume that any single hook is impossible to bypass.
 
 Recommended chain:
 
@@ -1894,7 +1950,7 @@ Layer 5  Merge / Branch Protection
          Final delivery boundary
 ```
 
-Do not treat the V6.3 host hook as the only security mechanism.
+Do not treat the V6.4 host adapter as the only security mechanism.
 
 ---
 
@@ -2024,9 +2080,9 @@ State + Gates
 
 ---
 
-## 33. Current V6.3 Boundaries
+## 33. Current V6.4 Boundaries
 
-V6.3 closes the main coding-governance loop, but it is not:
+V6.4 closes the main coding-governance loop, but it is not:
 
 - a Jira/Linear replacement
 - a CI/CD replacement
@@ -2123,6 +2179,12 @@ python scripts/execution_state_manager.py \
 python scripts/context_plane.py validate \
   --repo . \
   --manifest .orchestrator/intake/context-manifest.json
+
+# Session bootstrap
+python scripts/session_context.py --repo . bootstrap --role implementer --stdout markdown
+
+# Task/role handoff
+python scripts/session_context.py --repo . handoff --from-role implementer --to-role reviewer --summary "Current task completed"
 
 # Host adapter dry-run
 python scripts/install_host_adapter.py --repo . --host all

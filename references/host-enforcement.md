@@ -1,17 +1,17 @@
-# V6.3 Host Enforcement Adapters
+# V6.4 Host Enforcement + Session Context
 
-V6.3 attaches existing governance decisions to host lifecycle events. Host adapters MUST stay thin: they translate events and outputs but do not duplicate Decision, Policy, Context, or State logic.
+V6.4 retains V6.3 runtime enforcement and adds snapshot-bound Session Bootstrap / Handoff context injection. Session artifacts remain projections; host adapters remain thin. Host adapters MUST stay thin: they translate events and outputs but do not duplicate Decision, Policy, Context, or State logic.
 
 ## Event contract
 
 | Canonical event | Purpose |
 |---|---|
-| `session_start` | inject compact resume/current-context summary |
-| `prompt_submit` | remind/inject current context before a new turn |
+| `session_start` | build/persist/inject V6.4 Session Bootstrap once for cold start/resume/compact |
+| `prompt_submit` | inject delta-only state/freshness context; do not repeat the full bootstrap every turn |
 | `pre_tool` | block illegal production-code mutation before side effects |
 | `post_tool` | mark semantic/context/verification evidence stale after material mutation |
 | `file_changed` | catch external/on-disk changes when the host exposes them |
-| `subagent_start` | project role-specific context |
+| `subagent_start` | build role-specific bootstrap and include a fresh handoff when applicable |
 | `subagent_stop` | require role outcome/evidence before a reviewer/verifier exits |
 | `stop` | block completion claims when governance completion is not ready |
 
@@ -30,7 +30,11 @@ A successful material mutation immediately invalidates semantic/context/final-ve
 
 Use `scripts/install_host_adapter.py --repo . --host <claude-code|codex|pi|all> --apply` from the Skill root. Review generated hook definitions before trusting/enabling them.
 
-## Compatibility references used for V6.3
+## V6.4 session-context rule
+
+Canonical session artifacts are JSON, configuration is YAML, and host prompt injection is compact Markdown. See `references/session-context.md`. Generated `.orchestrator/session/` files are excluded from the material worktree fingerprint.
+
+## Compatibility references used for V6.4
 
 - Claude Code Hooks reference: https://code.claude.com/docs/en/hooks
 - Codex Hooks reference: https://developers.openai.com/codex/hooks

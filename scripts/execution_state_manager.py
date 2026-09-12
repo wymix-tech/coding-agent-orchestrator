@@ -827,6 +827,7 @@ def attach_context_snapshot(
     return _commit(state_path, new_state, event, expected_revision)
 
 
+
 def record_verification(
     state_path: pathlib.Path,
     status: str,
