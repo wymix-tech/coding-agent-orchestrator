@@ -1,6 +1,6 @@
-# V6.5 Project Bootstrap & Unified CLI
+# Project Bootstrap & Unified CLI
 
-V6.5 productizes the existing governance engines. It does **not** create a new authority.
+Project Bootstrap productizes the existing governance engines. It does **not** create a new authority.
 The goal is one-time repository initialization followed by automatic resume through host
 adapters and durable project state.
 

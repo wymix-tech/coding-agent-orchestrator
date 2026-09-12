@@ -1,4 +1,4 @@
-# V6.2 Context Plane
+# Context Plane
 
 ## Purpose
 
@@ -136,6 +136,6 @@ The pack may say "read this" but it may never say "this projection overrides its
 - SDD owns requirement intent/acceptance behavior;
 - Engineering Policy owns allowed implementation constraints;
 - Decision Engine owns Flow classification;
-- V5 Execution State owns/project runtime state by field authority;
+- Canonical Execution State owns project runtime state by field authority;
 - CBM owns only structural graph evidence;
 - fresh verification evidence owns proof of completion.

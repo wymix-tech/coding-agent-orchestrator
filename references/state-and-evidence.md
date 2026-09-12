@@ -130,7 +130,7 @@ Legal CLOSED transition
 
 A broken link means the work item is not ready to close.
 
-## V6 semantic-impact lineage
+## Semantic-impact lineage
 
 For code changes, extend the traceability chain:
 
@@ -149,7 +149,7 @@ Requirement / SDD
 `semantic-impact.json` is evidence, not a requirement source and not a state authority.
 CBM provider opinions never replace Orchestrator Work Facts.
 
-## V6.1 Policy evidence
+## Policy evidence
 
 Engineering Policy has its own snapshot and artifact refs:
 
@@ -163,7 +163,7 @@ When policy is enabled, Canonical Execution State analysis metadata may referenc
 
 Policy evidence follows the same freshness principle as other execution evidence: a material code/policy change requires rerouting/re-evaluation before completion. External guidance references are context, not proof of compliance.
 
-## V6.2 Context lineage
+## Context lineage
 
 The Context Plane does not add another source of truth. It records where current truth lives and which snapshot a role-specific projection was generated from:
 

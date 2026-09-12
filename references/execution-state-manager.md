@@ -236,9 +236,9 @@ completion:
 
 Global DONE is true only when the native/canonical work item is closed **and** all orchestrator close guards pass. Never treat a native `done` token alone as sufficient proof of completion.
 
-## V6 analysis attachments
+## Analysis attachments
 
-V6 adds an `analysis` projection to durable execution state:
+Durable execution state includes an `analysis` projection:
 
 ```yaml
 analysis:
@@ -268,7 +268,7 @@ A changed analysis snapshot also advances `execution_snapshot_id`. If prior fina
 verification was against another snapshot, it becomes stale automatically.
 
 
-## V6 flow reconciliation
+## Flow reconciliation
 
 When deterministic reassessment changes Flow, reconcile it durably:
 
@@ -282,7 +282,7 @@ python scripts/execution_state_manager.py \
 Raising to STANDARD/DEEP activates required review. A later de-escalation does not
 automatically erase an already-required review obligation.
 
-## V6.1 Engineering Policy integration
+## Engineering Policy integration
 
 When policy is enabled, `analysis` may include `policy_plan_ref`, `policy_evaluation_ref`, `policy_context_ref`, and `policy_snapshot_id`. These are Orchestrator-owned metadata even when native SDD state is authoritative for phase/status.
 
@@ -294,7 +294,7 @@ policy:ARCH-SPRING-LAYER-001:architecture-layers
 
 A REQUIRED policy gate behaves exactly like any other REQUIRED gate: it cannot be skipped or marked not-required, and close is denied until it passes. Policy routing/evaluation artifacts explain why the gate exists; the gate evidence proves that the implementation complies.
 
-## V6.2 Context Plane integration
+## Context Plane integration
 
 `analysis` may also carry stable references to the current Context Manifest and the pack generated for the current role/stage:
 

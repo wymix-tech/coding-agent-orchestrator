@@ -1,6 +1,6 @@
 # Spring Boot Policy Enforcement
 
-For layered Spring Boot projects, use the V6 starter policy for routing/context and use ArchUnit as the preferred deterministic dependency-direction gate.
+For layered Spring Boot projects, use the packaged starter policy for routing/context and use ArchUnit as the preferred deterministic dependency-direction gate.
 
 ## Canonical direction
 
@@ -32,7 +32,7 @@ class LayerArchitectureTest {
 
 Treat this as a project example, not a universal architecture law. Some codebases use domain/application/infrastructure, ports-and-adapters, CQRS, or generated clients; encode the repository's actual intended boundaries.
 
-## V6 lightweight checker vs ArchUnit
+## Lightweight checker vs ArchUnit
 
 `scripts/policy_engine.py evaluate` detects direct Java imports for changed files. It is deliberately conservative and cheap. It does not replace Java type resolution.
 
@@ -43,7 +43,7 @@ Policy Router
    -> exact layered rules
    -> lightweight changed-file check
    -> ArchUnit gate
-   -> V5 quality gate evidence
+   -> execution-state quality gate evidence
 ```
 
 ## Responsibilities

@@ -1,10 +1,10 @@
 # ECC Rules Integration
 
-V6.1 can treat an installed/local ECC `rules/` tree as an **external guidance source**.
+Engineering Policy can treat an installed/local ECC `rules/` tree as an **external guidance source**.
 
 ## Why only a source
 
-ECC's rule model has useful properties for this project: common rules plus language/framework packs, path-scoped rule metadata, and a clear split between broad rules and on-demand skills. V6 adopts those structural ideas but keeps project Engineering Policy authoritative.
+ECC's rule model has useful properties for this project: common rules plus language/framework packs, path-scoped rule metadata, and a clear split between broad rules and on-demand skills. The orchestrator adopts those structural ideas but keeps project Engineering Policy authoritative.
 
 External ECC rules:
 

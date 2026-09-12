@@ -1,4 +1,4 @@
-# V6 Engineering Policy Layer
+# Engineering Policy Layer
 
 ## Purpose
 
@@ -6,9 +6,9 @@ Engineering Policy answers **what implementations are allowed**. Keep it separat
 
 - SDD: what/why to build.
 - Decision Engine: how much process is required.
-- V6 Semantic Impact: what is affected.
+- Semantic Impact: what is affected.
 - Superpowers: how the agent works.
-- V5 State Manager: whether the work may advance/close.
+- Execution State Manager: whether the work may advance/close.
 
 ## Storage
 
@@ -25,7 +25,7 @@ Prefer stable rule IDs such as `ARCH-SPRING-LAYER-001` so planning, review, CI, 
 
 ## Levels
 
-- `MUST`: blocking invariant. It must have executable evidence or an explicit approved waiver mechanism outside this V6 scope.
+- `MUST`: blocking invariant. It must have executable evidence or an explicit approved waiver mechanism outside this policy-layer scope.
 - `SHOULD`: review-level expectation; deviations require rationale but do not automatically block.
 - `PREFER`: advisory convention.
 

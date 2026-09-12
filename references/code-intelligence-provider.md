@@ -2,7 +2,7 @@
 
 ## Purpose
 
-V6 uses external structural analyzers behind a stable provider boundary. A provider may
+Semantic Impact uses external structural analyzers behind a stable provider boundary. A provider may
 answer **what code is connected to this change**; it must not decide **how much process**
 the change requires.
 
@@ -64,5 +64,5 @@ provenance is retained with strength `superseded`; it is not silently deleted.
 
 ## Capability evolution
 
-V6 intentionally has one provider implementation. Future providers may implement this
+The current implementation intentionally has one provider implementation. Future providers may implement this
 contract without changing Decision Engine, SDD adapters, or Execution State Manager.

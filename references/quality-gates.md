@@ -62,7 +62,7 @@ REQUIRED gates must be recorded in Canonical Execution State with status and evi
 
 Final verification is separate from individual gates and is bound to `execution_snapshot_id`; any material snapshot change invalidates previous final-verification freshness.
 
-## V6 Verification Planner
+## Verification Planner
 
 `scripts/verification_planner.py` derives verification **requirements/candidates** from
 semantic impact, such as integration, contract compatibility, async failure/timing, or
@@ -77,9 +77,9 @@ Project Policy  -> what gates are mandatory regardless of impact
 
 Both must be satisfied before DONE when classified as REQUIRED.
 
-## V6.1 Engineering Policy gates
+## Engineering Policy gates
 
-Project Engineering Policy may map `MUST` rules to one or more executable gates. The router emits these in `policy-plan.json`; `verification-plan.json` carries them under `policy_gates`, and V5 State records blocking gates when state sync is enabled.
+Project Engineering Policy may map `MUST` rules to one or more executable gates. The router emits these in `policy-plan.json`; `verification-plan.json` carries them under `policy_gates`, and Canonical Execution State records blocking gates when state sync is enabled.
 
 Examples:
 

@@ -2,6 +2,7 @@
 
 ## 6.5 — Project Bootstrap & Unified CLI
 
+- Refactored `SKILL.md` to be version-neutral: capability names now replace historical V3/V4/V5/V6.x labels; release history remains in this changelog and `MANIFEST.json`.
 - Added `coding-orchestrator` / `coding-orchestrator.cmd` and `scripts/coding_orchestrator.py` as the stable human/agent front controller.
 - Added `init`, `discover`, `doctor`, `status`, `intake`, `resume`, `verify`, and `host install` commands.
 - Added conservative repository discovery for technology, SDD/state authority, host markers, CBM availability, and architecture evidence.
@@ -11,7 +12,11 @@
 - Added evidence-gated Spring layered-policy auto-enablement; Spring Boot identity alone no longer implies `web -> service -> dao`.
 - Added safe host auto-install semantics: repository-local host markers are high-confidence, binary-only detection is advisory.
 - Added bootstrap report, project config generation, Doctor health checks, closed-work archival, and unified resume/verification readiness views.
-- Added V6.5 bootstrap/CLI tests; full regression suite is 111 tests.
+- Added V6.5 bootstrap/CLI tests.
+- Refactored `SKILL.md` into a compact runtime router with an explicit Lazy Reference Loading Contract; detailed CLI/examples remain in on-demand references.
+- Added `scripts/context_footprint_check.py` and regression guards for Skill size, version-neutrality, and lazy-reference semantics.
+- Updated README guidance to avoid sequential eager-loading of the reference corpus.
+- Full regression suite is 115 tests.
 
 ## 6.4 — Session Bootstrap & Handoff Context
 

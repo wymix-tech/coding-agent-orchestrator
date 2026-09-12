@@ -1,12 +1,12 @@
-# V6.4 Session Bootstrap & Handoff Context
+# Session Bootstrap & Handoff Context
 
-V6.4 adds resumable, prompt-facing context projections on top of the V6.2 Context Plane and V6.3 Host Enforcement layer.
+Session Context provides resumable, prompt-facing projections on top of the Context Plane and Host Enforcement layer.
 
 ## Why this exists
 
 A new coding-agent session should not reconstruct project reality from chat history. It should start from the current SDD authority, Decision result, Canonical Execution State, Semantic Impact, Engineering Policy, Context Manifest, and Evidence. Likewise, a role/session handoff should not depend on a long natural-language transcript.
 
-V6.4 therefore adds two derived artifacts:
+Session Context therefore defines two derived artifacts:
 
 - **Session Bootstrap**: compact cold-start/resume context generated from current project truth.
 - **Task Handoff**: explicit role/session transfer artifact generated at a controlled task boundary.
@@ -15,7 +15,7 @@ Neither artifact is authoritative. They are views over existing authorities.
 
 ## Format contract
 
-V6.4 deliberately uses different formats for different jobs:
+The design deliberately uses different formats for different jobs:
 
 | Surface | Format | Reason |
 |---|---|---|
@@ -42,13 +42,13 @@ Default runtime paths:
     └── handoff-<id>.md
 ```
 
-Generated session artifacts are excluded from the V6.3 material working-tree fingerprint. Creating a bootstrap must not make semantic/context evidence stale.
+Generated session artifacts are excluded from the material working-tree fingerprint. Creating a bootstrap must not make semantic/context evidence stale.
 
 ## Session types
 
 ### `fresh_project`
 
-Used when Canonical Execution State does not exist yet. The bootstrap may guide discovery/intake, but production-code mutation remains blocked by V6.3 enforcement.
+Used when Canonical Execution State does not exist yet. The bootstrap may guide discovery/intake, but production-code mutation remains blocked by host enforcement.
 
 ### `session_resume`
 
@@ -138,7 +138,7 @@ python scripts/session_context.py --repo . validate-handoff
 
 ## Host integration
 
-V6.3 host adapters now consume V6.4 session context:
+Host adapters consume Session Context as follows:
 
 - Claude Code `SessionStart` receives Session Bootstrap Markdown.
 - Codex `SessionStart` receives Session Bootstrap Markdown.

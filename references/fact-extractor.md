@@ -167,9 +167,9 @@ Two agents given the same repository snapshot, request, authoritative SDD artifa
 
 Remaining variance is localized to semantic fact resolution and becomes visible in the provenance ledger instead of being hidden inside a subjective score.
 
-## V6 semantic enrichment
+## Semantic enrichment
 
-V4 file/Git extraction remains the first evidence pass. V6 then runs CBM semantic-impact
+File/Git extraction remains the first evidence pass. Semantic Impact then runs CBM semantic-impact
 analysis before semantic resolution. The impact mapper may raise structural scope estimates
 when graph evidence proves a wider blast radius. It must preserve superseded provenance and
 must not use missing graph edges as negative proof.

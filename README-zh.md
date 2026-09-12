@@ -1957,7 +1957,7 @@ python3 -m unittest discover \
 V6.5 当前包：
 
 ```text
-111 tests
+115 tests
 ```
 
 覆盖范围包括：
@@ -2350,27 +2350,32 @@ Agent 声称完成
 
 ---
 
-## 37. 进一步阅读
+## 37. 按需阅读与上下文预算
 
-建议按以下顺序阅读：
+`SKILL.md` 是运行时路由器，不是文档目录的预加载清单。**不要按顺序一次性读取全部 references**；应根据当前阶段只读取 1～2 份最相关文档。
+
+典型路由：
 
 ```text
-SKILL.md
-  ↓
-references/orchestration-model.md
-  ↓
-references/decision-engine.md
-  ↓
-references/semantic-impact-engine.md
-  ↓
-references/engineering-policy-layer.md
-  ↓
-references/context-plane.md
-  ↓
-references/execution-state-manager.md
-  ↓
-references/host-enforcement.md
+新项目初始化      → references/project-bootstrap.md
+流程/SDD 选择     → orchestration-model.md / adapter-contract.md
+事实与分类        → fact-extractor.md / decision-engine.md
+代码影响          → semantic-impact-engine.md
+工程规则          → engineering-policy-layer.md
+执行状态          → execution-state-manager.md
+角色上下文        → context-plane.md
+冷启动/交接       → session-context.md
+宿主 Hook         → host-enforcement.md
+Review/Verify     → quality-gates.md
 ```
+
+可以运行上下文体积检查：
+
+```bash
+python scripts/context_footprint_check.py --repo .
+```
+
+默认门限用于防止 `SKILL.md` 重新膨胀；完整 reference 语料仍然可以保持丰富，因为它们是 lazy retrieval 的知识库，而不是常驻 Prompt。
 
 需要针对具体 SDD 时再阅读：
 

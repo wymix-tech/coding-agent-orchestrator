@@ -1933,7 +1933,7 @@ python3 -m unittest discover \
 Current V6.5 package:
 
 ```text
-111 tests
+115 tests
 ```
 
 Coverage includes:
@@ -2326,27 +2326,32 @@ The target outcome is:
 
 ---
 
-## 37. Further Reading
+## 37. On-demand Reading and Context Budget
 
-Recommended reading order:
+`SKILL.md` is a runtime router, not a preload list for the documentation corpus. **Do not read every reference sequentially.** Load only the 1–2 documents needed for the current stage or decision.
+
+Typical routing:
 
 ```text
-SKILL.md
-  ↓
-references/orchestration-model.md
-  ↓
-references/decision-engine.md
-  ↓
-references/semantic-impact-engine.md
-  ↓
-references/engineering-policy-layer.md
-  ↓
-references/context-plane.md
-  ↓
-references/execution-state-manager.md
-  ↓
-references/host-enforcement.md
+New project          → references/project-bootstrap.md
+Workflow / SDD       → orchestration-model.md / adapter-contract.md
+Facts / classification → fact-extractor.md / decision-engine.md
+Code impact          → semantic-impact-engine.md
+Engineering rules    → engineering-policy-layer.md
+Execution state      → execution-state-manager.md
+Role context         → context-plane.md
+Cold start / handoff → session-context.md
+Host hooks           → host-enforcement.md
+Review / verify      → quality-gates.md
 ```
+
+Run the context-footprint guard with:
+
+```bash
+python scripts/context_footprint_check.py --repo .
+```
+
+The default limits keep `SKILL.md` from growing back into a handbook. The full reference corpus may remain rich because it is lazy-retrieved knowledge, not always-on prompt context.
 
 For a specific SDD:
 

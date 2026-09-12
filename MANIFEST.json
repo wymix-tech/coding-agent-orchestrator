@@ -6,7 +6,7 @@
   "provider_count": 1,
   "policy_layer": "project-owned engineering policy with optional ECC external guidance",
   "governance_authority": "orchestrator",
-  "test_count": 111,
+  "test_count": 115,
   "key_entrypoints": [
     "scripts/project_discovery.py",
     "scripts/project_bootstrap.py",
@@ -24,7 +24,8 @@
     "scripts/impact_mapper.py",
     "scripts/decision_engine.py",
     "scripts/verification_planner.py",
-    "scripts/execution_state_manager.py"
+    "scripts/execution_state_manager.py",
+    "scripts/context_footprint_check.py"
   ],
   "context_plane": "source-hashed Context Manifest + role/stage Context Packs",
   "host_enforcement": [
@@ -35,5 +36,6 @@
   "enforcement_kernel": "scripts/enforcement_kernel.py",
   "session_context": "JSON canonical bootstrap/handoff + YAML config + Markdown prompt projection",
   "project_bootstrap": "safe-auto discovery + idempotent initialization + no fake active work item",
-  "unified_cli": "coding-orchestrator: init/discover/doctor/status/intake/resume/verify/host install"
+  "unified_cli": "coding-orchestrator: init/discover/doctor/status/intake/resume/verify/host install",
+  "context_loading": "small SKILL runtime router + lazy 1–2 reference retrieval; heavy corpus remains non-resident"
 }

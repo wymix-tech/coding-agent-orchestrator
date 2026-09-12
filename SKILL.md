@@ -1,141 +1,76 @@
 ---
 name: orchestrating-sdd-coding
-version: 6.5
 alias: adaptive-sdd-coding-orchestrator
-description: Use when coding work should be bootstrapped and routed through OpenSpec, BMAD, another SDD system, or Superpowers disciplines with conservative project discovery, a unified CLI, deterministic evidence-backed classification, CBM semantic impact analysis, project Engineering Policy, durable execution state, snapshot-bound role-aware Context Packs, resumable Session Bootstrap/Handoff context, and Claude Code/Codex/Pi runtime enforcement adapters.
+description: Use when coding work should be governed through an existing or generic SDD flow with evidence-backed classification, semantic impact, Engineering Policy, durable execution state, minimal role-aware context, resumable session context, and runtime enforcement.
 ---
 
 # Adaptive SDD Coding Orchestrator
 
 ## Purpose
 
-Act as the control plane for coding work. Keep the repository's SDD system authoritative for **what/why**, Engineering Policy authoritative for **what implementations are allowed**, Codebase Memory (CBM) authoritative only for structural evidence, the Decision Engine authoritative for **how much process**, Canonical Execution State authoritative for **where/what next**, the V6 Context Plane authoritative only for **which current sources a role should read**, the V6.4 Session Context layer responsible only for **compact cold-start/resume/handoff projections**, the V6.3 Enforcement Kernel responsible only for **when host actions must be allowed/denied/refreshed**, and Superpowers authoritative for **how to work**.
+Act as the control plane for coding work without replacing project-owned engineering systems.
 
-Do not replace OpenSpec, BMAD, project policy, or native execution state. Do not let CBM or an external rule pack select process rigor or silently become a blocking project policy.
+- **SDD** owns what and why.
+- **Engineering Policy** owns what implementations are allowed.
+- **Code intelligence** supplies structural evidence only.
+- **Decision Engine** owns required process rigor.
+- **Execution State** owns where work is and what comes next.
+- **Context Plane** owns which current sources a role should read.
+- **Session Context** projects compact cold-start, resume, and handoff state.
+- **Enforcement Kernel** guards host actions; state/CI remain final boundaries.
+- **Superpowers** governs implementation discipline.
 
-## V6.5 Unified Bootstrap
+## Lazy Reference Loading Contract
 
-For a new repository, prefer the stable front controller:
+Treat this Skill package as a knowledge store, not a prompt bundle.
 
-```bash
-./coding-orchestrator init
-./coding-orchestrator doctor
-./coding-orchestrator status
-```
+1. **Never preload all references.** Load only the reference needed for the current decision or stage.
+2. **Normally load at most 1–2 references at a time.** Add another only when the current reference explicitly requires it or evidence is insufficient.
+3. **Do not recursively follow every link.** References are retrieval targets, not an import graph.
+4. **Prefer current project artifacts over generic reference text.** State, SDD, Policy, Context Pack, and Evidence are current facts; references explain rules.
+5. **Keep heavy material lazy.** Full code graphs, execution history, policy corpora, test logs, and old handoffs stay out of prompt context unless directly needed.
+6. **Discard stale projections.** Context Packs, Session Bootstrap, Handoff, semantic analysis, and verification must match current authoritative snapshots before reliance.
 
-Use `scripts/project_discovery.py` and `scripts/project_bootstrap.py` only as internal/debugging entry points. Safe Auto MUST NOT invent SDD authority, architecture style, quality thresholds, or an active work item. The first canonical execution state is created by the first real `intake`. Existing project-owned policy/config MUST be preserved unless an explicit force/migration operation is requested.
+## Invariants
 
-If multiple SDD authorities are detected, stop at `ACTION_REQUIRED`. If Spring Boot is detected but classic layered architecture is not proven from repository evidence, do not auto-enable the Spring layered blocking policy. Binary-only host discovery is advisory; install an adapter automatically only for a high-confidence repository-local host marker.
+1. **Bootstrap conservatively.** Never invent SDD authority, architecture style, quality thresholds, or an active work item.
+2. **One authority per concern.** Preserve repository-native SDD/state authority; augment only missing concerns.
+3. **Unknown is not false.** Missing evidence never proves low risk, low impact, or compliance.
+4. **Evidence before classification.** Mechanical facts may classify directly; semantic claims require provenance.
+5. **Compute process rigor.** Agents must not manually vibe-score or override deterministic Flow selection.
+6. **Semantic impact precedes final scope classification** when code changes are involved.
+7. **Project Policy outranks imported guidance.** External rules are non-blocking until explicitly promoted locally.
+8. **Enforce MUST rules mechanically where possible.** Prefer architecture, static-analysis, build, test, and contract gates over prompt-only compliance.
+9. **Freshness is snapshot-bound.** Material requirement, code, policy, evidence, or state changes invalidate stale analysis or verification as applicable.
+10. **Host hooks are guardrails, not final authority.** Transition guards, CI, and merge protection must still prevent invalid completion.
+11. **Session/Context artifacts are projections, not truth.** Rebuild them from authoritative state; never infer completion from chat claims.
+12. **DONE is earned by evidence.** Required policy/quality gates, review findings, acceptance, traceability, and fresh final verification cannot be optimized away.
 
-## Core Rules
+## Stage Router
 
-1. **Bootstrap conservatively.** On a new repository, use `coding-orchestrator init`; auto-create only safe infrastructure and configurations supported by evidence. Then discover authorities before creating execution state.
-2. **Load policy progressively.** Bootstrap loads the policy manifest and compact always-on MUST summaries; planning loads relevant summaries; implementation loads exact rules selected by semantic impact; review/verification load rule IDs plus evidence.
-3. **Project context, do not dump it.** Build a Context Manifest from SDD, Decision, State, Semantic Impact, Engineering Policy, Verification, and Evidence; give each role/stage only a snapshot-bound Context Pack. Full graph/history/rule corpora stay lazy-retrieved.
-4. **Project policy outranks external guidance.** ECC or other imported rules may supply defaults/reference material but MUST NOT lower project `MUST` rules or become blocking without explicit local promotion.
-5. **Extract before resolving.** Mechanical proof may set Work Facts; heuristics are hints only.
-6. **Measure semantic impact before final scope classification.** For code changes, use the V6 CBM path in `references/semantic-impact-engine.md`.
-7. **Route policy from impact.** Use `scripts/policy_engine.py` to select rules by affected files, language, framework, layer, and impact signals.
-8. **Provider evidence is structural, not governance authority.** CBM risk labels MUST NOT populate `risk.*`, choose Flow, satisfy policy, or satisfy gates.
-9. **Unknown is not false.** Missing CBM edges, policy evidence, or provider availability never proves low impact or compliance.
-10. **Compute; do not vibe-score.** Use `scripts/decision_engine.py --strict-evidence`; agents MUST NOT adjust scores or flow manually.
-11. **Enforce MUST where possible.** Prefer deterministic tools such as ArchUnit, Semgrep, build/test/contract checks, or V6 policy checks over prompt-only compliance.
-12. **Use one requirement authority and one execution-state authority per field.** Native state wins where the SDD tool owns it; augment only missing execution concerns.
-13. **Guard every phase advance.** V5 state guards deny illegal transitions and close attempts lacking required policy/quality evidence.
-14. **Fresh verification is snapshot-bound.** Material code/evidence/policy changes invalidate stale completion evidence.
-15. **Reassess deterministically.** Material discoveries update evidence, rerun semantic impact + policy routing + Decision Engine, and reconcile SDD depth/state.
-16. **Enforce at host boundaries, not only prompts.** Use V6.3 host adapters for cheap runtime checks; hooks MUST call the shared Enforcement Kernel and MUST NOT duplicate governance rules.
-17. **Keep a final enforcement boundary outside the host.** Host hooks are guardrails; V5 transition guards, CI, and branch/merge protection remain authoritative even when a host hook can be disabled or bypassed.
-18. **Bootstrap from state, not chat history.** Session Bootstrap/Handoff are projections of SDD/Decision/State/Impact/Policy/Evidence; they MUST NOT become a second source of truth or infer task completion from casual assistant claims.
-19. **Preserve invariants.** Required gates, root-cause debugging, traceability, scope discipline, native authority, project MUST policy, and fresh final verification cannot be optimized away.
+Load references lazily according to the current need:
 
-## Orchestration
+| Current need | Read |
+|---|---|
+| New repository / initialization | `references/project-bootstrap.md` |
+| Workflow discovery or reconciliation | `references/orchestration-model.md` |
+| SDD authority selection | `references/adapter-contract.md`, then exactly one selected `adapters-*.md` |
+| Fact extraction / unresolved evidence | `references/fact-extractor.md` |
+| Process classification / Flow | `references/decision-engine.md` or `references/adaptive-flow-policy.md` |
+| Code-change impact | `references/semantic-impact-engine.md`; read provider details only when debugging/integrating the provider |
+| Project rules / policy routing | `references/engineering-policy-layer.md`; load framework-specific or ECC material only when applicable |
+| Execution state / transitions | `references/execution-state-manager.md`; load exactly one state adapter when needed |
+| Role/stage context or stale context | `references/context-plane.md` |
+| Cold start / resume / handoff | `references/session-context.md` |
+| Implementation discipline | `references/superpowers-policy.md` |
+| Host hook/extension behavior | `references/host-enforcement.md`; consult `host-capabilities.yaml` only for host-specific capability questions |
+| Review / verification / closure | `references/quality-gates.md` and, when traceability/evidence is the issue, `references/state-and-evidence.md` |
 
-1. `BOOTSTRAP` once using `coding-orchestrator init` and `references/project-bootstrap.md`.
-2. `DISCOVER` using `references/orchestration-model.md`.
-3. `POLICY BOOTSTRAP` from `.orchestrator/policies/manifest.yaml` when present. Use packaged `policies/` only as starter templates.
-4. `EXTRACT` repository/request facts using `scripts/fact_extractor.py`.
-5. `IMPACT` code changes using CBM through `scripts/cbm_provider.py`; normalize to `semantic-impact.json`.
-6. `POLICY ROUTE` with `scripts/policy_engine.py`; produce `policy-plan.json`, compact `policy-context.md`, and policy enforcement requirements. Optional ECC rules are discovered through `scripts/ecc_rules_adapter.py` as non-authoritative guidance.
-7. `MAP` structural impact into Work Facts with `scripts/impact_mapper.py`.
-8. `RESOLVE` remaining semantic facts with provenance using `scripts/fact_resolver.py`.
-9. `CLASSIFY` with strict evidence using the Decision Engine.
-10. `PLAN VERIFICATION` using `scripts/verification_planner.py`; merge semantic-impact requirements with project Policy Gates.
-11. Select exactly one SDD adapter via `references/adapter-contract.md`.
-12. Detect execution-state provider and initialize/resume Canonical Execution State.
-13. Attach analysis + policy artifact refs to execution state; record applicable blocking Policy Gates.
-14. `CONTEXT` build/refresh `context-manifest.json` and the current role/stage Context Pack using `scripts/context_plane.py`; validate freshness before relying on an older pack.
-15. `SESSION CONTEXT` on cold start/resume/role handoff, build a JSON Session Bootstrap and inject its compact Markdown projection. At explicit task/role boundaries, persist a Task Handoff with snapshot bindings.
-16. Compose Superpowers via `references/superpowers-policy.md` and implement one traceable slice at a time.
-17. Record blockers, cursor, assignments, policy/quality gates, review, verification, snapshots, and current context refs durably.
-18. `ENFORCE` host lifecycle events through `scripts/enforcement_kernel.py`: inject context on session/prompt start, deny illegal code mutation before side effects, mark analysis/verification stale after material mutation, and guard completion claims.
-19. Close only after state guards, project MUST policy, quality gates, SDD alignment, and fresh final verification all pass.
+Do not load framework-specific examples for unrelated stacks. Do not load all SDD/state adapters to compare them after authority is already known.
 
+## Runtime Workflow
 
-## Engineering Policy
-
-Read `references/engineering-policy-layer.md` before editing project policy. For Spring Boot layered projects the starter policy expresses:
-
-```text
-web/controller -> service -> dao/repository
-```
-
-and blocks direct `web -> dao`, `service -> web`, and reverse DAO dependencies. `scripts/policy_engine.py evaluate` provides a conservative changed-file Java import check; use ArchUnit as the stronger project gate when available.
-
-To install starter policy files into a repository:
-
-```bash
-python scripts/policy_bootstrap.py --repo .
-```
-
-ECC integration is optional. Read `references/ecc-rules-integration.md`; external ECC rules remain guidance until explicitly promoted into local machine policy.
-
-## Context Plane
-
-Read `references/context-plane.md`. `context-manifest.json` is an index of current truth; role/stage Context Packs are projections only. Regenerate a pack when its source hashes, execution revision, analysis snapshot, or policy snapshot changes. Never use a stale pack as evidence that the repository/state is unchanged.
-
-
-## V6.4 Session Bootstrap & Handoff
-
-Read `references/session-context.md`. Canonical session artifacts are JSON, project configuration is YAML, and the prompt-facing projection is Markdown. Do not use the rendered Markdown as authority.
-
-Cold start / resume:
-
-```bash
-python scripts/session_context.py --repo . bootstrap --role implementer --stdout markdown
-```
-
-Explicit task/role handoff:
-
-```bash
-python scripts/session_context.py --repo . handoff \
-  --from-role implementer \
-  --to-role reviewer \
-  --summary "Implemented the current task" \
-  --next-action "review_current_task"
-```
-
-Host `SessionStart` injects the bootstrap once. Later prompt events are delta-only. A fresh handoff may enrich the next bootstrap, but State/SDD/Evidence always win on conflict.
-
-## V6.3 Host Enforcement
-
-Read `references/host-enforcement.md` and `references/host-capabilities.yaml`. Claude Code, Codex, and Pi adapters are thin translators over one kernel:
-
-```text
-Host event -> Enforcement Kernel -> Decision/State/Context/Policy -> allow | deny | context | stale
-```
-
-Install explicitly into a repository:
-
-```bash
-python scripts/install_host_adapter.py --repo . --host all --apply
-```
-
-This creates/merges Claude Code and Codex hook configuration and installs the Pi extension. Review/trust host hooks according to the host's own security model. A material mutation starts a **dirty window**: continued implementation edits remain allowed, but semantic/context/final-verification evidence becomes stale and V5 phase guards prevent review/verification/close until semantic intake is rerun.
-
-Do not put heavy CBM indexing, PIT, full test suites, or broad scans in synchronous PreToolUse. Pre-tool checks must stay cheap; heavy proof belongs after a slice or at phase/final gates.
-
-## Preferred V6.5 entry point
+Use the unified front controller for normal operation:
 
 ```bash
 ./coding-orchestrator init
@@ -145,10 +80,24 @@ Do not put heavy CBM indexing, PIT, full test suites, or broad scans in synchron
 ./coding-orchestrator verify
 ```
 
-The V6.5 CLI delegates to the same underlying engines. For debugging or custom integrations, `scripts/semantic_intake_pipeline.py` remains available as the lower-level intake entry point.
+Operate through these phases:
 
-CBM is the only V6 code-intelligence provider. If it is unavailable, fail closed by default; never reinterpret provider absence as low impact.
+1. **BOOTSTRAP**: discover repository, SDD/state authority, technology, host, and safe project policy. Stop at `ACTION_REQUIRED` when authority is ambiguous.
+2. **INTAKE**: extract facts and evidence, measure semantic impact when relevant, route policy, classify process rigor, and plan verification.
+3. **CONTEXT**: build/refresh the Context Manifest and minimal role/stage Context Pack; on cold start or handoff, project compact Session Context from authoritative state.
+4. **IMPLEMENT**: work in traceable slices under project Policy and Superpowers discipline. Runtime hooks perform cheap checks and mark affected analysis/verification stale after material mutations.
+5. **REVIEW / VERIFY**: refresh required semantic/policy evidence, clear blocking findings, run required gates, and bind final verification to the current execution snapshot.
+6. **CLOSE**: allow closure only when the Completion Contract passes.
+
+Use lower-level scripts only for debugging, custom integration, or explicit automation. If required code-intelligence evidence is unavailable, fail closed; never reinterpret provider absence as low impact.
 
 ## Completion Contract
 
-DONE means the authoritative SDD/native work item is complete **and** Canonical Execution State can legally transition to `closed/completed` with all REQUIRED quality and policy gates passing, no active blocker, acceptance satisfied, blocking review findings cleared, requirement → task → test → evidence traceability intact, and fresh verification against the final execution snapshot.
+DONE means the authoritative work item is complete **and** Canonical Execution State can legally transition to `closed/completed` with:
+
+- no active blocker;
+- acceptance satisfied;
+- required project Policy and quality gates passing;
+- blocking review findings cleared;
+- requirement → task → test → evidence traceability intact; and
+- fresh final verification against the final execution snapshot.

@@ -1,4 +1,4 @@
-# V6 Semantic Impact Engine
+# Semantic Impact Engine
 
 ## Goal
 
@@ -27,10 +27,10 @@ semantic-impact.json
       +--> Verification Planner
       |
       v
-V3 Decision Engine
+Decision Engine
       |
       v
-V5/V6 Execution State Manager
+Execution State Manager
 ```
 
 ## Canonical impact concepts
@@ -62,7 +62,7 @@ V5/V6 Execution State Manager
 
 ## Work-Fact mapping
 
-V6 may resolve/raise only facts supported by structural evidence, such as:
+Semantic Impact may resolve/raise only facts supported by structural evidence, such as:
 
 ```text
 complexity.predicted_components
@@ -85,14 +85,14 @@ or acceptance semantics from graph topology alone.
 Example:
 
 ```text
-V4 changed-file scan:
+Changed-file scan:
   modules_touched = 1
 
 CBM blast radius:
   affected modules = 3
 ```
 
-V6 raises the scope value to 3, marks the previous evidence `superseded`, and records the
+Semantic Impact raises the scope value to 3, marks the previous evidence `superseded`, and records the
 CBM snapshot as the replacement provenance. This is an evidence refinement, not manual
 score adjustment.
 
@@ -116,12 +116,12 @@ existing REQUIRED gates.
 ## Provider risk quarantine
 
 Any CBM risk label is provider opinion only. It is useful for troubleshooting or reviewer
-context, but flow selection always comes from deterministic Work Facts and V3 rules.
+context, but flow selection always comes from deterministic Work Facts and deterministic decision rules.
 
 ## Pagination / completeness invariant
 
 Current CBM `detect_changes` can page changed files, impacted symbols, and summaries.
-Therefore V6 records:
+Therefore Semantic Impact records:
 
 ```yaml
 completeness:
@@ -131,12 +131,12 @@ completeness:
 ```
 
 A partial page is positive evidence for relationships it contains, but its counts are not
-safe upper bounds. V6 therefore does not finalize numeric component/module/deployable
+safe upper bounds. Semantic Impact therefore does not finalize numeric component/module/deployable
 estimates from a partial result and the semantic intake pipeline defaults to
 `NEEDS_EVIDENCE` until continuation pages are collected. `--allow-partial-impact` is an
 explicit escape hatch, never the default.
 
-## V6.1 policy routing handoff
+## Policy-routing handoff
 
 Semantic Impact now feeds Engineering Policy selection as well as Work Facts. Changed/affected files, inferred language/framework, layer membership, and boundary/contract signals are inputs to `scripts/policy_engine.py`.
 
@@ -146,7 +146,7 @@ CBM semantic impact
   -> Policy Router
   -> exact project rule IDs
   -> compact policy context
-  -> enforcement / V5 gates
+  -> enforcement / execution-state gates
 ```
 
 CBM remains structural evidence only. It does not define project architecture policy; the repository policy manifest does.
