@@ -1,0 +1,127 @@
+{
+  "boundaries": {
+    "async_boundary": false,
+    "async_relations": [],
+    "cross_project": false,
+    "cross_service": true,
+    "data_relations": [],
+    "integration_relations": [
+      "HTTP_CALLS"
+    ],
+    "relation_types": [
+      "CALLS",
+      "HTTP_CALLS"
+    ]
+  },
+  "changes": {
+    "changed_files": [
+      "auth-service/src/TokenValidator.java"
+    ],
+    "changed_symbols": [
+      {
+        "distance": null,
+        "file_path": "auth-service/src/TokenValidator.java",
+        "kind": "Method",
+        "module": "auth-service",
+        "name": "ams.auth.TokenValidator.validate",
+        "project": "ams-platform",
+        "risk": null,
+        "service": "auth-service"
+      }
+    ]
+  },
+  "contracts": {
+    "changed_contract_files": [],
+    "changed_route_symbols": [],
+    "public_contract_signal": false
+  },
+  "coverage": {
+    "raw": null,
+    "status": "unknown"
+  },
+  "evidence": [
+    {
+      "claim": "changed_symbols",
+      "count": 1,
+      "strength": "observed"
+    },
+    {
+      "claim": "blast_radius",
+      "count": 2,
+      "strength": "derived"
+    },
+    {
+      "claim": "integration_boundary",
+      "relations": [
+        "HTTP_CALLS"
+      ],
+      "strength": "derived"
+    }
+  ],
+  "impact": {
+    "affected_files": [
+      "auth-service/src/TokenValidator.java",
+      "gateway/src/GatewayAuthFilter.java",
+      "gateway/src/UserRoutes.java"
+    ],
+    "affected_modules": [
+      "auth-service",
+      "gateway"
+    ],
+    "affected_projects": [
+      "ams-platform"
+    ],
+    "affected_services": [
+      "auth-service",
+      "gateway-service"
+    ],
+    "direct_dependents": 1,
+    "impacted_symbol_count": 2,
+    "impacted_symbols": [
+      {
+        "distance": 1,
+        "file_path": "gateway/src/GatewayAuthFilter.java",
+        "kind": "Method",
+        "module": "gateway",
+        "name": "ams.gateway.GatewayAuthFilter.filter",
+        "project": "ams-platform",
+        "risk": null,
+        "service": "gateway-service"
+      },
+      {
+        "distance": 2,
+        "file_path": "gateway/src/UserRoutes.java",
+        "kind": "Route",
+        "module": "gateway",
+        "name": "GET /api/users",
+        "project": "ams-platform",
+        "risk": null,
+        "service": "gateway-service"
+      }
+    ],
+    "transitive_dependents": 1,
+    "unknown_distance_dependents": 0
+  },
+  "provider": {
+    "authority": "structural_evidence_only",
+    "id": "codebase-memory-mcp",
+    "project": "ams-platform",
+    "provider_risk_authoritative": false,
+    "version": null
+  },
+  "provider_opinion": {
+    "authoritative_for_flow": false,
+    "risk_labels": [
+      "HIGH"
+    ]
+  },
+  "raw_digest": "a86ebe1be7239b53790b8d9e294074bdffae697682495c1d6556526eaaa0fc2d",
+  "schema_version": 1,
+  "snapshot": {
+    "changed_file_hashes": {
+      "auth-service/src/TokenValidator.java": null
+    },
+    "git_head": null,
+    "id": "1febcf0d6369bf19b616"
+  }
+}

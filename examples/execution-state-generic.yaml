@@ -1,0 +1,71 @@
+schema_version: 1
+revision: 2
+authority:
+  provider: generic
+  mode: orchestrator
+  native_state_ref: null
+  native_owned_fields: []
+  orchestrator_owned_fields:
+  - phase
+  - status
+  - work_item.progress
+  - blocked
+  - blockers
+  - assignments
+  - quality_gates
+  - review
+  - verification
+  - cursor
+  - readiness
+  - execution_snapshot_id
+  last_native_sync: null
+work_item:
+  id: CHG-42
+  type: change
+  title: Local validation fix
+  progress:
+    completed: 0
+    total: 1
+iteration:
+  type: continuous
+  id: null
+flow_profile: FAST
+phase: implementation
+status: in_progress
+blocked: false
+blockers: []
+assignments: {}
+cursor:
+  current_task_id: T1
+  current_task_title: Fix validation branch
+  next_action: implement_task:T1
+readiness:
+  behavior_change: true
+  sdd_ready: true
+  acceptance_criteria_present: true
+  implementation_tasks_complete: false
+  acceptance_satisfied: false
+quality_gates: {}
+review:
+  required: false
+  status: not_required
+  blocking_findings: 0
+  evidence: []
+verification:
+  required: true
+  status: pending
+  snapshot_id: null
+  fresh: false
+  evidence: []
+  verified_at: null
+execution_snapshot_id: code-1
+created_at: '2026-09-12T12:00:00Z'
+updated_at: '2026-09-12T12:10:00Z'
+analysis:
+  semantic_impact_ref: null
+  work_facts_ref: null
+  decision_ref: null
+  verification_plan_ref: null
+  analysis_snapshot_id: null
+  provider: null
+  updated_at: null

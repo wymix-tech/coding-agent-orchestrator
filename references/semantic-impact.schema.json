@@ -1,0 +1,115 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Adaptive SDD Orchestrator V6 Semantic Impact",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "provider",
+    "snapshot",
+    "changes",
+    "impact",
+    "boundaries",
+    "contracts",
+    "provider_opinion"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "provider": {
+      "type": "object",
+      "required": [
+        "id"
+      ],
+      "properties": {
+        "id": {
+          "const": "codebase-memory-mcp"
+        },
+        "version": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "project": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "authority": {
+          "enum": [
+            "structural_evidence_only",
+            "none"
+          ]
+        },
+        "provider_risk_authoritative": {
+          "const": false
+        },
+        "available": {
+          "type": "boolean"
+        }
+      }
+    },
+    "snapshot": {
+      "type": "object",
+      "required": [
+        "id"
+      ],
+      "properties": {
+        "id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "changes": {
+      "type": "object"
+    },
+    "impact": {
+      "type": "object"
+    },
+    "boundaries": {
+      "type": "object"
+    },
+    "contracts": {
+      "type": "object"
+    },
+    "coverage": {
+      "type": "object"
+    },
+    "provider_opinion": {
+      "type": "object",
+      "required": [
+        "authoritative_for_flow"
+      ],
+      "properties": {
+        "authoritative_for_flow": {
+          "const": false
+        }
+      }
+    },
+    "evidence": {
+      "type": "array"
+    },
+    "completeness": {
+      "type": "object",
+      "properties": {
+        "status": {
+          "enum": [
+            "complete",
+            "partial"
+          ]
+        },
+        "complete": {
+          "type": "boolean"
+        },
+        "continuation_signals": {
+          "type": "array"
+        }
+      }
+    }
+  }
+}

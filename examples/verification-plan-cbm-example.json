@@ -1,0 +1,37 @@
+{
+  "flow_profile": "STANDARD",
+  "items": [
+    {
+      "evidence_ref": "semantic-impact.json#/changes/changed_symbols",
+      "kind": "targeted_unit_or_component_tests",
+      "reason": "changed executable symbols",
+      "required_by_impact": true,
+      "status": "pending"
+    },
+    {
+      "evidence_ref": "work-facts.resolved.json#/verification/requires_integration_boundary",
+      "kind": "integration_tests",
+      "reason": "semantic impact crosses a runtime/module integration boundary",
+      "required_by_impact": true,
+      "status": "pending"
+    },
+    {
+      "evidence_ref": "work-facts.resolved.json#/risk",
+      "kind": "security_regression_tests",
+      "reason": "security-sensitive behavior is affected",
+      "required_by_impact": true,
+      "status": "pending"
+    },
+    {
+      "evidence_ref": "decision.json#/flow_profile",
+      "kind": "regression_suite",
+      "reason": "flow/blast radius requires broader regression",
+      "required_by_impact": true,
+      "status": "pending"
+    }
+  ],
+  "plan_id": "5384ad9b0100bde10899",
+  "policy_note": "repository/native quality policy may add stricter REQUIRED gates; this plan cannot downgrade them",
+  "schema_version": 1,
+  "semantic_impact_snapshot": "1febcf0d6369bf19b616"
+}

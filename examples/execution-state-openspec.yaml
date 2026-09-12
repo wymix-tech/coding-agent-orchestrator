@@ -1,0 +1,71 @@
+schema_version: 1
+revision: 4
+authority:
+  provider: openspec
+  mode: hybrid
+  native_state_ref: openspec/changes/login-info-reporting
+  native_owned_fields: []
+  orchestrator_owned_fields:
+  - phase
+  - status
+  - work_item.progress
+  - blocked
+  - blockers
+  - assignments
+  - quality_gates
+  - review
+  - verification
+  - cursor
+  - readiness
+  - execution_snapshot_id
+  last_native_sync: null
+work_item:
+  id: login-info-reporting
+  type: change
+  title: Login information reporting
+  progress:
+    completed: 2
+    total: 5
+iteration:
+  type: continuous
+  id: null
+flow_profile: STANDARD
+phase: implementation
+status: in_progress
+blocked: false
+blockers: []
+assignments: {}
+cursor:
+  current_task_id: '3.1'
+  current_task_title: Validate request payload
+  next_action: implement_task:3.1
+readiness:
+  behavior_change: true
+  sdd_ready: true
+  acceptance_criteria_present: true
+  implementation_tasks_complete: false
+  acceptance_satisfied: false
+quality_gates: {}
+review:
+  required: true
+  status: pending
+  blocking_findings: 0
+  evidence: []
+verification:
+  required: true
+  status: pending
+  snapshot_id: null
+  fresh: false
+  evidence: []
+  verified_at: null
+execution_snapshot_id: fact-snapshot-abcd
+created_at: '2026-09-12T12:00:00Z'
+updated_at: '2026-09-12T13:00:00Z'
+analysis:
+  semantic_impact_ref: null
+  work_facts_ref: null
+  decision_ref: null
+  verification_plan_ref: null
+  analysis_snapshot_id: null
+  provider: null
+  updated_at: null

@@ -1,0 +1,33 @@
+{
+  "source": "coding-agent semantic resolution example",
+  "resolutions": [
+    {
+      "path": "risk.authn_authz",
+      "value": true,
+      "source_type": "code_inspection",
+      "source": "src/auth/token_validator.py#validate",
+      "evidence": "The changed branch decides whether an authentication token is accepted.",
+      "strength": "observed",
+      "resolver": "coding-agent"
+    },
+    {
+      "path": "verification.security_properties",
+      "value": true,
+      "source_type": "acceptance_criteria",
+      "source": "active SDD change",
+      "evidence": "Invalid tokens must be rejected while valid tokens remain accepted.",
+      "strength": "authoritative",
+      "resolver": "coding-agent"
+    },
+    {
+      "path": "scope.external_consumers",
+      "value": false,
+      "source_type": "contract_inventory",
+      "source": "active SDD change + repository dependency graph",
+      "evidence": "All token-validator callers are in-repository and released together.",
+      "strength": "derived",
+      "negative_proof": "Reviewed declared consumers and repository references for the changed validator; no external consumer or exported contract was found in the bounded dependency inventory.",
+      "resolver": "coding-agent"
+    }
+  ]
+}

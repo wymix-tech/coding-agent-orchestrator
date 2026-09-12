@@ -1,0 +1,17 @@
+{
+  "name": "coding-agent-orchestrator",
+  "version": "6.0",
+  "focus": "CBM-backed semantic impact and verification planning",
+  "code_intelligence_provider": "codebase-memory-mcp",
+  "provider_count": 1,
+  "governance_authority": "orchestrator",
+  "test_count": 57,
+  "key_entrypoints": [
+    "scripts/semantic_intake_pipeline.py",
+    "scripts/cbm_provider.py",
+    "scripts/impact_mapper.py",
+    "scripts/decision_engine.py",
+    "scripts/verification_planner.py",
+    "scripts/execution_state_manager.py"
+  ]
+}

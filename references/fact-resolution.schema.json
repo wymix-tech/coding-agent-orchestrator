@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Adaptive SDD Work Fact Resolution",
+  "type": "object",
+  "required": ["resolutions"],
+  "properties": {
+    "source": {"type": "string"},
+    "resolutions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["path", "value", "source_type", "source", "evidence", "strength"],
+        "properties": {
+          "path": {"type": "string", "minLength": 3},
+          "value": {},
+          "source_type": {"type": "string", "minLength": 1},
+          "source": {"type": "string", "minLength": 1},
+          "evidence": {},
+          "strength": {"enum": ["authoritative", "observed", "derived"]},
+          "negative_proof": {"type": "string", "minLength": 1},
+          "resolver": {"type": "string"}
+        },
+        "additionalProperties": true
+      }
+    }
+  },
+  "additionalProperties": false
+}

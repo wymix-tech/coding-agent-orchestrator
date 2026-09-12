@@ -1,0 +1,115 @@
+{
+  "schema_version": "1.0",
+  "score_labels": {
+    "0": "low",
+    "1": "medium",
+    "2": "high",
+    "3": "critical"
+  },
+  "flow_rank": {
+    "TRIVIAL": 0,
+    "FAST": 1,
+    "STANDARD": 2,
+    "DEEP": 3
+  },
+  "combination_rules": [
+    {
+      "id": "C1",
+      "description": "Four or more dimensions at high-or-above indicate coupled uncertainty/risk.",
+      "when": "count(scores >= 2) >= 4",
+      "minimum_flow": "DEEP"
+    },
+    {
+      "id": "C2",
+      "description": "High ambiguity plus high novelty requires discovery before coding.",
+      "when": "ambiguity >= 2 and novelty >= 2",
+      "minimum_flow": "DEEP"
+    },
+    {
+      "id": "C3",
+      "description": "High complexity, risk, and verification difficulty together require deep treatment.",
+      "when": "complexity >= 2 and risk >= 2 and verification_difficulty >= 2",
+      "minimum_flow": "DEEP"
+    }
+  ],
+  "override_rules": [
+    {
+      "id": "O1",
+      "signal": "risk.authn_authz",
+      "minimum_flow": "STANDARD"
+    },
+    {
+      "id": "O2",
+      "signal": "risk.cryptography_or_secrets",
+      "minimum_flow": "DEEP"
+    },
+    {
+      "id": "O3",
+      "signal": "risk.payment_or_financial",
+      "minimum_flow": "DEEP"
+    },
+    {
+      "id": "O4",
+      "signal": "risk.destructive_migration",
+      "minimum_flow": "DEEP"
+    },
+    {
+      "id": "O5",
+      "signal": "risk.irreversible_or_hard_to_recover",
+      "minimum_flow": "DEEP"
+    },
+    {
+      "id": "O6",
+      "signal": "scope.public_contract_change",
+      "minimum_flow": "STANDARD"
+    },
+    {
+      "id": "O7",
+      "signal": "risk.production_infra",
+      "minimum_flow": "STANDARD"
+    },
+    {
+      "id": "O8",
+      "signal": "risk.compliance_or_privacy",
+      "minimum_flow": "STANDARD"
+    }
+  ],
+  "dimension_flow_floor": {
+    "ambiguity": {
+      "0": "TRIVIAL",
+      "1": "FAST",
+      "2": "STANDARD",
+      "3": "STANDARD"
+    },
+    "complexity": {
+      "0": "TRIVIAL",
+      "1": "FAST",
+      "2": "STANDARD",
+      "3": "DEEP"
+    },
+    "scope": {
+      "0": "TRIVIAL",
+      "1": "FAST",
+      "2": "STANDARD",
+      "3": "DEEP"
+    },
+    "risk": {
+      "0": "TRIVIAL",
+      "1": "FAST",
+      "2": "STANDARD",
+      "3": "DEEP"
+    },
+    "novelty": {
+      "0": "TRIVIAL",
+      "1": "FAST",
+      "2": "STANDARD",
+      "3": "DEEP"
+    },
+    "verification_difficulty": {
+      "0": "TRIVIAL",
+      "1": "FAST",
+      "2": "STANDARD",
+      "3": "DEEP"
+    }
+  }
+}

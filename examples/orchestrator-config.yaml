@@ -1,0 +1,97 @@
+# Optional repository policy for Adaptive SDD Coding Orchestrator v6.
+# Facts are evidence-backed; Decision Engine owns flow classification;
+# Execution State Manager owns or projects durable agile/runtime state.
+
+orchestrator:
+  evidence:
+    extractor: scripts/fact_extractor.py
+    resolver: scripts/fact_resolver.py
+    conservative: true
+    heuristic_facts_allowed: false
+    unknown_is_false: false
+    require_negative_proof_for_non_authoritative_false: true
+    accepted_strengths: [authoritative, observed, derived]
+    snapshot_on_material_change: true
+
+  code_intelligence:
+    enabled: true
+    provider: codebase-memory-mcp    # V6 supports CBM only
+    provider_spi: scripts/code_intelligence_provider.py
+    adapter: scripts/cbm_provider.py
+    semantic_pipeline: scripts/semantic_intake_pipeline.py
+    impact_mapper: scripts/impact_mapper.py
+    verification_planner: scripts/verification_planner.py
+    refresh_index_before_impact: true
+    detect_changes_depth: 3
+    fail_closed_when_unavailable: true
+    positive_evidence_only: true
+    provider_risk_authoritative: false
+    coverage_metadata_required_when_available: true
+    semantic_impact_file: .orchestrator/intake/semantic-impact.json
+    verification_plan_file: .orchestrator/intake/verification-plan.json
+
+  decision_engine:
+    enabled: true
+    mode: deterministic
+    facts_contract: references/decision-engine.md
+    reference_implementation: scripts/decision_engine.py
+    strict_evidence: true
+    fail_on_unknown_fact: true
+    allow_manual_score_override: false
+    allow_deescalation: true
+    require_reassessment: true
+    minimum_flow: null          # trivial | fast | standard | deep | null
+    fixed_flow: null            # invalid if below computed minimum
+
+  sdd:
+    mode: auto                  # auto | openspec | bmad | generic
+    prevent_dual_authority: true
+    prefer_active_change: true
+
+  execution_state:
+    enabled: true
+    provider: auto              # auto | bmad | openspec | generic | other
+    authority_mode: auto        # auto | native | hybrid | orchestrator
+    state_file: .orchestrator/execution-state.yaml
+    history_file: .orchestrator/execution-history.jsonl
+    detector: scripts/state_provider_detector.py
+    manager: scripts/execution_state_manager.py
+    require_field_ownership: true
+    optimistic_locking: true
+    require_expected_revision_for_multi_agent: true
+    append_only_history: true
+    blocked_is_modifier: true
+    resume_from_repository_state: true
+    invalidate_verification_on_snapshot_change: true
+    native_drift_policy: block_and_reconcile
+
+    # Defaults may be raised by repository/risk policy.
+    review_required_from: standard
+    fresh_verification_required: true
+
+    iteration:
+      type: continuous          # continuous | sprint | milestone
+      id: null
+
+  execution:
+    tdd: required_for_behavior_changes
+    worktree: auto
+    parallelism: safe-only
+    require_systematic_debugging_for_unknown_failures: true
+
+  gates:
+    # Example only. Project policy owns actual values.
+    test:
+      classification: required
+      command: "<project-test-command>"
+    lint:
+      classification: unknown
+    static_analysis:
+      classification: unknown
+    coverage:
+      classification: unknown
+      line_min: null
+      branch_min: null
+    mutation_testing:
+      classification: unknown
+      kill_rate_min: null

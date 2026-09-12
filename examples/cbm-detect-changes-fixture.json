@@ -1,0 +1,55 @@
+{
+  "project": "ams-platform",
+  "changed_files": [
+    {"path": "auth-service/src/TokenValidator.java"}
+  ],
+  "changed_symbols": [
+    {
+      "qualified_name": "ams.auth.TokenValidator.validate",
+      "label": "Method",
+      "file_path": "auth-service/src/TokenValidator.java",
+      "module": "auth-service",
+      "service": "auth-service",
+      "project": "ams-platform"
+    }
+  ],
+  "impacted_symbols": [
+    {
+      "qualified_name": "ams.gateway.GatewayAuthFilter.filter",
+      "label": "Method",
+      "file_path": "gateway/src/GatewayAuthFilter.java",
+      "module": "gateway",
+      "service": "gateway-service",
+      "project": "ams-platform",
+      "distance": 1,
+      "relationship": "CALLS"
+    },
+    {
+      "qualified_name": "GET /api/users",
+      "label": "Route",
+      "file_path": "gateway/src/UserRoutes.java",
+      "module": "gateway",
+      "service": "gateway-service",
+      "project": "ams-platform",
+      "distance": 2,
+      "relationship": "HTTP_CALLS"
+    }
+  ],
+  "edges": [
+    {
+      "relationship": "CALLS",
+      "source": "ams.gateway.GatewayAuthFilter.filter",
+      "target": "ams.auth.TokenValidator.validate",
+      "confidence": 0.98,
+      "strategy": "lsp"
+    },
+    {
+      "relationship": "HTTP_CALLS",
+      "source": "gateway-service",
+      "target": "auth-service",
+      "confidence": 0.92,
+      "strategy": "language_rule"
+    }
+  ],
+  "risk_classification": "HIGH"
+}

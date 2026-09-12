@@ -1,0 +1,427 @@
+{
+  "ambiguity": {
+    "acceptance_criteria_explicit": true,
+    "boundaries_explicit": true,
+    "conflicting_requirements": false,
+    "goal_explicit": true,
+    "multiple_observable_interpretations": false,
+    "unresolved_external_contract": false
+  },
+  "complexity": {
+    "architecture_decision_required": false,
+    "concurrency_or_transaction": false,
+    "distributed_coordination": false,
+    "new_state_machine": false,
+    "predicted_components": 1
+  },
+  "extraction": {
+    "collector": "example_fixture",
+    "mode": "strict-example",
+    "resolution_queue": [],
+    "schema_version": 1,
+    "snapshot_id": "example-auth-strict"
+  },
+  "novelty": {
+    "docs_or_examples_missing": false,
+    "exact_repo_precedent": true,
+    "first_repo_use": false,
+    "new_external_dependency_or_protocol": false,
+    "unproven_architecture_assumption": false
+  },
+  "policy": {
+    "fixed_flow": null,
+    "minimum_flow": null
+  },
+  "provenance": {
+    "ambiguity.acceptance_criteria_explicit": [
+      {
+        "evidence": "Explicit requirement/acceptance declaration in example spec.",
+        "source": "examples/auth-change-spec",
+        "source_type": "example_fixture",
+        "strength": "authoritative",
+        "value": true
+      }
+    ],
+    "ambiguity.boundaries_explicit": [
+      {
+        "evidence": "Explicit requirement/acceptance declaration in example spec.",
+        "source": "examples/auth-change-spec",
+        "source_type": "example_fixture",
+        "strength": "authoritative",
+        "value": true
+      }
+    ],
+    "ambiguity.conflicting_requirements": [
+      {
+        "evidence": "The example fixture explicitly declares this boolean fact false within the bounded scenario.",
+        "source": "examples/auth-change-boundaries",
+        "source_type": "example_fixture",
+        "strength": "authoritative",
+        "value": false
+      }
+    ],
+    "ambiguity.goal_explicit": [
+      {
+        "evidence": "Explicit requirement/acceptance declaration in example spec.",
+        "source": "examples/auth-change-spec",
+        "source_type": "example_fixture",
+        "strength": "authoritative",
+        "value": true
+      }
+    ],
+    "ambiguity.multiple_observable_interpretations": [
+      {
+        "evidence": "The example fixture explicitly declares this boolean fact false within the bounded scenario.",
+        "source": "examples/auth-change-boundaries",
+        "source_type": "example_fixture",
+        "strength": "authoritative",
+        "value": false
+      }
+    ],
+    "ambiguity.unresolved_external_contract": [
+      {
+        "evidence": "The example fixture explicitly declares this boolean fact false within the bounded scenario.",
+        "source": "examples/auth-change-boundaries",
+        "source_type": "example_fixture",
+        "strength": "authoritative",
+        "value": false
+      }
+    ],
+    "complexity.architecture_decision_required": [
+      {
+        "evidence": "The example fixture explicitly declares this boolean fact false within the bounded scenario.",
+        "source": "examples/auth-change-boundaries",
+        "source_type": "example_fixture",
+        "strength": "authoritative",
+        "value": false
+      }
+    ],
+    "complexity.concurrency_or_transaction": [
+      {
+        "evidence": "The example fixture explicitly declares this boolean fact false within the bounded scenario.",
+        "source": "examples/auth-change-boundaries",
+        "source_type": "example_fixture",
+        "strength": "authoritative",
+        "value": false
+      }
+    ],
+    "complexity.distributed_coordination": [
+      {
+        "evidence": "The example fixture explicitly declares this boolean fact false within the bounded scenario.",
+        "source": "examples/auth-change-boundaries",
+        "source_type": "example_fixture",
+        "strength": "authoritative",
+        "value": false
+      }
+    ],
+    "complexity.new_state_machine": [
+      {
+        "evidence": "The example fixture explicitly declares this boolean fact false within the bounded scenario.",
+        "source": "examples/auth-change-boundaries",
+        "source_type": "example_fixture",
+        "strength": "authoritative",
+        "value": false
+      }
+    ],
+    "complexity.predicted_components": [
+      {
+        "evidence": "Bounded repository impact analysis for the example auth change.",
+        "source": "examples/auth-impact-analysis",
+        "source_type": "example_fixture",
+        "strength": "observed",
+        "value": 1
+      }
+    ],
+    "novelty.docs_or_examples_missing": [
+      {
+        "evidence": "The example fixture explicitly declares this boolean fact false within the bounded scenario.",
+        "source": "examples/auth-change-boundaries",
+        "source_type": "example_fixture",
+        "strength": "authoritative",
+        "value": false
+      }
+    ],
+    "novelty.exact_repo_precedent": [
+      {
+        "evidence": "Repository precedent/dependency inventory for the example.",
+        "source": "examples/auth-repo-precedent",
+        "source_type": "example_fixture",
+        "strength": "observed",
+        "value": true
+      }
+    ],
+    "novelty.first_repo_use": [
+      {
+        "evidence": "The example fixture explicitly declares this boolean fact false within the bounded scenario.",
+        "source": "examples/auth-change-boundaries",
+        "source_type": "example_fixture",
+        "strength": "authoritative",
+        "value": false
+      }
+    ],
+    "novelty.new_external_dependency_or_protocol": [
+      {
+        "evidence": "The example fixture explicitly declares this boolean fact false within the bounded scenario.",
+        "source": "examples/auth-change-boundaries",
+        "source_type": "example_fixture",
+        "strength": "authoritative",
+        "value": false
+      }
+    ],
+    "novelty.unproven_architecture_assumption": [
+      {
+        "evidence": "The example fixture explicitly declares this boolean fact false within the bounded scenario.",
+        "source": "examples/auth-change-boundaries",
+        "source_type": "example_fixture",
+        "strength": "authoritative",
+        "value": false
+      }
+    ],
+    "risk.authn_authz": [
+      {
+        "evidence": "Example code inspection establishes the stated risk property.",
+        "source": "src/auth/token_validator.py#validate",
+        "source_type": "example_fixture",
+        "strength": "observed",
+        "value": true
+      }
+    ],
+    "risk.compliance_or_privacy": [
+      {
+        "evidence": "The example fixture explicitly declares this boolean fact false within the bounded scenario.",
+        "source": "examples/auth-change-boundaries",
+        "source_type": "example_fixture",
+        "strength": "authoritative",
+        "value": false
+      }
+    ],
+    "risk.cryptography_or_secrets": [
+      {
+        "evidence": "The example fixture explicitly declares this boolean fact false within the bounded scenario.",
+        "source": "examples/auth-change-boundaries",
+        "source_type": "example_fixture",
+        "strength": "authoritative",
+        "value": false
+      }
+    ],
+    "risk.destructive_migration": [
+      {
+        "evidence": "The example fixture explicitly declares this boolean fact false within the bounded scenario.",
+        "source": "examples/auth-change-boundaries",
+        "source_type": "example_fixture",
+        "strength": "authoritative",
+        "value": false
+      }
+    ],
+    "risk.irreversible_or_hard_to_recover": [
+      {
+        "evidence": "The example fixture explicitly declares this boolean fact false within the bounded scenario.",
+        "source": "examples/auth-change-boundaries",
+        "source_type": "example_fixture",
+        "strength": "authoritative",
+        "value": false
+      }
+    ],
+    "risk.payment_or_financial": [
+      {
+        "evidence": "The example fixture explicitly declares this boolean fact false within the bounded scenario.",
+        "source": "examples/auth-change-boundaries",
+        "source_type": "example_fixture",
+        "strength": "authoritative",
+        "value": false
+      }
+    ],
+    "risk.persistent_data_change": [
+      {
+        "evidence": "The example fixture explicitly declares this boolean fact false within the bounded scenario.",
+        "source": "examples/auth-change-boundaries",
+        "source_type": "example_fixture",
+        "strength": "authoritative",
+        "value": false
+      }
+    ],
+    "risk.production_infra": [
+      {
+        "evidence": "The example fixture explicitly declares this boolean fact false within the bounded scenario.",
+        "source": "examples/auth-change-boundaries",
+        "source_type": "example_fixture",
+        "strength": "authoritative",
+        "value": false
+      }
+    ],
+    "risk.security_sensitive": [
+      {
+        "evidence": "Example code inspection establishes the stated risk property.",
+        "source": "src/auth/token_validator.py#validate",
+        "source_type": "example_fixture",
+        "strength": "observed",
+        "value": true
+      }
+    ],
+    "risk.user_visible_failure": [
+      {
+        "evidence": "Example code inspection establishes the stated risk property.",
+        "source": "src/auth/token_validator.py#validate",
+        "source_type": "example_fixture",
+        "strength": "observed",
+        "value": true
+      }
+    ],
+    "scope.cross_team_contract": [
+      {
+        "evidence": "The example fixture explicitly declares this boolean fact false within the bounded scenario.",
+        "source": "examples/auth-change-boundaries",
+        "source_type": "example_fixture",
+        "strength": "authoritative",
+        "value": false
+      }
+    ],
+    "scope.deployable_units": [
+      {
+        "evidence": "Bounded repository impact analysis for the example auth change.",
+        "source": "examples/auth-impact-analysis",
+        "source_type": "example_fixture",
+        "strength": "observed",
+        "value": 1
+      }
+    ],
+    "scope.external_consumers": [
+      {
+        "evidence": "The example fixture explicitly declares this boolean fact false within the bounded scenario.",
+        "source": "examples/auth-change-boundaries",
+        "source_type": "example_fixture",
+        "strength": "authoritative",
+        "value": false
+      }
+    ],
+    "scope.files_estimate": [
+      {
+        "evidence": "Bounded repository impact analysis for the example auth change.",
+        "source": "examples/auth-impact-analysis",
+        "source_type": "example_fixture",
+        "strength": "observed",
+        "value": 1
+      }
+    ],
+    "scope.modules_touched": [
+      {
+        "evidence": "Bounded repository impact analysis for the example auth change.",
+        "source": "examples/auth-impact-analysis",
+        "source_type": "example_fixture",
+        "strength": "observed",
+        "value": 1
+      }
+    ],
+    "scope.public_contract_change": [
+      {
+        "evidence": "The example fixture explicitly declares this boolean fact false within the bounded scenario.",
+        "source": "examples/auth-change-boundaries",
+        "source_type": "example_fixture",
+        "strength": "authoritative",
+        "value": false
+      }
+    ],
+    "verification.async_retry_timing": [
+      {
+        "evidence": "The example fixture explicitly declares this boolean fact false within the bounded scenario.",
+        "source": "examples/auth-change-boundaries",
+        "source_type": "example_fixture",
+        "strength": "authoritative",
+        "value": false
+      }
+    ],
+    "verification.compatibility_or_migration": [
+      {
+        "evidence": "The example fixture explicitly declares this boolean fact false within the bounded scenario.",
+        "source": "examples/auth-change-boundaries",
+        "source_type": "example_fixture",
+        "strength": "authoritative",
+        "value": false
+      }
+    ],
+    "verification.concurrency_or_distributed_faults": [
+      {
+        "evidence": "The example fixture explicitly declares this boolean fact false within the bounded scenario.",
+        "source": "examples/auth-change-boundaries",
+        "source_type": "example_fixture",
+        "strength": "authoritative",
+        "value": false
+      }
+    ],
+    "verification.deterministic_local": [
+      {
+        "evidence": "The example fixture explicitly declares this boolean fact false within the bounded scenario.",
+        "source": "examples/auth-change-boundaries",
+        "source_type": "example_fixture",
+        "strength": "authoritative",
+        "value": false
+      }
+    ],
+    "verification.performance_or_load": [
+      {
+        "evidence": "The example fixture explicitly declares this boolean fact false within the bounded scenario.",
+        "source": "examples/auth-change-boundaries",
+        "source_type": "example_fixture",
+        "strength": "authoritative",
+        "value": false
+      }
+    ],
+    "verification.requires_integration_boundary": [
+      {
+        "evidence": "Example verification plan explicitly states this verification property.",
+        "source": "examples/auth-verification-plan",
+        "source_type": "example_fixture",
+        "strength": "authoritative",
+        "value": true
+      }
+    ],
+    "verification.security_properties": [
+      {
+        "evidence": "Example verification plan explicitly states this verification property.",
+        "source": "examples/auth-verification-plan",
+        "source_type": "example_fixture",
+        "strength": "authoritative",
+        "value": true
+      }
+    ],
+    "verification.special_harness_required": [
+      {
+        "evidence": "The example fixture explicitly declares this boolean fact false within the bounded scenario.",
+        "source": "examples/auth-change-boundaries",
+        "source_type": "example_fixture",
+        "strength": "authoritative",
+        "value": false
+      }
+    ]
+  },
+  "risk": {
+    "authn_authz": true,
+    "compliance_or_privacy": false,
+    "cryptography_or_secrets": false,
+    "destructive_migration": false,
+    "irreversible_or_hard_to_recover": false,
+    "payment_or_financial": false,
+    "persistent_data_change": false,
+    "production_infra": false,
+    "security_sensitive": true,
+    "user_visible_failure": true
+  },
+  "scope": {
+    "cross_team_contract": false,
+    "deployable_units": 1,
+    "external_consumers": false,
+    "files_estimate": 1,
+    "modules_touched": 1,
+    "public_contract_change": false
+  },
+  "verification": {
+    "async_retry_timing": false,
+    "compatibility_or_migration": false,
+    "concurrency_or_distributed_faults": false,
+    "deterministic_local": false,
+    "performance_or_load": false,
+    "requires_integration_boundary": true,
+    "security_properties": true,
+    "special_harness_required": false
+  }
+}

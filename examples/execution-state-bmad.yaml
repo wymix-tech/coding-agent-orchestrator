@@ -1,0 +1,78 @@
+schema_version: 1
+revision: 7
+authority:
+  provider: bmad
+  mode: native
+  native_state_ref: _bmad-output/implementation-artifacts/sprint-status.yaml
+  native_owned_fields:
+  - phase
+  - status
+  - work_item.progress
+  orchestrator_owned_fields:
+  - blocked
+  - blockers
+  - assignments
+  - quality_gates
+  - review
+  - verification
+  - cursor
+  - readiness
+  - execution_snapshot_id
+  last_native_sync:
+    at: '2026-09-12T13:00:00Z'
+    native_revision: sha256:example
+    native_state_ref: _bmad-output/implementation-artifacts/sprint-status.yaml
+work_item:
+  id: AMS-3
+  type: story
+  title: SDK login information reporting
+  progress:
+    completed: 3
+    total: 6
+iteration:
+  type: sprint
+  id: sprint-12
+flow_profile: STANDARD
+phase: implementation
+status: in_progress
+blocked: false
+blockers: []
+assignments:
+  implementer:
+    assignee: coding-agent-1
+    assigned_at: '2026-09-12T13:00:00Z'
+    assigned_by: orchestrator
+cursor:
+  current_task_id: '4'
+  current_task_title: Implement async reporting
+  next_action: implement_task:4
+readiness:
+  behavior_change: true
+  sdd_ready: true
+  acceptance_criteria_present: true
+  implementation_tasks_complete: false
+  acceptance_satisfied: false
+quality_gates: {}
+review:
+  required: true
+  status: pending
+  blocking_findings: 0
+  evidence: []
+verification:
+  required: true
+  status: pending
+  snapshot_id: null
+  fresh: false
+  evidence: []
+  verified_at: null
+execution_snapshot_id: code-snapshot-17
+created_at: '2026-09-12T12:00:00Z'
+updated_at: '2026-09-12T13:00:00Z'
+analysis:
+  semantic_impact_ref: null
+  work_facts_ref: null
+  decision_ref: null
+  verification_plan_ref: null
+  analysis_snapshot_id: null
+  provider: null
+  updated_at: null

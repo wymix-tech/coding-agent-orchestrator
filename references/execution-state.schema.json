@@ -1,0 +1,196 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.local/orchestrator/execution-state.schema.json",
+  "title": "Adaptive SDD Coding Orchestrator Execution State v1 (V6 extensions)",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "revision",
+    "authority",
+    "work_item",
+    "flow_profile",
+    "phase",
+    "status",
+    "blocked",
+    "blockers",
+    "readiness",
+    "quality_gates",
+    "review",
+    "verification"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "revision": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "authority": {
+      "type": "object",
+      "required": [
+        "provider",
+        "mode"
+      ],
+      "properties": {
+        "provider": {
+          "enum": [
+            "bmad",
+            "openspec",
+            "generic",
+            "other"
+          ]
+        },
+        "mode": {
+          "enum": [
+            "native",
+            "hybrid",
+            "orchestrator"
+          ]
+        },
+        "native_state_ref": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "work_item": {
+      "type": "object",
+      "required": [
+        "id",
+        "type",
+        "title",
+        "progress"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "type": {
+          "type": "string",
+          "minLength": 1
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1
+        },
+        "progress": {
+          "type": "object",
+          "required": [
+            "completed",
+            "total"
+          ],
+          "properties": {
+            "completed": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "total": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        }
+      }
+    },
+    "flow_profile": {
+      "enum": [
+        "TRIVIAL",
+        "FAST",
+        "STANDARD",
+        "DEEP"
+      ]
+    },
+    "phase": {
+      "enum": [
+        "discovery",
+        "specification",
+        "design",
+        "planning",
+        "implementation",
+        "review",
+        "verification",
+        "release",
+        "closed"
+      ]
+    },
+    "status": {
+      "enum": [
+        "pending",
+        "ready",
+        "in_progress",
+        "completed",
+        "failed",
+        "cancelled"
+      ]
+    },
+    "blocked": {
+      "type": "boolean"
+    },
+    "blockers": {
+      "type": "array"
+    },
+    "readiness": {
+      "type": "object"
+    },
+    "quality_gates": {
+      "type": "object"
+    },
+    "review": {
+      "type": "object"
+    },
+    "verification": {
+      "type": "object"
+    },
+    "analysis": {
+      "type": "object",
+      "properties": {
+        "semantic_impact_ref": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "work_facts_ref": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "decision_ref": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "verification_plan_ref": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "analysis_snapshot_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "provider": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "updated_at": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    }
+  }
+}

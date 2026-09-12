@@ -1,0 +1,60 @@
+{
+  "ambiguity": {
+    "goal_explicit": true,
+    "acceptance_criteria_explicit": true,
+    "boundaries_explicit": true,
+    "conflicting_requirements": false,
+    "multiple_observable_interpretations": false,
+    "unresolved_external_contract": false
+  },
+  "complexity": {
+    "predicted_components": 1,
+    "architecture_decision_required": false,
+    "concurrency_or_transaction": false,
+    "distributed_coordination": false,
+    "new_state_machine": false
+  },
+  "scope": {
+    "files_estimate": 1,
+    "modules_touched": 1,
+    "deployable_units": 1,
+    "external_consumers": false,
+    "cross_team_contract": false,
+    "public_contract_change": false
+  },
+  "risk": {
+    "user_visible_failure": false,
+    "persistent_data_change": false,
+    "security_sensitive": false,
+    "authn_authz": false,
+    "cryptography_or_secrets": false,
+    "payment_or_financial": false,
+    "destructive_migration": false,
+    "compliance_or_privacy": false,
+    "production_infra": false,
+    "irreversible_or_hard_to_recover": false
+  },
+  "novelty": {
+    "exact_repo_precedent": true,
+    "new_external_dependency_or_protocol": false,
+    "first_repo_use": false,
+    "unproven_architecture_assumption": false,
+    "docs_or_examples_missing": false
+  },
+  "verification": {
+    "deterministic_local": true,
+    "requires_integration_boundary": false,
+    "async_retry_timing": false,
+    "compatibility_or_migration": false,
+    "security_properties": false,
+    "concurrency_or_distributed_faults": false,
+    "performance_or_load": false,
+    "special_harness_required": false
+  },
+  "policy": {"minimum_flow": null, "fixed_flow": null},
+  "evidence": {
+    "ambiguity.goal_explicit": ["User requested an exact internal log-text correction."],
+    "scope.files_estimate": ["Search shows one production file and no callers/contracts affected."],
+    "novelty.exact_repo_precedent": ["Existing logging pattern in same file."]
+  }
+}
