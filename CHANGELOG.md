@@ -1,5 +1,15 @@
 # Changelog
 
+## 6.2 — Context Manifest / Role-aware Context Packs
+
+- Added V6 Context Plane to unify SDD/request, Work Facts, Decision, Execution State, Semantic Impact, Engineering Policy, Verification, and Evidence references.
+- Added `context-manifest.json` with source hashes, authority metadata, snapshot binding, blockers, and freshness warnings.
+- Added role/stage Context Packs for planner, implementer, reviewer, verifier, debugger, and resume workflows.
+- Added context budgets that defer low-relevance sources without dropping mandatory authority context.
+- Added manifest freshness validation and stale-source detection.
+- Added context refs to V5 analysis state and integrated pack generation into the semantic intake pipeline.
+- Added Context Manifest/Pack JSON Schemas, examples, documentation, tests, and pressure scenarios.
+
 ## 6.1 — Engineering Policy Layer + ECC Rule Source
 
 - Added project-owned Engineering Policy as a first-class V6 context and governance layer.

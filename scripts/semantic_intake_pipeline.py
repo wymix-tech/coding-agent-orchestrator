@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""V6 end-to-end intake: V4 facts + CBM impact + deterministic decision + verification plan.
+"""V6.2 end-to-end intake: facts + CBM impact + policy + decision + verification + context projection.
 
-The pipeline never lets CBM select a flow. CBM contributes structural evidence only;
-V3 Decision Engine remains the sole flow classifier.
+CBM contributes structural evidence only; the Decision Engine remains the sole flow classifier.
+The Context Plane indexes authorities and emits snapshot-bound role/stage packs without
+becoming a new source of truth.
 """
 from __future__ import annotations
 
@@ -20,6 +21,7 @@ import impact_mapper
 import verification_planner
 import execution_state_manager
 import policy_engine
+import context_plane
 
 
 def dump(path: Path, data: Any) -> None:
@@ -56,11 +58,25 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
     p.add_argument("--policy-stage", default="implementation", choices=["bootstrap", "planning", "implementation", "review", "verification"])
     p.add_argument("--ecc-root", type=Path, help="optional ECC rules root; overrides manifest source root")
     p.add_argument("--skip-policy", action="store_true")
+    p.add_argument("--skip-context", action="store_true", help="do not generate V6.2 Context Manifest/Pack")
+    p.add_argument("--context-role", default="implementer", choices=sorted(context_plane.ROLES))
+    p.add_argument("--context-stage", choices=sorted(context_plane.STAGES), help="defaults to policy stage")
+    p.add_argument("--context-max-items", type=int, default=12)
+    p.add_argument("--context-max-chars", type=int, default=16000)
+    p.add_argument("--sdd-provider", choices=["openspec", "bmad", "generic", "other"])
+    p.add_argument("--sdd-ref", type=Path, help="authoritative SDD artifact/change/story reference for Context Manifest")
     args = p.parse_args(argv)
 
     request = args.request_file.read_text(encoding="utf-8") if args.request_file else args.request
     repo = args.repo.resolve()
-    outdir = args.output_dir
+    outdir = args.output_dir if args.output_dir.is_absolute() else repo / args.output_dir
+    state_path_resolved = args.state if args.state.is_absolute() else repo / args.state
+
+    request_ref = None
+    if request:
+        request_ref = outdir / "request-context.md"
+        request_ref.parent.mkdir(parents=True, exist_ok=True)
+        request_ref.write_text(request, encoding="utf-8")
 
     draft = fact_extractor.extract(repo, request=request, base_ref=args.base_ref)
     dump(outdir / "work-facts.v4-draft.json", draft)
@@ -112,12 +128,17 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
     policy_plan = None
     policy_evaluation = None
     policy_manifest = args.policy_manifest
+    if policy_manifest is not None and not policy_manifest.is_absolute():
+        policy_manifest = repo / policy_manifest
     if policy_manifest is None:
         candidate = repo / ".orchestrator" / "policies" / "manifest.yaml"
         if candidate.exists():
             policy_manifest = candidate
+    ecc_root = args.ecc_root
+    if ecc_root is not None and not ecc_root.is_absolute():
+        ecc_root = repo / ecc_root
     if policy_manifest is not None and not args.skip_policy:
-        policy_plan = policy_engine.route(repo, impact, policy_manifest.resolve(), args.policy_stage, args.ecc_root)
+        policy_plan = policy_engine.route(repo, impact, policy_manifest.resolve(), args.policy_stage, ecc_root)
         dump(outdir / "policy-plan.json", policy_plan)
         (outdir / "policy-context.md").write_text(policy_engine.render_context(policy_plan), encoding="utf-8")
         policy_evaluation = policy_engine.evaluate(repo, policy_plan, policy_manifest.resolve())
@@ -149,7 +170,7 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
 
     state_sync = None
     if args.sync_state:
-        state_path = args.state
+        state_path = state_path_resolved
         current = execution_state_manager._load(state_path)
         analysis_snapshot = (enriched.get("extraction") or {}).get("analysis_snapshot_id")
         current = execution_state_manager.attach_analysis(
@@ -166,6 +187,8 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
             policy_evaluation_ref=str(outdir / "policy-evaluation.json") if policy_evaluation else None,
             policy_context_ref=str(outdir / "policy-context.md") if policy_plan else None,
             policy_snapshot_id=(policy_plan or {}).get("policy_snapshot_id"),
+            context_manifest_ref=str(outdir / "context-manifest.json") if not args.skip_context else None,
+            context_pack_ref=str(outdir / f"context-pack.{args.context_role}.{args.context_stage or args.policy_stage}.json") if not args.skip_context else None,
         )
         if decision.get("status") == "CLASSIFIED" and decision.get("flow_profile"):
             current = execution_state_manager.set_flow_profile(
@@ -191,6 +214,40 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
             "execution_snapshot_id": current.get("execution_snapshot_id"),
         }
 
+    context_summary = None
+    if not args.skip_context:
+        context_stage = args.context_stage or args.policy_stage
+        manifest = context_plane.build_manifest(
+            repo,
+            outdir,
+            state_ref=state_path_resolved if state_path_resolved.exists() else None,
+            request_ref=request_ref,
+            sdd_ref=args.sdd_ref,
+            sdd_provider=args.sdd_provider,
+            policy_manifest_ref=policy_manifest,
+        )
+        manifest_path = outdir / "context-manifest.json"
+        context_plane._dump_json(manifest_path, manifest)
+        pack = context_plane.build_pack(
+            manifest, args.context_role, context_stage,
+            max_items=args.context_max_items, max_chars=args.context_max_chars,
+        )
+        pack_path = outdir / f"context-pack.{args.context_role}.{context_stage}.json"
+        pack_md_path = outdir / f"context-pack.{args.context_role}.{context_stage}.md"
+        context_plane._dump_json(pack_path, pack)
+        pack_md_path.write_text(context_plane.render_pack(pack), encoding="utf-8")
+        context_summary = {
+            "manifest": str(manifest_path),
+            "pack": str(pack_path),
+            "markdown": str(pack_md_path),
+            "context_snapshot_id": manifest.get("context_snapshot_id"),
+            "pack_snapshot_id": pack.get("pack_snapshot_id"),
+            "role": args.context_role,
+            "stage": context_stage,
+            "blockers": manifest.get("blockers", []),
+            "warnings": manifest.get("warnings", []),
+        }
+
     policy_blocked = bool(
         policy_plan and (
             policy_plan.get("status") == "CONFLICT"
@@ -214,6 +271,7 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
         },
         "unresolved_count": len((facts.get("extraction") or {}).get("resolution_queue", [])),
         "state_sync": state_sync,
+        "context": context_summary,
         "artifacts": {
             "semantic_impact": str(outdir / "semantic-impact.json"),
             "work_facts": str(outdir / ("work-facts.resolved.json" if args.resolutions else "work-facts.semantic-draft.json")),
@@ -222,6 +280,10 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
             "policy_plan": str(outdir / "policy-plan.json") if policy_plan else None,
             "policy_evaluation": str(outdir / "policy-evaluation.json") if policy_evaluation else None,
             "policy_context": str(outdir / "policy-context.md") if policy_plan else None,
+            "request_context": str(request_ref) if request_ref else None,
+            "context_manifest": str(outdir / "context-manifest.json") if context_summary else None,
+            "context_pack": context_summary.get("pack") if context_summary else None,
+            "context_pack_markdown": context_summary.get("markdown") if context_summary else None,
         },
     }
     print(json.dumps(summary, ensure_ascii=False, indent=2))

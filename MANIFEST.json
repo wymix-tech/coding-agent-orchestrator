@@ -1,14 +1,15 @@
 {
   "name": "coding-agent-orchestrator",
-  "version": "6.1",
-  "focus": "CBM semantic impact + Engineering Policy routing/enforcement + durable execution state",
+  "version": "6.2",
+  "focus": "CBM semantic impact + Engineering Policy + snapshot-bound Context Plane + durable execution state",
   "code_intelligence_provider": "codebase-memory-mcp",
   "provider_count": 1,
   "policy_layer": "project-owned engineering policy with optional ECC external guidance",
   "governance_authority": "orchestrator",
-  "test_count": 65,
+  "test_count": 76,
   "key_entrypoints": [
     "scripts/semantic_intake_pipeline.py",
+    "scripts/context_plane.py",
     "scripts/policy_engine.py",
     "scripts/ecc_rules_adapter.py",
     "scripts/policy_bootstrap.py",
@@ -17,5 +18,6 @@
     "scripts/decision_engine.py",
     "scripts/verification_planner.py",
     "scripts/execution_state_manager.py"
-  ]
+  ],
+  "context_plane": "source-hashed Context Manifest + role/stage Context Packs"
 }

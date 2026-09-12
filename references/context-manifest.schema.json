@@ -1,0 +1,145 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/coding-agent-orchestrator/context-manifest.schema.json",
+  "title": "Coding Agent Orchestrator Context Manifest",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "context_snapshot_id",
+    "authorities",
+    "snapshots",
+    "sources",
+    "warnings",
+    "blockers"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "generated_at": {
+      "type": "string"
+    },
+    "context_snapshot_id": {
+      "type": "string",
+      "minLength": 8
+    },
+    "work_item": {
+      "type": [
+        "object",
+        "null"
+      ]
+    },
+    "current": {
+      "type": [
+        "object",
+        "null"
+      ]
+    },
+    "authorities": {
+      "type": "object"
+    },
+    "snapshots": {
+      "type": "object"
+    },
+    "sources": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "kind",
+          "ref",
+          "authority",
+          "tier",
+          "content_sha256",
+          "summary"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "ref": {
+            "type": "string"
+          },
+          "authority": {
+            "type": "string"
+          },
+          "tier": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9
+          },
+          "roles": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "stages": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "required": {
+            "type": "boolean"
+          },
+          "snapshot_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "content_sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "size_bytes": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "summary": {
+            "type": "string"
+          },
+          "file_count": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "entrypoints": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    "evidence": {
+      "type": [
+        "object",
+        "null"
+      ]
+    },
+    "warnings": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "blockers": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "principles": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  }
+}

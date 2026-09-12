@@ -293,3 +293,15 @@ policy:ARCH-SPRING-LAYER-001:architecture-layers
 ```
 
 A REQUIRED policy gate behaves exactly like any other REQUIRED gate: it cannot be skipped or marked not-required, and close is denied until it passes. Policy routing/evaluation artifacts explain why the gate exists; the gate evidence proves that the implementation complies.
+
+## V6.2 Context Plane integration
+
+`analysis` may also carry stable references to the current Context Manifest and the pack generated for the current role/stage:
+
+```yaml
+analysis:
+  context_manifest_ref: .orchestrator/intake/context-manifest.json
+  context_pack_ref: .orchestrator/intake/context-pack.implementer.implementation.json
+```
+
+These refs are navigation metadata only. The Context Manifest/Pack do not own phase, status, requirement, policy, or verification truth. Before a new agent relies on a pack, refresh or validate it with `scripts/context_plane.py`; a stale pack must not be treated as current repository state.

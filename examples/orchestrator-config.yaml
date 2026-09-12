@@ -57,6 +57,26 @@ orchestrator:
       authority: external_guidance
       promote_to_blocking_only_via_local_policy: true
 
+
+  context_plane:
+    enabled: true
+    manager: scripts/context_plane.py
+    manifest_file: .orchestrator/intake/context-manifest.json
+    default_role: implementer
+    default_stage: implementation
+    default_max_items: 12
+    default_max_chars: 16000
+    bind_to_source_hashes: true
+    bind_to_execution_revision: true
+    fail_on_stale_manifest: true
+    mandatory_context_never_dropped: true
+    lazy_retrieval:
+      full_cbm_graph: true
+      full_execution_history: true
+      full_external_rule_corpus: true
+    roles: [planner, implementer, reviewer, verifier, debugger, resume]
+    stages: [bootstrap, planning, implementation, review, verification, resume]
+
   decision_engine:
     enabled: true
     mode: deterministic

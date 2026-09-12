@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://example.local/orchestrator/execution-state.schema.json",
-  "title": "Adaptive SDD Coding Orchestrator Execution State v1 (V6.1 policy extensions)",
+  "title": "Adaptive SDD Coding Orchestrator Execution State v1 (V6.2 context extensions)",
   "type": "object",
   "required": [
     "schema_version",
@@ -209,6 +209,18 @@
           ]
         },
         "policy_snapshot_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "context_manifest_ref": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "context_pack_ref": {
           "type": [
             "string",
             "null"

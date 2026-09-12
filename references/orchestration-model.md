@@ -2,7 +2,7 @@
 
 ## Control-plane model
 
-The orchestrator has eleven layers:
+The orchestrator has twelve layers:
 
 1. **Discovery** — repository instructions, active SDD system/change, native execution-state mechanisms, git state, build/test commands, architecture, and quality policy.
 2. **Evidence Collection** — deterministic collectors produce repository/Git/SDD/CI observations and mechanically defensible facts.
@@ -12,9 +12,10 @@ The orchestrator has eleven layers:
 6. **Decision Engine** — deterministically score six dimensions and select TRIVIAL / FAST / STANDARD / DEEP.
 7. **SDD Adapter** — translate the repository's native planning artifacts into a normalized change model.
 8. **Execution State Manager** — normalize native/hybrid/orchestrator execution state, guard transitions, attach analysis/policy artifacts, record blockers/assignments/gates, append history, and support resume.
-9. **Execution Policy** — compose Superpowers disciplines required by the computed flow.
-10. **Quality Gates** — evaluate repository-defined automated/human gates, including blocking Engineering Policy gates, without weakening REQUIRED policy.
-11. **Evidence Ledger** — tie facts, semantic impact, policies, decisions, state transitions, implementation, review, and verification to auditable evidence.
+9. **Context Plane** — index current authorities/snapshots in a Context Manifest and project minimal role/stage Context Packs without creating a new authority.
+10. **Execution Policy** — compose Superpowers disciplines required by the computed flow.
+11. **Quality Gates** — evaluate repository-defined automated/human gates, including blocking Engineering Policy gates, without weakening REQUIRED policy.
+12. **Evidence Ledger** — tie facts, semantic impact, policies, decisions, state transitions, implementation, review, and verification to auditable evidence.
 
 ## Normalized change model
 
@@ -48,6 +49,9 @@ Change
   execution_state_ref
   execution_revision
   state_authority
+  context_manifest_ref
+  context_snapshot
+  current_context_pack_ref
   status
 ```
 
@@ -134,7 +138,9 @@ INIT / RESUME CANONICAL STATE
         ↓
 ATTACH ANALYSIS + POLICY REFS + SNAPSHOT
         ↓
-REQUIREMENT / POLICY BLOCKERS?
+BUILD / REFRESH CONTEXT MANIFEST + CURRENT ROLE PACK
+        ↓
+REQUIREMENT / POLICY / CONTEXT BLOCKERS?
   ├─ YES → BLOCK + CLARIFY / SPECIFY → RECOMPUTE
   └─ NO
         ↓
@@ -176,7 +182,8 @@ At session/agent start, prefer repository state over conversational memory:
 2. Load/sync native execution state when applicable.
 3. Load canonical execution state and validate revision/schema.
 4. Reconcile drift before coding.
-5. Read `resume` summary and execute only the reported legal next action or a stricter project-native action.
+5. Refresh `context-manifest.json` and generate a `resume/resume` Context Pack.
+6. Read `resume` summary and execute only the reported legal next action or a stricter project-native action.
 
 ## Stop / replan conditions
 

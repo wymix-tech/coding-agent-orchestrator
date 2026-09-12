@@ -1,0 +1,62 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-09-12T15:00:01Z",
+  "context_snapshot_id": "ctx-example-000000000001",
+  "pack_snapshot_id": "pack-example-00000000001",
+  "role": "implementer",
+  "stage": "implementation",
+  "valid_for": {
+    "context_snapshot_id": "ctx-example-000000000001",
+    "analysis_snapshot_id": "A43",
+    "execution_snapshot_id": "A43",
+    "state_revision": 17,
+    "policy_snapshot_id": "P12"
+  },
+  "current": {
+    "flow_profile": "STANDARD",
+    "phase": "implementation",
+    "status": "in_progress",
+    "blocked": false,
+    "next_action": "implement_task:4.2",
+    "revision": 17
+  },
+  "work_item": {"id": "AMS-LOGIN-003", "title": "Login information reporting"},
+  "blockers": [],
+  "warnings": [{"code": "VERIFICATION_STALE", "detail": "verification must be rerun after implementation"}],
+  "evidence_status": {},
+  "selected": [
+    {
+      "id": "requirement",
+      "kind": "requirement",
+      "ref": "openspec/changes/login-reporting",
+      "authority": "repository_sdd",
+      "tier": 0,
+      "summary": "Login reporting acceptance criteria and tasks.",
+      "snapshot_id": null,
+      "content_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+      "reason": "role=implementer; stage=implementation",
+      "mandatory": true
+    },
+    {
+      "id": "execution_state",
+      "kind": "execution_state",
+      "ref": ".orchestrator/execution-state.yaml",
+      "authority": "canonical_execution_state",
+      "tier": 0,
+      "summary": "STANDARD / implementation / task 4.2",
+      "snapshot_id": "A43",
+      "content_sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+      "reason": "role=implementer; stage=implementation",
+      "mandatory": true
+    }
+  ],
+  "deferred": [
+    {"id": "execution_history", "ref": ".orchestrator/execution-history.jsonl", "reason": "lazy retrieval only when history is needed"}
+  ],
+  "budget": {"max_items": 12, "max_chars": 16000, "selected_items": 2, "estimated_metadata_chars": 900},
+  "retrieval_policy": {
+    "default": "use selected summaries/refs; lazy-retrieve deferred sources only when the current step needs them",
+    "do_not_inline": ["full CBM graph", "full execution history", "entire external rule corpus"],
+    "refresh_when": ["execution revision changes materially", "analysis snapshot changes", "policy snapshot changes", "verification becomes stale"]
+  }
+}

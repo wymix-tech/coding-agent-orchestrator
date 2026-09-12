@@ -237,6 +237,8 @@ def create_state(
             "policy_evaluation_ref": None,
             "policy_context_ref": None,
             "policy_snapshot_id": None,
+            "context_manifest_ref": None,
+            "context_pack_ref": None,
             "analysis_snapshot_id": None,
             "provider": None,
             "updated_at": None,
@@ -686,6 +688,8 @@ def attach_analysis(
     policy_evaluation_ref: Optional[str] = None,
     policy_context_ref: Optional[str] = None,
     policy_snapshot_id: Optional[str] = None,
+    context_manifest_ref: Optional[str] = None,
+    context_pack_ref: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Attach V6 analysis artifacts without claiming their conclusions as native SDD state."""
     state = _load(state_path)
@@ -702,6 +706,8 @@ def attach_analysis(
         "policy_evaluation_ref": policy_evaluation_ref,
         "policy_context_ref": policy_context_ref,
         "policy_snapshot_id": policy_snapshot_id,
+        "context_manifest_ref": context_manifest_ref,
+        "context_pack_ref": context_pack_ref,
         "analysis_snapshot_id": analysis_snapshot_id,
         "provider": provider,
         "updated_at": utc_now(),
@@ -728,6 +734,8 @@ def attach_analysis(
         policy_evaluation_ref=policy_evaluation_ref,
         policy_context_ref=policy_context_ref,
         policy_snapshot_id=policy_snapshot_id,
+        context_manifest_ref=context_manifest_ref,
+        context_pack_ref=context_pack_ref,
         provider=provider,
     )
     return _commit(state_path, new_state, event, expected_revision)
@@ -1044,6 +1052,8 @@ def build_parser() -> argparse.ArgumentParser:
     x.add_argument("--policy-evaluation-ref")
     x.add_argument("--policy-context-ref")
     x.add_argument("--policy-snapshot-id")
+    x.add_argument("--context-manifest-ref")
+    x.add_argument("--context-pack-ref")
     x.add_argument("--provider", default="codebase-memory-mcp")
     x.add_argument("--actor", required=True)
     x.add_argument("--expected-revision", type=int)
@@ -1125,6 +1135,8 @@ def main(argv: Optional[List[str]] = None) -> int:
                 policy_evaluation_ref=args.policy_evaluation_ref,
                 policy_context_ref=args.policy_context_ref,
                 policy_snapshot_id=args.policy_snapshot_id,
+                context_manifest_ref=args.context_manifest_ref,
+                context_pack_ref=args.context_pack_ref,
             )
         elif args.command == "assign":
             result = assign_role(path, args.role, args.assignee, args.actor, args.expected_revision)

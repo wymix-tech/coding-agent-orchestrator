@@ -290,3 +290,41 @@ Expected: bootstrap reads the manifest, planning/implementation loads only appli
 A `MUST` architecture rule maps to ArchUnit, but no ArchUnit result exists yet.
 
 Expected: the gate remains `pending`; absence of a checker result is not treated as compliance. DONE is denied until executable evidence or an explicitly governed exception exists.
+
+## V6.2 Context Plane pressure scenarios
+
+### P34 — Full graph dump temptation
+
+CBM reports hundreds of impacted symbols. The agent asks to paste all graph results into its prompt.
+
+Expected: Context Manifest records the semantic-impact source; the current role pack contains a compact blast-radius summary/reference only. Full graph data remains deferred lazy retrieval.
+
+### P35 — Stale implementer pack after state advance
+
+An implementer pack was generated at execution revision 21. Review findings move the state to revision 25 and change the next action, but a new agent tries to reuse the old pack.
+
+Expected: source hash/revision validation reports the old manifest/pack stale. Refresh before work; conversation history must not override current repository state.
+
+### P36 — Reviewer receives implementer-shaped context
+
+A reviewer starts and is given only the implementer's context pack.
+
+Expected: regenerate a `reviewer/review` pack. It prioritizes requirement/acceptance, semantic impact, policy evaluation, state, and verification plan rather than blindly inheriting implementation-oriented context.
+
+### P37 — Tiny context budget
+
+The configured pack budget is smaller than the metadata required for requirement, state, semantic impact, and decision.
+
+Expected: mandatory sources remain selected even if the nominal budget is exceeded; lower-relevance sources are deferred. Budget pressure cannot silently remove requirement/state authority.
+
+### P38 — Policy or decision artifact changes after pack generation
+
+A policy MUST or Decision result is updated after the Context Manifest is generated.
+
+Expected: content-hash validation marks the manifest stale. The old pack is not valid evidence of current constraints/Flow.
+
+### P39 — Missing SDD/request authority
+
+A context build runs without an explicit SDD reference and without persisted request context.
+
+Expected: the pack reports `MISSING_MANDATORY_CONTEXT` for requirement authority. It must not invent a requirement source from code comments or semantic graph data.

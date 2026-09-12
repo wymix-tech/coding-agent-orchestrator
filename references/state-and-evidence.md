@@ -162,3 +162,19 @@ policy-evaluation.json
 When policy is enabled, Canonical Execution State analysis metadata may reference these artifacts. Applicable blocking enforcement is projected into `quality_gates` using stable names such as `policy:<RULE_ID>:<gate>`.
 
 Policy evidence follows the same freshness principle as other execution evidence: a material code/policy change requires rerouting/re-evaluation before completion. External guidance references are context, not proof of compliance.
+
+## V6.2 Context lineage
+
+The Context Plane does not add another source of truth. It records where current truth lives and which snapshot a role-specific projection was generated from:
+
+```text
+SDD / Work Facts / Decision / State / Semantic Impact / Policy / Verification Evidence
+                              ↓
+                    context-manifest.json
+                              ↓
+                role + stage Context Pack
+                              ↓
+                         Agent session
+```
+
+A pack is valid only for its `context_snapshot_id` and `valid_for` metadata. If a backing source hash or execution revision changes, regenerate the pack before relying on it. Conversation memory cannot make a stale pack current.

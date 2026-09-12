@@ -1,0 +1,149 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/coding-agent-orchestrator/context-pack.schema.json",
+  "title": "Coding Agent Orchestrator Context Pack",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "context_snapshot_id",
+    "pack_snapshot_id",
+    "role",
+    "stage",
+    "valid_for",
+    "selected",
+    "deferred",
+    "budget",
+    "retrieval_policy"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "generated_at": {
+      "type": "string"
+    },
+    "context_snapshot_id": {
+      "type": "string"
+    },
+    "pack_snapshot_id": {
+      "type": "string"
+    },
+    "role": {
+      "enum": [
+        "planner",
+        "implementer",
+        "reviewer",
+        "verifier",
+        "debugger",
+        "resume"
+      ]
+    },
+    "stage": {
+      "enum": [
+        "bootstrap",
+        "planning",
+        "implementation",
+        "review",
+        "verification",
+        "resume"
+      ]
+    },
+    "valid_for": {
+      "type": "object"
+    },
+    "current": {
+      "type": "object"
+    },
+    "work_item": {
+      "type": [
+        "object",
+        "null"
+      ]
+    },
+    "blockers": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "warnings": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "evidence_status": {
+      "type": [
+        "object",
+        "null"
+      ]
+    },
+    "selected": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "kind",
+          "ref",
+          "authority",
+          "summary",
+          "mandatory"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "ref": {
+            "type": "string"
+          },
+          "authority": {
+            "type": "string"
+          },
+          "tier": {
+            "type": "integer"
+          },
+          "summary": {
+            "type": "string"
+          },
+          "snapshot_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "content_sha256": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "mandatory": {
+            "type": "boolean"
+          },
+          "entrypoints": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    "deferred": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "budget": {
+      "type": "object"
+    },
+    "retrieval_policy": {
+      "type": "object"
+    }
+  }
+}

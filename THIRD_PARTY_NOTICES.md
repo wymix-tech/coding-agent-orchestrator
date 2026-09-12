@@ -9,4 +9,4 @@ This project includes an optional integration pattern for the open-source ECC pr
 - License: MIT
 - Copyright: Affaan Mustafa
 
-The packaged V6.1 artifact does **not** copy ECC rule bodies. It contains an adapter that can discover a separately installed/local ECC `rules/` tree and route relevant references as non-authoritative guidance.
+The packaged V6.2 artifact does **not** copy ECC rule bodies. It contains an adapter that can discover a separately installed/local ECC `rules/` tree and route relevant references as non-authoritative guidance.

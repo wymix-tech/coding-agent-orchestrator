@@ -1,0 +1,75 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-09-12T15:00:00Z",
+  "context_snapshot_id": "ctx-example-000000000001",
+  "work_item": {
+    "id": "AMS-LOGIN-003",
+    "type": "story",
+    "title": "Login information reporting"
+  },
+  "current": {
+    "flow_profile": "STANDARD",
+    "phase": "implementation",
+    "status": "in_progress",
+    "blocked": false,
+    "next_action": "implement_task:4.2",
+    "revision": 17
+  },
+  "authorities": {
+    "requirement": {"provider": "openspec", "ref": "openspec/changes/login-reporting", "authority": "repository_sdd"},
+    "decision": {"authority": "decision_engine", "ref": ".orchestrator/intake/decision.json"},
+    "execution": {"authority": "canonical_execution_state", "ref": ".orchestrator/execution-state.yaml", "revision": 17},
+    "semantic": {"authority": "cbm_structural_evidence", "ref": ".orchestrator/intake/semantic-impact.json"},
+    "engineering_policy": {"authority": "project_engineering_policy", "ref": ".orchestrator/policies/manifest.yaml"},
+    "verification": {"authority": "verification_planner_plus_fresh_evidence", "ref": ".orchestrator/intake/verification-plan.json"}
+  },
+  "snapshots": {
+    "analysis_snapshot_id": "A43",
+    "execution_snapshot_id": "A43",
+    "semantic_snapshot_id": "S43",
+    "policy_snapshot_id": "P12",
+    "verification_snapshot_id": "A42",
+    "verification_fresh": false
+  },
+  "sources": [
+    {
+      "id": "requirement",
+      "kind": "requirement",
+      "ref": "openspec/changes/login-reporting",
+      "authority": "repository_sdd",
+      "tier": 0,
+      "roles": ["planner", "implementer", "reviewer", "verifier", "debugger", "resume"],
+      "stages": ["bootstrap", "planning", "implementation", "review", "verification", "resume"],
+      "required": true,
+      "snapshot_id": null,
+      "content_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+      "size_bytes": 4200,
+      "summary": "OpenSpec change: login reporting behavior, acceptance criteria and tasks."
+    },
+    {
+      "id": "execution_state",
+      "kind": "execution_state",
+      "ref": ".orchestrator/execution-state.yaml",
+      "authority": "canonical_execution_state",
+      "tier": 0,
+      "roles": ["planner", "implementer", "reviewer", "verifier", "debugger", "resume"],
+      "stages": ["bootstrap", "planning", "implementation", "review", "verification", "resume"],
+      "required": true,
+      "snapshot_id": "A43",
+      "content_sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+      "size_bytes": 3800,
+      "summary": "revision=17; flow=STANDARD; phase=implementation; next=implement_task:4.2; verification=passed/fresh=false"
+    }
+  ],
+  "evidence": {
+    "quality_gates": {},
+    "review": {"required": true, "status": "pending"},
+    "verification": {"required": true, "status": "passed", "snapshot_id": "A42", "fresh": false}
+  },
+  "warnings": [{"code": "VERIFICATION_STALE", "detail": "verification_snapshot=A42; execution=A43"}],
+  "blockers": [],
+  "principles": [
+    "manifest indexes truth; it does not duplicate full corpora",
+    "context packs are role/stage projections, not new authorities"
+  ]
+}
