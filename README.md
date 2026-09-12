@@ -4,24 +4,24 @@
 
 **Current version: V6.5**
 
-Coding Agent Orchestrator 是一个面向 AI Coding Agent 的工程控制面。它不替代 OpenSpec、BMAD、Superpowers、CI 或代码图谱工具，而是把它们组织成一条可审计、可恢复、可动态调整、可在运行时强制执行的开发链路。
+Coding Agent Orchestrator is an engineering control plane for AI coding agents. It does not replace OpenSpec, BMAD, Superpowers, CI, or code-graph tools. Instead, it composes them into a development lifecycle that is auditable, resumable, adaptive, and enforceable at runtime.
 
-它解决的核心问题不是“Agent 会不会写代码”，而是：
+The core problem is not whether an agent can write code. The project is designed to answer a broader set of engineering questions:
 
-- 当前需求应该走多重的开发流程？
-- 这个判断依据是什么？
-- 项目现在开发到哪里？
-- 本次修改会影响哪些模块、服务、契约和测试？
-- 当前实现允许遵守哪些架构与编码约束？
-- 当前 Agent 到底应该看到哪些上下文？
-- Agent 是否真的被这些约束限制，而不是只在 Prompt 中被提醒？
-- 最终什么时候才允许宣布 DONE？
+- How much process does this requirement actually need?
+- What evidence supports that decision?
+- Where is the work currently in the development lifecycle?
+- Which modules, services, contracts, and tests are affected by the change?
+- Which architecture and coding constraints apply to the implementation?
+- What context should the current agent actually see?
+- Are those constraints enforced, or merely mentioned in a prompt?
+- When is the system allowed to declare the work DONE?
 
 ---
 
-## 1. 项目定位
+## 1. Project Positioning
 
-Coding Agent Orchestrator 将 AI 软件开发拆分为多个职责明确的控制层：
+Coding Agent Orchestrator decomposes AI-assisted software development into control layers with explicit responsibilities:
 
 ```text
 Project Bootstrap / Unified CLI
@@ -73,55 +73,55 @@ Quality + Policy + Verification Gates
        DONE
 ```
 
-各层职责保持严格边界：
+Each layer has a strict responsibility boundary:
 
-| 层 | 负责回答的问题 | 权威来源 |
+| Layer | Question it answers | Authority |
 |---|---|---|
-| SDD | 要做什么，为什么做 | OpenSpec / BMAD / Generic SDD |
-| Work Facts | 当前有哪些可证明事实 | Repository / Git / SDD / CI / Evidence |
-| Decision Engine | 应该走多重流程 | Deterministic rules |
-| Semantic Impact | 修改会影响哪里 | CBM structural evidence |
-| Engineering Policy | 允许怎么实现 | Project-owned policy |
-| Context Plane | 当前角色应该看什么 | Manifest + role/stage projection |
-| Execution State | 做到哪里，下一步是什么 | Native / Hybrid / Orchestrator state |
-| Session Context | 冷启动/恢复/交接时先看到什么 | State + Context Plane 的 JSON projection |
-| Host Enforcement | 当前动作是否允许 | Shared Enforcement Kernel |
-| Superpowers | Agent 应该怎样工作 | Execution discipline |
-| Quality Gates | 是否满足完成条件 | Tests / Static analysis / Review / Verification |
+| SDD | What are we building, and why? | OpenSpec / BMAD / Generic SDD |
+| Work Facts | What can currently be proven? | Repository / Git / SDD / CI / Evidence |
+| Decision Engine | How much process is required? | Deterministic rules |
+| Semantic Impact | What is affected by the change? | CBM structural evidence |
+| Engineering Policy | What implementation patterns are allowed? | Project-owned policy |
+| Context Plane | What should this role see right now? | Manifest + role/stage projection |
+| Execution State | Where are we, and what happens next? | Native / Hybrid / Orchestrator state |
+| Session Context | What should a cold-start/resumed/handoff agent see first? | JSON projection over State + Context Plane |
+| Host Enforcement | Is the current action allowed? | Shared Enforcement Kernel |
+| Superpowers | How should the agent perform the work? | Execution discipline |
+| Quality Gates | Are completion conditions satisfied? | Tests / Static analysis / Review / Verification |
 
-一个重要原则是：**任何单一工具都不能越权成为全局权威。**
+A central principle is that **no single tool is allowed to become the global authority for everything**.
 
-例如 CBM 可以证明存在跨服务调用，但不能决定 Flow 是 STANDARD 还是 DEEP；ECC 可以提供工程规则参考，但不能自动成为项目级 MUST；Claude Code / Codex / Pi 的 Hook 可以做实时阻断，但最终 DONE 仍由 Execution State + CI/Gates 决定。
+For example, CBM may prove that a cross-service call exists, but it cannot decide whether the flow must be STANDARD or DEEP. ECC may provide useful engineering guidance, but it does not automatically become a project-level MUST rule. Claude Code, Codex, and Pi hooks can block actions at runtime, but final completion authority still belongs to Execution State plus CI and required gates.
 
 ---
 
-## 2. 版本演进
+## 2. Version Evolution
 
-Coding Agent Orchestrator 从一个 SDD 编排 Skill 演进为完整的 Coding Governance Plane：
+Coding Agent Orchestrator evolved from an SDD orchestration skill into a broader coding-governance plane:
 
-| 版本 | 核心能力 |
+| Version | Primary capability |
 |---|---|
-| V1 | OpenSpec / BMAD / Generic SDD Adapter + Superpowers + Quality Gates |
-| V2 | Adaptive Flow，按需求特征选择 TRIVIAL / FAST / STANDARD / DEEP |
-| V3 | Deterministic Decision Engine，消除“凭感觉打分” |
-| V4 | Evidence-backed Fact Extractor，事实必须附带证据 |
-| V5 | Execution State Manager，提供阶段、任务、阻塞、Gate、Resume 和历史 |
-| V6.0 | CBM Semantic Impact，分析 changed symbol 与 blast radius |
-| V6.1 | Engineering Policy Layer，项目级架构与开发约束 |
-| V6.2 | Context Manifest / Context Pack，统一项目上下文平面 |
-| V6.3 | Claude Code / Codex Hooks + Pi Extension Runtime Enforcement |
-| V6.4 | Session Bootstrap / Task Handoff，上下文冷启动、恢复和角色交接 |
-| **V6.5** | **Project Bootstrap + Unified CLI，一次初始化、自动发现、统一入口与 Doctor** |
+| V1 | OpenSpec / BMAD / Generic SDD adapters + Superpowers + Quality Gates |
+| V2 | Adaptive Flow: select TRIVIAL / FAST / STANDARD / DEEP from work characteristics |
+| V3 | Deterministic Decision Engine: remove subjective agent scoring |
+| V4 | Evidence-backed Fact Extractor: facts require evidence |
+| V5 | Execution State Manager: phases, tasks, blockers, gates, resume, and history |
+| V6.0 | CBM Semantic Impact: changed-symbol and blast-radius analysis |
+| V6.1 | Engineering Policy Layer: project-level architecture and development constraints |
+| V6.2 | Context Manifest / Context Pack: unified project context plane |
+| V6.3 | Claude Code / Codex hooks + Pi extension runtime enforcement |
+| V6.4 | Session Bootstrap / Task Handoff for cold start, resume, and role transfer |
+| **V6.5** | **Project Bootstrap + Unified CLI: one-time initialization, discovery, Doctor, and stable human/agent entry points** |
 
-V6.5 不再增加新的治理规则，而是把 V3~V6.4 已有能力收口成真正可用的项目入口：`init / discover / doctor / status / intake / resume / verify / host install`。全新项目只需要一次安全初始化，后续由宿主 Hook/Extension 和 Context Plane 自动恢复。
+V6.5 adds no new governance authority. It productizes V3~V6.4 behind stable entry points: `init / discover / doctor / status / intake / resume / verify / host install`. A repository is initialized once; later sessions recover through host adapters and the Context Plane.
 
-V6.4 在 V6.3 Runtime Enforcement 基础上继续解决“新会话/新 Agent 怎么快速恢复当前工程现实”。V6.3 的核心变化是从：
+V6.4 builds on V6.3 runtime enforcement by solving how a new session/agent reconstructs current engineering reality without relying on old chat history. The defining V6.3 transition is from:
 
 ```text
-“请 Agent 遵守规则”
+"Please follow these rules"
 ```
 
-升级到：
+to:
 
 ```text
 Prompt-guided
@@ -135,11 +135,11 @@ CI-verified
 
 ---
 
-## 3. 核心设计原则
+## 3. Core Design Principles
 
-### 3.1 SDD 负责 What / Why
+### 3.1 SDD Owns What / Why
 
-Orchestrator 不创建第四套 SDD。已有 OpenSpec 或 BMAD 时，继续使用其原生需求、规格、设计和任务体系。
+The Orchestrator does not invent a fourth SDD system. If a repository already uses OpenSpec or BMAD, its native requirement, specification, design, and task artifacts remain authoritative.
 
 ```text
 OpenSpec / BMAD / Generic
@@ -148,14 +148,14 @@ OpenSpec / BMAD / Generic
 Orchestrator Adapter
           │
           ▼
-统一执行模型
+Unified Execution Model
 ```
 
-### 3.2 Decision Engine 负责 How Much Process
+### 3.2 The Decision Engine Owns How Much Process
 
-不是每个需求都走完整重流程。
+Not every request should go through a heavyweight lifecycle.
 
-Decision Engine 根据可验证事实计算六个维度：
+The Decision Engine computes six dimensions from evidence-backed facts:
 
 ```text
 Ambiguity
@@ -166,7 +166,7 @@ Novelty
 Verification Difficulty
 ```
 
-并确定：
+It then selects one of:
 
 ```text
 TRIVIAL
@@ -175,31 +175,31 @@ STANDARD
 DEEP
 ```
 
-Agent 不允许直接修改分数或手工选择更轻的 Flow。
+Agents are not allowed to directly edit the computed scores or manually choose a lighter flow.
 
 ### 3.3 Unknown != False
 
-没有发现证据，不代表事实为假。
+Absence of evidence is not evidence of absence.
 
-例如：
+For example:
 
 ```text
-没有发现 external consumer
+No external consumer was found
 ```
 
-不能自动推出：
+does not automatically imply:
 
 ```text
 external_consumers = false
 ```
 
-需要负面证明或权威证据。
+A negative proof or authoritative evidence is required.
 
-### 3.4 CBM 只提供结构证据
+### 3.4 CBM Provides Structural Evidence Only
 
-V6 当前唯一 Code Intelligence Provider 是 **Codebase Memory MCP，简称 CBM**。
+The only Code Intelligence Provider currently integrated in V6 is **Codebase Memory MCP (CBM)**.
 
-CBM 用来提供：
+CBM is used to provide structural evidence such as:
 
 ```text
 changed symbols
@@ -210,31 +210,31 @@ HTTP / async / data-flow relationships
 blast radius
 ```
 
-但 CBM 的 risk label 不具有治理权威：
+CBM's own risk labels are not governance authority:
 
 ```text
 CBM: HIGH RISK
 ```
 
-不会直接变成：
+must not directly become:
 
 ```text
 Flow = DEEP
 ```
 
-结构事实必须先进入 Work Facts，再由 Decision Engine 分类。
+Structural evidence first becomes Work Facts. The Decision Engine then classifies the work.
 
 ### 3.5 Project Policy > External Guidance
 
-项目自己的 `.orchestrator/policies/` 是工程约束权威。
+The project-owned `.orchestrator/policies/` directory is the authority for engineering constraints.
 
-ECC 等外部规则源只能作为 guidance，除非显式晋升为项目 Policy。
+External rule sources such as ECC remain guidance unless a rule is explicitly promoted into project policy.
 
 ### 3.6 State over Chat History
 
-工程事实不应依赖某一次 Agent 会话。
+Engineering truth should not depend on a single agent session.
 
-新的 Agent 应该可以只依赖仓库状态恢复：
+A new agent should be able to recover the current work from repository state:
 
 ```text
 SDD
@@ -246,17 +246,17 @@ Context Manifest
 Evidence
 ```
 
-而不是重新阅读整段历史对话。
+It should not need to reread an entire historical conversation.
 
-### 3.7 DONE 必须由系统证明
+### 3.7 DONE Must Be Proven
 
 ```text
-DONE != 代码写完
-DONE != 单元测试绿了
-DONE != Agent 说“完成了”
+DONE != code was written
+DONE != unit tests are green
+DONE != the agent says "finished"
 ```
 
-DONE 至少意味着：
+DONE requires, at minimum:
 
 ```text
 SDD / Native Work Item Complete
@@ -278,7 +278,7 @@ Verification Snapshot == Current Execution Snapshot
 
 ---
 
-## 4. 目录结构
+## 4. Repository Structure
 
 ```text
 coding-agent-orchestrator/
@@ -367,69 +367,69 @@ coding-agent-orchestrator/
 
 ---
 
-## 5. 运行要求
+## 5. Runtime Requirements
 
-### 必需
+### Required
 
 - Python 3
-- Git repository
-- 一个明确的项目工作目录
+- A Git repository
+- A well-defined project working directory
 
-项目 Python 实现主要使用标准库；由于状态、Policy 和项目配置使用 YAML，需安装 `PyYAML`。
+The Python implementation primarily uses the standard library; `PyYAML` is required because execution state, engineering policy, and repository configuration use YAML.
 
-### V6 Semantic Impact 推荐
+### Recommended for V6 Semantic Impact
 
-安装并可调用 `codebase-memory-mcp` 对应的 CBM CLI/binary。
+Install and expose the CBM CLI/binary corresponding to `codebase-memory-mcp`.
 
-V6 默认策略是：**CBM 不可用时 fail closed**，因为 Provider 不可用不能被解释为“低影响”。
+The default V6 policy is: **fail closed when CBM is unavailable**, because an unavailable provider must not be interpreted as evidence of low impact.
 
-如果只做离线测试，可以使用包内 fixture：
+For offline tests, use the included fixture:
 
 ```bash
 --cbm-fixture examples/cbm-detect-changes-fixture.json
 ```
 
-### Spring Boot 项目推荐
+### Recommended for Spring Boot Projects
 
-对于架构分层约束，建议项目自身增加 ArchUnit 作为最终 REQUIRED Gate。
+For architecture layering constraints, add ArchUnit to the project as the final REQUIRED architecture gate.
 
-内置 V6 policy checker 负责快速反馈，ArchUnit 负责更强的仓库级证明。
+The built-in V6 policy checker provides fast feedback. ArchUnit provides stronger repository-level proof.
 
-### Host Enforcement 可选宿主
+### Optional Host Enforcement Targets
 
-V6.4 保留 V6.3 的宿主适配，并新增 Session Bootstrap/Handoff 注入：
+V6.4 retains the V6.3 host integrations and adds Session Bootstrap/Handoff injection for:
 
 - Claude Code hooks
 - Codex hooks
 - Pi extension
 
-Host Hook 永远不是最终唯一安全边界。V5 State Guard、CI 和 Merge/Branch Protection 应继续保留。
+Host hooks are never the only security boundary. Keep V5 state guards, CI, and merge/branch protection in place.
 
 ---
 
-## 6. 快速开始
+## 6. Quick Start
 
-### 6.0 V6.5 推荐方式：一次初始化
+### 6.0 V6.5 recommended path: initialize once
 
-V6.5 推荐使用统一入口，而不是手工依次调用内部脚本：
+V6.5 recommends the unified front controller instead of manually chaining internal scripts:
 
 ```bash
 ./coding-orchestrator init
 ```
 
-Windows：
+Windows:
 
 ```bat
 coding-orchestrator.cmd init
 ```
 
-或始终可以直接：
+Or always:
 
 ```bash
 python scripts/coding_orchestrator.py init
 ```
 
-`init` 会保守地自动完成：
+`init` conservatively performs:
 
 ```text
 Repository Discovery
@@ -440,33 +440,33 @@ Repository Discovery
   -> architecture evidence
   -> safe Engineering Policy bootstrap
   -> enforcement/session config
-  -> detected host adapter install
+  -> detected host adapter installation
   -> fresh-project Session Bootstrap
   -> READY_FOR_INTAKE
 ```
 
-**它不会创建一个假的 active task。** 第一个真实 `execution-state.yaml` 只会在第一次 `intake` 时创建。
+**It does not invent an active task.** The first real `execution-state.yaml` is created by the first `intake`.
 
-安全自动化原则：
+Safe-auto rules:
 
-- 能客观证明的内容自动配置。
-- 多个 SDD Authority 同时存在时返回 `ACTION_REQUIRED`，不擅自选择。
-- 仅检测到 Spring Boot 不等于自动启用经典 `web -> service -> dao`；只有仓库结构能证明该架构时才自动启用。
-- binary-only Host 信号只作为提示；Safe Auto 默认只为高置信度项目级 Host marker 自动安装 Adapter。
-- CBM 未安装不会阻止项目 bootstrap，但正常 Semantic Intake 会 fail closed。
-- 已存在的项目 Policy/配置默认保留；不要让 bootstrap 静默覆盖团队规则。
+- Auto-configure only facts that can be proven.
+- Multiple SDD authorities produce `ACTION_REQUIRED`; the tool does not guess.
+- Detecting Spring Boot alone does not prove classic `web -> service -> dao`; that policy is auto-enabled only when repository structure proves it.
+- Binary-only host detection is advisory; Safe Auto installs adapters only for high-confidence repository-local host markers.
+- Missing CBM does not block bootstrap, but normal Semantic Intake still fails closed.
+- Existing project policy/config is preserved by default.
 
-初始化后：
+After initialization:
 
 ```bash
 ./coding-orchestrator doctor
 ./coding-orchestrator status
-./coding-orchestrator intake "新增用户查询 REST API"
+./coding-orchestrator intake "Add a user lookup REST API"
 ./coding-orchestrator resume
 ./coding-orchestrator verify
 ```
 
-如果需要显式安装某个新 Agent Host：
+Install a new host explicitly when needed:
 
 ```bash
 ./coding-orchestrator host install pi
@@ -474,7 +474,7 @@ Repository Discovery
 ./coding-orchestrator host install codex
 ```
 
-机器/CI 使用：
+Machine/CI usage:
 
 ```bash
 ./coding-orchestrator --json discover
@@ -482,28 +482,28 @@ Repository Discovery
 ./coding-orchestrator init --ci
 ```
 
-`--ci` 遇到无法自动解决的 Authority 冲突时返回非零退出码。
+`--ci` returns non-zero when authority ambiguity cannot be resolved safely.
 
-> 下面 6.1~6.6 保留的是内部/高级手工路径，适合调试 Engine 或自定义集成；普通项目优先使用 V6.5 Unified CLI。
+> Sections 6.1~6.6 retain the internal/manual path for engine debugging and custom integrations. Normal repositories should prefer the V6.5 Unified CLI.
 
 
-以下示例假设 Orchestrator 包位于项目中可访问的位置。
+The examples below assume the Orchestrator package is accessible from the project repository.
 
-### 6.1 安装项目级 Engineering Policy
+### 6.1 Install Project Engineering Policy
 
 ```bash
 python scripts/policy_bootstrap.py --repo .
 ```
 
-默认不会覆盖已有文件。
+Existing files are not overwritten by default.
 
-需要强制覆盖 starter policy 时：
+To force replacement of starter policies:
 
 ```bash
 python scripts/policy_bootstrap.py --repo . --force
 ```
 
-会建立或补齐：
+This creates or completes:
 
 ```text
 .orchestrator/
@@ -513,25 +513,25 @@ python scripts/policy_bootstrap.py --repo . --force
     └── spring-boot-layered.yaml
 ```
 
-这些 starter 文件应该根据项目实际架构修改，不建议长期原样使用。
+These starter files should be adapted to the actual architecture of the repository rather than kept unchanged indefinitely.
 
-### 6.2 检测 Execution State Provider
+### 6.2 Detect the Execution State Provider
 
 ```bash
 python scripts/state_provider_detector.py .
 ```
 
-典型策略：
+Typical recommendations:
 
-| 项目 | 推荐模式 |
+| Project | Recommended mode |
 |---|---|
 | BMAD + sprint-status | `native` |
 | OpenSpec | `hybrid` |
-| 无原生执行状态 | `orchestrator` |
+| No native execution state | `orchestrator` |
 
-### 6.3 初始化执行状态
+### 6.3 Initialize Execution State
 
-例如 OpenSpec 项目：
+For example, in an OpenSpec repository:
 
 ```bash
 python scripts/execution_state_manager.py \
@@ -544,7 +544,7 @@ python scripts/execution_state_manager.py \
   --authority-mode hybrid
 ```
 
-查看 Resume 摘要：
+View the resume summary:
 
 ```bash
 python scripts/execution_state_manager.py \
@@ -552,9 +552,9 @@ python scripts/execution_state_manager.py \
   resume
 ```
 
-### 6.4 运行完整 Semantic Intake
+### 6.4 Run the Full Semantic Intake Pipeline
 
-V6.5 下该命令作为内部/高级入口：
+In V6.5 this remains the internal/advanced semantic-intake entry point:
 
 ```bash
 python scripts/semantic_intake_pipeline.py \
@@ -570,7 +570,7 @@ python scripts/semantic_intake_pipeline.py \
   --context-stage implementation
 ```
 
-这条流水线会依次完成：
+The pipeline performs:
 
 ```text
 Fact Extraction
@@ -594,9 +594,9 @@ Context Manifest
 Role/Stage Context Pack
 ```
 
-### 6.5 安装 Host Enforcement Adapter
+### 6.5 Install Host Enforcement Adapters
 
-先 dry-run：
+Dry-run first:
 
 ```bash
 python scripts/install_host_adapter.py \
@@ -604,7 +604,7 @@ python scripts/install_host_adapter.py \
   --host all
 ```
 
-确认后安装：
+Then apply:
 
 ```bash
 python scripts/install_host_adapter.py \
@@ -613,7 +613,7 @@ python scripts/install_host_adapter.py \
   --apply
 ```
 
-也可以单独安装：
+Install a single host if preferred:
 
 ```bash
 python scripts/install_host_adapter.py --repo . --host claude-code --apply
@@ -621,46 +621,25 @@ python scripts/install_host_adapter.py --repo . --host codex --apply
 python scripts/install_host_adapter.py --repo . --host pi --apply
 ```
 
-安装器会创建或合并宿主配置，并在需要时创建备份，同时创建 `.orchestrator/session-context.yaml`。
-
-### 6.6 生成冷启动 / Resume Context
-
-```bash
-python scripts/session_context.py --repo . bootstrap \
-  --role implementer \
-  --stdout markdown
-```
-
-受控任务/角色交接时生成 Handoff：
-
-```bash
-python scripts/session_context.py --repo . handoff \
-  --from-role implementer \
-  --to-role reviewer \
-  --completed-task-id T4.2 \
-  --summary "Implemented async report delivery" \
-  --next-action "review_task:T4.2"
-```
-
-格式约定：**JSON 是 canonical artifact，YAML 是配置，Markdown 是实际注入 Agent 的提示词投影。默认不使用 XML。**
+The installer creates or merges host configuration and produces backups when necessary.
 
 ---
 
 ## 7. Adaptive Flow
 
-Orchestrator 不要求所有任务使用同样重的流程。
+The Orchestrator does not force every task through the same process depth.
 
 ### TRIVIAL
 
-适合：
+Suitable for:
 
 ```text
-文案修改
-简单配置
-明确的局部非风险调整
+copy changes
+simple configuration
+clear, local, non-risk adjustments
 ```
 
-典型流程：
+Typical flow:
 
 ```text
 Impact Check
@@ -674,7 +653,7 @@ Done
 
 ### FAST
 
-适合需求明确、影响有限的功能或 Bug Fix。
+Suitable for well-defined features or bug fixes with limited impact.
 
 ```text
 Mini Spec / AC
@@ -690,7 +669,7 @@ Verification
 
 ### STANDARD
 
-适合正常 Feature、多文件/多模块、API 或数据模型变化。
+Suitable for normal feature work, multi-file or multi-module changes, APIs, or data-model changes.
 
 ```text
 Spec
@@ -710,7 +689,7 @@ Verification
 
 ### DEEP
 
-适合高风险、高复杂度、跨服务、认证授权、破坏性迁移等任务。
+Suitable for high-risk or high-complexity work, cross-service changes, authentication/authorization, and destructive migrations.
 
 ```text
 Discovery
@@ -730,29 +709,29 @@ Security / Compatibility / Migration Checks
 Fresh Verification
 ```
 
-### 动态升降级
+### Dynamic Escalation and De-escalation
 
-开发过程中一旦发现事实变化，必须重新分析：
+If facts change during implementation, re-run the analysis:
 
 ```text
 FAST
  ↓
-发现跨服务依赖
+Cross-service dependency discovered
  ↓
-重新 Work Facts + CBM Impact
+Recompute Work Facts + CBM Impact
  ↓
 STANDARD
 ```
 
-反之，如果调查确认原本复杂的问题其实是局部 bug，也允许降级，但不能取消已经成立的安全与质量义务。
+The reverse is also allowed when investigation proves that a seemingly complex issue is actually a local bug. However, previously established security and quality obligations are not silently removed.
 
 ---
 
 ## 8. Deterministic Decision Engine
 
-V3 之后不允许 Agent 自由打分。
+Since V3, agents are not allowed to score work subjectively.
 
-运行：
+Run:
 
 ```bash
 python scripts/decision_engine.py \
@@ -761,18 +740,18 @@ python scripts/decision_engine.py \
   --pretty
 ```
 
-Decision Engine 使用结构化 Work Facts、组合规则和 Override Rules。
+The engine uses structured Work Facts, combination rules, and override rules.
 
-例如：
+For example:
 
 ```text
-代码只有 2 行修改
-但属于 authentication path
+Only two lines of code changed
+but the change is on an authentication path
 ```
 
-不会因为“代码量小”就选择 TRIVIAL。
+must not become TRIVIAL merely because the textual diff is small.
 
-Risk Override 可以规定：
+A risk override may state:
 
 ```text
 authentication / authorization
@@ -782,94 +761,94 @@ critical risk
 → force DEEP
 ```
 
-模糊需求也不会直接等同于 DEEP。高 Ambiguity 首先产生 implementation blocker：
+Ambiguous work also does not automatically become DEEP. High ambiguity first creates an implementation blocker:
 
 ```text
 Clarify
   ↓
-补齐 Acceptance Criteria
+Complete Acceptance Criteria
   ↓
-重新生成 Work Facts
+Regenerate Work Facts
   ↓
-重新分类
+Reclassify
 ```
 
 ---
 
 ## 9. Evidence-backed Work Facts
 
-Fact Extractor 采用保守策略：
+The Fact Extractor is deliberately conservative:
 
 ```text
 Mechanical Evidence
-→ 可以直接形成 Fact
+→ may directly produce a Fact
 
 Heuristic
-→ 只能形成 Hint
+→ may only produce a Hint
 
 Unknown
-→ 保持 Unknown
+→ remains Unknown
 ```
 
-例如路径包含：
+For example, a path such as:
 
 ```text
 src/auth/token_validator
 ```
 
-只能提示：
+may suggest:
 
 ```text
-可能涉及 authentication
+possibly authentication-related
 ```
 
-不能自动得到：
+but may not directly assert:
 
 ```json
 {"risk": {"authn_authz": true}}
 ```
 
-Agent Resolver 必须补充代码检查或权威证据。
+The semantic resolver must add code inspection or other authoritative evidence.
 
-同时所有 Fact 都有严格类型约束，避免：
+All facts are also type-checked so that malformed values such as:
 
 ```json
 {"authn_authz": "false"}
 ```
 
-被 Python 当成 truthy 值。
+cannot be accidentally interpreted as truthy values by Python.
 
 ---
 
 ## 10. CBM Semantic Impact
 
-V6 当前只接入一个 Code Intelligence Provider：**Codebase Memory MCP**。
+V6 currently integrates a single Code Intelligence Provider: **Codebase Memory MCP**.
 
-Provider 抽象保留在：
+The provider abstraction lives in:
 
 ```text
 scripts/code_intelligence_provider.py
 ```
 
-当前实现：
+The current implementation is:
 
 ```text
 scripts/cbm_provider.py
 ```
 
-查看 Provider 能力：
+Inspect capabilities:
 
 ```bash
 python scripts/cbm_provider.py capabilities
 ```
 
-检查健康状态：
+Check health:
 
 ```bash
 python scripts/cbm_provider.py health
 ```
 
-CBM 主要帮助 Orchestrator 发现：
+CBM helps the Orchestrator derive:
 
 ```text
 Git Change
@@ -885,7 +864,7 @@ Blast Radius
 
 ### Provider Risk Quarantine
 
-CBM 自己的风险分类只保存为 provider opinion：
+CBM's own risk classification is retained only as provider opinion:
 
 ```yaml
 provider_opinion:
@@ -894,34 +873,34 @@ provider_opinion:
   authoritative_for_flow: false
 ```
 
-Flow 仍由 Decision Engine 决定。
+The Decision Engine remains the only authority for Flow classification.
 
-### 分页完整性
+### Pagination Completeness
 
-如果 CBM blast radius 结果存在 continuation cursor 或 partial result，Orchestrator 默认不会把第一页的数量当作完整上界。
+If a CBM blast-radius response contains a continuation cursor or partial result, the Orchestrator does not treat the first page as a complete upper bound.
 
 ```text
 partial semantic impact
 → NEEDS_EVIDENCE
 ```
 
-除非显式使用：
+unless explicitly overridden with:
 
 ```bash
 --allow-partial-impact
 ```
 
-该参数是逃生口，不是推荐默认行为。
+This flag is an escape hatch, not the recommended default.
 
 ---
 
 ## 11. Engineering Policy
 
-Engineering Policy 负责表达：
+Engineering Policy expresses:
 
-> 项目允许怎么实现。
+> What is allowed in this project.
 
-它和 SDD 的职责不同：
+This is distinct from SDD:
 
 ```text
 SDD
@@ -933,13 +912,13 @@ Engineering Policy
 
 ### Policy Manifest
 
-默认入口：
+Default entry point:
 
 ```text
 .orchestrator/policies/manifest.yaml
 ```
 
-规则支持三级：
+Rules support three levels:
 
 ```text
 MUST
@@ -947,23 +926,23 @@ SHOULD
 PREFER
 ```
 
-推荐语义：
+Recommended semantics:
 
-| Level | 行为 |
+| Level | Behavior |
 |---|---|
-| MUST | 可映射为 blocking gate |
-| SHOULD | Review / warning |
+| MUST | May map to a blocking gate |
+| SHOULD | Review finding / warning |
 | PREFER | Advisory only |
 
 ### Spring Boot Layered Policy
 
-Starter Policy 包含：
+The starter policy models:
 
 ```text
 web/controller -> service -> dao/repository
 ```
 
-并禁止：
+and forbids:
 
 ```text
 web -> dao
@@ -971,7 +950,7 @@ service -> web
 dao -> service/web
 ```
 
-例如：
+For example:
 
 ```java
 @RestController
@@ -980,7 +959,7 @@ class UserController {
 }
 ```
 
-会触发：
+triggers:
 
 ```text
 ARCH-SPRING-LAYER-001
@@ -989,7 +968,7 @@ web -> dao forbidden
 
 ### Policy Routing
 
-根据 Semantic Impact 选择当前真正适用的 Policy：
+Select only policies that are actually applicable to the current Semantic Impact:
 
 ```bash
 python scripts/policy_engine.py route \
@@ -1000,7 +979,7 @@ python scripts/policy_engine.py route \
   --output .orchestrator/intake/policy-plan.json
 ```
 
-执行轻量检查：
+Run lightweight policy checks:
 
 ```bash
 python scripts/policy_engine.py evaluate \
@@ -1012,9 +991,9 @@ python scripts/policy_engine.py evaluate \
 
 ### ECC Integration
 
-ECC `rules/` 可以作为外部工程规则来源。
+ECC `rules/` may be used as an external source of engineering guidance.
 
-默认定位：
+Default status:
 
 ```text
 ECC rules
@@ -1022,39 +1001,39 @@ ECC rules
 → non-blocking
 ```
 
-只有显式转换为 `.orchestrator/policies/*.yaml` 的项目规则，才可以成为 blocking MUST。
+Only rules explicitly converted into `.orchestrator/policies/*.yaml` may become blocking project-level MUST rules.
 
-这防止外部规则更新后悄悄改变项目 Gate。
+This prevents external rule updates from silently changing project gates.
 
 ---
 
 ## 12. Context Plane
 
-V6.2 将上下文从 Chat History 中剥离出来，建立真正的 Project Context Plane。
+V6.2 moves durable project context out of chat history and into a dedicated Project Context Plane.
 
 ### Context Manifest
 
-`context-manifest.json` 回答：
+`context-manifest.json` answers:
 
 ```text
-当前权威 Requirement 在哪里？
-Decision 在哪里？
-Execution State 在哪里？
-Semantic Impact 在哪里？
-Policy 在哪里？
-Verification 在哪里？
-每份数据对应什么 hash/snapshot？
+Where is the authoritative Requirement?
+Where is the Decision?
+Where is Execution State?
+Where is Semantic Impact?
+Where is Policy?
+Where is Verification?
+Which hash/snapshot does each source belong to?
 ```
 
-它是索引，不是新的 Source of Truth。
+It is an index, not another Source of Truth.
 
 ### Context Pack
 
-Context Pack 回答：
+A Context Pack answers:
 
-> 当前这个角色、当前这个阶段到底应该看什么？
+> What should this role, in this stage, actually see?
 
-支持角色：
+Supported roles:
 
 ```text
 planner
@@ -1065,7 +1044,7 @@ debugger
 resume
 ```
 
-支持阶段：
+Supported stages:
 
 ```text
 bootstrap
@@ -1076,7 +1055,7 @@ verification
 resume
 ```
 
-例如 Implementer Context Pack 更关注：
+An Implementer pack emphasizes:
 
 ```text
 Requirement
@@ -1087,7 +1066,7 @@ Exact Engineering Policies
 Relevant Verification Requirements
 ```
 
-Reviewer 则更关注：
+A Reviewer pack emphasizes:
 
 ```text
 Requirement / AC
@@ -1097,7 +1076,7 @@ Review Requirements
 Verification Plan
 ```
 
-Verifier 更关注：
+A Verifier pack emphasizes:
 
 ```text
 Acceptance Criteria
@@ -1108,7 +1087,7 @@ Review Result
 Fresh Verification
 ```
 
-### 构建 Context Plane
+### Build the Context Plane
 
 ```bash
 python scripts/context_plane.py build \
@@ -1121,7 +1100,7 @@ python scripts/context_plane.py build \
   --stage implementation
 ```
 
-验证是否 stale：
+Validate freshness:
 
 ```bash
 python scripts/context_plane.py validate \
@@ -1129,7 +1108,7 @@ python scripts/context_plane.py validate \
   --manifest .orchestrator/intake/context-manifest.json
 ```
 
-Context Pack 绑定：
+Context Packs are bound to:
 
 ```text
 source hashes
@@ -1138,25 +1117,25 @@ analysis snapshot
 policy snapshot
 ```
 
-任意重要来源改变后，旧 Pack 不再被视为当前事实。
+When an important source changes, the old pack is no longer considered current truth.
 
 ### Context Budget
 
-Context Plane 不会把完整 CBM Graph、完整执行历史、全部 ECC Rule Corpus 塞进 Prompt。
+The Context Plane does not dump the full CBM graph, complete execution history, or the entire ECC rule corpus into the prompt.
 
-原则：
+Principle:
 
 ```text
 Graph is storage, not prompt.
 ```
 
-Mandatory Context 永不因为预算不足被静默删除，低相关内容进入 lazy retrieval。
+Mandatory context is never silently dropped because of budget pressure. Lower-relevance material moves to lazy retrieval.
 
 ---
 
 ## 12.5 V6.4 Session Bootstrap / Handoff Context
 
-V6.4 解决的是：新会话、新 Agent、compact/resume 之后，不再依赖旧聊天历史重新拼项目状态。
+V6.4 prevents new sessions, new agents, and compact/resume events from rebuilding project truth from chat history.
 
 ```text
 SDD / Decision / State / Semantic Impact / Policy / Evidence
@@ -1173,15 +1152,15 @@ SDD / Decision / State / Semantic Impact / Policy / Evidence
                        Agent
 ```
 
-三类启动模式：
+Bootstrap modes:
 
 ```text
-fresh_project  → 尚未初始化 State，只允许 discovery/intake
-session_resume → 已有 State，从当前 task/cursor/next action 恢复
-agent_handoff  → 有 fresh handoff，额外携带上一任务摘要、风险和交接动作
+fresh_project  → no State yet; discovery/intake only
+session_resume → durable State exists; resume current task/cursor/next action
+agent_handoff  → fresh handoff adds previous-task summary, risks, and transfer action
 ```
 
-默认文件：
+Default files:
 
 ```text
 .orchestrator/session/
@@ -1192,34 +1171,34 @@ agent_handoff  → 有 fresh handoff，额外携带上一任务摘要、风险�
 └── handoff-<id>.json/.md
 ```
 
-Handoff 不能从“看起来完成了”之类自然语言自动制造完成事实。只有显式交接操作才能写入 `completed_task`。Handoff 会绑定 Work Item、Execution/Analysis snapshot 以及 Requirement/Decision/Policy/Evidence Authority Fingerprint；这些事实发生变化后旧 Handoff 会变 stale。
+A handoff cannot manufacture task completion from casual natural-language claims. Only an explicit handoff operation may populate `completed_task`. Handoffs bind to Work Item, Execution/Analysis snapshots, and a Requirement/Decision/Policy/Evidence authority fingerprint; material authority changes make old handoffs stale.
 
-完整规范见 `references/session-context.md`。
+See `references/session-context.md`.
 
 ---
 
 ## 13. Execution State Manager
 
-V5 提供 Durable Execution State，解决：
+V5 provides durable execution state and answers:
 
 ```text
-现在做到哪里？
-谁在做？
-是否被阻塞？
-下一步是什么？
-哪些 Gate 通过了？
-新的 Agent 如何恢复？
+Where are we now?
+Who is working on it?
+Is it blocked?
+What happens next?
+Which gates have passed?
+How does a new agent resume?
 ```
 
 ### Canonical State
 
-使用：
+The state model uses:
 
 ```text
 Phase × Status + Blocked Modifier
 ```
 
-Phase：
+Phases:
 
 ```text
 discovery
@@ -1233,7 +1212,7 @@ release
 closed
 ```
 
-Status：
+Statuses:
 
 ```text
 pending
@@ -1244,7 +1223,7 @@ failed
 cancelled
 ```
 
-Blocked 单独存在：
+Blocked is represented separately:
 
 ```yaml
 phase: implementation
@@ -1252,21 +1231,21 @@ status: in_progress
 blocked: true
 ```
 
-这样不会因为 blocked 而丢失“到底阻塞在哪个阶段”的信息。
+This preserves the phase in which the work is blocked.
 
 ### Authority Modes
 
 #### native
 
-适合 BMAD 等已有执行状态权威的系统。
+Appropriate for systems such as BMAD that already own execution state.
 
-Native Tool 管：
+The native tool owns:
 
 ```text
 phase / status / progress
 ```
 
-Orchestrator 补充：
+The Orchestrator augments it with:
 
 ```text
 blockers
@@ -1279,15 +1258,15 @@ context refs
 
 #### hybrid
 
-适合 OpenSpec。
+Appropriate for OpenSpec.
 
-OpenSpec 管：
+OpenSpec owns:
 
 ```text
 proposal / spec / design / tasks readiness
 ```
 
-Orchestrator 管：
+The Orchestrator owns:
 
 ```text
 implementation / review / verification runtime state
@@ -1295,37 +1274,37 @@ implementation / review / verification runtime state
 
 #### orchestrator
 
-没有原生状态机制时，由：
+When no native state system exists:
 
 ```text
 .orchestrator/execution-state.yaml
 ```
 
-作为执行状态权威。
+becomes the execution-state authority.
 
 ### Optimistic Revision
 
-Execution State 使用 revision 防止多 Agent last-write-wins。
+Execution State uses a revision to prevent multi-agent last-write-wins behavior.
 
 ```text
-Agent A read revision 12
-Agent B read revision 12
+Agent A reads revision 12
+Agent B reads revision 12
 
 A update -> revision 13
 B update expected 12 -> conflict
 ```
 
-并发环境中每个 State mutation 都应携带 expected revision。
+Concurrent state mutations should always include the expected revision.
 
 ### Append-only History
 
-默认：
+Default history:
 
 ```text
 .orchestrator/execution-history.jsonl
 ```
 
-记录：
+It records events such as:
 
 ```text
 STATE_INITIALIZED
@@ -1338,13 +1317,13 @@ VERIFICATION_RECORDED
 ...
 ```
 
-不要重写历史记录。
+History should be appended, not rewritten.
 
 ---
 
-## 14. Host Enforcement（V6.3 Runtime + V6.4 Session Context）
+## 14. Host Enforcement (V6.3 Runtime + V6.4 Session Context)
 
-V6.3 增加统一 Runtime Enforcement Kernel，V6.4 在相同生命周期上增加 Session Bootstrap/Handoff：
+V6.3 adds a shared Runtime Enforcement Kernel; V6.4 adds Session Bootstrap/Handoff on the same lifecycle events:
 
 ```text
 Host Event
@@ -1356,17 +1335,17 @@ Decision / State / Context / Policy
 allow | deny | context | stale
 ```
 
-三个 Host Adapter 都只是事件翻译器，不复制治理规则。
+All host adapters are thin event translators. Governance rules are not copied into each host.
 
 ### Claude Code
 
-模板：
+Template:
 
 ```text
 hosts/claude-code/hooks.template.json
 ```
 
-主要事件：
+Primary events:
 
 ```text
 SessionStart
@@ -1380,25 +1359,25 @@ Stop
 
 ### Codex
 
-模板：
+Template:
 
 ```text
 hosts/codex/hooks.template.json
 ```
 
-主要事件与 Claude Code 类似。
+The primary event set is similar to Claude Code.
 
-项目级 Hook 只是 Runtime Guardrail，最终安全边界仍是 V5 + CI。
+Project-level hooks are runtime guardrails. Final safety still comes from V5 plus CI.
 
 ### Pi
 
-模板：
+Template:
 
 ```text
 hosts/pi/coding-orchestrator.template.ts
 ```
 
-主要事件：
+Primary events:
 
 ```text
 session_start
@@ -1408,37 +1387,33 @@ tool_result
 agent_end
 ```
 
-Pi 的 `tool_call` 可以提供 mutation 前阻断，`agent_end` 更适合作为 best-effort completion continuation。最终 DONE 依然由 State / CI 决定。
+Pi's `tool_call` can block mutations before execution. `agent_end` is best treated as a best-effort completion continuation point. Final DONE authority remains with State / CI.
 
 ---
 
-## 15. Runtime Enforcement 规则
+## 15. Runtime Enforcement Rules
 
 ### Session Start
 
-执行：
+Run:
 
 ```text
 detect project
   ↓
-load State / Context Manifest / current role Pack
+load state
   ↓
-validate latest Handoff
+check context freshness
   ↓
-build Session Bootstrap JSON
+load current Context Pack
   ↓
-render compact Markdown
-  ↓
-inject once
+inject compact context
 ```
 
-后续 `UserPromptSubmit` 默认只注入 delta context，不重复注入完整 Bootstrap。
-
-不会把所有历史、CBM 图或 Policy 全量塞进模型。
+Do not inject complete history, the full CBM graph, or the full policy corpus.
 
 ### Pre Tool
 
-生产代码 mutation 之前执行轻量同步检查：
+Before a production-code mutation, perform lightweight synchronous checks:
 
 ```text
 Execution State exists?
@@ -1448,9 +1423,9 @@ Role allowed to mutate?
 Context fresh enough for first mutation?
 ```
 
-不满足则 DENY。
+Deny the tool call if a required condition is not met.
 
-例如：
+Example:
 
 ```text
 phase = planning
@@ -1460,7 +1435,7 @@ Agent wants Write UserService.java
 
 ### Post Tool
 
-发生 material mutation 后：
+After a material mutation:
 
 ```text
 semantic_fresh = false
@@ -1468,30 +1443,29 @@ context_fresh = false
 verification.fresh = false
 ```
 
-并可执行轻量 Policy feedback。
+Lightweight policy feedback may also run here.
 
 ### Stop
 
-普通中间回复不会被拦截。
+Normal intermediate responses are not blocked.
 
-只有 Agent 明确声称：
+The Completion Contract is checked only when the agent explicitly claims something such as:
 
 ```text
-完成
 Done
 Finished
-可以合并
+Ready to merge
 ```
 
-或状态已经进入 verification / release / closed 语境时，才检查 Completion Contract。
+or the state is already in a verification / release / closed completion context.
 
 ---
 
 ## 16. Dirty Window
 
-V6.3 不会在每次改一行代码后立即跑全套重型分析。
+V6.3 does not rerun the entire heavyweight analysis stack after every single line edit.
 
-修改后进入 Dirty Window：
+After a mutation, the system enters a Dirty Window:
 
 ```text
 Implementation
@@ -1503,9 +1477,9 @@ edit
 edit
 ```
 
-这些连续 Implementation mutation 可以继续进行。
+Continuous implementation edits may proceed.
 
-但是第一次 material mutation 会立即使以下证据失效：
+However, the first material mutation immediately invalidates:
 
 ```text
 Semantic Impact
@@ -1514,7 +1488,7 @@ Policy proof
 Final Verification
 ```
 
-当准备进入：
+Before transitioning to:
 
 ```text
 review
@@ -1522,7 +1496,7 @@ verification
 closed
 ```
 
-时，State Guard 会要求重新完成：
+the State Guard requires renewed evidence:
 
 ```text
 Semantic Intake
@@ -1533,24 +1507,24 @@ Context refresh
 Verification
 ```
 
-这个设计避免出现两种极端：
+The design avoids both extremes:
 
 ```text
-极端 A：每改一行都跑 PIT/CBM/全量测试
-极端 B：改完一堆代码继续拿旧证据宣布 DONE
+Extreme A: run PIT/CBM/full tests after every line change
+Extreme B: make many changes and declare DONE using stale evidence
 ```
 
 ---
 
 ## 17. Enforcement Configuration
 
-Starter：
+Starter configuration:
 
 ```text
 examples/enforcement.yaml
 ```
 
-示例：
+Example:
 
 ```yaml
 version: 1
@@ -1568,26 +1542,26 @@ allowed_code_mutation_phases:
   - implementation
 ```
 
-安装 Host Adapter 后，项目可维护自己的：
+After host adapters are installed, a project may maintain:
 
 ```text
 .orchestrator/enforcement.yaml
 ```
 
-建议不要随意关闭：
+Avoid casually disabling:
 
 ```text
 require_state_for_code_mutation
 require_classified_decision_for_code_mutation
 ```
 
-否则 Runtime Enforcement 的核心价值会被削弱。
+Doing so removes much of the value of runtime enforcement.
 
 ---
 
-## 18. Spring Boot 推荐落地
+## 18. Recommended Spring Boot Setup
 
-一个典型 Spring Boot 项目可以采用：
+A typical Spring Boot project may use:
 
 ```text
 web/controller
@@ -1597,11 +1571,11 @@ service
 dao/repository
 ```
 
-建议三层执行：
+Use three enforcement layers.
 
 ### Context Layer
 
-Agent 修改 Controller 前，Context Pack 注入：
+Before an agent edits a controller, inject into the Context Pack:
 
 ```text
 ARCH-SPRING-LAYER-001
@@ -1610,32 +1584,32 @@ web may depend on service, not dao
 
 ### Runtime Layer
 
-写入代码后，V6 Policy Check 立即识别直接跨层依赖。
+After code is written, the V6 Policy Check detects direct cross-layer dependencies quickly.
 
 ### CI Layer
 
-ArchUnit 执行真正的仓库级 Architecture Gate。
+ArchUnit executes the repository-level architecture gate.
 
-推荐关系：
+Recommended relationship:
 
 ```text
 Prompt / Context
-→ 防忘
+→ Prevent forgetting
 
 V6 Hook / Policy Check
-→ 快速反馈
+→ Fast feedback
 
 ArchUnit / CI
-→ 最终证明
+→ Final proof
 ```
 
 ---
 
 ## 19. Verification Planner
 
-Verification Planner 根据 Semantic Impact + Engineering Policy + Project Quality Policy 决定需要哪些验证。
+The Verification Planner combines Semantic Impact, Engineering Policy, and project quality policy to determine what must be verified.
 
-典型推导：
+Typical derivations:
 
 ```text
 changed executable symbol
@@ -1657,28 +1631,28 @@ data migration
 → migration / rollback checks
 ```
 
-已有 REQUIRED Gate 不能被 Planner 降级。
+Existing REQUIRED gates cannot be downgraded by the planner.
 
-例如项目规定：
+For example, if the project requires:
 
 ```text
 Semgrep REQUIRED
 PIT mutation >= 80% REQUIRED
 ```
 
-即使 Flow 是 FAST，也不能擅自取消这些 Gate。
+those gates remain mandatory even when the selected flow is FAST.
 
 ---
 
-## 20. 推荐项目配置
+## 20. Recommended Project Configuration
 
-参考：
+See:
 
 ```text
 examples/orchestrator-config.yaml
 ```
 
-它涵盖：
+It covers:
 
 ```text
 Evidence
@@ -1692,40 +1666,40 @@ Execution Discipline
 Quality Gates
 ```
 
-建议复制到项目自己的配置体系后再修改实际命令和阈值，不要把示例中的：
+Copy the example into your own project configuration and replace real commands and thresholds. Do not leave placeholders such as:
 
 ```text
 <project-test-command>
 <project-archunit-test-command>
 ```
 
-留在真实项目中。
+in production repositories.
 
 ---
 
-## 21. 推荐日常开发工作流
+## 21. Recommended Daily Development Workflow
 
-### 新 Feature
+### New Feature
 
 ```text
-1. SDD 创建/定位 Change 或 Story
-2. 初始化或恢复 Execution State
-3. 运行 Semantic Intake
-4. Decision Engine 确定 Flow
-5. Policy Router 选择工程约束
-6. Context Plane 生成 Planner/Implementer Pack
+1. Create or locate the SDD Change / Story
+2. Initialize or resume Execution State
+3. Run Semantic Intake
+4. Let the Decision Engine determine Flow
+5. Let the Policy Router select engineering constraints
+6. Generate Planner / Implementer Context Packs
 7. Transition → implementation
-8. Agent 开发，Host Hook 实时约束
-9. Dirty Window 内完成一个 traceable slice
-10. 重新 Semantic Intake
+8. Develop under Host Hook enforcement
+9. Complete one traceable slice within the Dirty Window
+10. Re-run Semantic Intake
 11. Transition → review
-12. Review / Policy / Quality Gates
+12. Run Review / Policy / Quality Gates
 13. Transition → verification
-14. Fresh Verification
+14. Produce Fresh Verification
 15. Transition → closed
 ```
 
-### 明确 Bug Fix
+### Clear Bug Fix
 
 ```text
 Bug
@@ -1745,11 +1719,11 @@ Semantic Reanalysis
 Verification
 ```
 
-未知失败不应靠 speculative patch 逐个尝试，应进入 root-cause debugging。
+Unknown failures should enter root-cause debugging rather than speculative patching.
 
 ### Resume
 
-新的 Agent 接手时：
+When a new agent takes over:
 
 ```bash
 python scripts/execution_state_manager.py \
@@ -1757,20 +1731,20 @@ python scripts/execution_state_manager.py \
   resume
 ```
 
-然后生成：
+Then generate a Context Pack with:
 
 ```text
 role = resume
 stage = resume
 ```
 
-的 Context Pack，而不是让新 Agent 重新扫整个聊天历史。
+instead of asking the new agent to rescan an entire chat history.
 
 ---
 
-## 22. 推荐 `.orchestrator/` 项目布局
+## 22. Recommended `.orchestrator/` Layout
 
-真实项目中建议维护：
+A real project should typically maintain:
 
 ```text
 .orchestrator/
@@ -1798,19 +1772,19 @@ stage = resume
 └── enforcement.yaml
 ```
 
-具体输出名称可能随 Pipeline 参数变化，但建议保持上述职责划分。
+Exact filenames may vary with pipeline parameters, but keep these responsibility boundaries stable.
 
 ---
 
-## 23. Source of Truth 规则
+## 23. Source of Truth Rules
 
-为了避免“双权威”，请遵守以下优先级。
+Avoid dual authorities by preserving the following precedence.
 
 ### Requirement Authority
 
 ```text
 Existing SDD
-> Project explicit configuration
+> Explicit project configuration
 > Generic fallback
 ```
 
@@ -1836,7 +1810,7 @@ Project Policy
 CBM structural evidence
 ```
 
-但 CBM 不能覆盖 Requirement、Policy 或 Decision Authority。
+CBM still does not override Requirement, Policy, or Decision authority.
 
 ### Completion Authority
 
@@ -1848,58 +1822,58 @@ Required CI/Gates
 Fresh Verification
 ```
 
-Host Agent 自己不是 Completion Authority。
+A host agent is not Completion Authority.
 
 ---
 
-## 24. Host Capability 差异
+## 24. Host Capability Differences
 
-三种宿主能力不完全一致，详见：
+The three hosts are not identical. See:
 
 ```text
 references/host-capabilities.yaml
 ```
 
-设计时应遵守：
+Design rule:
 
 ```text
-Host 能力不足
-≠
-降低治理要求
+A weaker host capability
+!=
+a weaker governance requirement
 ```
 
-而应该：
+Instead:
 
 ```text
 Host Guard weaker
 → State / CI Guard stronger
 ```
 
-因此项目不能因为使用某个 Host 没有硬 Stop Block，就取消最终 Completion Gate。
+Do not remove final completion gates merely because a host lacks a hard Stop blocker.
 
 ---
 
-## 25. 常见问题
+## 25. FAQ
 
-### Q1：没有 CBM 能不能使用？
+### Q1: Can the system be used without CBM?
 
-V3/V4/V5/Policy/Context 的部分能力仍然存在，但 V6 Semantic Impact 默认 fail closed。
+Parts of V3/V4/V5, Policy, and Context remain usable, but V6 Semantic Impact fails closed by default.
 
-对于正式代码变更，不建议把“CBM 不可用”解释为“低风险”。
+For real code changes, do not interpret "CBM unavailable" as "low risk".
 
-测试时可使用 fixture。
+Fixtures may be used for tests.
 
-### Q2：所有需求都需要 OpenSpec/BMAD 吗？
+### Q2: Does every requirement need OpenSpec or BMAD?
 
-不需要。
+No.
 
-TRIVIAL/FAST 可以走 Generic 或轻量 SDD，但仍应遵守项目 Engineering Policy 和必要 Verification。
+TRIVIAL and FAST work can use Generic or lightweight SDD, while still obeying project Engineering Policy and required Verification.
 
-### Q3：为什么不把所有规则都写进 Prompt？
+### Q3: Why not put every rule into the prompt?
 
-因为规则越多，Context Pollution 越严重。
+Because rule volume creates context pollution.
 
-本项目采用：
+This project uses:
 
 ```text
 Manifest
@@ -1908,45 +1882,47 @@ Manifest
 → Machine Enforcement
 ```
 
-而不是一次加载全部规范。
+instead of loading the entire rule corpus at once.
 
-### Q4：为什么 External ECC Rule 不能直接 BLOCK？
+### Q4: Why can an external ECC rule not directly BLOCK work?
 
-因为外部规则更新不应该隐式改变项目治理行为。
+Because updates to an external rule source must not silently change project governance behavior.
 
-必须显式晋升为 Project Policy 后，才能成为 MUST / Gate。
+A rule must be explicitly promoted into Project Policy before it can become a MUST or Gate.
 
-### Q5：为什么代码改完后 Semantic Impact 会 stale？
+### Q5: Why does Semantic Impact become stale after code changes?
 
-因为旧 CBM 图、旧 Context Pack、旧 Verification 针对的是旧 Snapshot。
+Because the previous CBM graph, Context Pack, and Verification refer to an older snapshot.
 
-新代码必须重新证明其 Impact 和 Verification。
+New code must re-prove its impact and verification state.
 
-### Q6：为什么 Hook 不直接每次跑全量测试？
+### Q6: Why do hooks not run the complete test suite after every edit?
 
-同步 Hook 应保持廉价，否则开发体验会崩坏。
+Synchronous hooks must stay cheap enough to preserve development usability.
 
-重型 Proof 应在 slice boundary、phase transition 或 final gate 执行。
+Heavy proof belongs at slice boundaries, phase transitions, and final gates.
 
-### Q7：Agent 能不能自己把状态改成 DONE？
+### Q7: Can an agent mark the state DONE by itself?
 
-不能绕过 Transition Guard。
+It cannot bypass Transition Guards.
 
-即使 Native SDD 报 `done`，如果 REQUIRED Gate 或 Fresh Verification 不满足：
+Even if a native SDD reports `done`, required gates and Fresh Verification may still be incomplete:
 
 ```text
 Native Done != Governance Done
 ```
 
-### Q8：是否已经支持 Multi-Agent Scheduler？
+### Q8: Is a full Multi-Agent Scheduler already included?
 
-V6.5 已经为多 Agent 准备了 revision、assignment、role context、reviewer/verifier write separation 和 Subagent hook，但当前版本不包含完整 V7 Scheduler。
+No.
+
+V6.5 already contains foundations for multi-agent work, including revisions, assignments, role-aware context, reviewer/verifier write separation, and subagent hooks, but the complete V7 scheduler is not part of this version.
 
 ---
 
-## 26. 测试
+## 26. Tests
 
-运行完整测试：
+Run the full suite:
 
 ```bash
 python3 -m unittest discover \
@@ -1954,13 +1930,13 @@ python3 -m unittest discover \
   -p 'test_*.py'
 ```
 
-V6.5 当前包：
+Current V6.5 package:
 
 ```text
 111 tests
 ```
 
-覆盖范围包括：
+Coverage includes:
 
 ```text
 Decision Engine
@@ -1973,7 +1949,7 @@ Session Bootstrap / Handoff
 Host Enforcement
 ```
 
-压力场景参考：
+Pressure scenarios:
 
 ```text
 evals/pressure-scenarios.md
@@ -1981,23 +1957,23 @@ evals/pressure-scenarios.md
 
 ---
 
-## 27. 故障排查
+## 27. Troubleshooting
 
-### Code mutation 被拒绝
+### Code mutation is denied
 
-检查：
+Check:
 
 ```text
-1. execution-state.yaml 是否存在
-2. Decision 是否已 CLASSIFIED
-3. 当前 phase 是否 implementation
-4. Context Manifest 是否 stale
-5. 当前角色是否允许修改 production code
+1. Does execution-state.yaml exist?
+2. Is the Decision CLASSIFIED?
+3. Is the current phase implementation?
+4. Is the Context Manifest stale?
+5. Is the current role allowed to modify production code?
 ```
 
-### 无法进入 Review
+### Cannot transition to Review
 
-常见原因：
+Common causes:
 
 ```text
 implementation tasks incomplete
@@ -2006,11 +1982,11 @@ semantic evidence stale
 policy evidence stale
 ```
 
-代码修改后通常需要重新运行 Semantic Intake。
+After code changes, Semantic Intake usually needs to be rerun.
 
-### 无法 CLOSED
+### Cannot transition to CLOSED
 
-检查：
+Check:
 
 ```text
 Acceptance Criteria
@@ -2023,9 +1999,9 @@ Verification Freshness
 Execution Snapshot Match
 ```
 
-### Context Pack stale
+### Context Pack is stale
 
-运行：
+Run:
 
 ```bash
 python scripts/context_plane.py validate \
@@ -2033,75 +2009,75 @@ python scripts/context_plane.py validate \
   --manifest .orchestrator/intake/context-manifest.json
 ```
 
-然后重新 build Context Plane。
+Then rebuild the Context Plane.
 
-### Policy 冲突
+### Policy conflict
 
-项目 Policy 不允许通过高优先级配置把已有 MUST 偷偷降级为 SHOULD/PREFER。
+Project Policy does not allow an existing MUST to be silently downgraded to SHOULD/PREFER through a higher-priority configuration layer.
 
-遇到 `ILLEGAL_DOWNGRADE` 时应解决 Policy Authority，而不是跳过检查。
+If `ILLEGAL_DOWNGRADE` occurs, resolve the policy authority conflict rather than skipping the check.
 
 ---
 
-## 28. 安全与治理边界
+## 28. Security and Governance Boundaries
 
-V6.4 采用 defense-in-depth，而不是假设任意一个 Hook 永远不可绕过。
+V6.4 uses defense in depth. It does not assume that any single hook is impossible to bypass.
 
-推荐完整链路：
+Recommended chain:
 
 ```text
 Layer 1  Context / Prompt
-         提前告诉 Agent 正确约束
+         Tell the agent the correct constraints early
 
 Layer 2  Host Hook / Extension
-         实时阻断明显非法动作
+         Block obviously invalid actions in real time
 
 Layer 3  Execution State Guard
-         阻止非法 phase transition
+         Prevent illegal phase transitions
 
 Layer 4  CI / Git / Quality Gate
-         仓库级机器证明
+         Repository-level machine proof
 
 Layer 5  Merge / Branch Protection
-         最终交付边界
+         Final delivery boundary
 ```
 
-不要把 V6.4 Host Adapter 当成唯一安全机制。
+Do not treat the V6.4 host adapter as the only security mechanism.
 
 ---
 
-## 29. 扩展新的 SDD
+## 29. Extending a New SDD
 
-实现：
+Implement the contract described in:
 
 ```text
 references/adapter-contract.md
 ```
 
-要求保持：
+Preserve the boundary:
 
 ```text
 SDD owns What / Why
 Orchestrator owns execution governance
 ```
 
-不要把已有 SDD artifact 全量复制到 Orchestrator。
+Do not fully duplicate existing SDD artifacts into Orchestrator-owned state.
 
 ---
 
-## 30. 扩展新的 Code Intelligence Provider
+## 30. Extending a New Code Intelligence Provider
 
-当前只有 CBM。
+CBM is currently the only provider.
 
-如果未来接入其他 Provider，应实现：
+A future provider should implement:
 
 ```text
 scripts/code_intelligence_provider.py
 ```
 
-并输出 Canonical Semantic Impact。
+and emit Canonical Semantic Impact.
 
-Decision Engine 不应直接依赖 Provider 私有数据结构。
+The Decision Engine must not depend directly on provider-private structures.
 
 ```text
 Provider
@@ -2115,18 +2091,18 @@ Work Facts
 
 ---
 
-## 31. 扩展新的 Host
+## 31. Extending a New Host
 
-增加一个 Host Adapter 时：
+When adding a host adapter:
 
-1. 阅读 `references/host-enforcement.md`。
-2. 在 `references/host-capabilities.yaml` 描述能力。
-3. 将宿主事件转换为 Canonical Enforcement Event。
-4. 调用 `scripts/enforcement_kernel.py`。
-5. 不要在 Host Adapter 内复制 Decision / Policy / State 规则。
-6. 对宿主无法硬阻断的能力，依赖 V5/CI 最终 Gate。
+1. Read `references/host-enforcement.md`.
+2. Describe host capabilities in `references/host-capabilities.yaml`.
+3. Convert host events into Canonical Enforcement Events.
+4. Call `scripts/enforcement_kernel.py`.
+5. Do not duplicate Decision / Policy / State rules in the host adapter.
+6. Where the host cannot hard-block an action, rely on V5/CI final gates.
 
-正确关系：
+Correct relationship:
 
 ```text
 New Host
@@ -2136,21 +2112,21 @@ Thin Adapter
 Shared Enforcement Kernel
 ```
 
-而不是：
+not:
 
 ```text
 New Host
    ↓
-重新实现一套 Orchestrator
+Reimplement the Orchestrator
 ```
 
 ---
 
-## 32. Superpowers 的位置
+## 32. Where Superpowers Fits
 
-Superpowers 不负责决定需求属于 FAST 还是 DEEP，它负责约束 Agent 怎样完成工作。
+Superpowers does not decide whether a requirement is FAST or DEEP. It constrains how an agent performs the work.
 
-典型路由：
+Typical routing:
 
 ```text
 Ambiguity
@@ -2175,7 +2151,7 @@ Before DONE
 → verification-before-completion
 ```
 
-因此：
+Therefore:
 
 ```text
 SDD
@@ -2196,20 +2172,20 @@ State + Gates
 
 ---
 
-## 33. 当前 V6.5 的边界
+## 33. Current V6.5 Boundaries
 
-V6.5 已经完成 Coding Governance 的主体闭环、Session Context 收口以及项目级 Auto Bootstrap/Unified CLI，但它不是：
+V6.5 closes the main coding-governance loop, Session Context, and project bootstrap/unified-entry-point gap, but it is not:
 
-- Jira/Linear 替代品
-- CI/CD 替代品
-- CodeQL/SonarQube 替代品
-- 完整 Multi-Agent Scheduler
-- 组织级 Governance Dashboard
-- 完整代码知识图谱实现
+- a Jira/Linear replacement
+- a CI/CD replacement
+- a CodeQL/SonarQube replacement
+- a complete Multi-Agent Scheduler
+- an organization-level governance dashboard
+- a complete code knowledge-graph implementation
 
-它更像这些系统之间的**控制面与协议层**。
+It is better understood as a **control plane and protocol layer** between those systems.
 
-后续可能演进方向包括：
+Possible future directions include:
 
 ```text
 Real Project Validation / Calibration
@@ -2219,13 +2195,13 @@ Multi-Agent Scheduling
 Organization-level Governance Control Plane
 ```
 
-但在继续增加功能前，建议先在真实项目中验证误拦截、漏拦截、CBM 准确率、Context Pack 质量和 Verification Recall。
+Before adding more features, validate the system on real repositories: false blocks, missed blocks, CBM accuracy, Context Pack quality, and Verification Recall.
 
 ---
 
-## 34. 推荐真实项目验证指标
+## 34. Recommended Real-project Validation Metrics
 
-在 Spring Boot 项目中建议准备 Golden Cases，覆盖：
+For a Spring Boot repository, prepare Golden Cases covering:
 
 ```text
 local change
@@ -2241,7 +2217,7 @@ bug fix
 large refactor
 ```
 
-重点观察：
+Measure:
 
 ```text
 Impact Recall
@@ -2254,7 +2230,7 @@ Context Pack Relevance
 Context Token Cost
 ```
 
-其中建议优先保证：
+Prioritize:
 
 ```text
 Verification Recall
@@ -2262,23 +2238,23 @@ Policy MUST Recall
 High-risk Impact Recall
 ```
 
-宁可多跑一个检查，也不要漏掉关键生产风险。
+It is usually better to run one extra relevant check than to miss a critical production risk.
 
 ---
 
-## 35. 核心命令速查
+## 35. Core Command Reference
 
 ```bash
-# 检测状态 Provider
+# Detect state Provider
 python scripts/state_provider_detector.py .
 
-# 安装 starter policy
+# Install starter policy
 python scripts/policy_bootstrap.py --repo .
 
-# 决策分类
+# Decision classification
 python scripts/decision_engine.py work-facts.json --strict-evidence --pretty
 
-# 完整 V6 semantic intake
+# Full V6 semantic intake
 python scripts/semantic_intake_pipeline.py \
   --repo . \
   --request-file request.md \
@@ -2314,45 +2290,45 @@ python3 -m unittest discover -s tests -p 'test_*.py'
 
 ---
 
-## 36. 核心理念
+## 36. Core Philosophy
 
-Coding Agent Orchestrator 的目标不是让 AI Coding 变成更重的流程，而是让流程强度与真实风险匹配。
+Coding Agent Orchestrator is not designed to make AI coding more bureaucratic. Its goal is to match process depth to real engineering risk.
 
 ```text
-简单需求
-→ 简单流程
+Simple requirement
+→ Simple process
 
-复杂需求
-→ 深度规划
+Complex requirement
+→ Deeper planning
 
-模糊需求
-→ 先澄清
+Ambiguous requirement
+→ Clarify first
 
-高风险需求
-→ 强验证
+High-risk requirement
+→ Stronger verification
 
-代码变化
-→ 旧证据失效
+Code changes
+→ Previous evidence becomes stale
 
-项目规则
-→ 可机器执行
+Project rules
+→ Machine-enforceable
 
-上下文
-→ 按角色/阶段精确投影
+Context
+→ Precisely projected by role and stage
 
-Agent 声称完成
-→ 必须有 Fresh Evidence
+Agent claims completion
+→ Fresh Evidence required
 ```
 
-最终希望达到的是：
+The target outcome is:
 
-> **让 Agent 在正确的时间看到正确的上下文，在正确的流程深度下工作，并且只有在有足够证据时才能宣布完成。**
+> **Let the agent see the right context at the right time, work at the right process depth, and declare completion only when sufficient evidence exists.**
 
 ---
 
-## 37. 进一步阅读
+## 37. Further Reading
 
-建议按以下顺序阅读：
+Recommended reading order:
 
 ```text
 SKILL.md
@@ -2372,7 +2348,7 @@ references/execution-state-manager.md
 references/host-enforcement.md
 ```
 
-需要针对具体 SDD 时再阅读：
+For a specific SDD:
 
 ```text
 references/adapters-openspec.md
@@ -2380,13 +2356,13 @@ references/adapters-bmad.md
 references/adapters-generic-sdd.md
 ```
 
-需要理解 ECC Integration：
+For ECC integration:
 
 ```text
 references/ecc-rules-integration.md
 ```
 
-需要理解 Superpowers Routing：
+For Superpowers routing:
 
 ```text
 references/superpowers-policy.md
@@ -2396,11 +2372,10 @@ references/superpowers-policy.md
 
 ## License / Third-party
 
-本包包含对第三方工具和规则源的集成设计。第三方说明见：
+This package contains integration designs for third-party tools and rule sources. See:
 
 ```text
 THIRD_PARTY_NOTICES.md
 ```
 
-项目没有把外部规则源自动提升为项目治理权威。
-
+External rule sources are never automatically promoted to project governance authority.
