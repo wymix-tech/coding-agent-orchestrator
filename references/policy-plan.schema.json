@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.local/orchestrator/policy-plan.schema.json",
+  "title": "V6.1 Engineering Policy Plan",
+  "type": "object",
+  "required": ["schema_version", "status", "stage", "policy_snapshot_id", "context", "applicable_rules", "enforcements"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "status": {"enum": ["ROUTED", "CONFLICT"]},
+    "stage": {"enum": ["bootstrap", "planning", "implementation", "review", "verification"]},
+    "policy_snapshot_id": {"type": "string", "minLength": 1},
+    "context": {"type": "object"},
+    "applicable_rules": {"type": "array"},
+    "enforcements": {"type": "array"},
+    "conflicts": {"type": "array"},
+    "external_sources": {"type": "array"},
+    "loading": {"type": "object"}
+  }
+}

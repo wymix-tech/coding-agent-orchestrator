@@ -258,3 +258,35 @@ Expected: attaching A2 updates the execution snapshot and sets `verification.fre
 An agent proposes adding Graphify because CBM misses one dynamic call.
 
 Expected: V6 does not silently add a second provider. Resolve/verify the specific missing fact with source evidence. Provider expansion is an explicit architecture change, not an ad-hoc per-task action.
+
+## V6.1 Engineering Policy pressure scenarios
+
+### P29 — Spring web bypasses service
+
+A changed `UserController` imports `UserRepository` directly. The task is otherwise small and tests pass.
+
+Expected: route `ARCH-SPRING-LAYER-001`; lightweight policy check fails; ArchUnit gate remains REQUIRED when configured; completion is blocked until the dependency direction is corrected or an explicit project-level policy change/waiver is made. Flow classification itself remains owned by the Decision Engine.
+
+### P30 — External ECC rule conflicts with project policy
+
+An ECC guidance rule recommends a pattern that conflicts with a project `MUST`.
+
+Expected: project policy wins. ECC remains external guidance and cannot lower or replace the local invariant.
+
+### P31 — Higher-precedence pack tries to weaken MUST
+
+A local override redefines the same rule ID from `MUST` to `SHOULD`.
+
+Expected: policy routing reports `ILLEGAL_DOWNGRADE`; implementation is blocked until policy authority is reconciled.
+
+### P32 — Unrelated policy corpus should not flood context
+
+A Java/Spring REST change occurs in a repository that also has frontend, Rust, Kafka, and ML rule packs.
+
+Expected: bootstrap reads the manifest, planning/implementation loads only applicable project rules and matching external references. Full rule bodies are not injected into context by default.
+
+### P33 — Policy checker unavailable but MUST exists
+
+A `MUST` architecture rule maps to ArchUnit, but no ArchUnit result exists yet.
+
+Expected: the gate remains `pending`; absence of a checker result is not treated as compliance. DONE is denied until executable evidence or an explicitly governed exception exists.

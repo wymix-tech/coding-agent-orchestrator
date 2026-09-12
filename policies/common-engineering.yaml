@@ -1,0 +1,27 @@
+id: common-engineering
+precedence: 100
+rules:
+  - id: ENG-BOUNDARY-001
+    title: Validate inputs at system boundaries
+    level: MUST
+    statement: External/user input must be validated before business processing.
+    scope:
+      signals: [public_contract]
+    load:
+      stages: [planning, implementation, review, verification]
+    enforcement:
+      - engine: review
+        gate: boundary-input-validation
+        required: true
+
+  - id: ENG-TEST-001
+    title: Behavior changes require executable verification
+    level: MUST
+    statement: Behavior-changing code requires tests or equivalent executable evidence.
+    load:
+      always: true
+      stages: [planning, implementation, review, verification]
+    enforcement:
+      - engine: project-test
+        gate: behavior-verification
+        required: true

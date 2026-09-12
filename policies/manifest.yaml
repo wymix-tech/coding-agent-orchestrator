@@ -1,0 +1,45 @@
+version: 1
+policy_set: default-project-engineering
+
+# Higher precedence wins, but a lower-level policy may not downgrade a stronger MUST.
+packs:
+  - id: common-engineering
+    path: common-engineering.yaml
+    precedence: 100
+    enabled: true
+  - id: spring-boot-layered
+    path: spring-boot-layered.yaml
+    precedence: 300
+    enabled: true
+
+# Canonical layer mapping used by V6 policy routing and lightweight checks.
+layers:
+  web:
+    path_globs:
+      - "**/web/**/*.java"
+      - "**/controller/**/*.java"
+    package_globs:
+      - "*.web.*"
+      - "*.controller.*"
+  service:
+    path_globs:
+      - "**/service/**/*.java"
+    package_globs:
+      - "*.service.*"
+  dao:
+    path_globs:
+      - "**/dao/**/*.java"
+      - "**/repository/**/*.java"
+    package_globs:
+      - "*.dao.*"
+      - "*.repository.*"
+
+# ECC is an optional upstream/default source. It is guidance unless a project policy
+# explicitly promotes a concept into a machine-enforced local rule.
+external_sources:
+  - id: ecc
+    kind: ecc_rules
+    enabled: true
+    root: .claude/rules/ecc
+    packs: [common, java]
+    authority: external_guidance

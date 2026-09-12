@@ -30,6 +30,33 @@ orchestrator:
     semantic_impact_file: .orchestrator/intake/semantic-impact.json
     verification_plan_file: .orchestrator/intake/verification-plan.json
 
+
+  engineering_policy:
+    enabled: true
+    manifest: .orchestrator/policies/manifest.yaml
+    router: scripts/policy_engine.py
+    bootstrap: scripts/policy_bootstrap.py
+    fail_on_policy_conflict: true
+    levels: [MUST, SHOULD, PREFER]
+    project_policy_authoritative: true
+    external_rules_can_block: false
+    load_strategy:
+      bootstrap: manifest_and_always_on_summaries
+      planning: relevant_rule_summaries
+      implementation: exact_rules_by_semantic_impact
+      review: rules_plus_violations
+      verification: required_gate_evidence
+    spring_boot:
+      layered_policy_pack: policies/spring-boot-layered.yaml
+      recommended_dependency_enforcer: archunit
+    ecc:
+      enabled: optional
+      adapter: scripts/ecc_rules_adapter.py
+      root: .claude/rules/ecc
+      packs: [common, java]
+      authority: external_guidance
+      promote_to_blocking_only_via_local_policy: true
+
   decision_engine:
     enabled: true
     mode: deterministic

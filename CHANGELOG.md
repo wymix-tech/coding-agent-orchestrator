@@ -1,5 +1,15 @@
 # Changelog
 
+## 6.1 — Engineering Policy Layer + ECC Rule Source
+
+- Added project-owned Engineering Policy as a first-class V6 context and governance layer.
+- Added progressive policy loading: manifest -> planning summaries -> exact implementation rules -> review/verification evidence.
+- Added `MUST` / `SHOULD` / `PREFER` levels, precedence, and illegal-downgrade conflict detection.
+- Added Spring Boot layered starter policy (`web/controller -> service -> dao/repository`) and lightweight Java import enforcement.
+- Added Policy Gate projection into Verification Plan and V5 Execution State.
+- Added optional ECC `rules/` adapter as non-authoritative external guidance; no ECC rule bodies are redistributed.
+- Added policy bootstrap, compact policy context packs, third-party attribution, and policy tests.
+
 ## 6.0 — Semantic Impact & CBM Provider
 
 - Added `CodeIntelligenceProvider` SPI with one implementation: `codebase-memory-mcp`.

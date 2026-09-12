@@ -18,7 +18,7 @@ def _get(d: Dict[str, Any], path: str, default: Any = None) -> Any:
     return cur
 
 
-def build_plan(facts: Dict[str, Any], impact: Dict[str, Any], decision: Dict[str, Any]) -> Dict[str, Any]:
+def build_plan(facts: Dict[str, Any], impact: Dict[str, Any], decision: Dict[str, Any], policy_plan: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     items: List[Dict[str, Any]] = []
     seen = set()
 
@@ -61,13 +61,27 @@ def build_plan(facts: Dict[str, Any], impact: Dict[str, Any], decision: Dict[str
     if flow == "DEEP":
         add("adversarial_verification_review", "DEEP flow requires independent verification pressure", "decision.json#/flow_profile")
 
-    # Project policy may add stricter gates. This plan never marks repository-required gates
-    # optional; it only derives additional checks from semantic impact.
+    policy_gates: List[Dict[str, Any]] = []
+    if policy_plan:
+        for enf in policy_plan.get("enforcements", []):
+            policy_gates.append({
+                "rule_id": enf.get("rule_id"),
+                "level": enf.get("level"),
+                "engine": enf.get("engine"),
+                "gate": enf.get("gate"),
+                "required_by_policy": bool(enf.get("required")),
+                "command": enf.get("command"),
+                "status": "pending",
+            })
+
+    # Project policy may add stricter gates. Semantic impact can add breadth, but can never
+    # downgrade a policy/native REQUIRED gate.
     material = {
         "facts_snapshot": _get(facts, "extraction.snapshot_id"),
         "impact_snapshot": _get(impact, "snapshot.id"),
         "flow": flow,
         "items": items,
+        "policy_gates": policy_gates,
     }
     plan_id = hashlib.sha256(json.dumps(material, sort_keys=True, ensure_ascii=False).encode("utf-8")).hexdigest()[:20]
     return {
@@ -76,6 +90,8 @@ def build_plan(facts: Dict[str, Any], impact: Dict[str, Any], decision: Dict[str
         "flow_profile": flow,
         "semantic_impact_snapshot": _get(impact, "snapshot.id"),
         "items": items,
+        "policy_gates": policy_gates,
+        "policy_snapshot_id": (policy_plan or {}).get("policy_snapshot_id"),
         "policy_note": "repository/native quality policy may add stricter REQUIRED gates; this plan cannot downgrade them",
     }
 
@@ -85,12 +101,14 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
     p.add_argument("--facts", type=Path, required=True)
     p.add_argument("--impact", type=Path, required=True)
     p.add_argument("--decision", type=Path, required=True)
+    p.add_argument("--policy-plan", type=Path)
     p.add_argument("--output", type=Path)
     args = p.parse_args(argv)
     out = build_plan(
         json.loads(args.facts.read_text(encoding="utf-8")),
         json.loads(args.impact.read_text(encoding="utf-8")),
         json.loads(args.decision.read_text(encoding="utf-8")),
+        json.loads(args.policy_plan.read_text(encoding="utf-8")) if args.policy_plan else None,
     )
     text = json.dumps(out, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
     if args.output:

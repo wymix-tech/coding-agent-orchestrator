@@ -233,6 +233,10 @@ def create_state(
             "work_facts_ref": None,
             "decision_ref": None,
             "verification_plan_ref": None,
+            "policy_plan_ref": None,
+            "policy_evaluation_ref": None,
+            "policy_context_ref": None,
+            "policy_snapshot_id": None,
             "analysis_snapshot_id": None,
             "provider": None,
             "updated_at": None,
@@ -678,6 +682,10 @@ def attach_analysis(
     verification_plan_ref: str,
     provider: str = "codebase-memory-mcp",
     expected_revision: Optional[int] = None,
+    policy_plan_ref: Optional[str] = None,
+    policy_evaluation_ref: Optional[str] = None,
+    policy_context_ref: Optional[str] = None,
+    policy_snapshot_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Attach V6 analysis artifacts without claiming their conclusions as native SDD state."""
     state = _load(state_path)
@@ -690,6 +698,10 @@ def attach_analysis(
         "work_facts_ref": work_facts_ref,
         "decision_ref": decision_ref,
         "verification_plan_ref": verification_plan_ref,
+        "policy_plan_ref": policy_plan_ref,
+        "policy_evaluation_ref": policy_evaluation_ref,
+        "policy_context_ref": policy_context_ref,
+        "policy_snapshot_id": policy_snapshot_id,
         "analysis_snapshot_id": analysis_snapshot_id,
         "provider": provider,
         "updated_at": utc_now(),
@@ -712,6 +724,10 @@ def attach_analysis(
         work_facts_ref=work_facts_ref,
         decision_ref=decision_ref,
         verification_plan_ref=verification_plan_ref,
+        policy_plan_ref=policy_plan_ref,
+        policy_evaluation_ref=policy_evaluation_ref,
+        policy_context_ref=policy_context_ref,
+        policy_snapshot_id=policy_snapshot_id,
         provider=provider,
     )
     return _commit(state_path, new_state, event, expected_revision)
@@ -1024,6 +1040,10 @@ def build_parser() -> argparse.ArgumentParser:
     x.add_argument("--work-facts-ref", required=True)
     x.add_argument("--decision-ref", required=True)
     x.add_argument("--verification-plan-ref", required=True)
+    x.add_argument("--policy-plan-ref")
+    x.add_argument("--policy-evaluation-ref")
+    x.add_argument("--policy-context-ref")
+    x.add_argument("--policy-snapshot-id")
     x.add_argument("--provider", default="codebase-memory-mcp")
     x.add_argument("--actor", required=True)
     x.add_argument("--expected-revision", type=int)
@@ -1101,6 +1121,10 @@ def main(argv: Optional[List[str]] = None) -> int:
                 path, args.actor, args.analysis_snapshot_id, args.semantic_impact_ref,
                 args.work_facts_ref, args.decision_ref, args.verification_plan_ref,
                 args.provider, args.expected_revision,
+                policy_plan_ref=args.policy_plan_ref,
+                policy_evaluation_ref=args.policy_evaluation_ref,
+                policy_context_ref=args.policy_context_ref,
+                policy_snapshot_id=args.policy_snapshot_id,
             )
         elif args.command == "assign":
             result = assign_role(path, args.role, args.assignee, args.actor, args.expected_revision)

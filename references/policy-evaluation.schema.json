@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.local/orchestrator/policy-evaluation.schema.json",
+  "title": "V6.1 Engineering Policy Evaluation",
+  "type": "object",
+  "required": ["schema_version", "policy_snapshot_id", "status", "results", "blocking_violations"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "policy_snapshot_id": {"type": ["string", "null"]},
+    "status": {"enum": ["PASSED", "FAILED"]},
+    "results": {"type": "array"},
+    "blocking_violations": {"type": "array"}
+  }
+}

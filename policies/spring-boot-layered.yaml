@@ -1,0 +1,104 @@
+id: spring-boot-layered
+precedence: 300
+rules:
+  - id: ARCH-SPRING-LAYER-001
+    title: Web layer must not depend directly on DAO
+    level: MUST
+    statement: Controllers/web adapters may depend on service contracts, never DAO/repository types directly.
+    scope:
+      languages: [java]
+      frameworks: [spring-boot]
+      layers: [web]
+    load:
+      stages: [planning, implementation, review, verification]
+    constraint:
+      type: forbidden_dependency
+      from_layer: web
+      to_layers: [dao]
+      scope: changed
+    enforcement:
+      - engine: v6-policy-check
+        gate: architecture-web-no-dao
+        required: true
+      - engine: archunit
+        gate: architecture-layers
+        required: true
+        command: "<project-archunit-test-command>"
+
+  - id: ARCH-SPRING-LAYER-002
+    title: Service layer must not depend on web layer
+    level: MUST
+    statement: Business services must remain independent of HTTP/controller adapter types.
+    scope:
+      languages: [java]
+      frameworks: [spring-boot]
+      layers: [service]
+    load:
+      stages: [planning, implementation, review, verification]
+    constraint:
+      type: forbidden_dependency
+      from_layer: service
+      to_layers: [web]
+      scope: changed
+    enforcement:
+      - engine: v6-policy-check
+        gate: architecture-service-no-web
+        required: true
+      - engine: archunit
+        gate: architecture-layers
+        required: true
+        command: "<project-archunit-test-command>"
+
+  - id: ARCH-SPRING-LAYER-003
+    title: DAO layer is persistence-only
+    level: MUST
+    statement: DAO/repository code owns persistence interaction and must not depend on web or service implementation types.
+    scope:
+      languages: [java]
+      frameworks: [spring-boot]
+      layers: [dao]
+    load:
+      stages: [planning, implementation, review, verification]
+    constraint:
+      type: forbidden_dependency
+      from_layer: dao
+      to_layers: [web, service]
+      scope: changed
+    enforcement:
+      - engine: v6-policy-check
+        gate: architecture-dao-direction
+        required: true
+      - engine: archunit
+        gate: architecture-layers
+        required: true
+        command: "<project-archunit-test-command>"
+
+  - id: ARCH-SPRING-RESP-001
+    title: Business logic belongs in service layer
+    level: MUST
+    statement: Web adapters handle transport concerns; domain/business decisions belong in services/domain code.
+    scope:
+      languages: [java]
+      frameworks: [spring-boot]
+      layers: [web, service]
+    load:
+      stages: [planning, implementation, review]
+    enforcement:
+      - engine: code-review
+        gate: spring-layer-responsibilities
+        required: true
+
+  - id: API-SPRING-001
+    title: REST controllers are transport adapters
+    level: SHOULD
+    statement: Controllers should focus on request mapping, validation, authorization context, and response mapping.
+    scope:
+      languages: [java]
+      frameworks: [spring-boot]
+      layers: [web]
+    load:
+      stages: [implementation, review]
+    enforcement:
+      - engine: code-review
+        gate: controller-transport-focus
+        required: false

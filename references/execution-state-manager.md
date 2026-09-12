@@ -281,3 +281,15 @@ python scripts/execution_state_manager.py \
 
 Raising to STANDARD/DEEP activates required review. A later de-escalation does not
 automatically erase an already-required review obligation.
+
+## V6.1 Engineering Policy integration
+
+When policy is enabled, `analysis` may include `policy_plan_ref`, `policy_evaluation_ref`, `policy_context_ref`, and `policy_snapshot_id`. These are Orchestrator-owned metadata even when native SDD state is authoritative for phase/status.
+
+Blocking policy enforcement is recorded through normal `quality_gates` with stable names such as:
+
+```text
+policy:ARCH-SPRING-LAYER-001:architecture-layers
+```
+
+A REQUIRED policy gate behaves exactly like any other REQUIRED gate: it cannot be skipped or marked not-required, and close is denied until it passes. Policy routing/evaluation artifacts explain why the gate exists; the gate evidence proves that the implementation complies.

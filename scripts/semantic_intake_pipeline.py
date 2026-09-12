@@ -19,6 +19,7 @@ import fact_resolver
 import impact_mapper
 import verification_planner
 import execution_state_manager
+import policy_engine
 
 
 def dump(path: Path, data: Any) -> None:
@@ -51,6 +52,10 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
     p.add_argument("--state", type=Path, default=Path(".orchestrator/execution-state.yaml"))
     p.add_argument("--sync-state", action="store_true", help="attach analysis refs/snapshot and reconcile computed flow")
     p.add_argument("--actor", default="orchestrator")
+    p.add_argument("--policy-manifest", type=Path, help="project Engineering Policy manifest; defaults to .orchestrator/policies/manifest.yaml when present")
+    p.add_argument("--policy-stage", default="implementation", choices=["bootstrap", "planning", "implementation", "review", "verification"])
+    p.add_argument("--ecc-root", type=Path, help="optional ECC rules root; overrides manifest source root")
+    p.add_argument("--skip-policy", action="store_true")
     args = p.parse_args(argv)
 
     request = args.request_file.read_text(encoding="utf-8") if args.request_file else args.request
@@ -103,6 +108,21 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
             }
 
     dump(outdir / "semantic-impact.json", impact)
+
+    policy_plan = None
+    policy_evaluation = None
+    policy_manifest = args.policy_manifest
+    if policy_manifest is None:
+        candidate = repo / ".orchestrator" / "policies" / "manifest.yaml"
+        if candidate.exists():
+            policy_manifest = candidate
+    if policy_manifest is not None and not args.skip_policy:
+        policy_plan = policy_engine.route(repo, impact, policy_manifest.resolve(), args.policy_stage, args.ecc_root)
+        dump(outdir / "policy-plan.json", policy_plan)
+        (outdir / "policy-context.md").write_text(policy_engine.render_context(policy_plan), encoding="utf-8")
+        policy_evaluation = policy_engine.evaluate(repo, policy_plan, policy_manifest.resolve())
+        dump(outdir / "policy-evaluation.json", policy_evaluation)
+
     enriched = impact_mapper.enrich_work_facts(draft, impact)
     enriched.setdefault("extraction", {})["analysis_snapshot_id"] = combined_snapshot(enriched, impact)
     dump(outdir / "work-facts.semantic-draft.json", enriched)
@@ -124,7 +144,7 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
             "implementation_blockers": ["complete_semantic_impact_collection"],
         }
     dump(outdir / "decision.json", decision)
-    plan = verification_planner.build_plan(facts, impact, decision)
+    plan = verification_planner.build_plan(facts, impact, decision, policy_plan)
     dump(outdir / "verification-plan.json", plan)
 
     state_sync = None
@@ -142,11 +162,28 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
             str(outdir / "verification-plan.json"),
             (impact.get("provider") or {}).get("id") or "codebase-memory-mcp",
             current["revision"],
+            policy_plan_ref=str(outdir / "policy-plan.json") if policy_plan else None,
+            policy_evaluation_ref=str(outdir / "policy-evaluation.json") if policy_evaluation else None,
+            policy_context_ref=str(outdir / "policy-context.md") if policy_plan else None,
+            policy_snapshot_id=(policy_plan or {}).get("policy_snapshot_id"),
         )
         if decision.get("status") == "CLASSIFIED" and decision.get("flow_profile"):
             current = execution_state_manager.set_flow_profile(
                 state_path, decision["flow_profile"], args.actor, str(outdir / "decision.json"), current["revision"]
             )
+        if policy_plan and policy_evaluation:
+            for gate in policy_engine.build_state_gates(policy_plan, policy_evaluation):
+                current = execution_state_manager.record_gate(
+                    state_path,
+                    gate["name"],
+                    gate["required"],
+                    gate["status"],
+                    args.actor,
+                    "policy",
+                    gate.get("evidence_ref") or str(outdir / "policy-plan.json"),
+                    gate.get("command"),
+                    current["revision"],
+                )
         state_sync = {
             "state": str(state_path),
             "revision": current["revision"],
@@ -154,6 +191,12 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
             "execution_snapshot_id": current.get("execution_snapshot_id"),
         }
 
+    policy_blocked = bool(
+        policy_plan and (
+            policy_plan.get("status") == "CONFLICT"
+            or (policy_evaluation or {}).get("status") == "FAILED"
+        )
+    )
     summary = {
         "status": decision.get("status"),
         "flow_profile": decision.get("flow_profile"),
@@ -161,6 +204,14 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
         "semantic_impact_snapshot": (impact.get("snapshot") or {}).get("id"),
         "provider": (impact.get("provider") or {}).get("id"),
         "provider_risk_ignored": True,
+        "policy": {
+            "enabled": policy_plan is not None,
+            "snapshot_id": (policy_plan or {}).get("policy_snapshot_id"),
+            "status": (policy_evaluation or {}).get("status"),
+            "applicable_rule_count": len((policy_plan or {}).get("applicable_rules", [])),
+            "blocked": policy_blocked,
+            "conflicts": (policy_plan or {}).get("conflicts", []),
+        },
         "unresolved_count": len((facts.get("extraction") or {}).get("resolution_queue", [])),
         "state_sync": state_sync,
         "artifacts": {
@@ -168,10 +219,17 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
             "work_facts": str(outdir / ("work-facts.resolved.json" if args.resolutions else "work-facts.semantic-draft.json")),
             "decision": str(outdir / "decision.json"),
             "verification_plan": str(outdir / "verification-plan.json"),
+            "policy_plan": str(outdir / "policy-plan.json") if policy_plan else None,
+            "policy_evaluation": str(outdir / "policy-evaluation.json") if policy_evaluation else None,
+            "policy_context": str(outdir / "policy-context.md") if policy_plan else None,
         },
     }
     print(json.dumps(summary, ensure_ascii=False, indent=2))
-    return 0 if decision.get("status") == "CLASSIFIED" else 1
+    if decision.get("status") != "CLASSIFIED":
+        return 1
+    if policy_blocked:
+        return 3
+    return 0
 
 
 if __name__ == "__main__":

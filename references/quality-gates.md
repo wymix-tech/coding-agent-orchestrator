@@ -76,3 +76,18 @@ Project Policy  -> what gates are mandatory regardless of impact
 ```
 
 Both must be satisfied before DONE when classified as REQUIRED.
+
+## V6.1 Engineering Policy gates
+
+Project Engineering Policy may map `MUST` rules to one or more executable gates. The router emits these in `policy-plan.json`; `verification-plan.json` carries them under `policy_gates`, and V5 State records blocking gates when state sync is enabled.
+
+Examples:
+
+- layered dependency direction -> ArchUnit and/or `v6-policy-check`;
+- controller/service responsibility -> code review or static analysis;
+- API compatibility -> contract tooling;
+- security invariants -> Semgrep/SAST/security tests.
+
+An external rule source such as ECC is guidance by default. It cannot become a REQUIRED gate merely because it was discovered. Promotion to blocking behavior requires an explicit repository-owned policy mapping.
+
+A project `MUST` that has no executable enforcement is not silently considered satisfied: keep its gate pending and require review/evidence or add a deterministic checker.

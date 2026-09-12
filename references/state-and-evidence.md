@@ -148,3 +148,17 @@ Requirement / SDD
 
 `semantic-impact.json` is evidence, not a requirement source and not a state authority.
 CBM provider opinions never replace Orchestrator Work Facts.
+
+## V6.1 Policy evidence
+
+Engineering Policy has its own snapshot and artifact refs:
+
+```text
+policy-plan.json
+policy-context.md
+policy-evaluation.json
+```
+
+When policy is enabled, Canonical Execution State analysis metadata may reference these artifacts. Applicable blocking enforcement is projected into `quality_gates` using stable names such as `policy:<RULE_ID>:<gate>`.
+
+Policy evidence follows the same freshness principle as other execution evidence: a material code/policy change requires rerouting/re-evaluation before completion. External guidance references are context, not proof of compliance.

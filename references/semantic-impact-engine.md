@@ -135,3 +135,18 @@ safe upper bounds. V6 therefore does not finalize numeric component/module/deplo
 estimates from a partial result and the semantic intake pipeline defaults to
 `NEEDS_EVIDENCE` until continuation pages are collected. `--allow-partial-impact` is an
 explicit escape hatch, never the default.
+
+## V6.1 policy routing handoff
+
+Semantic Impact now feeds Engineering Policy selection as well as Work Facts. Changed/affected files, inferred language/framework, layer membership, and boundary/contract signals are inputs to `scripts/policy_engine.py`.
+
+```text
+CBM semantic impact
+  -> affected files / boundaries / contracts
+  -> Policy Router
+  -> exact project rule IDs
+  -> compact policy context
+  -> enforcement / V5 gates
+```
+
+CBM remains structural evidence only. It does not define project architecture policy; the repository policy manifest does.
