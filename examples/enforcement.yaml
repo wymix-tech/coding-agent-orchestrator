@@ -1,0 +1,25 @@
+version: 1
+enabled: true
+mode: enforce
+require_state_for_code_mutation: true
+require_classified_decision_for_code_mutation: true
+require_fresh_context_before_first_mutation: true
+post_mutation_policy_feedback: true
+completion_claim_only: true
+max_stop_blocks_per_session: 3
+allowed_code_mutation_phases:
+  - implementation
+source_roots:
+  - src/
+  - app/
+  - lib/
+  - packages/
+  - services/
+  - modules/
+non_code_prefixes:
+  - .orchestrator/
+  - .claude/
+  - .codex/
+  - .pi/
+  - openspec/
+  - docs/

@@ -195,10 +195,12 @@ def _summary(kind: str, doc: Any) -> str:
         ver = doc.get("verification") or {}
         review = doc.get("review") or {}
         failed = [name for name, gate in (doc.get("quality_gates") or {}).items() if gate.get("status") == "failed"]
+        enf = doc.get("enforcement") or {}
         return (
             f"revision={doc.get('revision')}; flow={doc.get('flow_profile')}; phase={doc.get('phase')}; status={doc.get('status')}; "
             f"blocked={bool(doc.get('blocked'))}; next={cursor.get('next_action')}; review={review.get('status')}; "
-            f"verification={ver.get('status')}/fresh={ver.get('fresh')}; failed_gates={','.join(failed)}"
+            f"verification={ver.get('status')}/fresh={ver.get('fresh')}; enforcement_dirty={enf.get('dirty')}; "
+            f"semantic_fresh={enf.get('semantic_fresh')}; failed_gates={','.join(failed)}"
         )
     return json.dumps(doc, ensure_ascii=False, sort_keys=True)[:900]
 

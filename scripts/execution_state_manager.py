@@ -172,6 +172,7 @@ def create_state(
         "readiness",
         "execution_snapshot_id",
         "analysis",
+        "enforcement",
     ]
     if authority_mode != "native":
         owned_fields.extend(["phase", "status", "work_item.progress"])
@@ -228,6 +229,18 @@ def create_state(
             "verified_at": None,
         },
         "execution_snapshot_id": None,
+        "enforcement": {
+            "enabled": False,
+            "dirty": False,
+            "semantic_fresh": None,
+            "context_fresh": None,
+            "policy_fresh": None,
+            "last_mutation_snapshot_id": None,
+            "last_mutation_at": None,
+            "last_mutation_paths": [],
+            "last_host": None,
+            "last_event": None,
+        },
         "analysis": {
             "semantic_impact_ref": None,
             "work_facts_ref": None,
@@ -274,6 +287,12 @@ def validate_state(state: Dict[str, Any]) -> None:
     analysis = state.get("analysis")
     if analysis is not None and not isinstance(analysis, dict):
         raise StateError("analysis must be an object")
+    enforcement = state.get("enforcement")
+    if enforcement is not None:
+        if not isinstance(enforcement, dict):
+            raise StateError("enforcement must be an object")
+        if not isinstance(enforcement.get("enabled", False), bool) or not isinstance(enforcement.get("dirty", False), bool):
+            raise StateError("enforcement enabled/dirty must be boolean")
     ver = state.get("verification") or {}
     if ver.get("status") not in ACCEPTED_VERIFICATION_STATUS:
         raise StateError("verification.status is invalid")
@@ -349,6 +368,14 @@ def transition_guard(state: Dict[str, Any], to_phase: str, to_status: str = "in_
     if to_phase in {"review", "verification", "release", "closed"}:
         if not readiness.get("implementation_tasks_complete"):
             reasons.append("implementation tasks are not complete")
+        enforcement = state.get("enforcement") or {}
+        if enforcement.get("enabled"):
+            if enforcement.get("dirty"):
+                reasons.append("runtime enforcement evidence is dirty after material mutation")
+            if enforcement.get("semantic_fresh") is False:
+                reasons.append("semantic impact evidence is stale")
+            if enforcement.get("policy_fresh") is False:
+                reasons.append("engineering policy evaluation is stale")
 
     if to_phase in {"verification", "release", "closed"} and state["review"].get("required"):
         if state["review"].get("status") != "passed":
@@ -718,6 +745,12 @@ def attach_analysis(
         new_state["execution_snapshot_id"] = analysis_snapshot_id
         if new_state["verification"].get("snapshot_id") != analysis_snapshot_id:
             new_state["verification"]["fresh"] = False
+    enforcement = new_state.setdefault("enforcement", {})
+    if enforcement.get("enabled"):
+        enforcement["semantic_fresh"] = True
+        enforcement["policy_fresh"] = True if policy_snapshot_id else enforcement.get("policy_fresh")
+        enforcement["context_fresh"] = None
+        enforcement["dirty"] = False
     new_state["cursor"]["next_action"] = compute_next_action(new_state)
     event = _new_event(
         state,
@@ -739,6 +772,60 @@ def attach_analysis(
         provider=provider,
     )
     return _commit(state_path, new_state, event, expected_revision)
+
+def set_enforcement_enabled(
+    state_path: pathlib.Path, enabled: bool, actor: str, expected_revision: Optional[int] = None
+) -> Dict[str, Any]:
+    state = _load(state_path)
+    _require_revision(state, expected_revision)
+    new_state = copy.deepcopy(state)
+    enf = new_state.setdefault("enforcement", {})
+    enf["enabled"] = bool(enabled)
+    event = _new_event(state, "ENFORCEMENT_MODE_UPDATED", actor, enabled=bool(enabled))
+    return _commit(state_path, new_state, event, expected_revision)
+
+
+def mark_enforcement_dirty(
+    state_path: pathlib.Path, change_kind: str, paths: List[str], actor: str, snapshot_id: str, reason: str,
+    expected_revision: Optional[int] = None
+) -> Dict[str, Any]:
+    state = _load(state_path)
+    _require_revision(state, expected_revision)
+    new_state = copy.deepcopy(state)
+    enf = new_state.setdefault("enforcement", {})
+    enf.update({
+        "enabled": True, "dirty": True, "semantic_fresh": False, "context_fresh": False,
+        "policy_fresh": False if change_kind in {"policy_change", "external_change"} else enf.get("policy_fresh"),
+        "last_mutation_snapshot_id": snapshot_id, "last_mutation_at": utc_now(),
+        "last_mutation_paths": list(paths), "last_host": actor, "last_event": change_kind,
+    })
+    new_state["execution_snapshot_id"] = snapshot_id
+    if new_state["verification"].get("snapshot_id") != snapshot_id:
+        new_state["verification"]["fresh"] = False
+    event = _new_event(state, "ENFORCEMENT_DIRTY", actor, change_kind=change_kind, paths=list(paths), snapshot_id=snapshot_id, reason=reason)
+    return _commit(state_path, new_state, event, expected_revision)
+
+
+def attach_context_snapshot(
+    state_path: pathlib.Path, context_snapshot_id: str, context_manifest_ref: str, context_pack_ref: str,
+    actor: str, expected_revision: Optional[int] = None
+) -> Dict[str, Any]:
+    state = _load(state_path)
+    _require_revision(state, expected_revision)
+    new_state = copy.deepcopy(state)
+    analysis = new_state.setdefault("analysis", {})
+    analysis["context_manifest_ref"] = context_manifest_ref
+    analysis["context_pack_ref"] = context_pack_ref
+    analysis["context_snapshot_id"] = context_snapshot_id
+    analysis["updated_at"] = utc_now()
+    enf = new_state.setdefault("enforcement", {})
+    if enf.get("enabled"):
+        enf["context_fresh"] = True
+        if enf.get("semantic_fresh") is not False and enf.get("policy_fresh") is not False:
+            enf["dirty"] = False
+    event = _new_event(state, "CONTEXT_SNAPSHOT_ATTACHED", actor, context_snapshot_id=context_snapshot_id, context_manifest_ref=context_manifest_ref, context_pack_ref=context_pack_ref)
+    return _commit(state_path, new_state, event, expected_revision)
+
 
 def record_verification(
     state_path: pathlib.Path,
@@ -933,6 +1020,7 @@ def resume_summary(state: Dict[str, Any]) -> Dict[str, Any]:
         "verification": state["verification"],
         "execution_snapshot_id": state["execution_snapshot_id"],
         "analysis": state.get("analysis", {}),
+        "enforcement": state.get("enforcement", {}),
         "completion": completion_status(state),
         "revision": state["revision"],
     }

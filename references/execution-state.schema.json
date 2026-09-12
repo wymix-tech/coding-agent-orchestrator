@@ -1,46 +1,98 @@
 {
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://example.local/orchestrator/execution-state.schema.json",
-  "title": "Adaptive SDD Coding Orchestrator Execution State v1 (V6.2 context extensions)",
-  "type": "object",
-  "required": [
-    "schema_version",
-    "revision",
-    "authority",
-    "work_item",
-    "flow_profile",
-    "phase",
-    "status",
-    "blocked",
-    "blockers",
-    "readiness",
-    "quality_gates",
-    "review",
-    "verification"
-  ],
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
   "properties": {
-    "schema_version": {
-      "const": 1
-    },
-    "revision": {
-      "type": "integer",
-      "minimum": 0
-    },
-    "authority": {
-      "type": "object",
-      "required": [
-        "provider",
-        "mode"
-      ],
+    "analysis": {
       "properties": {
-        "provider": {
-          "enum": [
-            "bmad",
-            "openspec",
-            "generic",
-            "other"
+        "analysis_snapshot_id": {
+          "type": [
+            "string",
+            "null"
           ]
         },
+        "context_manifest_ref": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "context_pack_ref": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "context_snapshot_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "decision_ref": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "policy_context_ref": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "policy_evaluation_ref": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "policy_plan_ref": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "policy_snapshot_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "provider": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "semantic_impact_ref": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "updated_at": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "verification_plan_ref": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "work_facts_ref": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "authority": {
+      "properties": {
         "mode": {
           "enum": [
             "native",
@@ -53,48 +105,86 @@
             "string",
             "null"
           ]
+        },
+        "provider": {
+          "enum": [
+            "bmad",
+            "openspec",
+            "generic",
+            "other"
+          ]
         }
-      }
-    },
-    "work_item": {
-      "type": "object",
+      },
       "required": [
-        "id",
-        "type",
-        "title",
-        "progress"
+        "provider",
+        "mode"
       ],
+      "type": "object"
+    },
+    "blocked": {
+      "type": "boolean"
+    },
+    "blockers": {
+      "type": "array"
+    },
+    "enforcement": {
       "properties": {
-        "id": {
-          "type": "string",
-          "minLength": 1
+        "context_fresh": {
+          "type": [
+            "boolean",
+            "null"
+          ]
         },
-        "type": {
-          "type": "string",
-          "minLength": 1
+        "dirty": {
+          "type": "boolean"
         },
-        "title": {
-          "type": "string",
-          "minLength": 1
+        "enabled": {
+          "type": "boolean"
         },
-        "progress": {
-          "type": "object",
-          "required": [
-            "completed",
-            "total"
-          ],
-          "properties": {
-            "completed": {
-              "type": "integer",
-              "minimum": 0
-            },
-            "total": {
-              "type": "integer",
-              "minimum": 0
-            }
-          }
+        "last_event": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "last_host": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "last_mutation_at": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "last_mutation_paths": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "last_mutation_snapshot_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "policy_fresh": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "semantic_fresh": {
+          "type": [
+            "boolean",
+            "null"
+          ]
         }
-      }
+      },
+      "type": "object"
     },
     "flow_profile": {
       "enum": [
@@ -117,6 +207,22 @@
         "closed"
       ]
     },
+    "quality_gates": {
+      "type": "object"
+    },
+    "readiness": {
+      "type": "object"
+    },
+    "review": {
+      "type": "object"
+    },
+    "revision": {
+      "minimum": 0,
+      "type": "integer"
+    },
+    "schema_version": {
+      "const": 1
+    },
     "status": {
       "enum": [
         "pending",
@@ -127,106 +233,65 @@
         "cancelled"
       ]
     },
-    "blocked": {
-      "type": "boolean"
-    },
-    "blockers": {
-      "type": "array"
-    },
-    "readiness": {
-      "type": "object"
-    },
-    "quality_gates": {
-      "type": "object"
-    },
-    "review": {
-      "type": "object"
-    },
     "verification": {
       "type": "object"
     },
-    "analysis": {
-      "type": "object",
+    "work_item": {
       "properties": {
-        "semantic_impact_ref": {
-          "type": [
-            "string",
-            "null"
-          ]
+        "id": {
+          "minLength": 1,
+          "type": "string"
         },
-        "work_facts_ref": {
-          "type": [
-            "string",
-            "null"
-          ]
+        "progress": {
+          "properties": {
+            "completed": {
+              "minimum": 0,
+              "type": "integer"
+            },
+            "total": {
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "completed",
+            "total"
+          ],
+          "type": "object"
         },
-        "decision_ref": {
-          "type": [
-            "string",
-            "null"
-          ]
+        "title": {
+          "minLength": 1,
+          "type": "string"
         },
-        "verification_plan_ref": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "analysis_snapshot_id": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "provider": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "updated_at": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "policy_plan_ref": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "policy_evaluation_ref": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "policy_context_ref": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "policy_snapshot_id": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "context_manifest_ref": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "context_pack_ref": {
-          "type": [
-            "string",
-            "null"
-          ]
+        "type": {
+          "minLength": 1,
+          "type": "string"
         }
-      }
+      },
+      "required": [
+        "id",
+        "type",
+        "title",
+        "progress"
+      ],
+      "type": "object"
     }
-  }
+  },
+  "required": [
+    "schema_version",
+    "revision",
+    "authority",
+    "work_item",
+    "flow_profile",
+    "phase",
+    "status",
+    "blocked",
+    "blockers",
+    "readiness",
+    "quality_gates",
+    "review",
+    "verification"
+  ],
+  "title": "Adaptive SDD Coding Orchestrator Execution State v1 (V6.2 context extensions)",
+  "type": "object"
 }

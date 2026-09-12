@@ -328,3 +328,29 @@ Expected: content-hash validation marks the manifest stale. The old pack is not 
 A context build runs without an explicit SDD reference and without persisted request context.
 
 Expected: the pack reports `MISSING_MANDATORY_CONTEXT` for requirement authority. It must not invent a requirement source from code comments or semantic graph data.
+
+## V6.3 host enforcement pressure scenarios
+
+### 29. Agent edits production code before classification
+Expected: PreToolUse/tool_call denies mutation and points to intake/classification. Reads remain allowed.
+
+### 30. Agent is in planning phase and tries to patch Java source
+Expected: runtime deny. SDD/policy/docs edits may proceed according to path classification; production code requires legal transition to implementation.
+
+### 31. Implementer makes five related edits in one slice
+Expected: first successful material mutation marks semantic/context/verification stale. Subsequent implementation edits remain allowed. The system does **not** run full CBM/tests after every edit, but review/verification transition is denied until re-analysis.
+
+### 32. Reviewer attempts to fix production code directly
+Expected: runtime deny for reviewer/verifier role. Findings must hand back to an implementation/debug role unless project policy explicitly changes role ownership.
+
+### 33. External editor changes source between agent turns
+Expected: next lifecycle event detects changed worktree fingerprint, marks enforcement dirty, and prevents stale analysis from crossing into review/verification/close.
+
+### 34. Agent says "done" while REQUIRED gate or fresh verification is missing
+Expected: Stop/SubagentStop continues the agent where supported. Pi may steer/follow-up, but V5 state/CI remains the hard final gate.
+
+### 35. Agent gives a normal mid-task response
+Expected: Stop is not blocked merely because the work item is not globally DONE. Completion guards activate only on completion semantics or final phases.
+
+### 36. Host hook is disabled/bypassed
+Expected: repository state transition guards and CI still reject illegal DONE. Runtime adapters are defense-in-depth, never the sole authority.

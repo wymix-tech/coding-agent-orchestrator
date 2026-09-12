@@ -1,5 +1,17 @@
 # Changelog
 
+## 6.3 — Host Enforcement Adapters
+
+- Added one host-neutral `scripts/enforcement_kernel.py` instead of duplicating governance logic in each coding agent.
+- Added Claude Code and Codex hook templates plus a Pi TypeScript extension adapter.
+- Added `scripts/install_host_adapter.py` to merge/install repository-local adapters explicitly.
+- Added runtime guards for missing/unclassified state, illegal code mutation phase, reviewer/verifier write separation, stale Context Manifest, and completion claims.
+- Added dirty-window semantics: material mutation invalidates semantic/context/final-verification freshness immediately but does not force heavyweight re-analysis after every edit; review/verification/close remain blocked until re-analysis.
+- Added V5 execution-state enforcement metadata and transition guards for stale semantic/policy evidence.
+- Added external working-tree change detection at the next lifecycle event.
+- Added host capability matrix documenting hard/soft enforcement differences and Codex/Pi caveats.
+- Added 11 runtime enforcement tests; full regression suite is 87 tests.
+
 ## 6.2 — Context Manifest / Role-aware Context Packs
 
 - Added V6 Context Plane to unify SDD/request, Work Facts, Decision, Execution State, Semantic Impact, Engineering Policy, Verification, and Evidence references.
