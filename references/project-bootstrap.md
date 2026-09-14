@@ -5,14 +5,28 @@ The goal is self-bootstrap on first activation, followed by automatic resume thr
 
 ## Stable entry points
 
-The recommended project-local Skill location is `.agents/skills/coding-agent-orchestrator/`.
-On first Skill activation, the Bootstrap Guard checks `.orchestrator/config.yaml`. If missing, it invokes the packaged Safe Auto `init` once and continues the same request. Manual initialization remains available from the project root:
+The recommended project-local Skill location is `.agents/skills/<skill-dir>/`, where
+`<skill-dir>` is a **deployment choice** (for example `coding-agent-orchestrator` or
+`orchestrating-sdd-coding`). Never hardcode it: the directory name differs per installation,
+and a wrong path forces a search-and-retry loop.
+
+The packaged front controller is always a sibling of `SKILL.md`. Resolve it once with:
 
 ```bash
-./.agents/skills/coding-agent-orchestrator/coding-orchestrator --repo . init
+<skill-root>/coding-orchestrator --repo . where
 ```
 
-Examples below use the shorter Skill-root form:
+`where` reports the resolved skill root, CLI path, and ready-to-run commands. On first Skill
+activation, the Bootstrap Guard checks `.orchestrator/config.yaml`. If missing, it invokes the
+packaged Safe Auto `init` once and continues the same request. Manual initialization remains
+available from the project root:
+
+```bash
+<skill-root>/coding-orchestrator --repo . init
+```
+
+Examples below use the shorter Skill-root form (`cd <skill-root>` first, or substitute the
+resolved path):
 
 ```bash
 ./coding-orchestrator init
@@ -23,7 +37,14 @@ Examples below use the shorter Skill-root form:
 ./coding-orchestrator intake "<requirement>"
 ./coding-orchestrator resume
 ./coding-orchestrator verify
+./coding-orchestrator where
 ./coding-orchestrator host install <claude-code|codex|pi|all>
+```
+
+If the launcher is not executable, invoke the same commands through Python:
+
+```bash
+python3 <skill-root>/scripts/coding_orchestrator.py --repo . start
 ```
 
 Use `--json` before the subcommand for machine-readable output.

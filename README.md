@@ -461,7 +461,13 @@ Host hooks are never the only security boundary. Keep V5 state guards, CI, and m
 The recommended project-local installation is:
 
 ```text
-project/.agents/skills/coding-agent-orchestrator/
+project/.agents/skills/<skill-dir>/
+```
+
+The directory name `<skill-dir>` is your choice — `coding-agent-orchestrator`, `orchestrating-sdd-coding`, or anything else. **Never hardcode it**; the same package installs under different names in different projects. To find out where it actually is, ask the Skill itself:
+
+```bash
+<skill-dir>/coding-orchestrator --repo . where
 ```
 
 Normally, you no longer need to remember a separate first-run step. When this Skill is selected for the first time, its **Bootstrap Guard** checks `.orchestrator/config.yaml`; if missing, it runs the packaged Safe Auto `init` once and then continues the same user request.
@@ -469,7 +475,7 @@ Normally, you no longer need to remember a separate first-run step. When this Sk
 Manual initialization remains available from the **project root**:
 
 ```bash
-./.agents/skills/coding-agent-orchestrator/coding-orchestrator --repo . init
+./.agents/skills/<skill-dir>/coding-orchestrator --repo . init
 ```
 
 Windows:

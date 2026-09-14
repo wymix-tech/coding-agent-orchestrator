@@ -15,8 +15,22 @@ ROOT = Path(__file__).resolve().parents[1]
 KERNEL = (ROOT / "scripts" / "enforcement_kernel.py").resolve()
 
 
-def load_template(path: Path) -> dict[str, Any]:
-    return json.loads(path.read_text(encoding="utf-8").replace("__KERNEL__", str(KERNEL).replace("\\", "\\\\")))
+def _embedded(path: Path) -> str:
+    """Render a filesystem path for embedding inside a JSON/TS double-quoted string literal."""
+    return str(path).replace("\\", "\\\\")
+
+
+def load_template(path: Path, repo: Path) -> dict[str, Any]:
+    if not path.is_file():
+        # A partial Skill install (for example one that ships without `hosts/`) used to fail with a
+        # bare path and no explanation. Say what is missing and how to fix it.
+        raise FileNotFoundError(
+            f"Packaged host template is missing: {path}. This Skill installation is incomplete; "
+            "reinstall it with the `hosts/` directory included, or initialize with `--host none`."
+        )
+    # `--repo` is baked in so the kernel never has to guess the project from the caller's cwd.
+    text = path.read_text(encoding="utf-8")
+    return json.loads(text.replace("__KERNEL__", _embedded(KERNEL)).replace("__REPO__", _embedded(repo)))
 
 
 def merge_hooks(target: Path, fragment: dict[str, Any], apply: bool) -> dict[str, Any]:
@@ -46,7 +60,7 @@ def merge_hooks(target: Path, fragment: dict[str, Any], apply: bool) -> dict[str
 
 def install_pi(repo: Path, apply: bool) -> str:
     template = (ROOT / "hosts" / "pi" / "coding-orchestrator.template.ts").read_text(encoding="utf-8")
-    text = template.replace("__KERNEL__", str(KERNEL).replace("\\", "\\\\"))
+    text = template.replace("__KERNEL__", _embedded(KERNEL)).replace("__REPO__", _embedded(repo))
     target = repo / ".pi" / "extensions" / "coding-orchestrator.ts"
     if apply:
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -109,11 +123,11 @@ def main() -> int:
     out={"apply":args.apply,"kernel":str(KERNEL),"enforcement_config":ensure_enforcement_config(repo,args.apply),"session_context_config":ensure_session_context_config(repo,args.apply),"hosts":{}}
     out["activation"] = project_activation.install(repo, selected, apply=args.apply)
     if "claude-code" in selected:
-        frag=load_template(ROOT/"hosts"/"claude-code"/"hooks.template.json")
+        frag=load_template(ROOT/"hosts"/"claude-code"/"hooks.template.json", repo)
         target=repo/".claude"/"settings.json"
         out["hosts"]["claude-code"]={"target":str(target),"merged":merge_hooks(target,frag,args.apply)}
     if "codex" in selected:
-        frag=load_template(ROOT/"hosts"/"codex"/"hooks.template.json")
+        frag=load_template(ROOT/"hosts"/"codex"/"hooks.template.json", repo)
         target=repo/".codex"/"hooks.json"
         out["hosts"]["codex"]={"target":str(target),"merged":merge_hooks(target,frag,args.apply),"note":"project hooks require Codex trust review"}
     if "pi" in selected:

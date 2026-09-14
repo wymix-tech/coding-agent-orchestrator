@@ -10,8 +10,9 @@ combines them. Host payload normalization belongs in `tool_actions.py`, not in p
 | Action | Conditions |
 |---|---|
 | `read` | Read-only inspection remains available without an active work item. |
-| `prepare` | Requirement documents, governance artifacts, and packaged recovery commands remain available. |
+| `prepare` | Requirement documents, SDD artifacts (`docs/`, `openspec/`), and packaged recovery commands remain available. |
 | `mutate_code` | Classified, complete, current analysis; ready SDD; required acceptance criteria; no active blocker; implementation phase with ready/in-progress status; writable role. |
+| `mutate_governance` | **Denied by default.** Authority config (`.orchestrator/config.yaml`), enforcement config, execution state, policy sources, and requirement identity are not agent-writable: they are what *grants* authority, so an agent must not be able to widen its own authority by editing them. Change them through the orchestrator CLI (classified as `prepare`) or an explicit operator action with `--allow-governance-mutation`. |
 | `advance` | Shared readiness/freshness rules when entering implementation or later; completed tasks for review or later; resolved findings and any required current review for verification or later. |
 | `close` | All shared checks plus acceptance satisfaction, all required current gates/review, and current passed final verification. Release applies the same final evidence requirements. |
 | `finish_role` | Reviewer/verifier records a passed or failed outcome with evidence. This authorizes reporting the role outcome, not declaring the work done. |
@@ -39,7 +40,7 @@ order. The actual mutation/transition must recheck; a prior check is only a diag
 
 | Consumer | Shared action/result |
 |---|---|
-| Host `pre_tool` | Normalized `read`, `prepare`, or `mutate_code`; result in `metadata.authorization`. |
+| Host `pre_tool` | Normalized `read`, `prepare`, `mutate_code`, or `mutate_governance`; result in `metadata.authorization`. |
 | State transition | `advance` or `close`; denial includes the full `authorization`. |
 | CLI `verify`, global host `stop`, completion status | `close`; these do not manufacture passing evidence. |
 | CLI `check` | Requested action; same result as the corresponding enforcement boundary. |

@@ -2,10 +2,11 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { spawnSync } from "node:child_process";
 
 const KERNEL = "__KERNEL__";
+const REPO = "__REPO__";
 
 function callKernel(eventName: string, payload: any, cwd: string): any {
   const input = { ...payload, cwd, _orchestrator_event: eventName };
-  const r = spawnSync("python3", [KERNEL, "host", "--host", "pi"], {
+  const r = spawnSync("python3", [KERNEL, "host", "--host", "pi", "--repo", REPO], {
     input: JSON.stringify(input), encoding: "utf8", cwd,
   });
   if (r.status !== 0) return { decision: "deny", reason: r.stderr || "orchestrator kernel failed" };

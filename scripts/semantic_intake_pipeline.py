@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable, Optional
 
@@ -37,6 +38,99 @@ def combined_snapshot(facts: dict, impact: dict) -> str:
         "provider": (impact.get("provider") or {}).get("id"),
     }
     return hashlib.sha256(json.dumps(material, sort_keys=True).encode("utf-8")).hexdigest()[:20]
+
+
+INTAKE_HISTORY_REL = ".orchestrator/runtime/intake-history.json"
+
+
+def _file_sha256(path: Path | None) -> str | None:
+    if path is None:
+        return None
+    try:
+        return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+    except OSError:
+        return None
+
+
+def intake_fingerprint(request: str, base_ref: str | None, resolutions: Path | None) -> str:
+    """Identity of the *inputs* an agent controls, independent of repository state."""
+    material = {
+        "request": request,
+        "base_ref": base_ref or "",
+        "resolutions": _file_sha256(resolutions),
+    }
+    return hashlib.sha256(json.dumps(material, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()[:16]
+
+
+def requirement_key(state_path: Path) -> str:
+    try:
+        state = execution_state_manager._load(state_path)
+    except Exception:
+        return "_unknown"
+    wi = (state or {}).get("work_item") or {}
+    rid, rev = wi.get("requirement_id"), wi.get("requirement_revision")
+    return f"{rid}:{rev or ''}" if rid else "_unknown"
+
+
+def record_intake(repo: Path, key: str, fingerprint: str, decision_status: str,
+                  resolutions_provided: bool, run_dir: Path) -> dict | None:
+    """Detect the retry-without-new-evidence loop and return a warning when it occurs.
+
+    Deterministic collectors guarantee that identical inputs produce an identical draft.
+    Re-running intake is therefore not a repair action; only new evidence changes the
+    outcome. Without this signal an agent can spin on NEEDS_EVIDENCE indefinitely.
+    """
+    path = repo / INTAKE_HISTORY_REL
+    doc: dict[str, Any] = {}
+    if path.exists():
+        try:
+            loaded = json.loads(path.read_text(encoding="utf-8"))
+            doc = loaded if isinstance(loaded, dict) else {}
+        except (OSError, ValueError):
+            doc = {}
+    entries = doc.setdefault("requirements", {})
+    if not isinstance(entries, dict):
+        entries = doc["requirements"] = {}
+    prev = entries.get(key) if isinstance(entries.get(key), dict) else {}
+
+    warning = None
+    if (
+        decision_status != "CLASSIFIED"
+        and prev.get("fingerprint") == fingerprint
+        and prev.get("decision_status") == decision_status
+    ):
+        repeat = int(prev.get("repeat_count", 1)) + 1
+        if resolutions_provided:
+            next_action = "strengthen_resolution_evidence"
+            remedy = ("the same resolutions file was supplied again; raise evidence strength to "
+                      "authoritative/observed/derived, or add negative_proof for false claims")
+        else:
+            next_action = "supply_fact_resolutions"
+            remedy = ("no resolutions were supplied; fill the resolutions template with evidence "
+                      "and re-run with --resolutions")
+        warning = {
+            "code": "IDENTICAL_INPUT_NO_NEW_EVIDENCE",
+            "message": (f"This requirement revision has been analyzed {repeat} times with identical inputs "
+                        f"and returned {decision_status} every time. Re-running intake cannot change a "
+                        f"deterministic result: {remedy}."),
+            "repeat_count": repeat,
+            "next_action": next_action,
+        }
+    else:
+        repeat = 1
+
+    entries[key] = {
+        "fingerprint": fingerprint,
+        "decision_status": decision_status,
+        "resolutions_provided": resolutions_provided,
+        "repeat_count": repeat,
+        "run_count": int(prev.get("run_count", 0)) + 1,
+        "last_run_dir": str(run_dir),
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+    doc["updated_at"] = datetime.now(timezone.utc).isoformat()
+    dump(path, doc)
+    return warning
 
 
 def main(argv: Optional[Iterable[str]] = None) -> int:
@@ -195,6 +289,12 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
         facts = fact_resolver.apply_resolutions(enriched, resolution_doc)
         dump(outdir / "work-facts.resolved.json", facts)
 
+    template_path = outdir / "fact-resolutions.template.json"
+    template = fact_resolver.build_resolution_template(
+        facts, source_ref=str(args.resolutions) if args.resolutions else str(request_ref) if request_ref else None
+    )
+    dump(template_path, template)
+
     decision = decision_engine.classify(facts, strict_evidence=True)
     completeness = impact.get("completeness") or {"complete": True, "status": "complete"}
     if not completeness.get("complete", True) and not args.allow_partial_impact:
@@ -208,6 +308,22 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
     dump(outdir / "decision.json", decision)
     plan = verification_planner.build_plan(facts, impact, decision, policy_plan)
     dump(outdir / "verification-plan.json", plan)
+
+    warnings: list[dict[str, Any]] = []
+    try:
+        loop_warning = record_intake(
+            repo,
+            requirement_key(state_path_resolved),
+            intake_fingerprint(request, args.base_ref, args.resolutions),
+            str(decision.get("status")),
+            args.resolutions is not None,
+            outdir,
+        )
+    except OSError:
+        loop_warning = None  # history is diagnostic only; never fail intake for it
+    if loop_warning:
+        loop_warning["resolutions_template"] = str(template_path)
+        warnings.append(loop_warning)
 
     state_sync = None
     if args.sync_state:
@@ -332,9 +448,11 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
             "conflicts": (policy_plan or {}).get("conflicts", []),
         },
         "unresolved_count": len((facts.get("extraction") or {}).get("resolution_queue", [])),
+        "warnings": warnings,
         "state_sync": state_sync,
         "context": context_summary,
         "artifacts": {
+            "resolutions_template": str(template_path),
             "semantic_impact": str(outdir / "semantic-impact.json"),
             "work_facts": str(outdir / ("work-facts.resolved.json" if args.resolutions else "work-facts.semantic-draft.json")),
             "decision": str(outdir / "decision.json"),

@@ -39,6 +39,7 @@ import provider_incident
 import semantic_intake_pipeline
 import requirement_identity
 import session_context
+import skill_runtime
 import start_router
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -159,6 +160,10 @@ def _human_init(result: dict[str, Any]) -> str:
         f"Activation: {(result.get('activation') or {}).get('generic', {}).get('path') or 'disabled'}",
         f"Next: {result.get('next_action')}",
     ]
+    runtime = result.get("runtime") or {}
+    if runtime:
+        lines.append(f"Skill runtime: {runtime.get('skill_root')}")
+        lines.append(f"Run from repository root: {runtime.get('commands', {}).get('start')}")
     for w in result.get("warnings") or []:
         lines.append(f"WARN {w.get('code')}: {w.get('detail')}")
     for u in result.get("unresolved") or []:
@@ -171,8 +176,34 @@ def cmd_init(args: argparse.Namespace) -> tuple[int, dict[str, Any], str]:
         args.repo, sdd=args.sdd, host=args.host, architecture=args.architecture,
         force=args.force, ci=args.ci, activation=not args.no_activation,
     )
+    # Publish the resolved runtime so every later step can invoke the CLI without searching.
+    result["runtime"] = skill_runtime.describe(args.repo)
     code = 2 if args.ci and result.get("status") == "ACTION_REQUIRED" else 0
     return code, result, _human_init(result)
+
+
+def cmd_where(args: argparse.Namespace) -> tuple[int, dict[str, Any], str]:
+    """Report where this Skill package actually lives, so nothing has to guess."""
+    result = skill_runtime.describe(args.repo)
+    scope = ("Installed inside this repository; the paths above are repository-relative."
+             if result["in_repo"] else
+             "Installed outside this repository (user-level); the paths above are absolute and"
+             " machine-specific, so do not write them into shared files such as AGENTS.md.")
+    lines = [
+        f"Skill root: {result['skill_root']}",
+        f"Skill file: {result['skill_ref']}",
+        f"CLI: {result['cli_ref']}",
+        f"Invocation prefix: {result['prefix']}",
+        "",
+        "Ready to run (from the repository root):",
+        f"  {result['commands']['start']}",
+        f"  {result['commands']['doctor']}",
+        f"  {result['commands']['status']}",
+        "",
+        scope,
+        "Do not hardcode a Skill directory name; it is deployment-specific.",
+    ]
+    return 0, result, "\n".join(lines)
 
 
 def cmd_discover(args: argparse.Namespace) -> tuple[int, dict[str, Any], str]:
@@ -461,6 +492,12 @@ def cmd_intake(args: argparse.Namespace) -> tuple[int, dict[str, Any], str]:
     }
     flow = pipeline.get("flow_profile")
     text = f"Intake: {pipeline.get('status')}\nFlow: {flow or 'not classified'}\nWork item: {(result.get('work_item') or {}).get('id')}\nNext: {bootstrap.get('next_action')}"
+    for warning in pipeline.get("warnings") or []:
+        text += f"\nWARNING {warning.get('code')}: {warning.get('message')}\n-> {warning.get('next_action')}"
+    if pipeline.get("status") == "NEEDS_EVIDENCE":
+        template = (pipeline.get("artifacts") or {}).get("resolutions_template")
+        if template:
+            text += f"\nEvidence scaffold: {template}\nFill it and re-run with --resolutions <file>."
     return code, result, text
 
 
@@ -582,7 +619,9 @@ def cmd_check(args: argparse.Namespace) -> tuple[int, dict[str, Any], str]:
     path = repo / ".orchestrator/execution-state.yaml"
     state = sm._load(path) if path.exists() else None
     result = action_guard.authorize(repo, state, args.action, target_phase=args.phase,
-                                    target_status=args.status, role=args.role, native_confirmed=args.native_confirmed)
+                                    target_status=args.status, role=args.role, native_confirmed=args.native_confirmed,
+                                    allow_governance_mutation=getattr(args, "allow_governance_mutation", False),
+                                    governance_paths=getattr(args, "governance_paths", None))
     text = "Action: " + args.action + " / " + result["decision"]
     for reason in result["reasons"]:
         text += "\n" + reason["code"] + ": " + reason["message"]
@@ -645,6 +684,8 @@ def build_parser() -> argparse.ArgumentParser:
     x.set_defaults(func=cmd_discover)
     x=sub.add_parser("doctor",help="diagnose installation and current project health")
     x.set_defaults(func=cmd_doctor)
+    x=sub.add_parser("where",help="report where this Skill and its front controller are installed")
+    x.set_defaults(func=cmd_where)
     x=sub.add_parser("status",help="show active execution status")
     x.add_argument("--role",default="implementer",choices=sorted(session_context.ROLES)); x.set_defaults(func=cmd_status)
 
@@ -689,6 +730,10 @@ def build_parser() -> argparse.ArgumentParser:
     x.add_argument("--phase", choices=action_guard.PHASES)
     x.add_argument("--status", default="in_progress", choices=sorted(action_guard.STATUSES))
     x.add_argument("--role", default="implementer", choices=sorted(session_context.ROLES))
+    x.add_argument("--allow-governance-mutation", action="store_true",
+                   help="operator override for --action mutate_governance; never a default")
+    x.add_argument("--governance-path", action="append", dest="governance_paths", metavar="PATH",
+                   help="governance input being changed, for --action mutate_governance")
     x.set_defaults(func=cmd_check)
 
     pr=sub.add_parser("provider",help="inspect/reset semantic provider operational state"); prs=pr.add_subparsers(dest="provider_command",required=True)

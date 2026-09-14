@@ -141,12 +141,12 @@ def _install_hosts(repo: Path, hosts: list[str]) -> dict[str, Any]:
     install_host_adapter.ensure_session_context_config(repo, True)
     for host in hosts:
         if host == "claude-code":
-            frag = install_host_adapter.load_template(ROOT / "hosts" / "claude-code" / "hooks.template.json")
+            frag = install_host_adapter.load_template(ROOT / "hosts" / "claude-code" / "hooks.template.json", repo)
             target = repo / ".claude" / "settings.json"
             install_host_adapter.merge_hooks(target, frag, True)
             out[host] = str(target)
         elif host == "codex":
-            frag = install_host_adapter.load_template(ROOT / "hosts" / "codex" / "hooks.template.json")
+            frag = install_host_adapter.load_template(ROOT / "hosts" / "codex" / "hooks.template.json", repo)
             target = repo / ".codex" / "hooks.json"
             install_host_adapter.merge_hooks(target, frag, True)
             out[host] = str(target)

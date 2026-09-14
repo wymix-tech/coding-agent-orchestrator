@@ -15,7 +15,7 @@ import repository_snapshot as snapshots
 import provider_incident
 import cbm_provider
 
-ACTIONS = {"read", "prepare", "mutate_code", "advance", "close", "finish_role"}
+ACTIONS = {"read", "prepare", "mutate_code", "mutate_governance", "advance", "close", "finish_role"}
 PHASES = ("discovery", "specification", "design", "planning", "implementation", "review", "verification", "release", "closed")
 STATUSES = {"pending", "ready", "in_progress", "completed", "failed", "cancelled"}
 LATE_PHASES = {"review", "verification", "release", "closed"}
@@ -192,7 +192,9 @@ def collect_evidence(repo: Path | None, state: dict | None) -> dict:
 
 def evaluate(state: dict | None, action: str, *, evidence: dict | None = None,
              target_phase: str | None = None, target_status: str = "in_progress",
-             role: str = "implementer", native_confirmed: bool = False) -> dict:
+             role: str = "implementer", native_confirmed: bool = False,
+             allow_governance_mutation: bool = False,
+             governance_paths: list[str] | None = None) -> dict:
     """Pure, deterministic eligibility decision; no mutation, IO, or host overrides."""
     facts = evidence or {}
     reasons = []
@@ -204,6 +206,17 @@ def evaluate(state: dict | None, action: str, *, evidence: dict | None = None,
         deny("UNKNOWN_ACTION", "Unknown governance action.", "inspect_action")
     elif action in {"read", "prepare"}:
         pass  # reading and non-production preparation remain available for recovery
+    elif action == "mutate_governance":
+        # Governance inputs grant authority; an agent must not be able to widen its own
+        # authority by rewriting them. Legitimate changes go through the orchestrator CLI
+        # (classified as prepare) or an explicit operator action.
+        targets = ", ".join(sorted(set(governance_paths or []))) or "governance configuration"
+        if not allow_governance_mutation:
+            deny("GOVERNANCE_CONFIG_PROTECTED",
+                 f"Governance input is not agent-writable: {targets}. Authority config, policy sources, "
+                 "execution state, and requirement identity must be changed through the orchestrator CLI "
+                 "or an explicit operator action, never by an agent edit.",
+                 "reconfigure_governance_explicitly")
     elif state is None:
         deny("STATE_MISSING", "Canonical Execution State is missing; run intake before production-code mutation or advance.", "run_intake")
     elif action == "finish_role":

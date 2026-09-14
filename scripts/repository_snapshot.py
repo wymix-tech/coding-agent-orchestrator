@@ -16,7 +16,24 @@ GENERATED_FILES = {
     ".orchestrator/config.yaml", ".orchestrator/enforcement.yaml", ".orchestrator/session-context.yaml",
 }
 IGNORED_DIRS = {".git", ".claude", ".codex", ".pi", "node_modules", "__pycache__", ".venv", "venv", ".pytest_cache"}
-IGNORED_PREFIXES = (".agents/skills/coding-agent-orchestrator/",)
+
+
+def _self_skill_prefix() -> str | None:
+    """Repo-relative prefix of this Skill package when installed project-locally.
+
+    The install directory is a deployment choice, so derive it. Without this the Skill's
+    own files count as material repository content and churn the fingerprint.
+    """
+    parts = Path(__file__).resolve().parents[1].parts
+    if len(parts) >= 3 and parts[-3] == ".agents" and parts[-2] == "skills":
+        return f".agents/skills/{parts[-1]}/"
+    return None
+
+
+# The legacy literal stays so repositories installed under the old name keep their snapshot.
+IGNORED_PREFIXES = tuple(dict.fromkeys(
+    p for p in (".agents/skills/coding-agent-orchestrator/", _self_skill_prefix()) if p
+))
 ACTIVATION_START = "<!-- coding-agent-orchestrator:start -->"
 ACTIVATION_END = "<!-- coding-agent-orchestrator:end -->"
 

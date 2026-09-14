@@ -20,20 +20,24 @@ Act as the control plane for coding work without replacing project-owned enginee
 - **Superpowers** governs implementation discipline.
 - **Activation stubs** load this Skill; they never own project truth.
 
+## Runtime Entry Point
+
+The Skill directory name is a deployment choice; never hardcode it. The front controller sits next to this `SKILL.md`: `<skill-root>/coding-orchestrator --repo . where` prints the resolved paths and commands; without an executable launcher use `python3 <skill-root>/scripts/coding_orchestrator.py`.
+
 ## Bootstrap & Start Intent Guard
 
-Ensure `.orchestrator/config.yaml` exists; if missing, Safe Auto initialize once and continue the same request. For `开始`, `继续`, `start`, `continue`, or `resume`, run packaged `coding-orchestrator --repo <repo-root> start`. Follow its route: resume active work, surface blockers, auto-intake one high-confidence requirement, ask when none exists, or require selection when several exist. Never invent scope, fake a work item, or code from a bare start intent. On `ACTION_REQUIRED`, stop mutation and surface the decision.
+Ensure `.orchestrator/config.yaml` exists; if missing, Safe Auto initialize once and continue the same request. For `开始`, `继续`, `start`, `continue`, or `resume`, run `start`. Follow its route: resume active work, surface blockers, auto-intake one high-confidence requirement, ask when none exists, or require selection when several exist. Never invent scope, fake a work item, or code from a bare start intent. On `ACTION_REQUIRED`, stop mutation and surface the decision.
 
 ## Lazy Reference Loading Contract
 
 Treat this Skill package as a knowledge store, not a prompt bundle.
 
-1. **Never preload all references.** Load only the reference needed for the current decision or stage.
-2. **Normally load at most 1–2 references at a time.** Add more only when required or evidence is insufficient.
+1. **Never preload all references.** Load only the reference the current decision needs.
+2. **Normally load at most 1–2 references at a time.** Add more only when evidence is insufficient.
 3. **Do not recursively follow every link.** References are retrieval targets, not an import graph.
 4. **Prefer current project artifacts.** State, SDD, Policy, Context Pack, and Evidence supply facts; references explain rules.
-5. **Keep heavy material lazy.** Full code graphs, execution history, policy corpora, test logs, and old handoffs stay out of prompt context unless directly needed.
-6. **Discard stale projections.** Context Packs, Session Bootstrap, Handoff, semantic analysis, and verification must match current authoritative snapshots before reliance.
+5. **Keep heavy material lazy.** Code graphs, history, policy corpora, test logs, and old handoffs stay out of context unless directly needed.
+6. **Discard stale projections.** Context Packs, Session, Handoff, and verification must match current authoritative snapshots before reliance.
 
 ## Invariants
 
@@ -45,10 +49,10 @@ Treat this Skill package as a knowledge store, not a prompt bundle.
 6. **Semantic impact precedes final scope classification** when code changes are involved.
 7. **Project Policy outranks imported guidance.** External rules are non-blocking until explicitly promoted locally.
 8. **Enforce MUST rules mechanically where possible.** Prefer architecture, static-analysis, build, test, and contract gates over prompt-only compliance.
-9. **Freshness is snapshot-bound.** Material requirement, code, policy, evidence, or state changes invalidate stale analysis or verification as applicable.
+9. **Freshness is snapshot-bound.** Material requirement, code, policy, evidence, or state changes invalidate stale analysis or verification.
 10. **Host hooks are guardrails, not final authority.** Transition guards, CI, and merge protection must still prevent invalid completion.
 11. **Session/Context artifacts are projections, not truth.** Rebuild them from authoritative state; never infer completion from chat claims.
-12. **DONE is earned by evidence.** Required policy/quality gates, review findings, acceptance, traceability, and fresh final verification cannot be optimized away.
+12. **DONE is earned by evidence.** Required gates, findings, acceptance, traceability, and fresh final verification cannot be optimized away.
 
 ## Stage Router
 
@@ -61,27 +65,27 @@ Load references lazily according to the current need:
 | SDD authority selection | `references/adapter-contract.md`, then exactly one selected `adapters-*.md` |
 | Fact extraction / unresolved evidence | `references/fact-extractor.md` |
 | Process classification / Flow | `references/decision-engine.md` or `references/adaptive-flow-policy.md` |
-| Code-change impact | `references/semantic-impact-engine.md`; read provider details only when debugging/integrating the provider |
-| Project rules / policy routing | `references/engineering-policy-layer.md`; load framework-specific or ECC material only when applicable |
-| Execution state / transitions | `references/execution-state-manager.md`; load exactly one state adapter when needed |
+| Code-change impact | `references/semantic-impact-engine.md`; provider details only when debugging |
+| Project rules / policy routing | `references/engineering-policy-layer.md`; framework-specific material only when applicable |
+| Execution state / transitions | `references/execution-state-manager.md`; one state adapter when needed |
 | Whether execution, advance, or closure is allowed | `references/action-authorization.md` |
 | Role/stage context or stale context | `references/context-plane.md` |
 | Cold start / resume / handoff | `references/session-context.md` |
 | Implementation discipline | `references/superpowers-policy.md` |
 | Host hook/extension behavior | `references/host-enforcement.md`; consult `host-capabilities.yaml` only for host-specific capability questions |
-| Review / verification / closure | `references/quality-gates.md` and, when traceability/evidence is the issue, `references/state-and-evidence.md` |
+| Review / verification / closure | `references/quality-gates.md` and, for traceability/evidence, `references/state-and-evidence.md` |
 
-Do not load framework-specific examples for unrelated stacks. Do not load all SDD/state adapters to compare them after authority is already known.
+Do not load framework-specific examples for unrelated stacks or all SDD/state adapters after authority is known.
 
 ## Runtime Workflow
 
-Use the packaged unified front controller for normal operation. Lower-level scripts are for debugging or integration only.
+Use the packaged front controller for normal operation; lower-level scripts are for debugging.
 
 Operate through these phases:
 
 1. **BOOTSTRAP / START**: run the Bootstrap & Start Intent Guard first; resolve current state before intake or resume, and stop at `ACTION_REQUIRED` when authority or requirement selection is ambiguous.
 2. **INTAKE**: extract facts and evidence, measure semantic impact when relevant, route policy, classify process rigor, and plan verification.
-3. **CONTEXT**: build/refresh the Context Manifest and minimal role/stage Context Pack; on cold start or handoff, project compact Session Context from authoritative state.
+3. **CONTEXT**: build/refresh the Context Manifest and minimal role/stage Context Pack; on cold start or handoff, project compact Session Context.
 4. **IMPLEMENT**: use `check --action mutate_code`; work in traceable slices under Policy and Superpowers. Hooks mark material mutations stale.
 5. **REVIEW / VERIFY**: refresh required semantic/policy evidence, clear blocking findings, run required gates, and bind final verification to the current execution snapshot.
 6. **ADVANCE / CLOSE**: consume Action Guard results via `check --action advance --phase <phase>` or `check --action close`; never derive permission from status labels alone.

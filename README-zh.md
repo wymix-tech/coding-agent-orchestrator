@@ -454,7 +454,13 @@ Host Hook 永远不是最终唯一安全边界。V5 State Guard、CI 和 Merge/B
 推荐把 Skill 安装在项目内：
 
 ```text
-project/.agents/skills/coding-agent-orchestrator/
+project/.agents/skills/<skill-dir>/
+```
+
+目录名 `<skill-dir>` 由你决定 —— `coding-agent-orchestrator`、`orchestrating-sdd-coding` 或其他名字都可以。**不要硬编码它**：同一个 Skill 包在不同项目里可能安装在不同的目录名下。想知道它实际在哪里，直接问 Skill 自己：
+
+```bash
+<skill-dir>/coding-orchestrator --repo . where
 ```
 
 正常情况下，现在不再需要记住一个额外的“首次初始化步骤”。Skill 第一次被选中后，**Bootstrap Guard** 会先检查 `.orchestrator/config.yaml`；如果不存在，就自动执行一次包内 Safe Auto `init`，然后继续当前这次用户请求，不需要退出或再发一次消息。
@@ -462,7 +468,7 @@ project/.agents/skills/coding-agent-orchestrator/
 仍然可以在**项目根目录**手工初始化：
 
 ```bash
-./.agents/skills/coding-agent-orchestrator/coding-orchestrator --repo . init
+./.agents/skills/<skill-dir>/coding-orchestrator --repo . init
 ```
 
 Windows：

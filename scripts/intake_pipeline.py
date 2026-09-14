@@ -40,6 +40,11 @@ def main(argv: Iterable[str] | None = None) -> int:
 
     decision = decision_engine.classify(facts, strict_evidence=True)
     dump(outdir / "decision.json", decision)
+    template_path = outdir / "fact-resolutions.template.json"
+    template = fact_resolver.build_resolution_template(
+        facts, source_ref=str(args.resolutions) if args.resolutions else None
+    )
+    dump(template_path, template)
     summary = {
         "status": decision.get("status"),
         "flow_profile": decision.get("flow_profile"),
@@ -48,6 +53,7 @@ def main(argv: Iterable[str] | None = None) -> int:
         "artifacts": {
             "draft": str(outdir / "work-facts.draft.json"),
             "decision": str(outdir / "decision.json"),
+            "resolutions_template": str(template_path),
         },
     }
     if args.resolutions:

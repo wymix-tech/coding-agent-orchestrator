@@ -6,7 +6,7 @@
   "provider_count": 1,
   "policy_layer": "project-owned engineering policy with optional ECC external guidance",
   "governance_authority": "orchestrator",
-  "test_count": 218,
+  "test_count": 249,
   "key_entrypoints": [
     "scripts/project_discovery.py",
     "scripts/project_bootstrap.py",

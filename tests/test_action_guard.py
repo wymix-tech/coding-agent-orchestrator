@@ -296,11 +296,47 @@ class ToolActionTests(unittest.TestCase):
     def test_preparation_is_allowed_without_work_item_but_code_is_not(self):
         with tempfile.TemporaryDirectory() as td:
             repo = Path(td)
-            for path in ("requirements.md", "docs/spec.md", ".orchestrator/config.yaml"):
+            # SDD authoring is legitimate preparation even with no active work item.
+            for path in ("requirements.md", "docs/spec.md", "docs/stories/01-login.md"):
                 result = ek.handle(repo, "claude-code", "pre_tool", {"tool_name": "Write", "tool_input": {"file_path": path}})
                 self.assertEqual("allow", result["decision"], path)
             result = ek.handle(repo, "claude-code", "pre_tool", {"tool_name": "Write", "tool_input": {"file_path": "src/a.py"}})
             self.assertEqual("deny", result["decision"])
+
+    def test_governance_inputs_are_not_agent_writable(self):
+        """An agent must not widen its own authority by rewriting what grants authority."""
+        with tempfile.TemporaryDirectory() as td:
+            repo = Path(td)
+            governed = [".orchestrator/config.yaml", ".orchestrator/enforcement.yaml",
+                        ".orchestrator/execution-state.yaml", ".orchestrator/policies/manifest.yaml",
+                        ".orchestrator/requirements/identity.json"]
+            for path in governed:
+                with self.subTest(path=path):
+                    self.assertEqual("mutate_governance", tool_actions.describe(
+                        {"tool_name": "Write", "tool_input": {"file_path": path}}, repo)["action"])
+                    result = ek.handle(repo, "pi", "pre_tool", {"tool_name": "Write", "tool_input": {"file_path": path}})
+                    self.assertEqual("deny", result["decision"])
+                    self.assertIn("GOVERNANCE_CONFIG_PROTECTED", result["metadata"]["authorization"]["reason_codes"])
+                    self.assertEqual("reconfigure_governance_explicitly",
+                                     result["metadata"]["authorization"]["next_action"])
+
+    def test_governance_mutation_requires_explicit_operator_override(self):
+        denied = guard.evaluate(None, "mutate_governance", governance_paths=[".orchestrator/config.yaml"])
+        self.assertFalse(denied["allowed"])
+        allowed = guard.evaluate(None, "mutate_governance", governance_paths=[".orchestrator/config.yaml"],
+                                 allow_governance_mutation=True)
+        self.assertTrue(allowed["allowed"])
+        self.assertIn("mutate_governance", guard.ACTIONS)
+
+    def test_shell_escalates_governance_writes_but_not_reads(self):
+        with tempfile.TemporaryDirectory() as td:
+            repo = Path(td)
+            self.assertEqual("read", tool_actions.describe(
+                {"tool_name": "Bash", "tool_input": {"command": "cat .orchestrator/config.yaml"}}, repo)["action"])
+            self.assertEqual("mutate_governance", tool_actions.describe(
+                {"tool_name": "Bash", "tool_input": {"command": "printf x > .orchestrator/config.yaml"}}, repo)["action"])
+            self.assertEqual("mutate_governance", tool_actions.describe(
+                {"tool_name": "Bash", "tool_input": {"command": "python3 -c \"open('.orchestrator/policies/m.yaml','w')\""}}, repo)["action"])
 
     def test_write_payload_variants_have_no_readonly_exemption(self):
         payloads = [

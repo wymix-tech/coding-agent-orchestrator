@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List
 
 ALLOWED_STRENGTH = {"authoritative", "observed", "derived"}
+REQUIRED_FIELDS = ["path", "value", "source_type", "source", "evidence", "strength"]
 WORK_SECTIONS = {"ambiguity", "complexity", "scope", "risk", "novelty", "verification"}
 INT_PATHS = {
     "complexity.predicted_components",
@@ -45,7 +46,7 @@ def set_path(data: Dict[str, Any], path: str, value: Any) -> None:
 
 
 def validate_resolution(r: Dict[str, Any]) -> None:
-    required = ["path", "value", "source_type", "source", "evidence", "strength"]
+    required = REQUIRED_FIELDS
     missing = [k for k in required if k not in r]
     if missing:
         raise ValueError(f"resolution missing fields {missing}: {r}")
@@ -101,6 +102,69 @@ def apply_resolutions(draft: Dict[str, Any], resolution_doc: Dict[str, Any]) -> 
                 queue.append(f"{section}.{key}")
     out.setdefault("extraction", {})["resolution_queue"] = queue
     return out
+
+
+def value_type(path: str) -> str:
+    return "non_negative_integer" if path in INT_PATHS else "boolean"
+
+
+def build_resolution_template(facts: Dict[str, Any], *, source_ref: str | None = None) -> Dict[str, Any]:
+    """Emit a fillable scaffold for every unresolved Work Fact.
+
+    Intake can report dozens of missing facts without saying how to answer them. The
+    scaffold removes that dead end: one entry per queued fact, pre-typed, with any
+    heuristic hint attached as inspection guidance that still cannot finalize the fact.
+    """
+    extraction = facts.get("extraction") or {}
+    queue = [p for p in (extraction.get("resolution_queue") or []) if isinstance(p, str)]
+    hints: Dict[str, Dict[str, Any]] = {}
+    for suggestion in (extraction.get("suggestions") or []):
+        if isinstance(suggestion, dict) and isinstance(suggestion.get("fact"), str):
+            hints.setdefault(suggestion["fact"], suggestion)
+    items: List[Dict[str, Any]] = []
+    for path in queue:
+        item: Dict[str, Any] = {
+            "path": path,
+            "value": None,
+            "value_type": value_type(path),
+            "source_type": "",
+            "source": "",
+            "evidence": "",
+            "strength": "",
+        }
+        hint = hints.get(path)
+        if hint is not None:
+            item["hint"] = {
+                "suggested_value": hint.get("suggested_value"),
+                "reason": hint.get("reason"),
+                "evidence": hint.get("evidence"),
+                "strength": "heuristic",
+                "note": ("heuristic is hint-only and cannot finalize this fact; inspect the cited "
+                         "location and restate it as authoritative, observed, or derived"),
+            }
+        if value_type(path) == "boolean":
+            item["negative_proof_required_if_false"] = "unless strength is authoritative"
+        items.append(item)
+    return {
+        "schema_version": 1,
+        "generated_by": "fact_resolver.build_resolution_template",
+        "status": "COMPLETE" if not items else "UNRESOLVED",
+        "unresolved_count": len(items),
+        "source_ref": source_ref,
+        "usage": ("Fill every entry you can evidence, delete the rest, then re-run intake with "
+                  "--resolutions <this file>. Unfilled entries keep the fact unresolved."),
+        "rules": {
+            "required_fields": list(REQUIRED_FIELDS),
+            "strength_allowed": sorted(ALLOWED_STRENGTH),
+            "heuristic_is_hint_only": True,
+            "false_requires_negative_proof_unless_authoritative": True,
+            "value_must_match_type": ("boolean facts use JSON true/false, never the string \"false\"; "
+                                      "structural counts use non-negative integers"),
+            "conflict_rule": ("a resolution cannot overwrite a mechanically proven fact with a "
+                              "different value; reconcile the sources or create a new snapshot"),
+        },
+        "resolutions": items,
+    }
 
 
 def main(argv: Iterable[str] | None = None) -> int:

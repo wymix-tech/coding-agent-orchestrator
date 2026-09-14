@@ -39,6 +39,7 @@ DEFAULT_CONFIG = {
     "post_mutation_policy_feedback": True,
     "completion_claim_only": True,
     "max_stop_blocks_per_session": 3,
+    "allow_governance_mutation": False,
 }
 
 COMPLETION_PATTERNS = [
@@ -346,7 +347,11 @@ def handle(repo: Path, host: str, event: str, raw: dict[str, Any]) -> dict[str, 
 
     if event == "pre_tool":
         info = mutation_info(raw, repo)
-        authorization = action_guard.authorize(repo, state, info["action"], role=infer_role(state, raw) if state else "implementer")
+        authorization = action_guard.authorize(
+            repo, state, info["action"], role=infer_role(state, raw) if state else "implementer",
+            allow_governance_mutation=bool(cfg.get("allow_governance_mutation", False)),
+            governance_paths=info.get("governance_paths"),
+        )
         save_runtime(repo, runtime)
         return canonical(event, decision=authorization["decision"],
                          reason="; ".join(r["message"] for r in authorization["reasons"]) or None,
@@ -355,7 +360,7 @@ def handle(repo: Path, host: str, event: str, raw: dict[str, Any]) -> dict[str, 
 
     if event in {"post_tool", "file_changed"}:
         info = mutation_info(raw, repo) if event == "post_tool" else {"mutating": True, "action": "mutate_code", "paths": [str(raw.get("file_path") or "")], "tool": "FileChanged"}
-        if info.get("action") == "mutate_code" and state is not None:
+        if info.get("action") in {"mutate_code", "mutate_governance"} and state is not None:
             snap = worktree_snapshot(repo)
             try:
                 state = sm.mark_enforcement_dirty(sp, "mutation" if event == "post_tool" else "external_change", info.get("paths") or [], host, snap, f"{host}:{event}", state["revision"])

@@ -67,6 +67,21 @@ Only high-confidence mechanical signals populate facts. Everything else remains 
 
 ## Phase 2: semantic resolution
 
+Intake emits a fillable scaffold at `fact-resolutions.template.json` next to the Work Facts
+artifacts: one pre-typed entry per queued fact (`boolean` or `non_negative_integer`), with any
+heuristic hint attached as inspection guidance marked hint-only, plus the rules the resolver
+enforces. Start from it instead of hand-writing the shape:
+
+```bash
+cp .orchestrator/intake/fact-resolutions.template.json fact-resolutions.json
+# fill every entry you can evidence, delete the rest, then:
+python scripts/semantic_intake_pipeline.py --repo . --request-file request.txt \
+  --output-dir .orchestrator/intake --resolutions fact-resolutions.json
+```
+
+Each entry needs `path`, `value`, `source_type`, `source`, `evidence`, and `strength`. Delete
+entries you cannot evidence yet rather than guessing; unfilled facts simply stay unresolved.
+
 The Coding Agent resolves queued facts by inspecting authoritative requirements, active SDD artifacts, architecture boundaries, changed symbols, dependencies, and relevant code.
 
 Each resolution is structured:
@@ -149,6 +164,24 @@ Examples of invalid reasoning:
 "No public API keyword found" ⇒ external_consumers=false # invalid
 "No test failed"              ⇒ deterministic_local=true # invalid
 ```
+
+## Retry without new evidence is not a repair
+
+Collectors are deterministic, so identical inputs always produce the same draft. Re-running
+intake is therefore not a fix for `NEEDS_EVIDENCE`; only new evidence changes the outcome.
+
+Intake records a fingerprint of the inputs an agent controls (request, base ref, resolutions
+file) per requirement revision in `.orchestrator/runtime/intake-history.json`. When the same
+fingerprint reproduces the same non-classified status, the summary carries:
+
+```json
+{"code": "IDENTICAL_INPUT_NO_NEW_EVIDENCE", "repeat_count": 3,
+ "next_action": "supply_fact_resolutions"}
+```
+
+With no `--resolutions`, the remedy is `supply_fact_resolutions`. If the same resolutions file
+was already supplied, it is `strengthen_resolution_evidence`: raise `strength` to
+`authoritative`/`observed`/`derived`, or add `negative_proof` for `false` claims.
 
 ## Reassessment
 

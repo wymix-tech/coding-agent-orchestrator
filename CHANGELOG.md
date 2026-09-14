@@ -1,5 +1,32 @@
 # Changelog
 
+## 6.5 revision — Deployment-Independent Runtime Location
+
+- Fixed agents repeatedly failing to locate the Skill's scripts. The install directory name is a deployment choice, but documentation and fallback paths hardcoded `.agents/skills/coding-agent-orchestrator/`, so any other name forced guessing and retries.
+- Added `scripts/skill_runtime.py` as the single source of truth for this Skill's own location, resolved from `__file__` instead of an assumed directory name.
+- Added `coding-orchestrator where`, which prints the resolved skill root, the front controller path, and ready-to-run commands; `init` now reports the runtime too.
+- `project_activation.py` no longer assumes a directory name. When this package is not inside the repository, it scans `.agents/skills/*/` for a directory that actually looks like this Skill.
+- `repository_snapshot.py` derives its own ignore prefix from the install location, so a Skill installed under any name stays out of material repository fingerprints.
+- Handled user-level installs. `where` reports absolute paths and states that the Skill is outside the repository; printed commands are shell-quoted so paths containing spaces (`C:\Users\Jane Doe\...`) run when pasted; Windows prefers `coding-orchestrator.cmd` over the POSIX launcher.
+- User-level installs no longer write a machine-specific absolute path into `AGENTS.md`. The activation block names the Skill instead, because that file is committed and shared.
+- An incomplete install that ships without `hosts/` now fails with an actionable message naming the missing asset instead of a bare `FileNotFoundError`.
+- Generated host adapters now carry the project path. `init --repo <project> --host X` bakes `--repo <project>` into `.claude/settings.json`, `.codex/hooks.json`, and the Pi extension, so the enforcement kernel resolves the project from the explicit argument instead of inferring it from the caller's cwd with `git rev-parse`. A hook triggered outside the repository, or in a tree that is not a Git repository, now targets the right project.
+- Added `tests/test_skill_runtime.py` (**18 tests**) covering project-level and user-level installs under several directory names, paths with spaces, the no-absolute-path rule, and the `--repo` propagation into Claude Code and Pi adapters. The suite now discovers **249 tests**.
+
+## 6.5 revision — Governance Artifacts Are Not Agent-Writable
+
+- Added the `mutate_governance` action class, **denied by default**. Authority config (`.orchestrator/config.yaml`), enforcement config, execution state, policy sources, and requirement identity are what *grant* authority, so an agent must not be able to widen its own authority by editing them.
+- `tool_actions.py` classifies file writes/edits and patch targets through `governance_class()`, and shell commands through `GOVERNANCE_TOKENS`; matched paths are reported as `governance_paths` on the described action.
+- Legitimate changes go through the orchestrator CLI (classified as `prepare`) or an explicit operator action with `--allow-governance-mutation`.
+- `references/action-authorization.md` documents the class and the SDD artifact widening of `prepare`; `tests/test_action_guard.py` covers it.
+
+## 6.5 revision — Intake Evidence Scaffold and Retry Loop Detection
+
+- Fixed intake reporting dozens of unresolved Work Facts without saying how to answer them. `build_resolution_template()` emits a fillable scaffold (`--resolutions-template`, also reported as `resolutions_template`) with one entry per queued fact; `value_type()` pre-types integer facts as `non_negative_integer` and the rest as `boolean`, and heuristic hints are attached as inspection guidance that still cannot finalize a fact.
+- Fixed silent retry loops. Collectors are deterministic, so identical inputs reproduce the same draft. `intake_fingerprint()` hashes the request, base ref, and resolutions file, and `record_intake()` keeps it per requirement revision in `.orchestrator/runtime/intake-history.json`. A repeated fingerprint reproducing the same non-classified status now warns with `IDENTICAL_INPUT_NO_NEW_EVIDENCE`, `repeat_count`, and a `next_action` of `supply_fact_resolutions`, or `strengthen_resolution_evidence` when a resolutions file was already supplied.
+- Intake history is diagnostic only; a write failure never fails intake.
+- `references/fact-extractor.md` documents both fixes; `tests/test_evidence_scaffold.py` covers them.
+
 ## 6.5 revision — Real CBM CLI Contract and Empty Greenfield Bootstrap
 
 - Verified the CLI/tool schemas against upstream CBM source commit `339b3f4097aa6ede22fc382ab7fd320d93c498b8` (2026-09-13).

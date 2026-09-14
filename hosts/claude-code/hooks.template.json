@@ -1,11 +1,11 @@
 {
   "hooks": {
-    "SessionStart": [{"matcher": "startup|resume|clear|compact", "hooks": [{"type": "command", "command": "python3 \"__KERNEL__\" host --host claude-code", "timeout": 15}]}],
-    "UserPromptSubmit": [{"hooks": [{"type": "command", "command": "python3 \"__KERNEL__\" host --host claude-code", "timeout": 10}]}],
-    "PreToolUse": [{"matcher": "Write|Edit|Bash|mcp__.*", "hooks": [{"type": "command", "command": "python3 \"__KERNEL__\" host --host claude-code", "timeout": 15}]}],
-    "PostToolUse": [{"matcher": "Write|Edit|Bash|mcp__.*", "hooks": [{"type": "command", "command": "python3 \"__KERNEL__\" host --host claude-code", "timeout": 15}]}],
-    "SubagentStart": [{"hooks": [{"type": "command", "command": "python3 \"__KERNEL__\" host --host claude-code", "timeout": 10}]}],
-    "SubagentStop": [{"hooks": [{"type": "command", "command": "python3 \"__KERNEL__\" host --host claude-code", "timeout": 15}]}],
-    "Stop": [{"hooks": [{"type": "command", "command": "python3 \"__KERNEL__\" host --host claude-code", "timeout": 15}]}]
+    "SessionStart": [{"matcher": "startup|resume|clear|compact", "hooks": [{"type": "command", "command": "python3 \"__KERNEL__\" host --host claude-code --repo \"__REPO__\"", "timeout": 15}]}],
+    "UserPromptSubmit": [{"hooks": [{"type": "command", "command": "python3 \"__KERNEL__\" host --host claude-code --repo \"__REPO__\"", "timeout": 10}]}],
+    "PreToolUse": [{"matcher": "Write|Edit|Bash|mcp__.*", "hooks": [{"type": "command", "command": "python3 \"__KERNEL__\" host --host claude-code --repo \"__REPO__\"", "timeout": 15}]}],
+    "PostToolUse": [{"matcher": "Write|Edit|Bash|mcp__.*", "hooks": [{"type": "command", "command": "python3 \"__KERNEL__\" host --host claude-code --repo \"__REPO__\"", "timeout": 15}]}],
+    "SubagentStart": [{"hooks": [{"type": "command", "command": "python3 \"__KERNEL__\" host --host claude-code --repo \"__REPO__\"", "timeout": 10}]}],
+    "SubagentStop": [{"hooks": [{"type": "command", "command": "python3 \"__KERNEL__\" host --host claude-code --repo \"__REPO__\"", "timeout": 15}]}],
+    "Stop": [{"hooks": [{"type": "command", "command": "python3 \"__KERNEL__\" host --host claude-code --repo \"__REPO__\"", "timeout": 15}]}]
   }
 }
