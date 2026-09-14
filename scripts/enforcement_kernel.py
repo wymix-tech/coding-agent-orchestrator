@@ -362,6 +362,15 @@ def handle(repo: Path, host: str, event: str, raw: dict[str, Any]) -> dict[str, 
         info = mutation_info(raw, repo) if event == "post_tool" else {"mutating": True, "action": "mutate_code", "paths": [str(raw.get("file_path") or "")], "tool": "FileChanged"}
         if info.get("action") in {"mutate_code", "mutate_governance"} and state is not None:
             snap = worktree_snapshot(repo)
+            # Commands such as git add/commit are conservatively authorized as
+            # mutations, but may leave all analyzed inputs unchanged. Do not
+            # invalidate verification merely because such a command completed.
+            # Keep existing dirty state, and still detect edits made by Git hooks.
+            if info.get("action") == "mutate_code" and snap == (state.get("analysis") or {}).get("repository_snapshot_id"):
+                evidence = action_guard.collect_evidence(repo, state)
+                if evidence.get("authority_fresh") and evidence.get("comparison_fresh", True):
+                    save_runtime(repo, runtime)
+                    return canonical(event)
             try:
                 state = sm.mark_enforcement_dirty(sp, "mutation" if event == "post_tool" else "external_change", info.get("paths") or [], host, snap, f"{host}:{event}", state["revision"])
                 runtime["dirty"] = True

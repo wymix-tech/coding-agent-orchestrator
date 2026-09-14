@@ -46,6 +46,12 @@ projections are excluded from the code fingerprint; their authoritative inputs a
 hashed separately. CLI and state checks compute the same live fingerprint even if
 no host event was delivered.
 
+A `post_tool` event alone is not proof of a material edit. For a conservatively
+classified code mutation such as `git add` or `git commit`, the kernel preserves
+current evidence when the live content and bound authority/comparison inputs
+still match. This does not clear an existing dirty state or exempt Git hooks
+that actually modify files. Governance mutations retain their dirty marking.
+
 ## Configuration and completion
 
 The supported hook settings are `enabled`, `post_mutation_policy_feedback`,

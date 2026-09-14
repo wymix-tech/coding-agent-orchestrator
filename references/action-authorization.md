@@ -80,6 +80,23 @@ verification results bind `snapshot_id` and `evidence_snapshot_id`; a required g
 cannot be downgraded by recording a result. Stop retries never convert a denial into
 permission, and state-only helpers cannot prove freshness without the repository.
 
+## Content and Git comparison identity
+
+Material repository fingerprints cover live file paths, bytes, executable modes, and
+symlink targets. HEAD, index placement, and already absent tracked paths are not
+content: staging, ordinary commits, empty commits, and message-only amendments
+preserve evidence when the analyzed inputs stay unchanged. Git hooks that edit
+those inputs still invalidate evidence.
+
+An explicit intake `--base-ref` is bound separately to its base tree and merge-base
+trees. Changed or unavailable comparison inputs produce `COMPARISON_BASE_CHANGED`
+even if the current worktree is identical. Git commit IDs remain trace metadata in
+Work Facts and semantic-impact artifacts.
+
+Content fingerprint version 2 intentionally differs from older HEAD-bound
+fingerprints. Existing active work needs one fresh intake/context/verification
+cycle after upgrading; old pass flags must not be copied onto the new binding.
+
 ## Existing-project migration and limits
 
 Keep schema version `1` and legacy command interfaces. Old analysis or result records
