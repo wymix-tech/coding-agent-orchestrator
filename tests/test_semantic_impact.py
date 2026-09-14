@@ -286,11 +286,11 @@ class CbmCliCompatibilityTests(unittest.TestCase):
         p = cbm_provider.CBMProvider("fake-cbm")
         p._binary_path = mock.Mock(return_value="/fake/cbm")
         p._run = mock.Mock(return_value=self._proc(0, stdout='{"changed_files":[],"changed_symbols":[],"impacted_symbols":[]}'))
-        out = p._run_tool("detect_changes", {"project":"demo","scope":"all","depth":3})
+        out = p._run_tool("detect_changes", {"project":"demo","scope":"impact","depth":3})
         self.assertEqual([], out["changed_files"])
         self.assertEqual(["/fake/cbm","cli","detect_changes"], p._run.call_args.args[0])
         payload=json.loads(p._run.call_args.kwargs["input_text"])
-        self.assertEqual({"project":"demo","scope":"all","depth":3}, payload)
+        self.assertEqual({"project":"demo","scope":"impact","depth":3}, payload)
 
     def test_nonzero_failure_preserves_stderr_and_stdout(self):
         p = cbm_provider.CBMProvider("fake-cbm")

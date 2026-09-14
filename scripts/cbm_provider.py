@@ -31,6 +31,20 @@ ASYNC_RELATIONS = {"ASYNC_CALLS", "EMITS", "LISTENS_ON", "PRODUCES", "CONSUMES"}
 INTEGRATION_RELATIONS = {"HTTP_CALLS", "ASYNC_CALLS", "EMITS", "LISTENS_ON", "PRODUCES", "CONSUMES"}
 DATA_RELATIONS = {"DATA_FLOWS", "WRITES", "READS"}
 CONTRACT_SUFFIX_RE = re.compile(r"(^|/)(openapi|swagger)([^/]*)\.(ya?ml|json)$|\.proto$|\.graphqls?$", re.I)
+NON_PRODUCT_ROOTS = {
+    ".git", ".orchestrator", ".agents", ".claude", ".codex", ".pi",
+    "_bmad", ".bmad", "bmad", "node_modules", "vendor", ".venv", "venv",
+}
+PRODUCT_FILE_NAMES = {
+    "pom.xml", "build.gradle", "build.gradle.kts", "package.json", "pyproject.toml",
+    "requirements.txt", "go.mod", "cargo.toml", "composer.json", "makefile",
+}
+PRODUCT_SUFFIXES = {
+    ".c", ".cc", ".cpp", ".cxx", ".h", ".hpp", ".cs", ".go", ".java", ".kt",
+    ".kts", ".m", ".mm", ".php", ".py", ".rb", ".rs", ".scala", ".swift",
+    ".ts", ".tsx", ".js", ".jsx", ".vue", ".svelte", ".proto", ".graphql",
+    ".graphqls", ".sql", ".sol", ".dart", ".ex", ".exs", ".erl", ".fs", ".fsx",
+}
 
 
 def _walk(value: Any) -> Iterator[Tuple[Optional[str], Any]]:
@@ -230,6 +244,55 @@ def _git_head(repo: Path) -> Optional[str]:
         return p.stdout.strip() if p.returncode == 0 else None
     except OSError:
         return None
+
+
+def repository_baseline(repo: Path) -> Dict[str, Any]:
+    """Classify whether CBM detect_changes has a meaningful Git/code baseline.
+
+    BMAD and Orchestrator installation files are workflow metadata, not an application
+    codebase. CBM's detect_changes requires HEAD and a resolvable base commit, so a genuinely
+    empty greenfield project must not be reported as a provider outage.
+    """
+    repo = repo.resolve()
+    product_files: List[str] = []
+    if repo.exists():
+        for path in repo.rglob("*"):
+            if not path.is_file():
+                continue
+            try:
+                rel = path.relative_to(repo)
+            except ValueError:
+                continue
+            if any(part.lower() in NON_PRODUCT_ROOTS for part in rel.parts[:-1]):
+                continue
+            if path.name.lower() in PRODUCT_FILE_NAMES or path.suffix.lower() in PRODUCT_SUFFIXES:
+                product_files.append(rel.as_posix())
+    head = _git_head(repo)
+    return {
+        "status": "empty_greenfield" if not product_files else ("ready" if head else "unborn_greenfield"),
+        "git_head": head,
+        "product_files": sorted(product_files),
+    }
+
+
+def empty_greenfield_impact(repo: Path, baseline: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """Return a neutral pre-implementation snapshot when there is no product code to analyze."""
+    baseline = baseline or repository_baseline(repo)
+    out = normalize_detect_changes(
+        {"changed_files": [], "changed_symbols": [], "impacted_symbols": []},
+        repo=repo,
+        project=repo.resolve().name,
+    )
+    out["provider"].update({"available": None, "invoked": False})
+    out["coverage"] = {"status": "not_applicable", "reason": "no_product_code"}
+    out["collection"] = {
+        "status": "not_applicable",
+        "reason": "empty_greenfield_project",
+        "cbm_invoked": False,
+        "git_head": baseline.get("git_head"),
+        "product_file_count": 0,
+    }
+    return out
 
 
 def _file_hash(repo: Path, relpath: str) -> Optional[str]:
@@ -835,6 +898,9 @@ class CBMProvider(CodeIntelligenceProvider):
         refresh_index: bool = True,
     ) -> Dict[str, Any]:
         repo = repo.resolve()
+        baseline = repository_baseline(repo)
+        if baseline["status"] == "empty_greenfield":
+            return empty_greenfield_impact(repo, baseline)
         if not self.health()["available"]:
             raise ProviderError("codebase-memory-mcp is unavailable")
         if depth < 1 or depth > 5:
@@ -846,23 +912,39 @@ class CBMProvider(CodeIntelligenceProvider):
             index_result = self._run_tool("index_repository", {"repo_path": str(repo)})
             project = self._project_name(index_result, repo)
 
-        args: Dict[str, Any] = {"scope": scope, "depth": depth, "project": project}
-        if scope == "branch" and base_branch:
+        # CBM's real schema accepts scope=files|impact. The Orchestrator's
+        # all/staged/unstaged/branch values are intake concepts and must never be passed through.
+        args: Dict[str, Any] = {"scope": "impact", "depth": depth, "project": project}
+        if base_branch:
             args["base_branch"] = base_branch
-        raw = self._run_tool("detect_changes", args)
-        coverage = self._run_tool("check_index_coverage", {"project": project}, tolerate=True)
+        if baseline["status"] == "unborn_greenfield":
+            # detect_changes requires HEAD and a base commit. Before the first commit, model
+            # every product file as new instead of misreporting CBM as unavailable.
+            raw = {"changed_files": baseline["product_files"], "changed_symbols": [], "impacted_symbols": []}
+        else:
+            raw = self._run_tool("detect_changes", args)
         normalized = normalize_detect_changes(
             raw,
             repo=repo,
             project=project,
             provider_version=self._version(),
-            coverage_raw=coverage,
         )
+        evidence_paths = sorted(set(normalized["changes"]["changed_files"]) | set(normalized["impact"]["affected_files"]))
+        if evidence_paths:
+            coverage = self._run_tool(
+                "check_index_coverage", {"project": project, "paths": evidence_paths[:128]},
+                tolerate=True,
+            )
+            normalized["coverage"] = _coverage_summary(coverage)
+        else:
+            normalized["coverage"] = {"status": "not_applicable", "reason": "no_evidence_paths"}
         normalized["collection"] = {
             "scope": scope,
             "base_branch": base_branch,
             "depth": depth,
             "index_refreshed": refresh_index,
+            "baseline_status": baseline["status"],
+            "detect_changes_invoked": baseline["status"] == "ready",
             "index_result_digest": hashlib.sha256(
                 json.dumps(index_result, sort_keys=True, ensure_ascii=False, default=str).encode("utf-8")
             ).hexdigest() if index_result is not None else None,

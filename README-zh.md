@@ -977,8 +977,15 @@ inline JSON 兼容路径。Agent 的 PATH 不完整时还会检查 `~/.local/bin
 真正的 indexing 失败不会被兼容 fallback 的二次错误覆盖。当前 CBM 可用下面的命令直接验证索引：
 
 ```bash
-codebase-memory-mcp cli index_repository --repo-path /absolute/path/to/repo --format json
+codebase-memory-mcp cli index_repository --repo-path /absolute/path/to/repo
+codebase-memory-mcp cli list_projects --format json --detail stats
 ```
+
+当前 CBM 的 `detect_changes --scope` 只接受 `files|impact`，不能传入 Orchestrator 自己的
+`all|branch`；`check_index_coverage` 还必须提供具体 `paths` 或 `scopes`。如果项目只有
+BMAD/Orchestrator 安装元数据、尚无业务源码，则按空白 greenfield 处理：不调用 CBM，也不会把
+尚无 Git `HEAD` 误报成 provider 故障。产生业务源码后才建立索引；首个提交前保守地把业务文件
+全部视为新增文件。
 
 CBM 运行失败现在会写入持久化 provider incident，不会再形成“证据不足 → 重跑 semantic intake →
 同一个 provider 再失败”的循环。可使用：

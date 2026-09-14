@@ -84,9 +84,14 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
     draft = fact_extractor.extract(repo, request=request, base_ref=args.base_ref)
     dump(outdir / "work-facts.v4-draft.json", draft)
 
+    baseline = cbm_provider.repository_baseline(repo)
     if args.cbm_fixture:
         raw = json.loads(args.cbm_fixture.read_text(encoding="utf-8"))
         impact = cbm_provider.normalize_detect_changes(raw, repo=repo, project=repo.name)
+    elif baseline["status"] == "empty_greenfield":
+        # BMAD/Orchestrator installation metadata is not a product codebase. With no product
+        # files, CBM detect_changes is not applicable and must not open a provider incident.
+        impact = cbm_provider.empty_greenfield_impact(repo, baseline)
     else:
         provider = cbm_provider.CBMProvider(args.cbm_binary)
         health = provider.health()

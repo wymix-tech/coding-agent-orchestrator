@@ -964,8 +964,14 @@ process has a reduced PATH. Runtime/indexing failures are never masked by syntax
 current CBM builds, a direct index smoke test is:
 
 ```bash
-codebase-memory-mcp cli index_repository --repo-path /absolute/path/to/repo --format json
+codebase-memory-mcp cli index_repository --repo-path /absolute/path/to/repo
+codebase-memory-mcp cli list_projects --format json --detail stats
 ```
+
+Current CBM accepts `detect_changes --scope files|impact` (not the Orchestrator's intake scope
+names), and `check_index_coverage` requires concrete `paths` or `scopes`. A project containing
+only BMAD/Orchestrator metadata is treated as an empty greenfield project: CBM is not invoked
+until product code exists, and the absence of a Git `HEAD` is not misreported as a provider outage.
 
 A CBM operational failure now opens a persistent provider incident instead of triggering endless
 semantic-intake retries. Inspect/reset it with:

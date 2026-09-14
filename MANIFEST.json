@@ -6,7 +6,7 @@
   "provider_count": 1,
   "policy_layer": "project-owned engineering policy with optional ECC external guidance",
   "governance_authority": "orchestrator",
-  "test_count": 216,
+  "test_count": 218,
   "key_entrypoints": [
     "scripts/project_discovery.py",
     "scripts/project_bootstrap.py",
@@ -63,7 +63,7 @@
   ],
   "start_intent_router": "bare start/resume/continue intents resolve authoritative project state; zero requirements asks, one high-confidence requirement auto-intakes, multiple candidates require selection",
   "action_authorization": "One pure evaluator with live evidence collection; read/prepare/mutate_code/advance/close/finish_role shared by state, CLI, start/resume, and host kernel",
-  "cbm_cli_compatibility": "schema flags + explicit JSON when advertised; legacy stdin/inline/raw only by capability/shape; runtime failures preserved; persistent provider retry circuit",
+  "cbm_cli_compatibility": "verified current schema: detect scope files|impact; coverage requires paths/scopes; schema flags + explicit JSON only when advertised; empty greenfield bypass; persistent provider retry circuit",
   "host_auto_selection": {
     "auto_priority": [
       "explicit --host",
@@ -84,15 +84,15 @@
     "bmad_discovery": "native sprint-state-driven output discovery with template exclusion and sourced unknown-format/location diagnostics",
     "verification_obligations": "stable obligations separated from execution results; auditable superseded/not_applicable/waived disposition",
     "completion_semantics": "historical governed completion separated from current close readiness; native closed alone is not Governance Done",
-    "cbm_contract": "bounded timeout, JSON contract checks, stdout/stderr preservation, no retry on runtime failure, syntax fallback only for proven shape mismatch"
+    "cbm_contract": "upstream 339b3f4 schema verified; real detect scope mapping; exact-path coverage; empty/unborn greenfield handling; bounded timeout; no runtime-failure retry"
   },
   "repair_validation": {
     "previous_full_baseline": "211/211 PASS before CBM provider resilience revision",
-    "current_discovered_tests": 216,
-    "current_affected_regression": "116/116 PASS (CBM/semantic, start, bootstrap CLI, activation, action authorization, session context, enforcement)",
-    "standard_unittest_current": "NOT_CLAIMED: repair container one-process runner was unstable during this revision; see repair/verification-summary.json",
+    "current_discovered_tests": 218,
+    "current_affected_regression": "53/53 PASS (CBM/semantic, start, bootstrap CLI)",
+    "standard_unittest_current": "218/218 PASS via python -m unittest discover -s tests -v",
     "context_footprint": "PASS: 100 lines, 7490 bytes, 942 words",
-    "external_live_integrations": "CBM live integration not available in repair container; target workstation verification required",
+    "external_live_integrations": "CBM upstream source/schema verified at 339b3f4; native binary build failed at link in repair container, so target-binary execution remains required",
     "report": "REPAIR_REPORT.md"
   },
   "repair_baseline": {

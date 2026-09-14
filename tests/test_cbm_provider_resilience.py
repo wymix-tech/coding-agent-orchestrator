@@ -37,6 +37,51 @@ class CbmProviderResilienceTests(unittest.TestCase):
         )
         self.assertIsNone(p._run.call_args.kwargs.get("input_text"))
 
+    def test_collect_maps_orchestrator_scope_to_real_cbm_schema_and_checks_paths(self):
+        with tempfile.TemporaryDirectory() as td:
+            repo = pathlib.Path(td)
+            subprocess = __import__("subprocess")
+            subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+            subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=repo, check=True)
+            subprocess.run(["git", "config", "user.name", "Test"], cwd=repo, check=True)
+            (repo / "app.py").write_text("print('v1')\n", encoding="utf-8")
+            subprocess.run(["git", "add", "app.py"], cwd=repo, check=True)
+            subprocess.run(["git", "commit", "-qm", "baseline"], cwd=repo, check=True)
+            (repo / "app.py").write_text("print('v2')\n", encoding="utf-8")
+            provider = cbm_provider.CBMProvider("fake-cbm")
+            provider.health = mock.Mock(return_value={"available": True})
+            provider._version = mock.Mock(return_value="0.10.8")
+            provider._run_tool = mock.Mock(side_effect=[
+                {"status": "indexed", "project": repo.name},
+                {"changed_files": ["app.py"], "changed_symbols": [], "impacted_symbols": []},
+                {"status": "complete"},
+            ])
+            out = provider.collect_impact(repo, scope="all", base_branch="HEAD", depth=3)
+            detect_args = provider._run_tool.call_args_list[1].args[1]
+            self.assertEqual("impact", detect_args["scope"])
+            self.assertNotEqual("all", detect_args["scope"])
+            coverage_args = provider._run_tool.call_args_list[2].args[1]
+            self.assertEqual(["app.py"], coverage_args["paths"])
+            self.assertTrue(out["collection"]["detect_changes_invoked"])
+
+    def test_empty_bmad_only_project_does_not_invoke_cbm_or_open_incident(self):
+        with tempfile.TemporaryDirectory() as td:
+            repo = pathlib.Path(td)
+            (repo / "_bmad/core").mkdir(parents=True)
+            (repo / "_bmad/core/workflow.yaml").write_text("name: bmad\n", encoding="utf-8")
+            with mock.patch.object(cbm_provider.CBMProvider, "health", side_effect=AssertionError("CBM must not be probed")), \
+                 mock.patch.object(cbm_provider.CBMProvider, "collect_impact", side_effect=AssertionError("CBM must not run")):
+                buf = io.StringIO()
+                with contextlib.redirect_stdout(buf):
+                    rc = semantic_intake_pipeline.main(["--repo", str(repo), "--request", "Build the first feature"])
+            result = json.loads(buf.getvalue())
+            self.assertNotEqual("PROVIDER_UNAVAILABLE", result["status"])
+            impact_path = repo / ".orchestrator/intake/semantic-impact.json"
+            impact = json.loads(impact_path.read_text(encoding="utf-8"))
+            self.assertFalse(impact["collection"]["cbm_invoked"])
+            self.assertEqual("empty_greenfield_project", impact["collection"]["reason"])
+            self.assertFalse(provider_incident.inspect(repo).get("status") == "open")
+
     def test_common_local_bin_is_found_when_agent_path_is_minimal(self):
         with tempfile.TemporaryDirectory() as td:
             home = pathlib.Path(td)
@@ -54,6 +99,7 @@ class CbmProviderResilienceTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             repo = pathlib.Path(td)
             (repo / ".orchestrator").mkdir()
+            (repo / "app.py").write_text("print('product code')\n", encoding="utf-8")
             health = {"available": True, "binary": "/fake/cbm", "version": "0.10.8"}
             diagnostics = {"provider": "codebase-memory-mcp", "binary": "/fake/cbm", "version": "0.10.8"}
             with mock.patch.object(cbm_provider.CBMProvider, "health", return_value=health), \

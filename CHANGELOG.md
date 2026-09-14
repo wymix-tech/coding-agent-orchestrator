@@ -1,5 +1,15 @@
 # Changelog
 
+## 6.5 revision — Real CBM CLI Contract and Empty Greenfield Bootstrap
+
+- Verified the CLI/tool schemas against upstream CBM source commit `339b3f4097aa6ede22fc382ab7fd320d93c498b8` (2026-09-13).
+- Corrected `detect_changes`: CBM accepts `scope=files|impact`; Orchestrator scopes are no longer passed through.
+- Corrected `check_index_coverage`: every call now includes the concrete evidence `paths` required by CBM.
+- Corrected the index smoke command: current `index_repository` does not declare `--format`; JSON formatting is used on tools that advertise it.
+- Added empty-greenfield handling. BMAD/Orchestrator/Agent installation metadata is excluded from product-code detection, so an empty project does not invoke CBM, require a Git `HEAD`, or open a false provider incident.
+- For product files before the first commit, indexing still runs and all product files are conservatively treated as new until CBM `detect_changes` has a valid Git baseline.
+- Added regressions for real scope mapping, exact-path coverage, and a BMAD-only empty project.
+
 ## 6.5 revision — CBM Provider Resilience and Retry Circuit
 
 - Modern CBM schema CLI builds now use explicit `--format json`, preventing compact/tree stdout from being misclassified as a provider outage.

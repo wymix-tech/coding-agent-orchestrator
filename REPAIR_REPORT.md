@@ -62,7 +62,9 @@ The end-to-end T8 regression supplies the complementary allowed path after real 
 
 ## CBM compatibility
 
-The adapter uses bounded execution (`ORCHESTRATOR_CBM_TIMEOUT_SECONDS`, default 120 seconds). Current stdin-JSON invocation is tried first. A runtime/indexing failure, timeout, or success-with-invalid-JSON is terminal and is not retried using another syntax, preventing duplicate side effects and error masking. Compatibility fallback is only allowed for invocation-shape incompatibility, and raw mode is only used when capability probing proves it exists.
+The adapter uses bounded execution (`ORCHESTRATOR_CBM_TIMEOUT_SECONDS`, default 120 seconds). Schema flags are used only when the installed tool's help advertises them; otherwise the adapter uses documented stdin JSON. A runtime/indexing failure, timeout, or success-with-invalid-JSON is terminal and is not retried using another syntax, preventing duplicate side effects and error masking. Compatibility fallback is only allowed for invocation-shape incompatibility, and raw mode is only used when capability probing proves it exists.
+
+The CLI contract was subsequently checked against upstream CBM commit `339b3f4097aa6ede22fc382ab7fd320d93c498b8`: `detect_changes.scope` is `files|impact`, `check_index_coverage` requires `paths` or `scopes`, and `index_repository` does not declare a `format` input. Empty BMAD-only greenfield projects now bypass CBM as not applicable instead of failing Git revision resolution and opening a false provider incident.
 
 Tests cover timeout, invalid JSON, nonzero stdout/stderr preservation, `index_repository`, `detect_changes`, modern stdin JSON, conditional inline fallback, and conditional raw fallback.
 
@@ -82,6 +84,7 @@ The following executables were **not available** in this repair environment: `co
 codebase-memory-mcp cli --help
 codebase-memory-mcp cli list_projects
 codebase-memory-mcp cli index_repository --repo-path /path/to/project
+codebase-memory-mcp cli list_projects --format json --detail stats
 
 # Then from each actual host:
 ./.agents/skills/coding-agent-orchestrator/coding-orchestrator --repo . doctor
@@ -113,9 +116,9 @@ Recovery commands on the target workstation:
 
 ```bash
 coding-orchestrator --repo . --json provider status codebase-memory-mcp
-codebase-memory-mcp cli index_repository --repo-path /absolute/path/to/repo --format json
+codebase-memory-mcp cli index_repository --repo-path /absolute/path/to/repo
 coding-orchestrator --repo . provider reset codebase-memory-mcp
 coding-orchestrator --repo . start
 ```
 
-The repair container does not contain the real CBM binary, so live-provider success is still **not verified here**. Current affected regression groups total 116 passing tests; the repository discovers 216 tests. A fresh one-process standard discover was not claimed for this follow-up because the local runner repeatedly stalled and one diagnostic run terminated in the Python/PyYAML stack; the prior persisted repair baseline had 211/211 full-suite PASS.
+The CBM upstream source and exact tool schemas were verified at commit `339b3f4`; a native build was attempted but failed during linking because two vendored tree-sitter symbols were unresolved, so execution of the target release binary is still required on the workstation. The repaired Orchestrator suite passes **218/218** with `python -m unittest discover -s tests -v`; the focused CBM/semantic/start/bootstrap groups pass **53/53**.

@@ -1,0 +1,106 @@
+{
+  "schema_version": 1,
+  "recorded_at": "2026-09-14T10:00:00Z",
+  "baseline": "V6.5 real CBM CLI contract and empty-greenfield checkpoint",
+  "instrumented_unittest": {
+    "tests": 211,
+    "failures": 0,
+    "errors": 0,
+    "threads_at_exit": [
+      "MainThread"
+    ],
+    "multiprocessing_children_at_exit": 0,
+    "status": "PASS"
+  },
+  "context_footprint": {
+    "command": "python3 scripts/context_footprint_check.py --repo . --json",
+    "status": "PASS",
+    "skill_lines": 100,
+    "skill_bytes": 7490,
+    "skill_words": 942
+  },
+  "action_guard_smoke": {
+    "state": "freshly bootstrapped repository with no active work item",
+    "mutate_code": {
+      "exit_code": 1,
+      "reason_codes": [
+        "STATE_MISSING"
+      ]
+    },
+    "advance_review": {
+      "exit_code": 1,
+      "reason_codes": [
+        "STATE_MISSING"
+      ]
+    },
+    "close": {
+      "exit_code": 1,
+      "reason_codes": [
+        "STATE_MISSING"
+      ]
+    }
+  },
+  "syntax_parse": {
+    "python_compileall": "PASS",
+    "json_documents": 27,
+    "yaml_documents": 10,
+    "status": "PASS"
+  },
+  "environment": {
+    "os": "Debian GNU/Linux 13 (trixie)",
+    "kernel": "Linux 6.18.44 x86_64",
+    "python": "3.13.5",
+    "git": "2.47.3"
+  },
+  "external_live_integrations": {
+    "status": "SOURCE_SCHEMA_VERIFIED_BINARY_NOT_EXECUTED",
+    "cbm_upstream_commit": "339b3f4097aa6ede22fc382ab7fd320d93c498b8",
+    "cbm_build_attempt": "link failed: unresolved tree_sitter_bash/tree_sitter_systemverilog",
+    "unavailable_binaries": [
+      "codebase-memory-mcp",
+      "pi",
+      "codex",
+      "claude",
+      "claude-code"
+    ]
+  },
+  "previous_standard_unittest": {
+    "command": "python3 -m unittest discover -s tests -v",
+    "tests": 211,
+    "status": "PASS",
+    "elapsed_seconds": 72.236
+  },
+  "current_suite": {
+    "discovered_tests": 218,
+    "affected_regression": {
+      "tests": 53,
+      "status": "PASS",
+      "groups": [
+        "cbm_provider_resilience",
+        "semantic_impact",
+        "start_router",
+        "v65_bootstrap_cli"
+      ]
+    },
+    "standard_discover": {
+      "status": "PASS",
+      "claim": "218/218 PASS",
+      "detail": "python -m unittest discover -s tests -v completed successfully"
+    }
+  },
+  "cbm_provider_resilience": {
+    "modern_output": "schema CLI --format json when advertised",
+    "binary_resolution": [
+      "PATH",
+      "ORCHESTRATOR_CBM_BINARY",
+      "CBM_BINARY",
+      "~/.local/bin",
+      "/opt/homebrew/bin",
+      "/usr/local/bin"
+    ],
+    "incident_path": ".orchestrator/providers/codebase-memory-mcp.json",
+    "retry_policy": "same binary/version: explicit reset/retry only after first failure; changed identity: one fresh automatic attempt",
+    "upstream_schema": "VERIFIED at DeusData/codebase-memory-mcp commit 339b3f4097aa6ede22fc382ab7fd320d93c498b8",
+    "live_cbm": "TARGET RELEASE BINARY NOT EXECUTED; local source build failed at link on unresolved tree_sitter_bash/tree_sitter_systemverilog"
+  }
+}
