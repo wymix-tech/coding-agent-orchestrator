@@ -25,9 +25,12 @@ from test_enforcement_kernel import EnforcementFixture
 
 
 def git(repo, *args):
-    return subprocess.check_output(
-        ["git", *args], cwd=repo, text=True, stderr=subprocess.PIPE,
-    ).strip()
+    try:
+        return subprocess.check_output(
+            ["git", *args], cwd=repo, text=True, stderr=subprocess.PIPE,
+        ).strip()
+    except subprocess.CalledProcessError as exc:
+        raise AssertionError(f"git {args!r} failed:\n{exc.stdout}\n{exc.stderr}") from exc
 
 
 class ContentSnapshotTests(unittest.TestCase):
@@ -53,7 +56,7 @@ class ContentSnapshotTests(unittest.TestCase):
         head = git(self.repo, "rev-parse", "HEAD")
         for args in (
             ("commit", "--allow-empty", "-qm", "empty"),
-            ("commit", "--amend", "-qm", "different message"),
+            ("commit", "--amend", "--allow-empty", "-qm", "different message"),
         ):
             with self.subTest(args=args):
                 git(self.repo, *args)
@@ -150,7 +153,7 @@ class ContentSnapshotTests(unittest.TestCase):
         first = self.analyses()
         for args in (
             ("commit", "--allow-empty", "-qm", "empty"),
-            ("commit", "--amend", "-qm", "message only"),
+            ("commit", "--amend", "--allow-empty", "-qm", "message only"),
         ):
             with self.subTest(args=args):
                 old_head = git(self.repo, "rev-parse", "HEAD")
@@ -267,8 +270,9 @@ class CommitAuthorizationTests(unittest.TestCase):
         for args in (
             ("add", "src"),
             ("commit", "-qm", "feature"),
+            ("commit", "--amend", "-qm", "feature-message"),
             ("commit", "--allow-empty", "-qm", "metadata"),
-            ("commit", "--amend", "-qm", "new-message"),
+            ("commit", "--amend", "--allow-empty", "-qm", "new-message"),
         ):
             command = "git " + " ".join(args)
             with self.subTest(command=command):
