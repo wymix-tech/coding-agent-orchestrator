@@ -2,6 +2,41 @@
 
 This report is the durable repair checkpoint for the T1–T8 stability work. The repaired source tree, schemas, documentation, and tests are packaged together; this report distinguishes local verification from external integrations that were unavailable in the repair environment.
 
+## Runtime/governance review follow-up — 2026-09-14
+
+This follow-up corrects the six issues reviewed in commit `6fec51a` and the four
+CBM-dependent errors in its newly added retry tests.
+
+| Reviewed issue | Correction and regression evidence |
+|---|---|
+| Shell governance-path aliases | Normalize literal paths against tool cwd, preserve symlink resolution before collapsing `..`, and protect descendants during parent removal/moves. A ready implementer is still denied the configuration-write variants that previously disabled enforcement. |
+| Policy sources outside the default directory | Include the configured manifest and enabled packs plus the currently analyzed manifest/source references, including paths under `docs/` and outside the repository. Direct writes, patches, moves and shell writes reject these targets. |
+| Windows recovery entry blocked by missing state | Share the packaged front-controller paths with tool classification and recognize the `.cmd` entry. Before a work item exists, packaged recovery remains available while similarly named foreign scripts and composed mutation commands remain guarded. |
+| Old/duplicate host hooks on upgrade | Compare installed adapters with the current runtime/repo, replace managed registrations, preserve unrelated hooks/settings, and keep repeated reconciliation idempotent. Cover Claude Code, Codex and Pi migration. |
+| Host path serialization | Parse JSON before substituting arguments; use POSIX shell quoting, encoded argument transport for Windows commands, and JSON-compatible TS literals. Special-character argument round trips execute against a local kernel stub. Explicit `--repo` also remains authoritative inside a parent Git tree. |
+| Filled scaffold overwritten by another intake | Create scaffolds exclusively at new paths. Both intake pipelines preserve filled files across repeated runs, including file aliases, and return the actual remaining-facts template path. |
+
+Verification on Linux with Python 3.12.14:
+
+```text
+python3 -m unittest discover -s tests -v
+Ran 263 tests in 19.346s
+OK
+
+Focused review regressions: 14/14 PASS
+Retry/scaffold module: 10/10 PASS, fixture-only CBM calls
+Skill quick validation: PASS
+Context footprint: PASS — 104 lines, 7497 bytes, 940 words
+git diff --check: PASS
+```
+
+The retry tests now supply `--cbm-fixture`, reject any attempt to instantiate the real
+provider, and check the intake exit/status before inspecting warning fields. Provider
+incident semantics are preserved. Windows tokenization and encoded command transport
+are exercised locally; native Windows host applications and a live CBM release binary
+were not exercised in this follow-up. Literal target classification remains a host
+guardrail, with the existing state/verification gates and sandbox limitations retained.
+
 ## Baseline and preserved design
 
 The repair preserves `scripts/action_guard.py` as the single action authorization evaluator consumed by CLI/state/host/start-resume paths, preserves shared material classification in `repository_snapshot.py`, preserves tool-input normalization in `tool_actions.py`, and keeps native SDD/project Policy authoritative. No quality gate is fabricated as passed.

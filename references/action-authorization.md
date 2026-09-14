@@ -17,6 +17,14 @@ combines them. Host payload normalization belongs in `tool_actions.py`, not in p
 | `close` | All shared checks plus acceptance satisfaction, all required current gates/review, and current passed final verification. Release applies the same final evidence requirements. |
 | `finish_role` | Reviewer/verifier records a passed or failed outcome with evidence. This authorizes reporting the role outcome, not declaring the work done. |
 
+Governance targets include the configured policy manifest and its enabled packs, plus
+sources referenced by the current analysis, even when they live under `docs/` or outside
+the repository. Literal tool/shell targets are normalized against the tool working
+directory, including `.`/`..`, native separators and symlinks. Directory removal/move
+operations check protected descendants too. Ordinary SDD authoring and packaged
+recovery entry points (including `coding-orchestrator.cmd`) retain their preparation
+classification. This classification does not replace a shell/filesystem sandbox.
+
 Preserve native SDD ownership: native phase/status changes must be made by its adapter
 and then projected. A native completion token alone does not establish governance
 completion. `native_confirmed` is an adapter assertion, not permission to skip gates.

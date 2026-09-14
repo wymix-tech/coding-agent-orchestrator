@@ -4,11 +4,14 @@ import json
 import os
 import pathlib
 import shutil
+import shlex
 import subprocess
+import sys
 import tempfile
 import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "scripts"))
 ENV = {**os.environ, "GIT_CONFIG_GLOBAL": "/dev/null", "GIT_CONFIG_SYSTEM": "/dev/null"}
 
 
@@ -246,7 +249,7 @@ class ActivationAndSnapshotTests(unittest.TestCase):
                 # No unresolved placeholder, and the project path is passed explicitly.
                 self.assertNotIn("__REPO__", command)
                 self.assertNotIn("__KERNEL__", command)
-                self.assertIn('--repo "%s"' % repo.resolve(), command)
+                self.assertEqual(str(repo.resolve()), shlex.split(command)[-1])
 
     def test_pi_extension_carries_the_project_path(self):
         """The Pi extension is generated per project, so it must know which project it belongs to."""

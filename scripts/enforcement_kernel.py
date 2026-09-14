@@ -474,7 +474,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     h.add_argument("--canonical", action="store_true", help="emit canonical output instead of host-specific output")
     args = p.parse_args(argv)
     raw = json.load(sys.stdin)
-    repo = repo_root(args.repo or raw.get("cwd") or os.getcwd())
+    repo = args.repo.resolve() if args.repo is not None else repo_root(raw.get("cwd") or os.getcwd())
     event = args.event or normalize_event(args.host, raw)
     result = handle(repo, args.host, event, raw)
     output = result if args.canonical or args.host == "pi" else format_host_output(args.host, event, result)

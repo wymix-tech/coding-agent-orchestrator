@@ -5,7 +5,7 @@ This script only mutates host configuration when --apply is provided. It creates
 next to an existing JSON file before merging orchestrator hook groups.
 """
 from __future__ import annotations
-import argparse, json, shutil
+import argparse, base64, copy, json, os, re, shlex, shutil
 from pathlib import Path
 from typing import Any
 
@@ -13,11 +13,40 @@ import project_activation
 
 ROOT = Path(__file__).resolve().parents[1]
 KERNEL = (ROOT / "scripts" / "enforcement_kernel.py").resolve()
+ENCODED_PREFIX = 'python3 -c "import base64,json,os,sys;os.execv(sys.executable,[sys.executable]+json.loads(base64.b64decode('
 
 
 def _embedded(path: Path) -> str:
     """Render a filesystem path for embedding inside a JSON/TS double-quoted string literal."""
-    return str(path).replace("\\", "\\\\")
+    return json.dumps(str(path), ensure_ascii=True)[1:-1]
+
+
+def _shell_command(argv: list[str], *, windows: bool | None = None) -> str:
+    windows = os.name == "nt" if windows is None else windows
+    if windows:
+        # Windows hosts may launch through cmd, PowerShell, or Git Bash. Transport
+        # paths as data so %, $, backticks, and spaces cannot be shell-expanded.
+        encoded = base64.b64encode(json.dumps(argv[1:]).encode("utf-8")).decode("ascii")
+        return ENCODED_PREFIX + "'" + encoded + "')))\""
+    return shlex.join(argv)
+
+
+def _managed_hook(hook: dict[str, Any]) -> bool:
+    command = str(hook.get("command") or "")
+    if hook.get("type") != "command":
+        return False
+    try:
+        if command.startswith(ENCODED_PREFIX):
+            encoded = command[len(ENCODED_PREFIX):].split("'", 2)[1]
+            argv = ["python3", *json.loads(base64.b64decode(encoded))]
+        else:
+            argv = shlex.split(command)
+        return (len(argv) >= 5 and Path(argv[0]).name.lower() in {"python", "python3", "python.exe", "python3.exe"}
+                and argv[1].replace("\\", "/").rsplit("/", 1)[-1] == "enforcement_kernel.py"
+                and argv[2:4] == ["host", "--host"]
+                and argv[4] in {"claude-code", "codex", "pi"})
+    except (ValueError, IndexError, TypeError):
+        return False
 
 
 def load_template(path: Path, repo: Path) -> dict[str, Any]:
@@ -28,9 +57,17 @@ def load_template(path: Path, repo: Path) -> dict[str, Any]:
             f"Packaged host template is missing: {path}. This Skill installation is incomplete; "
             "reinstall it with the `hosts/` directory included, or initialize with `--host none`."
         )
-    # `--repo` is baked in so the kernel never has to guess the project from the caller's cwd.
-    text = path.read_text(encoding="utf-8")
-    return json.loads(text.replace("__KERNEL__", _embedded(KERNEL)).replace("__REPO__", _embedded(repo)))
+    # Decode the JSON first, substitute whole arguments, then quote for the shell.
+    # Shell escaping and JSON string encoding are different serialization layers.
+    fragment = json.loads(path.read_text(encoding="utf-8"))
+    values = {"__KERNEL__": str(KERNEL), "__REPO__": str(repo.resolve())}
+    for groups in fragment.get("hooks", {}).values():
+        for group in groups:
+            for hook in group.get("hooks", []):
+                if hook.get("type") == "command":
+                    argv = [values.get(arg, arg) for arg in shlex.split(hook["command"])]
+                    hook["command"] = _shell_command(argv)
+    return fragment
 
 
 def merge_hooks(target: Path, fragment: dict[str, Any], apply: bool) -> dict[str, Any]:
@@ -40,7 +77,16 @@ def merge_hooks(target: Path, fragment: dict[str, Any], apply: bool) -> dict[str
     merged = dict(existing)
     if fragment.get("description") and not merged.get("description"):
         merged["description"] = fragment["description"]
-    hooks = dict(merged.get("hooks") or {})
+    hooks = {}
+    for event, groups in (existing.get("hooks") or {}).items():
+        kept = []
+        for group in groups:
+            copied = copy.deepcopy(group)
+            entries = copied.get("hooks") or []
+            copied["hooks"] = [hook for hook in entries if not _managed_hook(hook)]
+            if copied["hooks"] or not entries:
+                kept.append(copied)
+        hooks[event] = kept
     for event, groups in (fragment.get("hooks") or {}).items():
         current = list(hooks.get(event) or [])
         encoded = {json.dumps(x, sort_keys=True) for x in current}
@@ -50,7 +96,7 @@ def merge_hooks(target: Path, fragment: dict[str, Any], apply: bool) -> dict[str
                 current.append(group); encoded.add(e)
         hooks[event] = current
     merged["hooks"] = hooks
-    if apply:
+    if apply and merged != existing:
         target.parent.mkdir(parents=True, exist_ok=True)
         if target.exists():
             shutil.copy2(target, target.with_suffix(target.suffix + ".bak"))
@@ -58,11 +104,16 @@ def merge_hooks(target: Path, fragment: dict[str, Any], apply: bool) -> dict[str
     return merged
 
 
-def install_pi(repo: Path, apply: bool) -> str:
+def render_pi(repo: Path) -> str:
     template = (ROOT / "hosts" / "pi" / "coding-orchestrator.template.ts").read_text(encoding="utf-8")
-    text = template.replace("__KERNEL__", _embedded(KERNEL)).replace("__REPO__", _embedded(repo))
+    values = {"__KERNEL__": _embedded(KERNEL), "__REPO__": _embedded(repo.resolve())}
+    return re.sub(r"__KERNEL__|__REPO__", lambda match: values[match.group()], template)
+
+
+def install_pi(repo: Path, apply: bool) -> str:
+    text = render_pi(repo)
     target = repo / ".pi" / "extensions" / "coding-orchestrator.ts"
-    if apply:
+    if apply and (not target.exists() or target.read_text(encoding="utf-8") != text):
         target.parent.mkdir(parents=True, exist_ok=True)
         if target.exists(): shutil.copy2(target, target.with_suffix(".ts.bak"))
         target.write_text(text, encoding="utf-8")
@@ -72,27 +123,20 @@ def install_pi(repo: Path, apply: bool) -> str:
 
 
 def is_installed(repo: Path, host: str) -> bool:
-    """Return whether this repository already contains the orchestrator adapter for host."""
+    """An adapter is installed only when its managed hooks match this runtime/repo."""
     repo = repo.resolve()
     try:
-        if host == "claude-code":
-            p = repo / ".claude" / "settings.json"
+        if host in {"claude-code", "codex"}:
+            p = repo / (".claude/settings.json" if host == "claude-code" else ".codex/hooks.json")
             if not p.exists():
                 return False
-            text = p.read_text(encoding="utf-8", errors="ignore")
-            return "enforcement_kernel.py" in text and "--host claude-code" in text
-        if host == "codex":
-            p = repo / ".codex" / "hooks.json"
-            if not p.exists():
-                return False
-            text = p.read_text(encoding="utf-8", errors="ignore")
-            return "enforcement_kernel.py" in text and "--host codex" in text
+            desired = load_template(ROOT / "hosts" / host / "hooks.template.json", repo)
+            return merge_hooks(p, desired, False) == json.loads(p.read_text(encoding="utf-8"))
         if host == "pi":
             p = repo / ".pi" / "extensions" / "coding-orchestrator.ts"
             if not p.exists():
                 return False
-            text = p.read_text(encoding="utf-8", errors="ignore")
-            return "enforcement_kernel.py" in text and '\"--host\", \"pi\"' in text
+            return p.read_text(encoding="utf-8") == render_pi(repo)
     except Exception:
         return False
     return False

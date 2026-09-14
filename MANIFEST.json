@@ -6,7 +6,7 @@
   "provider_count": 1,
   "policy_layer": "project-owned engineering policy with optional ECC external guidance",
   "governance_authority": "orchestrator",
-  "test_count": 249,
+  "test_count": 263,
   "key_entrypoints": [
     "scripts/project_discovery.py",
     "scripts/project_bootstrap.py",
@@ -62,7 +62,7 @@
     "READY_FOR_WORK"
   ],
   "start_intent_router": "bare start/resume/continue intents resolve authoritative project state; zero requirements asks, one high-confidence requirement auto-intakes, multiple candidates require selection",
-  "action_authorization": "One pure evaluator with live evidence collection; read/prepare/mutate_code/advance/close/finish_role shared by state, CLI, start/resume, and host kernel",
+  "action_authorization": "One pure evaluator with live evidence collection; read/prepare/mutate_code/mutate_governance/advance/close/finish_role shared by state, CLI, start/resume, and host kernel",
   "cbm_cli_compatibility": "verified current schema: detect scope files|impact; coverage requires paths/scopes; schema flags + explicit JSON only when advertised; empty greenfield bypass; persistent provider retry circuit",
   "host_auto_selection": {
     "auto_priority": [
@@ -88,12 +88,13 @@
   },
   "repair_validation": {
     "previous_full_baseline": "211/211 PASS before CBM provider resilience revision",
-    "current_discovered_tests": 218,
-    "current_affected_regression": "53/53 PASS (CBM/semantic, start, bootstrap CLI)",
-    "standard_unittest_current": "218/218 PASS via python -m unittest discover -s tests -v",
-    "context_footprint": "PASS: 100 lines, 7490 bytes, 942 words",
+    "current_discovered_tests": 263,
+    "current_affected_regression": "14/14 review regression tests PASS; affected modules also covered by the full suite",
+    "standard_unittest_current": "263/263 PASS via python3 -m unittest discover -s tests -v (Python 3.12.14, Linux)",
+    "context_footprint": "PASS: 104 lines, 7497 bytes, 940 words",
     "external_live_integrations": "CBM upstream source/schema verified at 339b3f4; native binary build failed at link in repair container, so target-binary execution remains required",
-    "report": "REPAIR_REPORT.md"
+    "report": "REPAIR_REPORT.md",
+    "runtime_review": "Six 6fec51a review defects corrected; CBM retry tests isolated with fixtures; native Windows host integration remains unverified"
   },
   "repair_baseline": {
     "status": "T1-T7 fixed and locally verified; T8 local lifecycle/contracts verified; live external integrations not verified in repair environment",

@@ -289,11 +289,9 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
         facts = fact_resolver.apply_resolutions(enriched, resolution_doc)
         dump(outdir / "work-facts.resolved.json", facts)
 
-    template_path = outdir / "fact-resolutions.template.json"
-    template = fact_resolver.build_resolution_template(
-        facts, source_ref=str(args.resolutions) if args.resolutions else str(request_ref) if request_ref else None
+    template_path = fact_resolver.write_resolution_template(
+        outdir, facts, source_ref=str(args.resolutions) if args.resolutions else str(request_ref) if request_ref else None
     )
-    dump(template_path, template)
 
     decision = decision_engine.classify(facts, strict_evidence=True)
     completeness = impact.get("completeness") or {"complete": True, "status": "complete"}

@@ -40,11 +40,9 @@ def main(argv: Iterable[str] | None = None) -> int:
 
     decision = decision_engine.classify(facts, strict_evidence=True)
     dump(outdir / "decision.json", decision)
-    template_path = outdir / "fact-resolutions.template.json"
-    template = fact_resolver.build_resolution_template(
-        facts, source_ref=str(args.resolutions) if args.resolutions else None
+    template_path = fact_resolver.write_resolution_template(
+        outdir, facts, source_ref=str(args.resolutions) if args.resolutions else None
     )
-    dump(template_path, template)
     summary = {
         "status": decision.get("status"),
         "flow_profile": decision.get("flow_profile"),

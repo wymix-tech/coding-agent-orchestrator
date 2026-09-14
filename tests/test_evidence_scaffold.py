@@ -3,10 +3,13 @@ import importlib.util
 import json
 import pathlib
 import subprocess
+import sys
 import tempfile
 import unittest
+from unittest import mock
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "scripts"))
 
 
 def load_module(name, path):
@@ -99,15 +102,20 @@ class IntakeLoopDetectionTests(unittest.TestCase):
     def run_intake(self, root, request, resolutions=None):
         outdir = root / ".orchestrator" / "intake"
         argv = ["--repo", str(root), "--request", request, "--output-dir", str(outdir),
-                "--skip-context", "--skip-policy", "--allow-cbm-unavailable"]
+                "--skip-context", "--skip-policy", "--cbm-fixture",
+                str(ROOT / "examples" / "cbm-detect-changes-fixture.json")]
         if resolutions:
             argv += ["--resolutions", str(resolutions)]
         import io
         import contextlib
         buf = io.StringIO()
-        with contextlib.redirect_stdout(buf):
+        with contextlib.redirect_stdout(buf), mock.patch.object(
+                pipeline.cbm_provider, "CBMProvider", side_effect=AssertionError("fixture must not invoke CBM")):
             code = pipeline.main(argv)
-        return code, json.loads(buf.getvalue().strip())
+        summary = json.loads(buf.getvalue().strip())
+        self.assertEqual(1, code, summary)
+        self.assertEqual("NEEDS_EVIDENCE", summary["status"], summary)
+        return code, summary
 
     def test_first_run_never_warns(self):
         tmp, root = make_repo()
@@ -163,7 +171,9 @@ class IntakeLoopDetectionTests(unittest.TestCase):
             request = "新增用户查询 REST API"
             self.run_intake(root, request)
             _, summary = self.run_intake(root, request)
-            self.assertTrue(summary["warnings"][0]["resolutions_template"].endswith("fact-resolutions.template.json"))
+            scaffold = pathlib.Path(summary["warnings"][0]["resolutions_template"])
+            self.assertTrue(scaffold.is_file())
+            self.assertEqual(summary["unresolved_count"], json.loads(scaffold.read_text())["unresolved_count"])
 
 
 if __name__ == "__main__":
