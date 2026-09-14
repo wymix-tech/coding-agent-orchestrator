@@ -2,6 +2,31 @@
 
 This report is the durable repair checkpoint for the T1–T8 stability work. The repaired source tree, schemas, documentation, and tests are packaged together; this report distinguishes local verification from external integrations that were unavailable in the repair environment.
 
+## Git commit/content snapshot follow-up — 2026-09-14
+
+The previous fingerprint mixed HEAD identity with material file content, and the
+post-tool hook marked every conservatively classified mutation dirty. An unchanged
+commit could therefore discard fresh gate/review/verification evidence.
+
+This revision separates content identity from Git trace metadata across the
+repository fingerprint, Work Facts, and CBM normalization. It also preserves
+already analyzed deletions through index cleanup and skips no-op code-mutation
+dirty marking after checking authority and comparison inputs. Actual edits,
+including edits performed by a Git pre-commit hook, remain invalidating.
+
+Explicit comparison bases bind both the base tree and merge-base trees. A changed
+or unavailable basis is rejected separately as `COMPARISON_BASE_CHANGED`. With no
+explicit base, a newly requested intake still describes outstanding uncommitted
+changes; committing can legitimately change that newly collected scope.
+
+Validation status: 21 new real Git regression tests are included, for an expected
+284-test suite. Execution is pending GitHub Actions because the local execution
+environment is unavailable. Do not treat the earlier 263-test result below as
+verification of this revision.
+
+The fingerprint format is versioned. Existing active work must refresh analysis,
+context, and affected gates/review/final verification once after upgrading.
+
 ## Runtime/governance review follow-up — 2026-09-14
 
 This follow-up corrects the six issues reviewed in commit `6fec51a` and the four

@@ -6,7 +6,7 @@
   "provider_count": 1,
   "policy_layer": "project-owned engineering policy with optional ECC external guidance",
   "governance_authority": "orchestrator",
-  "test_count": 263,
+  "test_count": 284,
   "key_entrypoints": [
     "scripts/project_discovery.py",
     "scripts/project_bootstrap.py",
@@ -84,13 +84,14 @@
     "bmad_discovery": "native sprint-state-driven output discovery with template exclusion and sourced unknown-format/location diagnostics",
     "verification_obligations": "stable obligations separated from execution results; auditable superseded/not_applicable/waived disposition",
     "completion_semantics": "historical governed completion separated from current close readiness; native closed alone is not Governance Done",
-    "cbm_contract": "upstream 339b3f4 schema verified; real detect scope mapping; exact-path coverage; empty/unborn greenfield handling; bounded timeout; no runtime-failure retry"
+    "cbm_contract": "upstream 339b3f4 schema verified; real detect scope mapping; exact-path coverage; empty/unborn greenfield handling; bounded timeout; no runtime-failure retry",
+    "content_snapshot": "material files only; Git HEAD retained as trace metadata; explicit comparison base/merge-base trees checked separately; no-op mutation hooks preserve current verification"
   },
   "repair_validation": {
-    "previous_full_baseline": "211/211 PASS before CBM provider resilience revision",
-    "current_discovered_tests": 263,
-    "current_affected_regression": "14/14 review regression tests PASS; affected modules also covered by the full suite",
-    "standard_unittest_current": "263/263 PASS via python3 -m unittest discover -s tests -v (Python 3.12.14, Linux)",
+    "previous_full_baseline": "263/263 PASS before content snapshot revision",
+    "current_discovered_tests": 284,
+    "current_affected_regression": "21 Git snapshot regression tests added; execution pending GitHub Actions",
+    "standard_unittest_current": "PENDING GitHub Actions; local execution environment unavailable for this revision",
     "context_footprint": "PASS: 104 lines, 7497 bytes, 940 words",
     "external_live_integrations": "CBM upstream source/schema verified at 339b3f4; native binary build failed at link in repair container, so target-binary execution remains required",
     "report": "REPAIR_REPORT.md",

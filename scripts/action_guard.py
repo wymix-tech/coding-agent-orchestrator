@@ -81,7 +81,15 @@ def bind_analysis(repo: Path, analysis: dict) -> dict:
     decision = _json(repo, analysis.get("decision_ref"))
     impact = _json(repo, analysis.get("semantic_impact_ref"))
     complete = semantic_complete(impact)
+    facts = _json(repo, analysis.get("work_facts_ref")) or {}
+    observations = (facts.get("extraction") or {}).get("observations") or {}
+    comparison = observations.get("comparison_basis")
+    if comparison is None:
+        # Compatibility with previously emitted facts; content snapshot v2 still
+        # requires one fresh analysis before older bindings can be reused.
+        comparison = snapshots.comparison_basis(repo, (observations.get("git") or {}).get("base_ref"))
     binding = {"repository_snapshot_id": snapshots.fingerprint(repo), "authority_hashes": hashes,
+               "comparison_basis": comparison,
                "decision_status": (decision or {}).get("status"), "semantic_complete": complete}
     # Caller-supplied analysis IDs can be reused even when requirements or policy
     # content changes. Gate/review/verification evidence must bind to actual inputs.
@@ -162,6 +170,11 @@ def collect_evidence(repo: Path | None, state: dict | None) -> dict:
         current = None
     evidence["repository_snapshot_id"] = current
     evidence["repository_fresh"] = bool(current and current == analysis.get("repository_snapshot_id"))
+    comparison = analysis.get("comparison_basis")
+    evidence["comparison_fresh"] = comparison is None or (
+        comparison.get("status") == "resolved"
+        and comparison == snapshots.comparison_basis(repo, comparison.get("base_ref"))
+    )
     hashes = analysis.get("authority_hashes") or {}
     stale_authorities = []
     for ref, expected in hashes.items():
@@ -275,6 +288,8 @@ def evaluate(state: dict | None, action: str, *, evidence: dict | None = None,
                 if action != "mutate_code" or not tracked_edit:
                     if not facts.get("repository_fresh"):
                         deny("REPOSITORY_CHANGED", "Repository content no longer matches the analyzed snapshot.", "run_semantic_intake")
+                if not facts.get("comparison_fresh", True):
+                    deny("COMPARISON_BASE_CHANGED", "The analyzed Git comparison base or merge-base trees changed or are unavailable.", "run_semantic_intake")
                 if action != "mutate_code":
                     enf = state.get("enforcement") or {}
                     if dirty or enf.get("semantic_fresh") is False or enf.get("policy_fresh") is False:

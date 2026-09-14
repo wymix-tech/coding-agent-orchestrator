@@ -191,7 +191,7 @@ was already supplied, it is `strengthen_resolution_evidence`: raise `strength` t
 
 ## Reassessment
 
-Do not mutate an old fact merely because implementation moved on. Create a new extraction snapshot after material scope/evidence changes, re-resolve only changed/invalidated facts, and rerun the same Decision Engine. Snapshot IDs include request/base/head plus changed-file content hashes, so another edit to the same filename produces a different snapshot. Record old/new snapshot IDs in the Evidence Ledger.
+Do not mutate an old fact merely because implementation moved on. Create a new extraction snapshot after material scope/evidence changes, re-resolve only changed/invalidated facts, and rerun the same Decision Engine. Snapshot IDs bind the request, material repository content, selected change set, and explicit Git comparison basis. `git_head` remains observation metadata and is excluded from identity. With a fixed comparison basis, staging or committing already analyzed content does not change the ID; edits to the same filename still do. Without `--base-ref`, a new extraction describes the outstanding uncommitted changes, so committing can legitimately change that new extraction's change set. Record old/new snapshot IDs in the Evidence Ledger.
 
 ## Agent convergence contract
 

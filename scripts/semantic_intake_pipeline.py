@@ -181,7 +181,7 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
     baseline = cbm_provider.repository_baseline(repo)
     if args.cbm_fixture:
         raw = json.loads(args.cbm_fixture.read_text(encoding="utf-8"))
-        impact = cbm_provider.normalize_detect_changes(raw, repo=repo, project=repo.name)
+        impact = cbm_provider.normalize_detect_changes(raw, repo=repo, project=repo.name, base_ref=args.base_ref)
     elif baseline["status"] == "empty_greenfield":
         # BMAD/Orchestrator installation metadata is not a product codebase. With no product
         # files, CBM detect_changes is not applicable and must not open a provider incident.

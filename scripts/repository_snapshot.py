@@ -1,4 +1,4 @@
-"""Material repository fingerprint shared by analysis and runtime authorization."""
+"""Content identity and separate Git comparison provenance for runtime authorization."""
 from __future__ import annotations
 
 import hashlib
@@ -83,19 +83,18 @@ def _material_file_digest(rel: str, path: Path) -> str | None:
     return digest_path(path)
 
 def fingerprint(repo: Path) -> str:
+    """Hash material on-disk content, independent of commits and index placement.
+
+    HEAD is trace metadata. Removing an already absent path from the index must
+    not change content identity either; deletion still removes its previous row.
+    """
     repo = repo.resolve()
-    head = ""
     try:
         raw = subprocess.check_output(
             ["git", "ls-files", "-z", "--cached", "--others", "--exclude-standard"],
             cwd=repo, stderr=subprocess.DEVNULL,
         )
         names = {os.fsdecode(x) for x in raw.split(b"\0") if x}
-        try:
-            head = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=repo,
-                                           stderr=subprocess.DEVNULL, text=True).strip()
-        except subprocess.CalledProcessError:
-            pass  # unborn branch
     except (OSError, subprocess.CalledProcessError):
         names = set()
         for directory, dirs, files in os.walk(repo):
@@ -114,7 +113,37 @@ def fingerprint(repo: Path) -> str:
             if digest is None:
                 continue
             rows.append((rel, digest, bool(path.stat().st_mode & 0o111)))
-        else:
-            rows.append((rel, "missing", None))
-    payload = json.dumps({"head": head, "files": rows}, sort_keys=True, separators=(",", ":")).encode()
+        # A deleted path is absent both before and after its deletion is committed.
+    payload = json.dumps({"version": 2, "files": rows}, sort_keys=True, separators=(",", ":")).encode()
     return "worktree:" + hashlib.sha256(payload).hexdigest()
+
+def _git_output(repo: Path, *args: str) -> str | None:
+    try:
+        return subprocess.check_output(
+            ["git", *args], cwd=repo, stderr=subprocess.DEVNULL, text=True,
+        ).strip()
+    except (OSError, subprocess.CalledProcessError):
+        return None
+
+
+def comparison_basis(repo: Path, base_ref: str | None) -> dict | None:
+    """Bind explicit diff scope without mixing HEAD identity into file identity.
+
+    A moving base or changed ancestry matters when its compared trees change.
+    Missing refs/merge bases are unresolved, never evidence of unchanged scope.
+    """
+    if not base_ref:
+        return None
+    base_tree = _git_output(repo, "rev-parse", "--verify", "--end-of-options", f"{base_ref}^{{tree}}")
+    base_commit = _git_output(repo, "rev-parse", "--verify", "--end-of-options", f"{base_ref}^{{commit}}")
+    merge_bases = _git_output(repo, "merge-base", "--all", base_commit, "HEAD") if base_commit else None
+    trees = [
+        _git_output(repo, "rev-parse", "--verify", f"{commit}^{{tree}}")
+        for commit in (merge_bases or "").splitlines()
+    ]
+    return {
+        "base_ref": base_ref,
+        "status": "resolved" if base_tree and trees and all(trees) else "unresolved",
+        "base_tree": base_tree,
+        "merge_base_trees": sorted(set(tree for tree in trees if tree)),
+    }

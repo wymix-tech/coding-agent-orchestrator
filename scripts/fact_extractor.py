@@ -458,9 +458,11 @@ def extract(repo: Path, request: str = "", base_ref: Optional[str] = None) -> Di
 
     code, head = run(["git", "rev-parse", "HEAD"], root)
     head = head if code == 0 else None
+    comparison = repository_snapshot.comparison_basis(root, base_ref)
     observations = {
         "repo_root": str(root),
-        "git_head": head,
+        "git_head": head,  # trace metadata; not part of the content snapshot
+        "comparison_basis": comparison,
         "git": git_trace,
         "changed_files": changed,
         "changed_file_hashes": {f: file_sha256(root / f) for f in changed},
@@ -487,7 +489,11 @@ def extract(repo: Path, request: str = "", base_ref: Optional[str] = None) -> Di
 
     changed_hashes = {f: file_sha256(root / f) for f in changed}
     digest_source = json.dumps(
-        {"head": head, "changed": changed, "changed_hashes": changed_hashes, "request": request, "base_ref": base_ref},
+        {
+            "repository_snapshot_id": repository_snapshot.fingerprint(root),
+            "changed": changed, "changed_hashes": changed_hashes,
+            "request": request, "comparison_basis": comparison,
+        },
         sort_keys=True, ensure_ascii=False,
     ).encode("utf-8")
     snapshot_id = hashlib.sha256(digest_source).hexdigest()[:16]

@@ -1,5 +1,14 @@
 # Changelog
 
+## 6.5 revision — Content Snapshots Independent of Git Commits
+
+- Remove HEAD identity from material fingerprints and keep deleted paths absent before and after their deletion is committed.
+- Retain Git HEAD as trace metadata in Work Facts/CBM output; bind analysis IDs to material content and explicit diff bases.
+- Check base and merge-base trees separately, rejecting changed or missing comparison inputs with `COMPARISON_BASE_CHANGED`.
+- Preserve current gate/review/verification evidence after no-op code-mutation events, including staging, commits, and message-only amendments; actual hook edits and stale authority inputs still invalidate it.
+- Add 21 real Git regression tests and a GitHub Actions workflow for focused/full tests and context footprint validation.
+- Existing active work needs one refresh when migrating from the previous HEAD-bound fingerprint.
+
 ## 6.5 revision — Runtime/Governance Review Corrections
 
 - Normalize literal governance targets across direct tools and shell commands, including relative aliases, native separators, symlinks, tool working directories, and parent-directory removal/moves.
