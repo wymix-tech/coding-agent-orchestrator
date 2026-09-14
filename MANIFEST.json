@@ -49,7 +49,7 @@
   "enforcement_kernel": "scripts/enforcement_kernel.py",
   "session_context": "JSON canonical bootstrap/handoff + YAML config + Markdown prompt projection",
   "project_bootstrap": "self-bootstrap guard + current-Agent host selection/reconciliation + safe-auto discovery + idempotent initialization + no fake active work item",
-  "unified_cli": "coding-orchestrator: init/discover/doctor/status/start/intake/resume/check/verify/provider status|reset/host install",
+  "unified_cli": "coding-orchestrator: init/discover/doctor/where/status/start/intake/resume/check/verify/readiness/progress/transition/provider status|reset/host install",
   "context_loading": "small SKILL runtime router + lazy 1–2 reference retrieval; heavy corpus remains non-resident",
   "project_activation": "managed AGENTS.md / CLAUDE.md activation stubs + current-Agent adapter selection (Pi/Codex runtime signals, Claude Code fallback) + host switching reconciliation; project truth remains in .orchestrator/ and authoritative sources",
   "readme_layout": {
@@ -62,6 +62,7 @@
     "READY_FOR_WORK"
   ],
   "start_intent_router": "bare start/resume/continue intents resolve authoritative project state; zero requirements asks, one high-confidence requirement auto-intakes, multiple candidates require selection",
+  "resume_guard": "a rephrased request never revises a source-backed requirement; revising an in-flight work item requires --revise-current --confirm-reset; readiness/progress/transition are CLI-only and every denial prints its recovery commands",
   "action_authorization": "One pure evaluator with live evidence collection; read/prepare/mutate_code/mutate_governance/advance/close/finish_role shared by state, CLI, start/resume, and host kernel",
   "cbm_cli_compatibility": "verified current schema: detect scope files|impact; coverage requires paths/scopes; schema flags + explicit JSON only when advertised; empty greenfield bypass; persistent provider retry circuit",
   "host_auto_selection": {

@@ -42,9 +42,23 @@ python3 ./coding-orchestrator --repo /path/to/project --json check --action clos
 
 `check` is read-only: exit `0` allows, exit `1` denies. The returned object contains
 `action`, `target_phase`, `allowed`, `decision`, `reason_codes`, detailed `reasons`,
-`next_action`, `state_revision`, and `work_item_id`. Reasons have stable machine codes,
-a message, and a recovery action. Multiple failures remain visible in deterministic
-order. The actual mutation/transition must recheck; a prior check is only a diagnostic.
+`next_action`, `recovery`, `state_revision`, and `work_item_id`. Reasons have stable
+machine codes, a message, and a recovery action. Multiple failures remain visible in
+deterministic order. The actual mutation/transition must recheck; a prior check is only
+a diagnostic.
+
+`recovery` lists the orchestrator CLI commands that clear the denial, derived from
+`RECOVERY_COMMANDS` in `action_guard.py`. Host `pre_tool` denials append them to the
+reason, so an agent never has to guess how to unblock itself:
+
+```bash
+coding-orchestrator readiness --key sdd_ready --value true --evidence-ref <approved spec or plan>
+coding-orchestrator progress --completed 0 --total 5 --evidence-ref <plan>
+coding-orchestrator transition --phase implementation --status in_progress --reason "plan is approved" --evidence-ref <plan>
+```
+
+Every one of them is classified as `prepare`, which is why executable state changes go
+through the front controller instead of `scripts/execution_state_manager.py`.
 
 | Consumer | Shared action/result |
 |---|---|

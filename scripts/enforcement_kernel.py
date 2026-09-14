@@ -353,10 +353,15 @@ def handle(repo: Path, host: str, event: str, raw: dict[str, Any]) -> dict[str, 
             governance_paths=info.get("governance_paths"),
         )
         save_runtime(repo, runtime)
-        return canonical(event, decision=authorization["decision"],
-                         reason="; ".join(r["message"] for r in authorization["reasons"]) or None,
+        reason = "; ".join(r["message"] for r in authorization["reasons"]) or None
+        # A denial must be executable: name the CLI that clears it instead of leaving the
+        # agent to guess, which previously produced repeated blocked retries.
+        recovery = authorization.get("recovery") or []
+        if reason and recovery:
+            reason += " Recovery: " + " | ".join(recovery)
+        return canonical(event, decision=authorization["decision"], reason=reason,
                          actions=[authorization["next_action"]] if authorization["next_action"] else [],
-                         metadata={"authorization": authorization})
+                         metadata={"authorization": authorization, "recovery": recovery})
 
     if event in {"post_tool", "file_changed"}:
         info = mutation_info(raw, repo) if event == "post_tool" else {"mutating": True, "action": "mutate_code", "paths": [str(raw.get("file_path") or "")], "tool": "FileChanged"}

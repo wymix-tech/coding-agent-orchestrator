@@ -23,6 +23,26 @@ GUARDED_PHASES = LATE_PHASES | {"implementation"}
 ANALYSIS_REFS = ("decision_ref", "semantic_impact_ref", "work_facts_ref", "verification_plan_ref",
                  "policy_plan_ref", "policy_evaluation_ref", "policy_context_ref", "requirement_ref")
 
+# A denial must name the legal way forward. Execution state is not agent-writable, so every
+# readiness/phase recovery has to be expressible as an orchestrator CLI invocation.
+RECOVERY_COMMANDS = {
+    "advance_native_sdd_to_ready": [
+        "coding-orchestrator readiness --key sdd_ready --value true --evidence-ref APPROVED_SPEC_OR_PLAN_PATH",
+        "coding-orchestrator readiness --key acceptance_criteria_present --value true --evidence-ref ACCEPTANCE_CRITERIA_PATH",
+        "coding-orchestrator transition --phase implementation --status in_progress --reason \"planning artifacts are approved\" --evidence-ref APPROVED_PLAN_PATH",
+    ],
+    "define_acceptance_criteria": [
+        "coding-orchestrator readiness --key acceptance_criteria_present --value true --evidence-ref ACCEPTANCE_CRITERIA_PATH",
+    ],
+    "transition_to_implementation": [
+        "coding-orchestrator transition --phase implementation --status in_progress --reason \"planning artifacts are approved\" --evidence-ref APPROVED_PLAN_PATH",
+    ],
+    "reconfigure_governance_explicitly": [
+        "coding-orchestrator readiness --key READINESS_KEY --value true --evidence-ref EVIDENCE_PATH",
+        "coding-orchestrator transition --phase PHASE --status STATUS --reason \"reason for the change\" --evidence-ref EVIDENCE_PATH",
+    ],
+}
+
 
 def active_blockers(state: dict | None) -> list[dict]:
     return [b for b in (state or {}).get("blockers", []) if b.get("resolved_at") is None]
@@ -331,10 +351,12 @@ def evaluate(state: dict | None, action: str, *, evidence: dict | None = None,
                 deny("VERIFICATION_NOT_PASSED", "Final verification has not passed.", "run_fresh_final_verification")
             if not current or not ver.get("fresh") or not evidence_matches(state, ver):
                 deny("VERIFICATION_STALE", "Final verification is not fresh for the current execution snapshot.", "run_fresh_final_verification")
+    recovery = [command for command in dict.fromkeys(
+        command for reason in reasons for command in RECOVERY_COMMANDS.get(reason["next_action"], []))]
     return {"schema_version": 1, "action": action, "target_phase": "closed" if action == "close" else target_phase,
             "allowed": not reasons, "decision": "deny" if reasons else "allow", "reasons": reasons,
             "reason_codes": list(dict.fromkeys(r["code"] for r in reasons)),
-            "next_action": reasons[0]["next_action"] if reasons else None,
+            "next_action": reasons[0]["next_action"] if reasons else None, "recovery": recovery,
             "state_revision": (state or {}).get("revision"), "work_item_id": ((state or {}).get("work_item") or {}).get("id")}
 
 
