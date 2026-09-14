@@ -2,6 +2,19 @@
 
 Host Enforcement combines runtime enforcement with snapshot-bound Session Bootstrap / Handoff context injection. Session artifacts remain projections; host adapters remain thin. Host adapters MUST stay thin: they translate events and outputs but do not duplicate Decision, Policy, Context, or State logic.
 
+`tool_actions.py` translates payloads to actions; `action_guard.py` makes every
+eligibility decision. The kernel returns that result under `metadata.authorization`.
+See [Action Authorization](action-authorization.md) for the shared contract also used
+by CLI checks, state transitions, verification, and resume/start guidance.
+
+## Current-host auto selection
+
+Self-Bootstrap uses runtime host identity, not stale repository markers. Explicit `--host` wins; otherwise the nearest recognized Agent process/runtime signal is selected. Pi and Codex expose positive subprocess signals, and an unrecognized runtime falls back to Claude Code. A later switch to another supported Agent triggers adapter reconciliation only; it must not reinitialize project governance state.
+
+## Activation vs enforcement
+
+Project activation and runtime enforcement are separate. `AGENTS.md` / `CLAUDE.md` managed blocks route repository coding/resume work to the Skill before normal execution begins. Pi performs equivalent activation through its session extension. After the Skill is active, host hooks/extensions enforce lifecycle constraints through the shared kernel. Activation stubs never own project truth.
+
 ## Event contract
 
 | Canonical event | Purpose |
@@ -24,7 +37,35 @@ Host Enforcement combines runtime enforcement with snapshot-bound Session Bootst
 
 ## Dirty-window rule
 
-A successful material mutation immediately invalidates semantic/context/final-verification freshness. Host enforcement deliberately allows further implementation edits in the same dirty window. It blocks review/verification/close until semantic intake and Context Plane refresh have reconciled the new snapshot. This avoids running CBM/full tests after every keystroke while preventing stale evidence from crossing a phase boundary.
+A recorded material mutation invalidates analysis and final-verification freshness.
+Further implementation edits are allowed only while the live fingerprint matches
+the last recorded tool mutation and requirement/decision/policy/context sources stay
+current. An additional external edit is not covered by this window. Advance and close
+require fresh semantic intake and context. Generated intake/runtime/session/state
+projections are excluded from the code fingerprint; their authoritative inputs are
+hashed separately. CLI and state checks compute the same live fingerprint even if
+no host event was delivered.
+
+## Configuration and completion
+
+The supported hook settings are `enabled`, `post_mutation_policy_feedback`,
+`completion_claim_only`, and `max_stop_blocks_per_session` (plus schema `version`).
+Legacy `mode`, `require_*_for_code_mutation`,
+`require_fresh_context_before_first_mutation`, `allowed_code_mutation_phases`,
+`source_roots`, and `non_code_prefixes` no longer override shared authorization.
+Existing files can retain these keys during migration; new starters omit them.
+`enabled: false` disables this hook adapter, while CLI/state authorization still applies.
+
+Exhausting the stop retry budget keeps the decision `deny` and sets
+`retry_recommended: false`; Pi stops requesting automatic continuation. A reviewer
+or verifier can report a failed outcome and finish their role without claiming global
+completion. Role completion never substitutes for `close` authorization.
+
+The payload adapter handles `cmd`/`command`, raw patches, moves, and shell operators.
+Unknown commands/tools require code-mutation authorization. Exact packaged governance
+commands and document preparation remain available for recovery. Shell classification
+is a workflow heuristic, not a general command sandbox; actual host event delivery
+and CI remain separate integration boundaries.
 
 ## Install
 

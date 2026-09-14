@@ -170,7 +170,7 @@ Use these to test routing, invariants, and resistance to both over-ceremony and 
 
 **Pass:** The extraction snapshot ID changes because changed-file content hashes are part of the fingerprint; reassessment is recorded against the new snapshot.
 
-## v5 Execution State Manager scenarios
+## Execution State Manager scenarios
 
 ### Native BMAD authority
 A BMAD repository has an active `sprint-status.yaml`. The coding agent wants to write `.orchestrator/execution-state.yaml` with a different story status because its local task is finished.
@@ -212,7 +212,7 @@ A new agent starts without previous chat context.
 
 Expected: load authoritative SDD/native status plus canonical state; `resume` identifies current phase/status, blockers, assignments, task cursor, gates, verification freshness, revision, and next legal action.
 
-## v6 Semantic Impact / CBM scenarios
+## Semantic Impact / CBM scenarios
 
 ### Provider risk tries to become governance risk
 CBM `detect_changes` reports `risk_classification=LOW` for a change that authoritative SDD/code inspection proves is authentication-sensitive.

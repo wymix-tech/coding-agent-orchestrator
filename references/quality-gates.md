@@ -56,11 +56,26 @@ For every REQUIRED gate record command/workflow, result, relevant summary, fresh
 
 No green label without executable evidence.
 
-## Execution State Manager integration (v5)
+## Execution State Manager integration
 
-REQUIRED gates must be recorded in Canonical Execution State with status and evidence. A REQUIRED gate can never be recorded as `skipped` or `not_required`. The `closed` transition is denied while any REQUIRED gate is not `passed`.
+Use [Action Authorization](action-authorization.md) as the shared release/closure
+decision. REQUIRED gates are the union of established state requirements, required
+policy enforcements, and Verification Plan items with `required_by_impact: true`.
+Intake synchronizes these items under stable `impact:<kind>` names. Omitting a required
+item from state does not remove the obligation.
 
-Final verification is separate from individual gates and is bound to `execution_snapshot_id`; any material snapshot change invalidates previous final-verification freshness.
+A required gate cannot be downgraded through a result update or recorded as `skipped`
+or `not_required`. Release and closure require every applicable gate to pass against
+the current execution and evidence snapshots. Required review must also match both;
+blocking findings prevent advancement to verification and beyond even when review
+is otherwise optional.
+
+Required gates derived from Semantic Impact or Engineering Policy also become durable verification obligations. Plan shrinkage does not erase an active obligation. If later evidence proves an obligation no longer applies, it must be disposed explicitly as `superseded`, `not_applicable`, or `waived` with reason, approving authority, evidence reference, work item, and requirement revision. A disposition changes applicability; it is never recorded as a successful test result.
+
+Final verification is separate from individual gates and binds both
+`execution_snapshot_id` and `analysis.evidence_snapshot_id`. Live code or authoritative
+input changes require re-analysis and new evidence; generated state/session updates
+alone do not change the material code fingerprint.
 
 ## Verification Planner
 

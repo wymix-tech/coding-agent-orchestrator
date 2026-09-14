@@ -27,6 +27,7 @@ class EnforcementFixture:
         subprocess.run(["git", "commit", "-qm", "init"], cwd=self.repo, check=True)
         self.intake = self.repo / ".orchestrator" / "intake"
         self.intake.mkdir(parents=True)
+        (self.repo / ".orchestrator/config.yaml").write_text("orchestrator: {}\n", encoding="utf-8")
         self.state_path = self.repo / ".orchestrator" / "execution-state.yaml"
         st = sm.create_state("W-1", "Example", "STANDARD")
         sm.initialize(self.state_path, st, "test")
@@ -35,7 +36,6 @@ class EnforcementFixture:
         if phase == "implementation":
             for k, v in [("behavior_change", True), ("acceptance_criteria_present", True), ("sdd_ready", True)]:
                 s = sm._load(self.state_path); sm.set_readiness(self.state_path, k, v, "test", "e", s["revision"])
-            s = sm._load(self.state_path); sm.transition(self.state_path, "implementation", "in_progress", "test", "ready", s["revision"])
         decision = {"status": "CLASSIFIED" if classified else "NEEDS_EVIDENCE", "flow_profile": "STANDARD" if classified else None}
         (self.intake / "decision.json").write_text(json.dumps(decision), encoding="utf-8")
         (self.intake / "semantic-impact.json").write_text(json.dumps({"snapshot":{"id":"A1"},"changes":{"changed_symbols":[]},"impact":{"impacted_symbol_count":0,"affected_modules":[],"affected_services":[]},"boundaries":{},"completeness":{"complete":True}}), encoding="utf-8")
@@ -49,6 +49,11 @@ class EnforcementFixture:
         pack = context_plane.build_pack(manifest, "implementer", "implementation")
         context_plane._dump_json(self.intake/"context-pack.implementer.implementation.json", pack)
         (self.intake/"context-pack.implementer.implementation.md").write_text(context_plane.render_pack(pack), encoding="utf-8")
+        if phase == "implementation" and classified:
+            s = sm._load(self.state_path)
+            sm.transition(self.state_path, "implementation", "in_progress", "test", "ready", s["revision"])
+            from governance_fixture import refresh_context
+            refresh_context(self.repo, self.state_path)
         # establish runtime baseline
         ek.handle(self.repo, "claude-code", "session_start", {"session_id":"s1"})
 

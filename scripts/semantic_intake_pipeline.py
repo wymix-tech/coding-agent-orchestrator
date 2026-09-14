@@ -22,6 +22,7 @@ import verification_planner
 import execution_state_manager
 import policy_engine
 import context_plane
+import provider_incident
 
 
 def dump(path: Path, data: Any) -> None:
@@ -50,9 +51,11 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
     p.add_argument("--cbm-depth", type=int, default=3)
     p.add_argument("--cbm-fixture", type=Path, help="offline/test raw detect_changes JSON")
     p.add_argument("--allow-cbm-unavailable", action="store_true")
+    p.add_argument("--retry-cbm", action="store_true", help="explicitly retry an open CBM provider incident once")
     p.add_argument("--allow-partial-impact", action="store_true", help="do not fail closed on CBM pagination/partial blast radius")
     p.add_argument("--state", type=Path, default=Path(".orchestrator/execution-state.yaml"))
     p.add_argument("--sync-state", action="store_true", help="attach analysis refs/snapshot and reconcile computed flow")
+    p.add_argument("--expected-state-revision", type=int, help="optimistic revision captured before long-running analysis")
     p.add_argument("--actor", default="orchestrator")
     p.add_argument("--policy-manifest", type=Path, help="project Engineering Policy manifest; defaults to .orchestrator/policies/manifest.yaml when present")
     p.add_argument("--policy-stage", default="implementation", choices=["bootstrap", "planning", "implementation", "review", "verification"])
@@ -86,6 +89,28 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
         impact = cbm_provider.normalize_detect_changes(raw, repo=repo, project=repo.name)
     else:
         provider = cbm_provider.CBMProvider(args.cbm_binary)
+        health = provider.health()
+        provider_id = provider_incident.identity(health.get("binary"), health.get("version"))
+        open_incident = provider_incident.inspect(repo)
+        if (
+            not args.retry_cbm
+            and open_incident.get("status") == "open"
+            and open_incident.get("provider_identity") == provider_id
+        ):
+            blocked = {
+                "status": "PROVIDER_BLOCKED",
+                "provider": "codebase-memory-mcp",
+                "error": open_incident.get("error"),
+                "error_class": open_incident.get("error_class"),
+                "incident": str(repo / ".orchestrator/providers/codebase-memory-mcp.json"),
+                "attempt_count": open_incident.get("attempt_count"),
+                "next_action": "repair_cbm_provider",
+                "retry": "explicit_only",
+                "principle": "provider failure is an operational blocker, not a request for more work-fact evidence",
+            }
+            dump(outdir / "semantic-impact.error.json", blocked)
+            print(json.dumps({**blocked, "artifact": str(outdir / "semantic-impact.error.json")}, ensure_ascii=False, indent=2))
+            return 3
         try:
             impact = provider.collect_impact(
                 repo,
@@ -94,20 +119,31 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
                 depth=args.cbm_depth,
                 refresh_index=True,
             )
+            provider_incident.record_success(
+                repo, binary=health.get("binary"), version=health.get("version")
+            )
         except Exception as exc:
+            diagnostics = provider.diagnostics()
+            error_class = cbm_provider._classify_provider_error(str(exc))
+            incident = provider_incident.record_failure(
+                repo, error_class=error_class, error=str(exc),
+                binary=health.get("binary"), version=health.get("version"), diagnostics=diagnostics,
+            )
             if not args.allow_cbm_unavailable:
-                dump(outdir / "semantic-impact.error.json", {
+                failure = {
                     "status": "PROVIDER_UNAVAILABLE",
                     "provider": "codebase-memory-mcp",
                     "error": str(exc),
-                    "principle": "do not convert provider absence into low impact",
-                })
-                print(json.dumps({
-                    "status": "PROVIDER_UNAVAILABLE",
-                    "provider": "codebase-memory-mcp",
-                    "error": str(exc),
-                    "artifact": str(outdir / "semantic-impact.error.json"),
-                }, ensure_ascii=False, indent=2))
+                    "error_class": error_class,
+                    "incident": str(repo / ".orchestrator/providers/codebase-memory-mcp.json"),
+                    "attempt_count": incident.get("attempt_count"),
+                    "next_action": "repair_cbm_provider",
+                    "retry": "explicit_only",
+                    "diagnostics": diagnostics,
+                    "principle": "do not convert provider failure into low impact or repeatedly request unrelated evidence",
+                }
+                dump(outdir / "semantic-impact.error.json", failure)
+                print(json.dumps({**failure, "artifact": str(outdir / "semantic-impact.error.json")}, ensure_ascii=False, indent=2))
                 return 2
             impact = {
                 "schema_version": 1,
@@ -171,48 +207,69 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
     state_sync = None
     if args.sync_state:
         state_path = state_path_resolved
-        current = execution_state_manager._load(state_path)
-        analysis_snapshot = (enriched.get("extraction") or {}).get("analysis_snapshot_id")
-        current = execution_state_manager.attach_analysis(
-            state_path,
-            args.actor,
-            analysis_snapshot,
-            str(outdir / "semantic-impact.json"),
-            str(outdir / ("work-facts.resolved.json" if args.resolutions else "work-facts.semantic-draft.json")),
-            str(outdir / "decision.json"),
-            str(outdir / "verification-plan.json"),
-            (impact.get("provider") or {}).get("id") or "codebase-memory-mcp",
-            current["revision"],
-            policy_plan_ref=str(outdir / "policy-plan.json") if policy_plan else None,
-            policy_evaluation_ref=str(outdir / "policy-evaluation.json") if policy_evaluation else None,
-            policy_context_ref=str(outdir / "policy-context.md") if policy_plan else None,
-            policy_snapshot_id=(policy_plan or {}).get("policy_snapshot_id"),
-            context_manifest_ref=str(outdir / "context-manifest.json") if not args.skip_context else None,
-            context_pack_ref=str(outdir / f"context-pack.{args.context_role}.{args.context_stage or args.policy_stage}.json") if not args.skip_context else None,
-        )
-        if decision.get("status") == "CLASSIFIED" and decision.get("flow_profile"):
-            current = execution_state_manager.set_flow_profile(
-                state_path, decision["flow_profile"], args.actor, str(outdir / "decision.json"), current["revision"]
-            )
-        if policy_plan and policy_evaluation:
-            for gate in policy_engine.build_state_gates(policy_plan, policy_evaluation):
-                current = execution_state_manager.record_gate(
-                    state_path,
-                    gate["name"],
-                    gate["required"],
-                    gate["status"],
-                    args.actor,
-                    "policy",
-                    gate.get("evidence_ref") or str(outdir / "policy-plan.json"),
-                    gate.get("command"),
-                    current["revision"],
+        try:
+            current = execution_state_manager._load(state_path)
+            base_revision = args.expected_state_revision if args.expected_state_revision is not None else current["revision"]
+            if current["revision"] != base_revision:
+                raise execution_state_manager.RevisionConflict(
+                    f"analysis started from revision {base_revision}, current is {current['revision']}"
                 )
-        state_sync = {
-            "state": str(state_path),
-            "revision": current["revision"],
-            "flow_profile": current["flow_profile"],
-            "execution_snapshot_id": current.get("execution_snapshot_id"),
-        }
+            analysis_snapshot = (enriched.get("extraction") or {}).get("analysis_snapshot_id")
+            current = execution_state_manager.attach_analysis(
+                state_path,
+                args.actor,
+                analysis_snapshot,
+                str(outdir / "semantic-impact.json"),
+                str(outdir / ("work-facts.resolved.json" if args.resolutions else "work-facts.semantic-draft.json")),
+                str(outdir / "decision.json"),
+                str(outdir / "verification-plan.json"),
+                (impact.get("provider") or {}).get("id") or "codebase-memory-mcp",
+                base_revision,
+                policy_plan_ref=str(outdir / "policy-plan.json") if policy_plan else None,
+                policy_evaluation_ref=str(outdir / "policy-evaluation.json") if policy_evaluation else None,
+                policy_context_ref=str(outdir / "policy-context.md") if policy_plan else None,
+                policy_snapshot_id=(policy_plan or {}).get("policy_snapshot_id"),
+                context_manifest_ref=str(outdir / "context-manifest.json") if not args.skip_context else None,
+                context_pack_ref=str(outdir / f"context-pack.{args.context_role}.{args.context_stage or args.policy_stage}.json") if not args.skip_context else None,
+                requirement_ref=str(args.sdd_ref) if args.sdd_ref else str(request_ref) if request_ref else None,
+            )
+            if decision.get("status") == "CLASSIFIED" and decision.get("flow_profile"):
+                current = execution_state_manager.set_flow_profile(
+                    state_path, decision["flow_profile"], args.actor, str(outdir / "decision.json"), current["revision"]
+                )
+            current = execution_state_manager.reconcile_verification_obligations(
+                state_path, plan, args.actor, current["revision"]
+            )
+            if policy_plan and policy_evaluation:
+                for gate in policy_engine.build_state_gates(policy_plan, policy_evaluation):
+                    current = execution_state_manager.record_gate(
+                        state_path, gate["name"], gate["required"], gate["status"], args.actor,
+                        "policy", gate.get("evidence_ref") or str(outdir / "policy-plan.json"),
+                        gate.get("command"), current["revision"],
+                    )
+            for item in plan.get("items", []):
+                if item.get("required_by_impact"):
+                    current = execution_state_manager.record_gate(
+                        state_path, item["gate_name"], True, "pending", args.actor,
+                        "verification", item.get("evidence_ref"), expected_revision=current["revision"],
+                    )
+            state_sync = {
+                "state": str(state_path),
+                "revision": current["revision"],
+                "flow_profile": current["flow_profile"],
+                "execution_snapshot_id": current.get("execution_snapshot_id"),
+            }
+        except execution_state_manager.RevisionConflict as exc:
+            conflict = {
+                "status": "STATE_CONFLICT",
+                "error": str(exc),
+                "expected_revision": args.expected_state_revision,
+                "state": str(state_path),
+                "artifacts_preserved_for_diagnostics": str(outdir),
+            }
+            dump(outdir / "state-sync.error.json", conflict)
+            print(json.dumps(conflict, ensure_ascii=False, indent=2))
+            return 4
 
     context_summary = None
     if not args.skip_context:

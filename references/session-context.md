@@ -48,7 +48,12 @@ Generated session artifacts are excluded from the material working-tree fingerpr
 
 ### `fresh_project`
 
-Used when Canonical Execution State does not exist yet. The bootstrap may guide discovery/intake, but production-code mutation remains blocked by host enforcement.
+Used when Canonical Execution State does not exist yet. Its status distinguishes two cases:
+
+- `UNBOOTSTRAPPED`: project config is missing; Safe Auto bootstrap is the next action.
+- `READY_FOR_INTAKE`: project bootstrap is complete but no real work item exists yet.
+
+Production-code mutation remains blocked until intake/classification creates and prepares canonical execution state.
 
 ### `session_resume`
 
@@ -79,7 +84,9 @@ Handoff freshness is invalidated by a changed execution or analysis snapshot. A 
 ## Injection lifecycle
 
 ```text
-SessionStart / resume / compact
+SessionStart / first prompt / resume / compact
+        ↓
+Bootstrap Guard (Safe Auto init once when needed)
         ↓
 Build Session Bootstrap JSON
         ↓
@@ -140,10 +147,10 @@ python scripts/session_context.py --repo . validate-handoff
 
 Host adapters consume Session Context as follows:
 
-- Claude Code `SessionStart` receives Session Bootstrap Markdown.
-- Codex `SessionStart` receives Session Bootstrap Markdown.
+- Claude Code `SessionStart` runs the Bootstrap Guard when needed, then receives Session Bootstrap Markdown.
+- Codex `SessionStart` runs the Bootstrap Guard when needed, then receives Session Bootstrap Markdown.
 - Pi `session_start` captures the bootstrap and injects it once on the next `before_agent_start`.
-- `UserPromptSubmit` / subsequent turns use delta-only context to avoid repeated prompt inflation.
+- If first bootstrap occurs on `UserPromptSubmit`, that same turn receives the full `READY_FOR_INTAKE` bootstrap; later turns use delta-only context to avoid repeated prompt inflation.
 
 ## Invariants
 

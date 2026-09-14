@@ -94,6 +94,8 @@ Default layout when the orchestrator owns or augments execution state:
 
 `execution-history.jsonl` is append-only. Do not rewrite historical events.
 
+State and history are committed together through a short cross-process critical section plus a durable transaction journal. The journal is recovered before state is observed, so an interrupted commit resolves to one complete revision rather than a state/history split. Lock acquisition is bounded by `ORCHESTRATOR_STATE_LOCK_TIMEOUT` (default 5 seconds); dead owners are reclaimed. CBM, tests, and other long-running work must execute outside this commit lock.
+
 ## Optimistic concurrency
 
 Every mutable state document has an integer `revision`.
@@ -104,35 +106,16 @@ This prevents multi-agent last-write-wins corruption.
 
 ## Transition guards
 
-The reference implementation enforces these minimum guards:
+`transition_guard`, committed transitions, `completion_status`, CLI `check`/`verify`,
+host hooks, and resume/start guidance consume `scripts/action_guard.py`.
+Use [Action Authorization](action-authorization.md) for the shared action contract,
+requirements by phase, denial codes, and migration rules. Do not implement a second
+set of transition conditions in an adapter.
 
-### Enter `implementation`
-
-- SDD/native planning state is `sdd_ready`.
-- If behavior changes, acceptance criteria are present.
-- No active blocker prevents phase advance.
-
-### Enter `review`
-
-- Implementation tasks are complete.
-- No active blocker prevents phase advance.
-
-### Enter `verification`
-
-- Implementation tasks are complete.
-- If review is required by the flow, review passed and no blocking finding remains.
-
-### Enter `closed`
-
-- No active blocker remains.
-- Implementation tasks are complete.
-- Acceptance criteria are satisfied.
-- Every REQUIRED quality gate passed.
-- Required review passed with no blocker.
-- Final verification passed.
-- Verification is fresh for the current execution snapshot.
-
-Repository/native policy may add stricter guards but MUST NOT weaken these invariants.
+Pass the repository root to read-only Python helpers so they can verify live inputs;
+a state-only query cannot establish permission or completion. A denied transition
+returns the same structured `authorization` result as the corresponding `check`.
+Recheck during the actual transition; an earlier successful check is not a permit.
 
 ## Flow-aware review
 
@@ -149,7 +132,11 @@ Quality policies can raise this floor.
 
 ## Fresh verification
 
-`execution_snapshot_id` identifies the current material code/evidence snapshot. Final verification records the snapshot it verified.
+`execution_snapshot_id` identifies the current execution snapshot. Analysis also
+binds a `repository_snapshot_id` and hashes of authoritative inputs into an
+`evidence_snapshot_id`. Each gate, review, and final-verification result records both
+the execution and evidence snapshot it covers. Reusing an analysis ID does not make
+old evidence valid after requirement, code, or policy content changes.
 
 If the execution snapshot changes after verification:
 
@@ -173,6 +160,7 @@ blockers:
 ```
 
 Resolving a blocker appends a history event. It does not erase the blocker record.
+Only records without `resolved_at` remain active; resolved history must not block resume.
 
 ## Assignments
 
@@ -188,7 +176,7 @@ assignments:
     assignee: agent-verify-1
 ```
 
-This prepares the state model for future multi-agent scheduling without coupling v5 to a scheduler.
+This prepares the state model for future multi-agent scheduling without coupling the state model to a scheduler.
 
 ## Resume contract
 
@@ -228,13 +216,15 @@ A native provider may report its story/change as done before orchestrator-wide g
 ```yaml
 completion:
   native_or_canonical_closed: true
+  historically_completed: false
+  completion_recorded: false
   governance_close_ready: false
   done: false
   close_guard_failures:
     - final verification has not passed
 ```
 
-Global DONE is true only when the native/canonical work item is closed **and** all orchestrator close guards pass. Never treat a native `done` token alone as sufficient proof of completion.
+A legal Orchestrator close writes `completion_record` with work/requirement identity, execution/analysis/repository snapshots, actor, time, and the allow decision. After that transition, `done` is a historical fact and later repository changes do not resurrect the work item; `governance_close_ready` may still become false because it evaluates live evidence. Native authority merely reporting `closed/completed` without a Governance completion record is **not** Global Done. For migration, legacy orchestrator-owned canonical `closed/completed` states remain historically complete; native-only legacy closed states remain not done.
 
 ## Analysis attachments
 
@@ -247,6 +237,12 @@ analysis:
   decision_ref: .orchestrator/intake/decision.json
   verification_plan_ref: .orchestrator/intake/verification-plan.json
   analysis_snapshot_id: <snapshot>
+  repository_snapshot_id: worktree:<content-hash>
+  evidence_snapshot_id: <bound-inputs-hash>
+  authority_hashes: {<source-ref>: <content-hash>}
+  requirement_ref: <authoritative-requirement>
+  decision_status: CLASSIFIED
+  semantic_complete: true
   provider: codebase-memory-mcp
 ```
 
@@ -266,6 +262,10 @@ python scripts/execution_state_manager.py \
 
 A changed analysis snapshot also advances `execution_snapshot_id`. If prior final
 verification was against another snapshot, it becomes stale automatically.
+Attaching `NEEDS_EVIDENCE` or incomplete semantic impact preserves dirty state and
+does not authorize implementation or phase advancement. Refresh the Context Manifest
+after attaching analysis; state/history projections are checked directly from current
+state and do not invalidate their own authority inputs.
 
 
 ## Flow reconciliation

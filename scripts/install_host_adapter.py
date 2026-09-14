@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Install/merge V6.4 host enforcement + session-context adapters into a repository.
+"""Install/merge host enforcement + session-context adapters into a repository.
 
 This script only mutates host configuration when --apply is provided. It creates a backup
 next to an existing JSON file before merging orchestrator hook groups.
@@ -8,6 +8,8 @@ from __future__ import annotations
 import argparse, json, shutil
 from pathlib import Path
 from typing import Any
+
+import project_activation
 
 ROOT = Path(__file__).resolve().parents[1]
 KERNEL = (ROOT / "scripts" / "enforcement_kernel.py").resolve()
@@ -53,6 +55,34 @@ def install_pi(repo: Path, apply: bool) -> str:
     return str(target)
 
 
+
+
+def is_installed(repo: Path, host: str) -> bool:
+    """Return whether this repository already contains the orchestrator adapter for host."""
+    repo = repo.resolve()
+    try:
+        if host == "claude-code":
+            p = repo / ".claude" / "settings.json"
+            if not p.exists():
+                return False
+            text = p.read_text(encoding="utf-8", errors="ignore")
+            return "enforcement_kernel.py" in text and "--host claude-code" in text
+        if host == "codex":
+            p = repo / ".codex" / "hooks.json"
+            if not p.exists():
+                return False
+            text = p.read_text(encoding="utf-8", errors="ignore")
+            return "enforcement_kernel.py" in text and "--host codex" in text
+        if host == "pi":
+            p = repo / ".pi" / "extensions" / "coding-orchestrator.ts"
+            if not p.exists():
+                return False
+            text = p.read_text(encoding="utf-8", errors="ignore")
+            return "enforcement_kernel.py" in text and '\"--host\", \"pi\"' in text
+    except Exception:
+        return False
+    return False
+
 def ensure_enforcement_config(repo: Path, apply: bool) -> str:
     target = repo / ".orchestrator" / "enforcement.yaml"
     if apply and not target.exists():
@@ -77,6 +107,7 @@ def main() -> int:
     args=p.parse_args(); repo=args.repo.resolve()
     selected=["claude-code","codex","pi"] if args.host=="all" else [args.host]
     out={"apply":args.apply,"kernel":str(KERNEL),"enforcement_config":ensure_enforcement_config(repo,args.apply),"session_context_config":ensure_session_context_config(repo,args.apply),"hosts":{}}
+    out["activation"] = project_activation.install(repo, selected, apply=args.apply)
     if "claude-code" in selected:
         frag=load_template(ROOT/"hosts"/"claude-code"/"hooks.template.json")
         target=repo/".claude"/"settings.json"

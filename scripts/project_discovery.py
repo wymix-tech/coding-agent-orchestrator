@@ -15,6 +15,8 @@ from pathlib import Path
 from typing import Any, Iterable
 
 import state_provider_detector
+import host_runtime
+import cbm_provider
 
 EXCLUDED_DIRS = {
     ".git", ".orchestrator", "node_modules", "target", "build", "dist", ".gradle",
@@ -215,15 +217,22 @@ def _detect_hosts(root: Path) -> dict[str, Any]:
             evidence.append(binary)
         if evidence:
             detected.append({"host": name, "confidence": "high" if marker.exists() else "medium", "evidence": evidence})
-    return {"detected": detected, "names": [x["host"] for x in detected]}
+    return {
+        "detected": detected,
+        "names": [x["host"] for x in detected],
+        "current_agent": host_runtime.detect_current_host(),
+    }
 
 
 def _detect_cbm() -> dict[str, Any]:
-    binary = shutil.which("codebase-memory-mcp")
+    provider = cbm_provider.CBMProvider("codebase-memory-mcp")
+    health = provider.health()
     return {
         "provider": "codebase-memory-mcp",
-        "available": bool(binary),
-        "binary": binary,
+        "available": bool(health.get("available")),
+        "binary": health.get("binary"),
+        "binary_candidates": health.get("binary_candidates") or [],
+        "version": health.get("version"),
         "authority": "structural_evidence_only",
     }
 

@@ -307,6 +307,15 @@ def build_manifest(
     add(_source(repo, "verification_plan", "verification_plan", intake_dir / "verification-plan.json", "verification_planner", 1))
     if policy_manifest_ref:
         add(_source(repo, "policy_manifest", "policy_manifest", policy_manifest_ref, "project_engineering_policy", 2))
+        # Include the actual project-owned policy packs referenced by the effective plan.
+        # External guidance remains non-authoritative and is not promoted by being indexed.
+        manifest_path = _resolve(repo, policy_manifest_ref)
+        if manifest_path and isinstance(policy_plan_doc, dict):
+            for idx, src in enumerate(policy_plan_doc.get("policy_sources") or []):
+                if not isinstance(src, dict) or not src.get("ref"):
+                    continue
+                pack_path = (manifest_path.parent / str(src["ref"])).resolve()
+                add(_source(repo, f"policy_source_{idx}", "policy_source", pack_path, "project_engineering_policy", 2, snapshot_id=src.get("content_hash")))
     if state_ref:
         state_path = _resolve(repo, state_ref)
         add(_source(repo, "execution_state", "execution_state", state_ref, "canonical_execution_state", 0, required=True,

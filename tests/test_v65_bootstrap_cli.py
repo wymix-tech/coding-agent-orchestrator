@@ -34,7 +34,7 @@ class V65BootstrapTests(unittest.TestCase):
             self.assertTrue((repo / ".orchestrator/session-context.yaml").exists())
             self.assertFalse((repo / ".orchestrator/execution-state.yaml").exists())
             bootstrap = json.loads((repo / ".orchestrator/session/session-bootstrap.json").read_text(encoding="utf-8"))
-            self.assertEqual("UNINITIALIZED", bootstrap["status"])
+            self.assertEqual("READY_FOR_INTAKE", bootstrap["status"])
 
     def test_spring_layered_policy_auto_enables_only_when_structure_is_proven(self):
         with tempfile.TemporaryDirectory() as td:
@@ -109,16 +109,62 @@ class V65BootstrapTests(unittest.TestCase):
             state = [x for x in result["checks"] if x["name"] == "execution_state"][0]
             self.assertEqual("INFO", state["status"])
 
-    def test_safe_auto_host_does_not_install_binary_only_signal(self):
+    def test_safe_auto_host_uses_current_agent_runtime_not_binary_inventory(self):
         with tempfile.TemporaryDirectory() as td:
             repo = pathlib.Path(td); git_init(repo)
             fake = {"pi": "/usr/local/bin/pi", "claude": None, "codex": None}
-            with mock.patch("shutil.which", side_effect=lambda name: fake.get(name)):
+            selection = {
+                "requested": "auto", "host": "codex", "hosts": ["codex"],
+                "source": "env:CODEX_THREAD_ID", "confidence": "high",
+                "fallback": False, "evidence": ["CODEX_THREAD_ID is set"],
+            }
+            with mock.patch("shutil.which", side_effect=lambda name: fake.get(name)), \
+                 mock.patch("host_runtime.select_hosts", return_value=selection):
                 d = project_discovery.discover(repo)
-                self.assertIn("pi", d["hosts"]["names"])
+                self.assertIn("pi", d["hosts"]["names"], "binary inventory remains diagnostic")
                 result = project_bootstrap.initialize(repo, host="auto")
-            self.assertEqual({}, result["hosts"]["installed"])
+            self.assertEqual(["codex"], sorted(result["hosts"]["installed"]))
+            self.assertTrue((repo / ".codex/hooks.json").exists())
             self.assertFalse((repo / ".pi/extensions/coding-orchestrator.ts").exists())
+
+    def test_safe_auto_host_falls_back_to_claude_code(self):
+        with tempfile.TemporaryDirectory() as td:
+            repo = pathlib.Path(td); git_init(repo)
+            selection = {
+                "requested": "auto", "host": "claude-code", "hosts": ["claude-code"],
+                "source": "default_fallback", "confidence": "fallback",
+                "fallback": True, "evidence": ["no reliable current-agent runtime signal detected"],
+            }
+            with mock.patch("host_runtime.select_hosts", return_value=selection):
+                result = project_bootstrap.initialize(repo, host="auto")
+            self.assertIn("claude-code", result["hosts"]["installed"])
+            self.assertTrue((repo / ".claude/settings.json").exists())
+            self.assertTrue((repo / "CLAUDE.md").exists())
+            self.assertIn("HOST_RUNTIME_FALLBACK", {x["code"] for x in result["warnings"]})
+
+
+    def test_status_before_bootstrap_is_unbootstrapped(self):
+        with tempfile.TemporaryDirectory() as td:
+            repo = pathlib.Path(td); git_init(repo)
+            args = cli.build_parser().parse_args(["--repo", str(repo), "status"]); args.repo = repo
+            code, result, _ = cli.cmd_status(args)
+            self.assertEqual(0, code)
+            self.assertEqual("UNBOOTSTRAPPED", result["status"])
+            self.assertEqual("safe_auto_init", result["next_action"])
+
+    def test_intake_self_bootstraps_when_config_is_missing(self):
+        with tempfile.TemporaryDirectory() as td:
+            repo = pathlib.Path(td); git_init(repo)
+            p = repo / "src/main/java/com/acme/App.java"; p.parent.mkdir(parents=True); p.write_text("class App {}\n", encoding="utf-8")
+            subprocess.run(["git", "add", "."], cwd=repo, check=True); subprocess.run(["git", "commit", "-qm", "init"], cwd=repo, check=True)
+            fixture = ROOT / "examples/cbm-detect-changes-fixture.json"
+            args = cli.build_parser().parse_args(["--repo", str(repo), "intake", "Add a small behavior change", "--cbm-fixture", str(fixture)])
+            args.repo = repo
+            code, result, _ = cli.cmd_intake(args)
+            self.assertTrue((repo / ".orchestrator/config.yaml").exists())
+            self.assertTrue((repo / ".orchestrator/execution-state.yaml").exists())
+            self.assertTrue(result["state_created"])
+            self.assertIn(code, {0, 1, 3})
 
     def test_first_intake_creates_real_execution_state(self):
         with tempfile.TemporaryDirectory() as td:
@@ -133,6 +179,24 @@ class V65BootstrapTests(unittest.TestCase):
             self.assertTrue((repo / ".orchestrator/execution-state.yaml").exists())
             self.assertTrue(result["state_created"])
             self.assertIn(code, {0, 1, 3})
+            import action_guard
+            import execution_state_manager as sm
+            state = sm._load(repo / ".orchestrator/execution-state.yaml")
+            evidence = action_guard.collect_evidence(repo, state)
+            required = {item["gate_name"] for item in evidence["verification_plan"]["items"]
+                        if item.get("required_by_impact")}
+            self.assertTrue(required, "fixture must exercise required semantic-impact gates")
+            self.assertTrue(required <= state["quality_gates"].keys())
+            for name in required:
+                self.assertTrue(state["quality_gates"][name]["required"])
+                self.assertEqual("pending", state["quality_gates"][name]["status"])
+            self.assertTrue(evidence["repository_fresh"])
+            self.assertTrue(evidence["authority_fresh"])
+            self.assertTrue(evidence["context_fresh"], evidence["stale_context_sources"])
+            if result["status"] == "NEEDS_EVIDENCE":
+                decision = action_guard.evaluate(state, "advance", target_phase="implementation", evidence=evidence)
+                self.assertIn("DECISION_NOT_CLASSIFIED", decision["reason_codes"])
+
 
 
 if __name__ == "__main__":

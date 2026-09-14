@@ -1,8 +1,15 @@
-# Optional repository policy for Adaptive SDD Coding Orchestrator v6.
+# Optional repository policy for Adaptive SDD Coding Orchestrator.
 # Facts are evidence-backed; Decision Engine owns flow classification;
 # Execution State Manager owns or projects durable agile/runtime state.
 
 orchestrator:
+  activation:
+    enabled: true
+    skill_ref: .agents/skills/coding-agent-orchestrator/SKILL.md
+    agents_file: AGENTS.md
+    claude_file: CLAUDE.md
+    recognize_short_resume_prompts: true
+
   evidence:
     extractor: scripts/fact_extractor.py
     resolver: scripts/fact_resolver.py
@@ -15,7 +22,7 @@ orchestrator:
 
   code_intelligence:
     enabled: true
-    provider: codebase-memory-mcp    # V6 supports CBM only
+    provider: codebase-memory-mcp    # current built-in provider
     provider_spi: scripts/code_intelligence_provider.py
     adapter: scripts/cbm_provider.py
     semantic_pipeline: scripts/semantic_intake_pipeline.py

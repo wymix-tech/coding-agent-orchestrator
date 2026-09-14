@@ -4,6 +4,7 @@ import pathlib
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 SCRIPTS = ROOT / "scripts"
@@ -195,6 +196,111 @@ class SemanticImpactTests(unittest.TestCase):
             a = cbm_provider.normalize_detect_changes(raw1, repo=root, project="ams-platform")
             b = cbm_provider.normalize_detect_changes(raw2, repo=root, project="ams-platform")
         self.assertNotEqual(a["snapshot"]["id"], b["snapshot"]["id"])
+
+
+class CbmCliCompatibilityTests(unittest.TestCase):
+    def _proc(self, rc, stdout="", stderr=""):
+        import subprocess
+        return subprocess.CompletedProcess(args=[], returncode=rc, stdout=stdout, stderr=stderr)
+
+    def test_current_cli_prefers_plain_tool_with_stdin_json(self):
+        p = cbm_provider.CBMProvider("fake-cbm")
+        p._binary_path = mock.Mock(return_value="/fake/cbm")
+        p._run = mock.Mock(return_value=self._proc(0, '{"status":"indexed","project":"demo"}'))
+        out = p._run_tool("index_repository", {"repo_path": "/tmp/demo"})
+        self.assertEqual("indexed", out["status"])
+        cmd = p._run.call_args.args[0]
+        self.assertEqual(["/fake/cbm", "cli", "index_repository"], cmd)
+        self.assertIn('"repo_path": "/tmp/demo"', p._run.call_args.kwargs["input_text"])
+
+    def test_shape_error_falls_back_to_inline_json_without_raw(self):
+        p = cbm_provider.CBMProvider("fake-cbm")
+        p._binary_path = mock.Mock(return_value="/fake/cbm")
+        p._run = mock.Mock(side_effect=[
+            self._proc(2, stderr="repo_path is required"),
+            self._proc(0, stdout='{"status":"indexed","project":"demo"}'),
+        ])
+        p._cli_protocol = mock.Mock(return_value={"supports_raw": False})
+        out = p._run_tool("index_repository", {"repo_path": "/tmp/demo"})
+        self.assertEqual("indexed", out["status"])
+        self.assertEqual(2, p._run.call_count)
+        self.assertEqual(["/fake/cbm", "cli", "index_repository"], p._run.call_args_list[0].args[0])
+        self.assertEqual("/fake/cbm", p._run.call_args_list[1].args[0][0])
+        self.assertNotIn("--raw", p._run.call_args_list[1].args[0])
+
+    def test_runtime_index_failure_is_not_masked_by_legacy_fallback(self):
+        p = cbm_provider.CBMProvider("fake-cbm")
+        p._binary_path = mock.Mock(return_value="/fake/cbm")
+        p._run = mock.Mock(return_value=self._proc(1, stderr="index.supervisor.worker_failed outcome=killed"))
+        with self.assertRaises(cbm_provider.ProviderError) as ctx:
+            p._run_tool("index_repository", {"repo_path": "/tmp/demo"})
+        self.assertIn("worker_failed", str(ctx.exception))
+        self.assertEqual(1, p._run.call_count)
+
+    def test_raw_fallback_is_used_only_when_help_proves_support(self):
+        p = cbm_provider.CBMProvider("fake-cbm")
+        p._binary_path = mock.Mock(return_value="/fake/cbm")
+        p._run = mock.Mock(side_effect=[
+            self._proc(2, stderr="unknown option: stdin-json"),
+            self._proc(2, stderr="unknown argument"),
+            self._proc(0, stdout='{"status":"indexed"}'),
+        ])
+        p._cli_protocol = mock.Mock(return_value={"supports_raw": True})
+        out = p._run_tool("index_repository", {"repo_path": "/tmp/demo"})
+        self.assertEqual("indexed", out["status"])
+        self.assertEqual(3, p._run.call_count)
+        self.assertIn("--raw", p._run.call_args_list[2].args[0])
+
+    def test_tolerated_failure_keeps_original_runtime_error(self):
+        p = cbm_provider.CBMProvider("fake-cbm")
+        p._binary_path = mock.Mock(return_value="/fake/cbm")
+        p._run = mock.Mock(return_value=self._proc(1, stderr="real coverage backend failure"))
+        out = p._run_tool("check_index_coverage", {"project": "demo"}, tolerate=True)
+        self.assertIn("real coverage backend failure", out["_tool_error"]["error"])
+        self.assertEqual(1, len(out["_tool_error"]["attempts"]))
+
+    def test_timeout_is_terminal_and_does_not_retry_with_other_cli_shapes(self):
+        import subprocess
+        p = cbm_provider.CBMProvider("fake-cbm", timeout_seconds=0.25)
+        p._binary_path = mock.Mock(return_value="/fake/cbm")
+        p._run = mock.Mock(side_effect=subprocess.TimeoutExpired(
+            cmd=["/fake/cbm","cli","index_repository"], timeout=0.25,
+            output="partial-stdout", stderr="worker still indexing"
+        ))
+        with self.assertRaises(cbm_provider.ProviderError) as ctx:
+            p._run_tool("index_repository", {"repo_path": "/tmp/demo"})
+        self.assertIn("timed out", str(ctx.exception))
+        self.assertIn("worker still indexing", str(ctx.exception))
+        self.assertEqual(1, p._run.call_count)
+
+    def test_success_with_invalid_json_fails_contract_without_retry(self):
+        p = cbm_provider.CBMProvider("fake-cbm")
+        p._binary_path = mock.Mock(return_value="/fake/cbm")
+        p._run = mock.Mock(return_value=self._proc(0, stdout="index complete but not json"))
+        with self.assertRaises(cbm_provider.ProviderError) as ctx:
+            p._run_tool("index_repository", {"repo_path": "/tmp/demo"})
+        self.assertIn("not JSON", str(ctx.exception))
+        self.assertEqual(1, p._run.call_count)
+
+    def test_detect_changes_contract_uses_project_scope_depth_json(self):
+        p = cbm_provider.CBMProvider("fake-cbm")
+        p._binary_path = mock.Mock(return_value="/fake/cbm")
+        p._run = mock.Mock(return_value=self._proc(0, stdout='{"changed_files":[],"changed_symbols":[],"impacted_symbols":[]}'))
+        out = p._run_tool("detect_changes", {"project":"demo","scope":"all","depth":3})
+        self.assertEqual([], out["changed_files"])
+        self.assertEqual(["/fake/cbm","cli","detect_changes"], p._run.call_args.args[0])
+        payload=json.loads(p._run.call_args.kwargs["input_text"])
+        self.assertEqual({"project":"demo","scope":"all","depth":3}, payload)
+
+    def test_nonzero_failure_preserves_stderr_and_stdout(self):
+        p = cbm_provider.CBMProvider("fake-cbm")
+        p._binary_path = mock.Mock(return_value="/fake/cbm")
+        p._run = mock.Mock(return_value=self._proc(1, stdout="index-id=abc", stderr="worker_failed"))
+        with self.assertRaises(cbm_provider.ProviderError) as ctx:
+            p._run_tool("index_repository", {"repo_path":"/tmp/demo"})
+        self.assertIn("worker_failed", str(ctx.exception))
+        self.assertIn("index-id=abc", str(ctx.exception))
+        self.assertEqual(1, p._run.call_count)
 
 
 if __name__ == "__main__":

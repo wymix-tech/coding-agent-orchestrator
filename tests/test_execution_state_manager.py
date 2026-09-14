@@ -4,6 +4,8 @@ import pathlib
 import tempfile
 import unittest
 
+from governance_fixture import attach_fixture_analysis
+
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 SPEC = importlib.util.spec_from_file_location("execution_state_manager", ROOT / "scripts" / "execution_state_manager.py")
 sm = importlib.util.module_from_spec(SPEC)
@@ -37,6 +39,7 @@ class StateFixture:
         sm.set_readiness(self.state_path, "acceptance_criteria_present", True, "planner", "spec", s["revision"])
         s = self.state()
         sm.set_readiness(self.state_path, "sdd_ready", True, "planner", "sdd", s["revision"])
+        attach_fixture_analysis(sm, self.state_path)
 
 
 class ExecutionStateTests(unittest.TestCase):
@@ -191,7 +194,7 @@ class ExecutionStateTests(unittest.TestCase):
         try:
             s = fx.state()
             sm.sync_native(fx.state_path, "closed", "completed", "bmad-adapter", "sprint-status.yaml", "done-rev", 1, 1, s["revision"])
-            summary = sm.resume_summary(fx.state())
+            summary = sm.resume_summary(fx.state(), fx.root)
             self.assertTrue(summary["completion"]["native_or_canonical_closed"])
             self.assertFalse(summary["completion"]["done"])
             self.assertTrue(summary["completion"]["close_guard_failures"])
@@ -202,7 +205,7 @@ class ExecutionStateTests(unittest.TestCase):
         fx = StateFixture(flow="FAST")
         try:
             fx.set_ready_for_impl()
-            summary = sm.resume_summary(fx.state())
+            summary = sm.resume_summary(fx.state(), fx.root)
             self.assertEqual("transition_to_implementation", summary["next_action"])
             self.assertIn("revision", summary)
             self.assertIn("authority", summary)

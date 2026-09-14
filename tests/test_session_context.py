@@ -30,6 +30,7 @@ class SessionFixture:
 
         self.intake = self.repo / ".orchestrator" / "intake"
         self.intake.mkdir(parents=True)
+        (self.repo / ".orchestrator/config.yaml").write_text("orchestrator: {}\n", encoding="utf-8")
         self.state = self.repo / ".orchestrator" / "execution-state.yaml"
         st = sm.create_state("W-42", "Session context feature", "STANDARD")
         sm.initialize(self.state, st, "test")
@@ -37,7 +38,6 @@ class SessionFixture:
             s = sm._load(self.state)
             sm.set_readiness(self.state, k, v, "test", "evidence", s["revision"])
         s = sm._load(self.state)
-        sm.transition(self.state, "implementation", "in_progress", "test", "ready", s["revision"])
         s = sm._load(self.state)
         sm.set_cursor(self.state, "test", "T4.2", "Implement async reporting", "implement_task:T4.2", s["revision"])
 
@@ -57,6 +57,7 @@ class SessionFixture:
             "status": "OK", "policy_snapshot_id": "P42",
             "applicable_rules": [{"id": "ARCH-SPRING-LAYER-001", "level": "MUST"}]
         }), encoding="utf-8")
+        (self.intake / "policy-evaluation.json").write_text(json.dumps({"status": "PASSED", "blocking_violations": []}), encoding="utf-8")
         (self.intake / "policy-context.md").write_text("# Policy\n- ARCH-SPRING-LAYER-001\n", encoding="utf-8")
         (self.intake / "verification-plan.json").write_text(json.dumps({"items": [{"kind": "integration_tests"}]}), encoding="utf-8")
         s = sm._load(self.state)
@@ -65,6 +66,7 @@ class SessionFixture:
             str(self.intake / "work-facts.semantic-draft.json"), str(self.intake / "decision.json"),
             str(self.intake / "verification-plan.json"), "codebase-memory-mcp", s["revision"],
             policy_plan_ref=str(self.intake / "policy-plan.json"),
+            policy_evaluation_ref=str(self.intake / "policy-evaluation.json"),
             policy_context_ref=str(self.intake / "policy-context.md"), policy_snapshot_id="P42",
             context_manifest_ref=str(self.intake / "context-manifest.json"),
             context_pack_ref=str(self.intake / "context-pack.implementer.implementation.json"),
@@ -76,19 +78,38 @@ class SessionFixture:
         pack = context_plane.build_pack(manifest, "implementer", "implementation")
         context_plane._dump_json(self.intake / "context-pack.implementer.implementation.json", pack)
         (self.intake / "context-pack.implementer.implementation.md").write_text(context_plane.render_pack(pack), encoding="utf-8")
+        s = sm._load(self.state)
+        sm.transition(self.state, "implementation", "in_progress", "test", "ready", s["revision"])
+        manifest = context_plane.build_manifest(self.repo, self.intake, state_ref=self.state,
+                                                request_ref=self.intake / "request-context.md", sdd_provider="generic")
+        context_plane._dump_json(self.intake / "context-manifest.json", manifest)
+        pack = context_plane.build_pack(manifest, "implementer", "implementation")
+        context_plane._dump_json(self.intake / "context-pack.implementer.implementation.json", pack)
+        (self.intake / "context-pack.implementer.implementation.md").write_text(context_plane.render_pack(pack), encoding="utf-8")
 
     def close(self):
         self.td.cleanup()
 
 
 class SessionContextTests(unittest.TestCase):
-    def test_fresh_project_bootstrap_is_safe_and_uninitialized(self):
+    def test_fresh_project_bootstrap_is_safe_and_unbootstrapped(self):
         with tempfile.TemporaryDirectory() as td:
             repo = pathlib.Path(td)
             doc = sc.build_bootstrap(repo)
             self.assertEqual("fresh_project", doc["session_type"])
-            self.assertEqual("UNINITIALIZED", doc["status"])
-            self.assertIn("STATE_NOT_INITIALIZED", {x["code"] for x in doc["blockers"]})
+            self.assertEqual("UNBOOTSTRAPPED", doc["status"])
+            self.assertIn("PROJECT_NOT_BOOTSTRAPPED", {x["code"] for x in doc["blockers"]})
+
+
+    def test_bootstrapped_project_without_work_item_is_ready_for_intake(self):
+        with tempfile.TemporaryDirectory() as td:
+            repo = pathlib.Path(td)
+            (repo / ".orchestrator").mkdir(parents=True)
+            (repo / ".orchestrator/config.yaml").write_text("orchestrator:\n  bootstrap:\n    unresolved: []\n", encoding="utf-8")
+            doc = sc.build_bootstrap(repo)
+            self.assertEqual("READY_FOR_INTAKE", doc["status"])
+            self.assertEqual("run_intake_for_first_work_item", doc["next_action"])
+            self.assertEqual([], doc["blockers"])
 
     def test_resume_bootstrap_projects_current_state(self):
         fx = SessionFixture()

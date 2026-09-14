@@ -1,0 +1,81 @@
+{
+  "$id": "https://example.local/orchestrator/requirement-registry.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "properties": {
+    "migration_warning": {
+      "type": "string"
+    },
+    "requirements": {
+      "additionalProperties": {
+        "properties": {
+          "native_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "provider": {
+            "type": "string"
+          },
+          "revisions": {
+            "additionalProperties": {
+              "properties": {
+                "completed_at": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "status": {
+                  "enum": [
+                    "active",
+                    "completed",
+                    "archived"
+                  ]
+                },
+                "work_item_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "status",
+                "work_item_id"
+              ],
+              "type": "object"
+            },
+            "type": "object"
+          },
+          "source_path": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "work_items": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "uniqueItems": true
+          }
+        },
+        "required": [
+          "provider",
+          "revisions",
+          "work_items"
+        ],
+        "type": "object"
+      },
+      "type": "object"
+    },
+    "schema_version": {
+      "const": 1
+    }
+  },
+  "required": [
+    "schema_version",
+    "requirements"
+  ],
+  "title": "Coding Agent Orchestrator Requirement Registry",
+  "type": "object"
+}

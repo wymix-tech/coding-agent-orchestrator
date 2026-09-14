@@ -1,15 +1,20 @@
 {
   "name": "coding-agent-orchestrator",
   "version": "6.5",
-  "focus": "Safe project auto-bootstrap + unified CLI + CBM semantic impact + Engineering Policy + Context Plane + Session Bootstrap/Handoff + host runtime enforcement + durable execution state",
+  "focus": "Unified action authorization + current-Agent host auto selection/reconciliation + Self-bootstrapping project activation + deterministic Start Intent Router + unified CLI + CBM CLI-compatible semantic impact + Engineering Policy + Context Plane + Session Bootstrap/Handoff + host runtime enforcement + durable execution state",
   "code_intelligence_provider": "codebase-memory-mcp",
   "provider_count": 1,
   "policy_layer": "project-owned engineering policy with optional ECC external guidance",
   "governance_authority": "orchestrator",
-  "test_count": 115,
+  "test_count": 216,
   "key_entrypoints": [
     "scripts/project_discovery.py",
     "scripts/project_bootstrap.py",
+    "scripts/host_runtime.py",
+    "scripts/bootstrap_guard.py",
+    "scripts/project_activation.py",
+    "scripts/start_router.py",
+    "scripts/requirement_discovery.py",
     "scripts/coding_orchestrator.py",
     "coding-orchestrator",
     "scripts/install_host_adapter.py",
@@ -25,7 +30,15 @@
     "scripts/decision_engine.py",
     "scripts/verification_planner.py",
     "scripts/execution_state_manager.py",
-    "scripts/context_footprint_check.py"
+    "scripts/context_footprint_check.py",
+    "scripts/action_guard.py",
+    "scripts/repository_snapshot.py",
+    "scripts/tool_actions.py",
+    "scripts/requirement_identity.py",
+    "references/requirement-registry.schema.json",
+    "REPAIR_REPORT.md",
+    "scripts/provider_incident.py",
+    "references/provider-incident.schema.json"
   ],
   "context_plane": "source-hashed Context Manifest + role/stage Context Packs",
   "host_enforcement": [
@@ -35,7 +48,61 @@
   ],
   "enforcement_kernel": "scripts/enforcement_kernel.py",
   "session_context": "JSON canonical bootstrap/handoff + YAML config + Markdown prompt projection",
-  "project_bootstrap": "safe-auto discovery + idempotent initialization + no fake active work item",
-  "unified_cli": "coding-orchestrator: init/discover/doctor/status/intake/resume/verify/host install",
-  "context_loading": "small SKILL runtime router + lazy 1–2 reference retrieval; heavy corpus remains non-resident"
+  "project_bootstrap": "self-bootstrap guard + current-Agent host selection/reconciliation + safe-auto discovery + idempotent initialization + no fake active work item",
+  "unified_cli": "coding-orchestrator: init/discover/doctor/status/start/intake/resume/check/verify/provider status|reset/host install",
+  "context_loading": "small SKILL runtime router + lazy 1–2 reference retrieval; heavy corpus remains non-resident",
+  "project_activation": "managed AGENTS.md / CLAUDE.md activation stubs + current-Agent adapter selection (Pi/Codex runtime signals, Claude Code fallback) + host switching reconciliation; project truth remains in .orchestrator/ and authoritative sources",
+  "readme_layout": {
+    "README.md": "English default",
+    "README-zh.md": "Simplified Chinese"
+  },
+  "bootstrap_states": [
+    "UNBOOTSTRAPPED",
+    "READY_FOR_INTAKE",
+    "READY_FOR_WORK"
+  ],
+  "start_intent_router": "bare start/resume/continue intents resolve authoritative project state; zero requirements asks, one high-confidence requirement auto-intakes, multiple candidates require selection",
+  "action_authorization": "One pure evaluator with live evidence collection; read/prepare/mutate_code/advance/close/finish_role shared by state, CLI, start/resume, and host kernel",
+  "cbm_cli_compatibility": "schema flags + explicit JSON when advertised; legacy stdin/inline/raw only by capability/shape; runtime failures preserved; persistent provider retry circuit",
+  "host_auto_selection": {
+    "auto_priority": [
+      "explicit --host",
+      "nearest recognized process ancestry",
+      "CODEX_THREAD_ID / PI_CODING_AGENT runtime signal",
+      "claude-code fallback"
+    ],
+    "repository_markers": "diagnostic_only",
+    "reconcile_on_activation": true,
+    "material_snapshot_excludes_host_integration": true
+  },
+  "stability_repairs": {
+    "transactional_state_history": "cross-process lock + recoverable transaction journal + optimistic revision conflict + idempotent history event recovery",
+    "work_identity": "stable requirement identity and content revision; per-work/revision immutable analysis runs; stale analysis cannot replace canonical refs",
+    "policy_snapshot": "effective rule semantics plus referenced policy source content",
+    "sdd_selection": "explicit selection persists by field-level merge and protects active native ownership conflicts",
+    "requirement_history": "stable identity/revision registry prevents completed work reopening and avoids body-hash identity conflation",
+    "bmad_discovery": "native sprint-state-driven output discovery with template exclusion and sourced unknown-format/location diagnostics",
+    "verification_obligations": "stable obligations separated from execution results; auditable superseded/not_applicable/waived disposition",
+    "completion_semantics": "historical governed completion separated from current close readiness; native closed alone is not Governance Done",
+    "cbm_contract": "bounded timeout, JSON contract checks, stdout/stderr preservation, no retry on runtime failure, syntax fallback only for proven shape mismatch"
+  },
+  "repair_validation": {
+    "previous_full_baseline": "211/211 PASS before CBM provider resilience revision",
+    "current_discovered_tests": 216,
+    "current_affected_regression": "116/116 PASS (CBM/semantic, start, bootstrap CLI, activation, action authorization, session context, enforcement)",
+    "standard_unittest_current": "NOT_CLAIMED: repair container one-process runner was unstable during this revision; see repair/verification-summary.json",
+    "context_footprint": "PASS: 100 lines, 7490 bytes, 942 words",
+    "external_live_integrations": "CBM live integration not available in repair container; target workstation verification required",
+    "report": "REPAIR_REPORT.md"
+  },
+  "repair_baseline": {
+    "status": "T1-T7 fixed and locally verified; T8 local lifecycle/contracts verified; live external integrations not verified in repair environment",
+    "report": "REPAIR_REPORT.md",
+    "source_requirements": [
+      "repair/orchestrator-repair-prompt.md",
+      "repair/orchestrator-next-repair-tasks.md"
+    ],
+    "verification_summary": "repair/verification-summary.json"
+  },
+  "provider_incident": ".orchestrator/providers/codebase-memory-mcp.json; same provider identity retries are explicit-only after first operational failure"
 }

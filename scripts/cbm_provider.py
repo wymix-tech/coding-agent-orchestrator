@@ -13,6 +13,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 from typing import Any, Dict, Iterable, Iterator, List, Optional, Sequence, Set, Tuple
 
@@ -62,7 +63,19 @@ def _json_from_text(text: str) -> Any:
     if not text:
         raise ProviderError("CBM returned empty stdout")
     try:
-        return json.loads(text)
+        parsed = json.loads(text)
+        # Older CLI builds may return the standard MCP content envelope rather than the
+        # raw tool payload. Decode a JSON text content item when present.
+        if isinstance(parsed, dict) and isinstance(parsed.get("content"), list):
+            for item in parsed["content"]:
+                if isinstance(item, dict) and item.get("type") == "text" and isinstance(item.get("text"), str):
+                    inner = item["text"].strip()
+                    if inner.startswith(("{", "[")):
+                        try:
+                            return json.loads(inner)
+                        except json.JSONDecodeError:
+                            pass
+        return parsed
     except json.JSONDecodeError:
         # Some CLI builds can prepend a notice. Find the first plausible JSON payload.
         starts = [p for p in (text.find("{"), text.find("[")) if p >= 0]
@@ -406,11 +419,130 @@ def normalize_detect_changes(
     }
 
 
+def _combined_process_text(proc: subprocess.CompletedProcess[str]) -> str:
+    parts = []
+    if proc.stderr:
+        parts.append(proc.stderr.strip())
+    if proc.stdout:
+        parts.append(proc.stdout.strip())
+    return "\n".join(x for x in parts if x)
+
+
+def _looks_like_cli_shape_error(text: str, args: Optional[Dict[str, Any]] = None) -> bool:
+    """Return True only when failure plausibly means the CLI invocation shape is unsupported.
+
+    This is intentionally narrow. Runtime/indexing failures must not trigger a second mutation
+    attempt because a compatibility fallback could mask the real cause or repeat side effects.
+    """
+    low = (text or "").lower()
+    syntax_markers = (
+        "unknown option", "unknown flag", "unrecognized option", "unrecognized argument",
+        "unexpected argument", "unknown argument", "unknown tool", "unknown command", "invalid option",
+    )
+    if any(x in low for x in syntax_markers):
+        return True
+    # Older CBM builds did not read JSON from stdin. If we supplied a required field but the
+    # tool says that exact field is missing, retrying with legacy inline JSON is safe and useful.
+    for key in (args or {}):
+        key_low = key.lower()
+        phrases = (
+            f"{key_low} is required",
+            f"missing required {key_low}",
+            f"missing required argument: {key_low}",
+        )
+        if any(x in low for x in phrases):
+            return True
+    return False
+
+
+
+def _candidate_binary_paths(binary: str) -> List[str]:
+    """Return deterministic CBM binary candidates, including common installer paths.
+
+    Coding-agent subprocesses often inherit a smaller PATH than the user's interactive shell.
+    The upstream installer commonly places the binary in ~/.local/bin, so PATH-only discovery
+    creates a false PROVIDER_UNAVAILABLE even when CBM is installed and callable by the user.
+    """
+    candidates: List[str] = []
+    env = os.environ.get("ORCHESTRATOR_CBM_BINARY") or os.environ.get("CBM_BINARY")
+    if env:
+        candidates.append(os.path.expanduser(env))
+    if os.path.isabs(binary) or os.sep in binary:
+        candidates.append(os.path.expanduser(binary))
+    else:
+        found = shutil.which(binary)
+        if found:
+            candidates.append(found)
+        home = Path.home()
+        candidates.extend([
+            str(home / ".local" / "bin" / binary),
+            str(home / "bin" / binary),
+            f"/opt/homebrew/bin/{binary}",
+            f"/usr/local/bin/{binary}",
+            f"/usr/bin/{binary}",
+        ])
+    out: List[str] = []
+    seen: Set[str] = set()
+    for item in candidates:
+        expanded = str(Path(item).expanduser())
+        if expanded in seen:
+            continue
+        seen.add(expanded)
+        p = Path(expanded)
+        if p.is_file() and os.access(str(p), os.X_OK):
+            out.append(str(p.resolve()))
+    return out
+
+
+def _flags_for_args(args: Optional[Dict[str, Any]]) -> Optional[List[str]]:
+    """Render simple MCP arguments as schema-generated CLI flags.
+
+    Current CBM generates `--kebab-case` flags from each tool schema. Complex values fall back
+    to stdin/inline JSON rather than guessing how a particular build serializes them.
+    """
+    flags: List[str] = []
+    for key, value in (args or {}).items():
+        flag = "--" + key.replace("_", "-")
+        if isinstance(value, bool):
+            if value:
+                flags.append(flag)
+            # False booleans are omitted; tools that need explicit false use JSON fallback.
+            continue
+        if isinstance(value, (str, int, float)) and not isinstance(value, bool):
+            flags.extend([flag, str(value)])
+            continue
+        if value is None:
+            continue
+        return None
+    return flags
+
+
+def _classify_provider_error(message: str) -> str:
+    low = (message or "").lower()
+    if "binary not found" in low or "not found on path" in low:
+        return "BINARY_NOT_FOUND"
+    if "timed out" in low:
+        return "TIMEOUT"
+    if "not parseable json" in low or "not json" in low or "empty stdout" in low:
+        return "OUTPUT_PROTOCOL_ERROR"
+    if _looks_like_cli_shape_error(low):
+        return "CLI_INCOMPATIBLE"
+    return "OPERATION_FAILED"
+
+
+DEFAULT_CBM_TIMEOUT_SECONDS = float(os.environ.get("ORCHESTRATOR_CBM_TIMEOUT_SECONDS", "120"))
+
+
 class CBMProvider(CodeIntelligenceProvider):
     provider_id = PROVIDER_ID
 
-    def __init__(self, binary: str = "codebase-memory-mcp") -> None:
+    def __init__(self, binary: str = "codebase-memory-mcp", timeout_seconds: Optional[float] = None) -> None:
         self.binary = binary
+        self.timeout_seconds = float(timeout_seconds if timeout_seconds is not None else DEFAULT_CBM_TIMEOUT_SECONDS)
+        self._tool_protocol_cache: Dict[str, Dict[str, Any]] = {}
+        self._last_diagnostics: Dict[str, Any] = {}
+        if self.timeout_seconds <= 0:
+            raise ProviderError("CBM timeout must be greater than zero")
 
     def capabilities(self) -> Dict[str, Any]:
         return {
@@ -426,61 +558,262 @@ class CBMProvider(CodeIntelligenceProvider):
         }
 
     def _binary_path(self) -> Optional[str]:
-        if os.path.isabs(self.binary) and Path(self.binary).exists():
-            return self.binary
-        return shutil.which(self.binary)
+        candidates = _candidate_binary_paths(self.binary)
+        return candidates[0] if candidates else None
+
+    def binary_candidates(self) -> List[str]:
+        return _candidate_binary_paths(self.binary)
 
     def _version(self) -> Optional[str]:
         path = self._binary_path()
         if not path:
             return None
         for args in ([path, "--version"], [path, "version"]):
-            p = subprocess.run(args, text=True, capture_output=True, check=False)
+            try:
+                p = subprocess.run(args, text=True, capture_output=True, check=False, timeout=min(self.timeout_seconds, 10.0))
+            except subprocess.TimeoutExpired:
+                continue
             if p.returncode == 0 and (p.stdout.strip() or p.stderr.strip()):
                 return (p.stdout.strip() or p.stderr.strip()).splitlines()[0][:200]
         return None
 
+    def _cli_protocol(self) -> Dict[str, Any]:
+        """Probe CBM CLI surface without mutating project data."""
+        path = self._binary_path()
+        if not path:
+            return {"status": "unavailable", "mode": None, "supports_raw": False, "supports_format": False}
+        try:
+            p = subprocess.run([path, "cli", "--help"], text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False, timeout=min(self.timeout_seconds, 10.0))
+        except subprocess.TimeoutExpired:
+            return {"status": "timeout", "mode": None, "supports_raw": False, "supports_format": False}
+        except OSError as exc:
+            return {"status": "unavailable", "mode": None, "supports_raw": False, "supports_format": False, "error": str(exc)}
+        text = _combined_process_text(p)
+        low = text.lower()
+        supports_format = "--format" in low
+        supports_raw = "--raw" in low
+        if supports_format:
+            mode = "schema-cli"
+        elif supports_raw:
+            mode = "legacy-raw"
+        elif p.returncode == 0 or text:
+            mode = "basic-cli"
+        else:
+            mode = "unknown"
+        return {
+            "status": "compatible" if mode != "unknown" else "unknown",
+            "mode": mode,
+            "supports_raw": supports_raw,
+            "supports_format": supports_format,
+        }
+
+    def _tool_protocol(self, tool: str) -> Dict[str, Any]:
+        cached = self._tool_protocol_cache.get(tool)
+        if cached is not None:
+            return cached
+        path = self._binary_path()
+        if not path:
+            result = {"status": "unavailable", "supports_format": False, "help": ""}
+            self._tool_protocol_cache[tool] = result
+            return result
+        try:
+            p = subprocess.run(
+                [path, "cli", tool, "--help"], text=True, stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE, check=False, timeout=min(self.timeout_seconds, 10.0)
+            )
+        except subprocess.TimeoutExpired:
+            result = {"status": "timeout", "supports_format": False, "help": ""}
+            self._tool_protocol_cache[tool] = result
+            return result
+        except OSError as exc:
+            result = {"status": "unavailable", "supports_format": False, "help": "", "error": str(exc)}
+            self._tool_protocol_cache[tool] = result
+            return result
+        text = _combined_process_text(p)
+        low = text.lower()
+        result = {
+            "status": "compatible" if (p.returncode == 0 or text) else "unknown",
+            "supports_format": "--format" in low,
+            "supports_json_envelope": "--json" in low,
+            "help": text[-4000:],
+        }
+        self._tool_protocol_cache[tool] = result
+        return result
+
+    def diagnostics(self) -> Dict[str, Any]:
+        path = self._binary_path()
+        return {
+            "provider": self.provider_id,
+            "requested_binary": self.binary,
+            "binary": path,
+            "binary_candidates": self.binary_candidates(),
+            "version": self._version() if path else None,
+            "cli_protocol": self._cli_protocol() if path else {"status": "unavailable"},
+            "last_call": self._last_diagnostics,
+        }
+
     def health(self) -> Dict[str, Any]:
         path = self._binary_path()
+        protocol = self._cli_protocol() if path else {"status": "unavailable", "mode": None}
         return {
             "provider": self.provider_id,
             "available": bool(path),
             "binary": path,
+            "binary_candidates": self.binary_candidates(),
             "version": self._version() if path else None,
+            "cli_protocol": protocol,
             "capabilities": self.capabilities(),
         }
 
-    def _run_tool(self, tool: str, args: Optional[Dict[str, Any]] = None, *, tolerate: bool = False) -> Any:
-        path = self._binary_path()
-        if not path:
-            raise ProviderError("codebase-memory-mcp binary not found on PATH")
-        payload = json.dumps(args or {}, ensure_ascii=False)
-        # v0.10+ supports stdin JSON plus --format json; keep --quiet diagnostics off stdout.
-        cmd = [path, "cli", "--quiet", tool, "--format", "json"]
-        p = subprocess.run(
+    def probe_cli(self) -> Dict[str, Any]:
+        """Run a non-mutating CLI smoke probe for doctor/diagnostics."""
+        base = self.health()
+        if not base.get("available"):
+            return {**base, "probe_status": "unavailable", "probe_error": "binary not found"}
+        try:
+            self._run_tool("list_projects")
+            return {**base, "probe_status": "compatible", "probe_error": None}
+        except Exception as exc:
+            return {**base, "probe_status": "incompatible", "probe_error": str(exc)[:2000]}
+
+    def _run(self, cmd: List[str], *, input_text: Optional[str] = None) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
             cmd,
-            input=payload if args else None,
+            input=input_text,
             text=True,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             check=False,
+            timeout=self.timeout_seconds,
         )
-        if p.returncode != 0:
-            # Compatibility fallback for older builds that expose --raw globally.
-            legacy = [path, "cli", "--raw", tool]
-            p2 = subprocess.run(
-                legacy + ([payload] if args else []),
-                text=True,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                check=False,
+
+    def _run_tool(self, tool: str, args: Optional[Dict[str, Any]] = None, *, tolerate: bool = False) -> Any:
+        """Invoke CBM using the best protocol actually advertised by the installed build.
+
+        Current builds expose schema-generated flags and `--format json`; older builds accept
+        stdin or inline JSON.  A runtime/indexing failure is terminal: compatibility fallback is
+        only allowed after a parser/shape error, which prevents duplicate side effects.
+        """
+        path = self._binary_path()
+        if not path:
+            searched = [str(Path.home() / ".local/bin/codebase-memory-mcp"), "/opt/homebrew/bin/codebase-memory-mcp", "/usr/local/bin/codebase-memory-mcp"]
+            raise ProviderError(
+                "codebase-memory-mcp binary not found on PATH or common install locations; "
+                f"set ORCHESTRATOR_CBM_BINARY to the absolute path (checked: {', '.join(searched)})"
             )
-            if p2.returncode == 0:
-                return _json_from_text(p2.stdout)
+        payload = json.dumps(args or {}, ensure_ascii=False)
+        attempts: List[Dict[str, Any]] = []
+
+        def record(label: str, proc: subprocess.CompletedProcess[str]) -> None:
+            attempts.append({
+                "mode": label,
+                "returncode": proc.returncode,
+                "stderr": (proc.stderr or "")[-4000:],
+                "stdout": (proc.stdout or "")[-4000:],
+            })
+
+        def invoke(label: str, cmd: List[str], *, input_text: Optional[str] = None) -> subprocess.CompletedProcess[str]:
+            try:
+                proc = self._run(cmd, input_text=input_text)
+            except subprocess.TimeoutExpired as exc:
+                stdout = exc.stdout.decode(errors="replace") if isinstance(exc.stdout, bytes) else (exc.stdout or "")
+                stderr = exc.stderr.decode(errors="replace") if isinstance(exc.stderr, bytes) else (exc.stderr or "")
+                attempts.append({
+                    "mode": label, "returncode": None, "timeout": self.timeout_seconds,
+                    "stderr": str(stderr)[-4000:], "stdout": str(stdout)[-4000:],
+                })
+                self._last_diagnostics = {"tool": tool, "attempts": attempts, "error_class": "TIMEOUT"}
+                detail = "\n".join(x for x in [str(stderr).strip(), str(stdout).strip()] if x)
+                raise ProviderError(
+                    f"CBM {tool} timed out after {self.timeout_seconds:g}s" + (f": {detail[-4000:]}" if detail else "")
+                ) from exc
+            record(label, proc)
+            return proc
+
+        def success(label: str, proc: subprocess.CompletedProcess[str]) -> Any:
+            try:
+                value = _json_from_text(proc.stdout)
+            except ProviderError as exc:
+                self._last_diagnostics = {
+                    "tool": tool, "attempts": attempts, "error_class": "OUTPUT_PROTOCOL_ERROR",
+                    "hint": "Installed CBM returned non-JSON output; prefer --format json on schema CLI builds.",
+                }
+                raise
+            self._last_diagnostics = {"tool": tool, "attempts": attempts, "selected_mode": label, "error_class": None}
+            return value
+
+        # Preferred for modern CBM: schema-generated flags + explicit JSON output.  We only use
+        # this shape when the tool's own help advertises --format, so an indexing command is not
+        # speculatively executed twice.
+        tool_protocol = self._tool_protocol(tool)
+        rendered = _flags_for_args(args)
+        if tool_protocol.get("supports_format") and rendered is not None:
+            proc = invoke("schema-flags-json", [path, "cli", tool, *rendered, "--format", "json"])
+            if proc.returncode == 0:
+                return success("schema-flags-json", proc)
+            error = _combined_process_text(proc)
+            if not _looks_like_cli_shape_error(error, args):
+                self._last_diagnostics = {"tool": tool, "attempts": attempts, "error_class": _classify_provider_error(error)}
+                if tolerate:
+                    return {"_tool_error": {"tool": tool, "error": error[-4000:], "attempts": attempts}}
+                raise ProviderError(f"CBM {tool} failed: {error[-4000:]}")
+            # A help/runtime mismatch is safe to retry with the documented JSON transport.
+
+        # Backward-compatible JSON stdin. Current upstream still accepts this form for tools with
+        # arguments; zero-argument tools intentionally receive no stdin.
+        try:
+            proc = invoke("stdin-json", [path, "cli", tool], input_text=payload if args else None)
+        except ProviderError as exc:
             if tolerate:
-                return {"_tool_error": {"tool": tool, "stderr": (p2.stderr or p.stderr)[-2000:]}}
-            raise ProviderError(f"CBM {tool} failed: {(p2.stderr or p.stderr)[-2000:]}")
-        return _json_from_text(p.stdout)
+                return {"_tool_error": {"tool": tool, "error": str(exc), "attempts": attempts}}
+            raise
+        if proc.returncode == 0:
+            try:
+                return success("stdin-json", proc)
+            except ProviderError:
+                # If this build has compact default output but help failed to advertise --format,
+                # do not rerun a mutating tool. Surface an output-protocol error instead.
+                if tolerate:
+                    return {"_tool_error": {"tool": tool, "error": "CBM returned non-JSON output", "attempts": attempts}}
+                raise
+        first_error = _combined_process_text(proc)
+        if not _looks_like_cli_shape_error(first_error, args):
+            self._last_diagnostics = {"tool": tool, "attempts": attempts, "error_class": _classify_provider_error(first_error)}
+            if tolerate:
+                return {"_tool_error": {"tool": tool, "error": first_error[-4000:], "attempts": attempts}}
+            raise ProviderError(f"CBM {tool} failed: {first_error[-4000:]}")
+
+        # Legacy/backward-compatible inline JSON. Current CBM documents this as deprecated but
+        # accepted. Only shape errors reach here, so runtime failures are never repeated.
+        inline_cmd = [path, "cli", tool] + ([payload] if args else [])
+        proc2 = invoke("inline-json", inline_cmd)
+        if proc2.returncode == 0:
+            return success("inline-json", proc2)
+        second_error = _combined_process_text(proc2)
+        if not _looks_like_cli_shape_error(second_error, args):
+            self._last_diagnostics = {"tool": tool, "attempts": attempts, "error_class": _classify_provider_error(second_error)}
+            if tolerate:
+                return {"_tool_error": {"tool": tool, "error": second_error[-4000:], "attempts": attempts}}
+            raise ProviderError(f"CBM {tool} failed: {second_error[-4000:]}")
+
+        # Very old builds exposed --raw as a global CLI option. Probe before using it.
+        protocol = self._cli_protocol()
+        if protocol.get("supports_raw"):
+            raw_cmd = [path, "cli", "--raw", tool] + ([payload] if args else [])
+            proc3 = invoke("legacy-raw", raw_cmd)
+            if proc3.returncode == 0:
+                return success("legacy-raw", proc3)
+            third_error = _combined_process_text(proc3)
+            self._last_diagnostics = {"tool": tool, "attempts": attempts, "error_class": _classify_provider_error(third_error)}
+            if tolerate:
+                return {"_tool_error": {"tool": tool, "error": third_error[-4000:], "attempts": attempts}}
+            raise ProviderError(f"CBM {tool} failed: {third_error[-4000:]}")
+
+        error = second_error or first_error or "CBM CLI invocation failed"
+        self._last_diagnostics = {"tool": tool, "attempts": attempts, "error_class": "CLI_INCOMPATIBLE"}
+        if tolerate:
+            return {"_tool_error": {"tool": tool, "error": error[-4000:], "attempts": attempts}}
+        raise ProviderError(f"CBM {tool} failed: {error[-4000:]}")
 
     @staticmethod
     def _project_name(index_result: Any, repo: Path) -> str:

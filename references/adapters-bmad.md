@@ -50,6 +50,6 @@ If an implementation task uncovers a requirement or architecture change, route i
 
 A story/change is complete only when its acceptance criteria are demonstrably satisfied, project gates pass, review blockers are cleared, and BMAD's native progress/status workflow is updated.
 
-## Execution state integration (v5)
+## Execution state integration
 
 Use `references/state-adapter-bmad.md`. When a native sprint-status artifact exists, prefer `native` authority. Do not duplicate writable story phase/status/progress in `.orchestrator`; store only extension state and a canonical projection for resume/guard evaluation.

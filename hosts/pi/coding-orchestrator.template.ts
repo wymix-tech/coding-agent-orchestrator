@@ -46,6 +46,10 @@ export default function (pi: ExtensionAPI) {
     const text = typeof last?.content === "string" ? last.content : JSON.stringify(last?.content || "");
     const r = callKernel("stop", { ...event, last_assistant_message: text }, ctx.cwd);
     if (r.decision === "deny") {
+      if (r.metadata?.retry_recommended === false) {
+        ctx.ui.notify(r.reason || "Completion is blocked; resolve the reported constraint.", "warning");
+        return;
+      }
       pi.sendMessage({ customType: "coding-orchestrator", content: r.reason || "Governance completion is not ready.", display: true }, { triggerTurn: true, deliverAs: "followUp" });
     }
   });

@@ -40,6 +40,21 @@ def dump_json(path: Path, data: Any) -> None:
     path.write_text(json.dumps(data, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
+def _canonical_hash(value: Any) -> str:
+    # Dict key order is non-semantic; list order is intentionally preserved because
+    # policy precedence, commands and ordered constraints can carry meaning.
+    raw = json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def _source_ref(path: Path, base: Path) -> str:
+    try:
+        return path.resolve().relative_to(base.resolve()).as_posix()
+    except Exception:
+        # Absolute location is diagnostic only and must not define policy identity.
+        return path.name
+
+
 def _unique(items: Iterable[str]) -> list[str]:
     return list(dict.fromkeys(x for x in items if x))
 
@@ -137,19 +152,41 @@ def _merge_rules(packs: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], lis
 
 
 def load_policy(repo: Path, manifest_path: Path) -> tuple[dict[str, Any], list[dict[str, Any]], list[dict[str, Any]]]:
+    if not manifest_path.exists():
+        raise FileNotFoundError(f"policy manifest not found: {manifest_path}")
     manifest = load_doc(manifest_path) or {}
     base = manifest_path.parent
     packs = []
+    source_fingerprints: list[dict[str, Any]] = []
     for ref in manifest.get("packs", []):
         if not ref.get("enabled", True):
             continue
-        doc = load_doc((base / ref["path"]).resolve()) or {}
-        packs.append({
+        source = (base / ref["path"]).resolve()
+        if not source.exists():
+            raise FileNotFoundError(f"policy pack not found: {ref['path']}")
+        doc = load_doc(source) or {}
+        semantic_source = {
             "id": ref.get("id") or doc.get("id") or ref["path"],
+            "ref": Path(str(ref["path"])).as_posix(),
             "precedence": int(ref.get("precedence", doc.get("precedence", 0))),
+            "document": doc,
+        }
+        source_fingerprints.append({
+            "id": semantic_source["id"],
+            "ref": semantic_source["ref"],
+            "precedence": semantic_source["precedence"],
+            "content_hash": _canonical_hash(doc),
+        })
+        packs.append({
+            "id": semantic_source["id"],
+            "precedence": semantic_source["precedence"],
             "rules": doc.get("rules", []),
         })
     rules, conflicts = _merge_rules(packs)
+    # Attach resolved source metadata for consumers without changing the public return shape.
+    manifest = dict(manifest)
+    manifest["_resolved_sources"] = source_fingerprints
+    manifest["_manifest_semantic_hash"] = _canonical_hash({k: v for k, v in manifest.items() if not str(k).startswith("_")})
     return manifest, rules, conflicts
 
 
@@ -217,14 +254,26 @@ def route(repo: Path, impact: dict[str, Any], manifest_path: Path, stage: str = 
                 "command": e.get("command"),
             })
 
-    material = {"stage": stage, "context": ctx, "rules": [r["id"] for r in applicable], "manifest": str(manifest_path)}
-    snapshot = hashlib.sha256(json.dumps(material, sort_keys=True).encode()).hexdigest()[:20]
+    # Snapshot the effective policy semantics, not merely rule IDs or an absolute path.
+    # This binds command/threshold/required/scope/level/override results and every
+    # project-owned source actually referenced by the manifest.
+    material = {
+        "stage": stage,
+        "context": ctx,
+        "effective_rules": applicable,
+        "all_merged_rules": rules,
+        "conflicts": conflicts,
+        "manifest_semantic_hash": manifest.get("_manifest_semantic_hash"),
+        "sources": manifest.get("_resolved_sources", []),
+    }
+    snapshot = _canonical_hash(material)[:20]
     return {
         "schema_version": 1,
         "status": "CONFLICT" if conflicts else "ROUTED",
         "stage": stage,
         "policy_snapshot_id": snapshot,
         "manifest": str(manifest_path),
+        "policy_sources": manifest.get("_resolved_sources", []),
         "context": ctx,
         "applicable_rules": applicable,
         "enforcements": enforcements,

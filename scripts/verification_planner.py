@@ -27,8 +27,13 @@ def build_plan(facts: Dict[str, Any], impact: Dict[str, Any], decision: Dict[str
         if key in seen:
             return
         seen.add(key)
+        gate_name = "impact:" + kind
+        obligation_id = "obl-impact-" + hashlib.sha256(gate_name.encode("utf-8")).hexdigest()[:12]
         items.append({
+            "obligation_id": obligation_id,
+            "source": "semantic_impact",
             "kind": kind,
+            "gate_name": gate_name,
             "required_by_impact": required,
             "reason": reason,
             "evidence_ref": evidence,
@@ -64,7 +69,11 @@ def build_plan(facts: Dict[str, Any], impact: Dict[str, Any], decision: Dict[str
     policy_gates: List[Dict[str, Any]] = []
     if policy_plan:
         for enf in policy_plan.get("enforcements", []):
+            gate_name = "policy:" + str(enf.get("rule_id")) + ":" + str(enf.get("gate") or enf.get("engine") or "policy")
             policy_gates.append({
+                "obligation_id": "obl-policy-" + hashlib.sha256(gate_name.encode("utf-8")).hexdigest()[:12],
+                "source": "engineering_policy",
+                "gate_name": gate_name,
                 "rule_id": enf.get("rule_id"),
                 "level": enf.get("level"),
                 "engine": enf.get("engine"),

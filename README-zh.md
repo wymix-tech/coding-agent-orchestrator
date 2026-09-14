@@ -1,8 +1,46 @@
 # Coding Agent Orchestrator
 
+[English](README.md)
+
 > Auto Bootstrap + Unified CLI + Adaptive SDD + Evidence + Semantic Impact + Engineering Policy + Context Plane + Runtime Enforcement
 
 **Current version: V6.5**
+
+## 统一执行、推进与关闭判定
+
+所有许可判断统一由 `scripts/action_guard.py` 负责。宿主 Hook、状态转换、CLI 验证以及
+start/resume 视图消费相同结果和原因码。可用以下只读命令检查当前许可：
+
+```bash
+python3 ./coding-orchestrator --repo /path/to/project --json check --action mutate_code
+python3 ./coding-orchestrator --repo /path/to/project --json check --action advance --phase review
+python3 ./coding-orchestrator --repo /path/to/project --json check --action close
+```
+
+退出码 `0` 表示允许，`1` 表示拒绝；结果包含 `allowed`、`reason_codes`、`reasons` 和
+`next_action`。实际执行边界会重新检查。`verify` 只判断关闭条件，不运行测试或关闭任务。
+
+共享规则检查未解决阻塞、已分类且完整有效的证据、SDD 就绪、阶段与角色权限、必要门禁与
+评审，以及最终验证。门禁、评审和验证同时绑定执行快照与实际输入内容；即使分析编号未变，
+需求或规则内容变化也会使旧结果失效。遗漏计划中的必要门禁、耗尽 Stop 重试次数都不能放行。
+
+旧项目若缺少内容绑定，需要针对同一活动需求重新 intake、补齐事实证据、刷新上下文，并重新
+记录适用的门禁、评审与最终验证结果。动作契约、连续编辑窗口、原生 SDD 权限和迁移细节见
+[Action Authorization](references/action-authorization.md)。
+
+### V6.5 稳定性与生命周期加固
+
+当前 V6.5 还补齐了并发与长期工作项的控制面边界：
+
+- Execution State / History 提交使用跨进程锁与可恢复事务日志；过期 revision 明确冲突，不再静默丢更新。
+- Requirement Identity 与内容 Revision 分离。Intake 产物按 `.orchestrator/work-items/<work>/revisions/<revision>/runs/<run>/` 隔离；长时间分析若基于旧 revision，不能覆盖更新后的 canonical state。
+- “历史已完成”与“当前是否允许 close”分离。后续新增需求或仓库变化不会把已经治理关闭的 A 重新拉回 active；但 native SDD 单独报告 `done` 仍不等于 Governance Done。
+- Policy Snapshot 绑定实际生效规则语义和所有项目级引用 pack，包括默认目录之外的 pack。
+- BMAD Discovery 以配置/检测到的 native sprint state 为入口；格式未知或 story artifact 缺失时返回带来源的 ACTION_REQUIRED，不从安装模板猜任务。
+- Required Verification Obligation 在计划缩减时不会无痕消失，只能通过带 reason、authority、evidence 的 `superseded` / `not_applicable` / `waived` 处置；这些状态不会伪装成测试 passed。
+- CBM CLI 调用有有界超时（`ORCHESTRATOR_CBM_TIMEOUT_SECONDS`，默认 120 秒）；超时、运行时失败和 JSON 契约失败不会再被兼容 fallback 掩盖。
+
+迁移：旧活动 Work Item 若缺少稳定 Requirement Identity，不自动猜测，需要显式迁移或关闭。旧的 Orchestrator-owned `closed/completed` 保留历史完成事实；只有 native closed、没有 Governance completion record 的状态仍不算 Done。新生成的 work-item/registry 产物属于控制面，不污染业务代码快照。 详细修复状态、迁移说明、验证命令和外部集成限制见 [REPAIR_REPORT.md](REPAIR_REPORT.md)。
 
 Coding Agent Orchestrator 是一个面向 AI Coding Agent 的工程控制面。它不替代 OpenSpec、BMAD、Superpowers、CI 或代码图谱工具，而是把它们组织成一条可审计、可恢复、可动态调整、可在运行时强制执行的开发链路。
 
@@ -113,7 +151,7 @@ Coding Agent Orchestrator 从一个 SDD 编排 Skill 演进为完整的 Coding G
 | V6.4 | Session Bootstrap / Task Handoff，上下文冷启动、恢复和角色交接 |
 | **V6.5** | **Project Bootstrap + Unified CLI，一次初始化、自动发现、统一入口与 Doctor** |
 
-V6.5 不再增加新的治理规则，而是把 V3~V6.4 已有能力收口成真正可用的项目入口：`init / discover / doctor / status / intake / resume / verify / host install`。全新项目只需要一次安全初始化，后续由宿主 Hook/Extension 和 Context Plane 自动恢复。
+V6.5 不再增加新的治理规则，而是把 V3~V6.4 已有能力收口成真正可用的项目入口：`init / discover / doctor / status / start / intake / resume / check / verify / host install`。全新项目只需要一次安全初始化，后续由宿主 Hook/Extension 和 Context Plane 自动恢复。
 
 V6.4 在 V6.3 Runtime Enforcement 基础上继续解决“新会话/新 Agent 怎么快速恢复当前工程现实”。V6.3 的核心变化是从：
 
@@ -282,8 +320,8 @@ Verification Snapshot == Current Execution Snapshot
 
 ```text
 coding-agent-orchestrator/
-├── README.md
-├── README.en.md
+├── README.md              # English（默认）
+├── README-zh.md           # 中文
 ├── coding-orchestrator
 ├── coding-orchestrator.cmd
 ├── SKILL.md
@@ -295,6 +333,7 @@ coding-agent-orchestrator/
 │   ├── coding_orchestrator.py
 │   ├── project_discovery.py
 │   ├── project_bootstrap.py
+│   ├── project_activation.py
 │   ├── fact_extractor.py
 │   ├── fact_resolver.py
 │   ├── decision_engine.py
@@ -362,6 +401,7 @@ coding-agent-orchestrator/
     ├── test_context_plane.py
     ├── test_session_context.py
     ├── test_enforcement_kernel.py
+    ├── test_project_activation.py
     └── test_v65_bootstrap_cli.py
 ```
 
@@ -409,24 +449,32 @@ Host Hook 永远不是最终唯一安全边界。V5 State Guard、CI 和 Merge/B
 
 ## 6. 快速开始
 
-### 6.0 V6.5 推荐方式：一次初始化
+### 6.0 推荐方式：首次激活自动自举
 
-V6.5 推荐使用统一入口，而不是手工依次调用内部脚本：
+推荐把 Skill 安装在项目内：
+
+```text
+project/.agents/skills/coding-agent-orchestrator/
+```
+
+正常情况下，现在不再需要记住一个额外的“首次初始化步骤”。Skill 第一次被选中后，**Bootstrap Guard** 会先检查 `.orchestrator/config.yaml`；如果不存在，就自动执行一次包内 Safe Auto `init`，然后继续当前这次用户请求，不需要退出或再发一次消息。
+
+仍然可以在**项目根目录**手工初始化：
 
 ```bash
-./coding-orchestrator init
+./.agents/skills/coding-agent-orchestrator/coding-orchestrator --repo . init
 ```
 
 Windows：
 
 ```bat
-coding-orchestrator.cmd init
+.agents\skills\coding-agent-orchestrator\coding-orchestrator.cmd --repo . init
 ```
 
-或始终可以直接：
+如果当前工作目录本身就是 Skill 目录，也仍然可以使用短命令：
 
 ```bash
-python scripts/coding_orchestrator.py init
+./coding-orchestrator init
 ```
 
 `init` 会保守地自动完成：
@@ -435,12 +483,13 @@ python scripts/coding_orchestrator.py init
 Repository Discovery
   -> technology / build / framework
   -> SDD authority detection
-  -> host detection
+  -> 当前 Agent Host detection
   -> CBM availability detection
   -> architecture evidence
   -> safe Engineering Policy bootstrap
   -> enforcement/session config
-  -> detected host adapter install
+  -> Project Activation Stub（AGENTS.md；适用时 CLAUDE.md）
+  -> 当前 Agent Host adapter install（无法识别时兜底 Claude Code）
   -> fresh-project Session Bootstrap
   -> READY_FOR_INTAKE
 ```
@@ -452,34 +501,86 @@ Repository Discovery
 - 能客观证明的内容自动配置。
 - 多个 SDD Authority 同时存在时返回 `ACTION_REQUIRED`，不擅自选择。
 - 仅检测到 Spring Boot 不等于自动启用经典 `web -> service -> dao`；只有仓库结构能证明该架构时才自动启用。
-- binary-only Host 信号只作为提示；Safe Auto 默认只为高置信度项目级 Host marker 自动安装 Adapter。
+- Safe Auto 按**当前正在运行的 Agent Host**选择 Adapter，而不是根据仓库里残留的 `.pi/.codex/.claude` 目录或 PATH 中有哪些二进制来猜。Pi 优先使用运行时信号/父进程识别，Codex 使用运行时信号/父进程识别；无法可靠识别时确定性兜底安装 Claude Code。
+- 项目已经 bootstrap 后，如果以后换到另一个受支持 Agent，Bootstrap Guard 只补装当前 Host Adapter，不重跑项目初始化，也不会重建当前 Work Item。
 - CBM 未安装不会阻止项目 bootstrap，但正常 Semantic Intake 会 fail closed。
 - 已存在的项目 Policy/配置默认保留；不要让 bootstrap 静默覆盖团队规则。
 
-初始化后：
+#### 冷启动激活
+
+把 Skill 放到 `.agents/skills/coding-agent-orchestrator/` 后，如果第一次输入 `开始`、`继续`、`start`、`continue`、`resume` 时 Host 成功选中了这个 Skill，Bootstrap Guard 会自动执行一次 Safe Auto `init`、建立 Activation Layer，并在**同一轮**继续处理当前请求。之后 `AGENTS.md` / Host Integration 会让这类模糊恢复提示可靠得多。
+
+仍然存在一个无法从 Skill 内部消除的首次边界：如果 Host 在 Activation Layer 尚不存在时，对极短的 `开始` 根本**没有选择这个 Skill**，那么尚未加载的 Skill 自然无法执行自举。这种情况下只需要第一次显式提到 `coding-agent-orchestrator`，或者执行上面的手工 `init`。
+
+`init` 会幂等地创建或更新 `AGENTS.md` 中的受控区块。默认 `--host auto` 会只安装**当前 Agent**对应的一份 Adapter：Pi 安装 Pi extension，Codex 安装 Codex hooks；无法可靠识别当前 Agent 时兜底安装 Claude Code hooks，并维护 `CLAUDE.md`。受控区块之外的项目原有指令不会被覆盖。
+
+Activation Stub 只负责回答 **“先加载哪个工作流”**，绝不成为项目事实源。Skill 被激活后，必须从 `.orchestrator/`、SDD Authority、Policy 与 Evidence 恢复真实状态。
+
+#### 单独一句“开始”到底表示什么
+
+`开始`、`继续`、`接着做`、`start`、`continue`、`resume` 这类短提示现在被定义为**控制意图**，不是需求本身。Activation Layer 会把它路由到：
 
 ```bash
-./coding-orchestrator doctor
-./coding-orchestrator status
-./coding-orchestrator intake "新增用户查询 REST API"
-./coding-orchestrator resume
-./coding-orchestrator verify
+./.agents/skills/coding-agent-orchestrator/coding-orchestrator --repo . start
 ```
 
-如果需要显式安装某个新 Agent Host：
+然后根据权威项目状态确定唯一合法的下一步：
+
+```text
+UNBOOTSTRAPPED -> Safe Auto init
+已有 active work -> Resume 当前工作
+当前工作 blocked -> 先暴露/解决 blocker
+没有 active work + 0 个可执行需求 -> 请求用户提供第一个需求
+没有 active work + 1 个高置信度需求 -> 自动 Intake
+没有 active work + 多个需求 -> ACTION_REQUIRED，让用户选择
+```
+
+因此单独一句“开始”永远不会被解释成“随便选技术栈并创建生产代码”。Generic Requirement Discovery 会排除 `.agents/`、`.orchestrator/`、Host 配置、构建产物以及普通安装型 README。
+
+初始化后的推荐项目结构：
+
+```text
+project/
+├── AGENTS.md                         # 自动创建/合并的激活入口
+├── CLAUDE.md                         # 仅 Claude Code 适用时存在
+├── .agents/
+│   └── skills/
+│       └── coding-agent-orchestrator/
+│           ├── SKILL.md
+│           ├── references/
+│           ├── scripts/
+│           └── ...
+├── .orchestrator/                    # 项目运行态事实源
+├── .claude/ .codex/ .pi/             # 仅宿主集成层
+└── src/
+```
+
+初始化后，在项目根目录：
 
 ```bash
-./coding-orchestrator host install pi
-./coding-orchestrator host install claude-code
-./coding-orchestrator host install codex
+ORCH=./.agents/skills/coding-agent-orchestrator/coding-orchestrator
+$ORCH --repo . doctor
+$ORCH --repo . status
+$ORCH --repo . start
+$ORCH --repo . intake "新增用户查询 REST API"
+$ORCH --repo . resume
+$ORCH --repo . verify
+```
+
+正常切换 Agent 时，Bootstrap Guard 会自动补装当前 Host。若需要预安装或覆盖自动识别，仍可显式安装：
+
+```bash
+$ORCH --repo . host install pi
+$ORCH --repo . host install claude-code
+$ORCH --repo . host install codex
 ```
 
 机器/CI 使用：
 
 ```bash
-./coding-orchestrator --json discover
-./coding-orchestrator --json doctor
-./coding-orchestrator init --ci
+$ORCH --repo . --json discover
+$ORCH --repo . --json doctor
+$ORCH --repo . init --ci
 ```
 
 `--ci` 遇到无法自动解决的 Authority 冲突时返回非零退出码。
@@ -868,6 +969,27 @@ python scripts/cbm_provider.py capabilities
 ```bash
 python scripts/cbm_provider.py health
 ```
+
+健康信息会包含检测到的 CBM CLI 协议；`coding-orchestrator doctor` 还会执行一次无副作用的
+`list_projects` smoke probe。对现代 schema CLI，Adapter 会显式使用 `cli <tool> --... --format json`，
+避免把 CBM 的 compact/tree 人类可读输出误判成 JSON 契约失败；旧版本才按协议检测结果使用 stdin/
+inline JSON 兼容路径。Agent 的 PATH 不完整时还会检查 `~/.local/bin`、Homebrew 等常见安装位置。
+真正的 indexing 失败不会被兼容 fallback 的二次错误覆盖。当前 CBM 可用下面的命令直接验证索引：
+
+```bash
+codebase-memory-mcp cli index_repository --repo-path /absolute/path/to/repo --format json
+```
+
+CBM 运行失败现在会写入持久化 provider incident，不会再形成“证据不足 → 重跑 semantic intake →
+同一个 provider 再失败”的循环。可使用：
+
+```bash
+coding-orchestrator --repo . provider status codebase-memory-mcp
+coding-orchestrator --repo . provider reset codebase-memory-mcp
+```
+
+第一次失败仍然 fail closed；之后自动调用直接返回 `PROVIDER_BLOCKED`，`next_action=repair_cbm_provider`。
+如果 CBM binary/version 发生变化，则允许自动进行一次新的尝试。
 
 CBM 主要帮助 Orchestrator 发现：
 
@@ -1438,25 +1560,10 @@ inject once
 
 ### Pre Tool
 
-生产代码 mutation 之前执行轻量同步检查：
-
-```text
-Execution State exists?
-Decision classified?
-Current phase == implementation?
-Role allowed to mutate?
-Context fresh enough for first mutation?
-```
-
-不满足则 DENY。
-
-例如：
-
-```text
-phase = planning
-Agent wants Write UserService.java
-→ DENY
-```
+先归一化工具输入，再调用共享 Action Guard。`read` 与需求/治理文档的 `prepare` 操作仍可用；
+`mutate_code` 要求分析有效、SDD 就绪、没有活动阻塞、处于 implementation 阶段且角色可写。
+已记录编辑窗口的例外只针对代码新鲜度，不能豁免已变化的需求或规则。准确契约与诊断命令见
+[Action Authorization](references/action-authorization.md)；适配器不得另写一套判断。
 
 ### Post Tool
 
@@ -1555,17 +1662,10 @@ examples/enforcement.yaml
 ```yaml
 version: 1
 enabled: true
-mode: enforce
-
-require_state_for_code_mutation: true
-require_classified_decision_for_code_mutation: true
-require_fresh_context_before_first_mutation: true
 post_mutation_policy_feedback: true
 completion_claim_only: true
 max_stop_blocks_per_session: 3
 
-allowed_code_mutation_phases:
-  - implementation
 ```
 
 安装 Host Adapter 后，项目可维护自己的：
@@ -1574,14 +1674,9 @@ allowed_code_mutation_phases:
 .orchestrator/enforcement.yaml
 ```
 
-建议不要随意关闭：
-
-```text
-require_state_for_code_mutation
-require_classified_decision_for_code_mutation
-```
-
-否则 Runtime Enforcement 的核心价值会被削弱。
+许可条件由共享 Action Guard 定义。旧的 `require_*`、阶段/路径覆盖及 `mode`
+配置不再降低许可条件。`enabled: false` 仅关闭宿主 Hook，状态与 CLI 检查仍然有效。
+重试上限只限制自动续跑次数，不降低关闭要求。
 
 ---
 
@@ -1957,7 +2052,7 @@ python3 -m unittest discover \
 V6.5 当前包：
 
 ```text
-115 tests
+177 tests
 ```
 
 覆盖范围包括：
@@ -1971,6 +2066,7 @@ Engineering Policy
 Context Plane
 Session Bootstrap / Handoff
 Host Enforcement
+Project Activation
 ```
 
 压力场景参考：
@@ -2408,4 +2504,3 @@ THIRD_PARTY_NOTICES.md
 ```
 
 项目没有把外部规则源自动提升为项目治理权威。
-

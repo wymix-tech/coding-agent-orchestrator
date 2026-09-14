@@ -1,8 +1,53 @@
 # Coding Agent Orchestrator
 
+[中文](README-zh.md)
+
 > Auto Bootstrap + Unified CLI + Adaptive SDD + Evidence + Semantic Impact + Engineering Policy + Context Plane + Runtime Enforcement
 
 **Current version: V6.5**
+
+## Shared execution, advance, and close authorization
+
+All permission decisions use `scripts/action_guard.py`. Host hooks, state transitions,
+CLI verification, and start/resume views consume the same result and reason codes.
+Inspect a decision without modifying the project:
+
+```bash
+python3 ./coding-orchestrator --repo /path/to/project --json check --action mutate_code
+python3 ./coding-orchestrator --repo /path/to/project --json check --action advance --phase review
+python3 ./coding-orchestrator --repo /path/to/project --json check --action close
+```
+
+Exit `0` allows and exit `1` denies. The result includes `allowed`, `reason_codes`,
+`reasons`, and `next_action`; the actual execution boundary rechecks permission.
+A successful `verify` checks closure readiness; it does not run tests or close work.
+
+The shared policy checks active blockers, classified/complete/current evidence,
+SDD readiness, phase and role restrictions, required gates/review, and final verification.
+Gate/review/verification evidence binds both the execution snapshot and actual input
+content. Requirement or policy changes invalidate old results even if an analysis ID
+is reused. Missing plan gates cannot be omitted to pass closure, and stop retry limits
+never grant permission.
+
+Existing projects need fresh intake for the same active requirement, resolved fact
+evidence, refreshed context, and newly recorded applicable gate/review/verification
+results when old records lack content bindings. See
+[Action Authorization](references/action-authorization.md) for the action contract,
+tracked edit windows, native authority, migration, and implementation boundaries.
+
+### V6.5 durability and lifecycle hardening
+
+The current V6.5 line also hardens the control plane around concurrency and long-lived work:
+
+- Execution state/history commits use a cross-process lock plus a recoverable transaction journal; stale revisions fail explicitly instead of losing updates.
+- Requirements have a stable identity separate from their content revision. Intake artifacts live under `.orchestrator/work-items/<work>/revisions/<revision>/runs/<run>/`; a stale long-running analysis cannot replace newer canonical state.
+- Completed work is a historical fact distinct from **current** close readiness. A later repository change cannot resurrect an already governed `closed/completed` work item; native SDD `done` alone still does not imply Governance Done.
+- Policy snapshots bind effective rule semantics and all referenced project-owned packs, including packs outside the default policy directory.
+- BMAD discovery follows configured/detected native sprint state and fails with sourced diagnostics for unknown formats or missing story artifacts instead of guessing from installation templates.
+- Required verification obligations survive plan shrinkage until explicitly disposed as `superseded`, `not_applicable`, or `waived` with reason, authority, and evidence. These dispositions are not reported as test passes.
+- CBM CLI calls have a bounded timeout (`ORCHESTRATOR_CBM_TIMEOUT_SECONDS`, default 120s); timeout/runtime/JSON-contract failures are terminal for that invocation and are not masked by syntax fallbacks.
+
+Migration notes: legacy active work without stable requirement identity is not guessed and requires explicit migration/closure. Legacy orchestrator-owned `closed/completed` state remains historically complete; native-only closed state without a Governance completion record remains not done. Generated work-item/registry artifacts are control-plane material and do not dirty the business-code snapshot. Detailed repair status, migration notes, verification commands, and external-integration limitations are recorded in [REPAIR_REPORT.md](REPAIR_REPORT.md).
 
 Coding Agent Orchestrator is an engineering control plane for AI coding agents. It does not replace OpenSpec, BMAD, Superpowers, CI, or code-graph tools. Instead, it composes them into a development lifecycle that is auditable, resumable, adaptive, and enforceable at runtime.
 
@@ -113,7 +158,7 @@ Coding Agent Orchestrator evolved from an SDD orchestration skill into a broader
 | V6.4 | Session Bootstrap / Task Handoff for cold start, resume, and role transfer |
 | **V6.5** | **Project Bootstrap + Unified CLI: one-time initialization, discovery, Doctor, and stable human/agent entry points** |
 
-V6.5 adds no new governance authority. It productizes V3~V6.4 behind stable entry points: `init / discover / doctor / status / intake / resume / verify / host install`. A repository is initialized once; later sessions recover through host adapters and the Context Plane.
+V6.5 adds no new governance authority. It productizes V3~V6.4 behind stable entry points: `init / discover / doctor / status / start / intake / resume / check / verify / host install`. A repository is initialized once; later sessions recover through host adapters and the Context Plane.
 
 V6.4 builds on V6.3 runtime enforcement by solving how a new session/agent reconstructs current engineering reality without relying on old chat history. The defining V6.3 transition is from:
 
@@ -282,8 +327,8 @@ Verification Snapshot == Current Execution Snapshot
 
 ```text
 coding-agent-orchestrator/
-├── README.md
-├── README.en.md
+├── README.md              # English (default)
+├── README-zh.md           # 中文
 ├── coding-orchestrator
 ├── coding-orchestrator.cmd
 ├── SKILL.md
@@ -295,6 +340,7 @@ coding-agent-orchestrator/
 │   ├── coding_orchestrator.py
 │   ├── project_discovery.py
 │   ├── project_bootstrap.py
+│   ├── project_activation.py
 │   ├── fact_extractor.py
 │   ├── fact_resolver.py
 │   ├── decision_engine.py
@@ -362,6 +408,7 @@ coding-agent-orchestrator/
     ├── test_context_plane.py
     ├── test_session_context.py
     ├── test_enforcement_kernel.py
+    ├── test_project_activation.py
     └── test_v65_bootstrap_cli.py
 ```
 
@@ -409,24 +456,32 @@ Host hooks are never the only security boundary. Keep V5 state guards, CI, and m
 
 ## 6. Quick Start
 
-### 6.0 V6.5 recommended path: initialize once
+### 6.0 Recommended path: self-bootstrap on first activation
 
-V6.5 recommends the unified front controller instead of manually chaining internal scripts:
+The recommended project-local installation is:
+
+```text
+project/.agents/skills/coding-agent-orchestrator/
+```
+
+Normally, you no longer need to remember a separate first-run step. When this Skill is selected for the first time, its **Bootstrap Guard** checks `.orchestrator/config.yaml`; if missing, it runs the packaged Safe Auto `init` once and then continues the same user request.
+
+Manual initialization remains available from the **project root**:
 
 ```bash
-./coding-orchestrator init
+./.agents/skills/coding-agent-orchestrator/coding-orchestrator --repo . init
 ```
 
 Windows:
 
 ```bat
-coding-orchestrator.cmd init
+.agents\skills\coding-agent-orchestrator\coding-orchestrator.cmd --repo . init
 ```
 
-Or always:
+If the Skill directory itself is your current working directory, the shorter form still works:
 
 ```bash
-python scripts/coding_orchestrator.py init
+./coding-orchestrator init
 ```
 
 `init` conservatively performs:
@@ -435,12 +490,13 @@ python scripts/coding_orchestrator.py init
 Repository Discovery
   -> technology / build / framework
   -> SDD authority detection
-  -> host detection
+  -> current Agent host detection
   -> CBM availability detection
   -> architecture evidence
   -> safe Engineering Policy bootstrap
   -> enforcement/session config
-  -> detected host adapter installation
+  -> project Activation Stub (AGENTS.md; CLAUDE.md when applicable)
+  -> current Agent host adapter installation (Claude Code fallback)
   -> fresh-project Session Bootstrap
   -> READY_FOR_INTAKE
 ```
@@ -452,34 +508,86 @@ Safe-auto rules:
 - Auto-configure only facts that can be proven.
 - Multiple SDD authorities produce `ACTION_REQUIRED`; the tool does not guess.
 - Detecting Spring Boot alone does not prove classic `web -> service -> dao`; that policy is auto-enabled only when repository structure proves it.
-- Binary-only host detection is advisory; Safe Auto installs adapters only for high-confidence repository-local host markers.
+- Safe Auto selects the **currently running Agent host**, not whichever host folders/binaries happen to exist in the repository. Pi is detected from its runtime signal/process ancestry, Codex from its runtime signal/process ancestry, and an unrecognized runtime deterministically falls back to Claude Code.
+- When a bootstrapped project is later opened from a different supported Agent, Bootstrap Guard reconciles only that host adapter; it does not rerun project initialization or rebuild the active work item.
 - Missing CBM does not block bootstrap, but normal Semantic Intake still fails closed.
 - Existing project policy/config is preserved by default.
 
-After initialization:
+#### Cold-start activation
+
+Placing the Skill under `.agents/skills/coding-agent-orchestrator/` makes it discoverable. If a vague first prompt such as `start`, `continue`, `resume`, `开始`, or `继续` selects this Skill, the Bootstrap Guard automatically runs Safe Auto `init` once, creates the activation layer, and continues that same turn. After that first successful bootstrap, `AGENTS.md` / host integration makes future vague resumes much more reliable.
+
+There is still one unavoidable first-use boundary: if a host does **not** select the Skill at all for an extremely vague prompt before activation exists, the Skill cannot execute code it has not loaded. In that case, mention `coding-agent-orchestrator` explicitly once or run the manual `init` command above.
+
+`init` idempotently creates or updates a managed block in `AGENTS.md`. With `--host auto` (the default), it installs exactly one adapter for the **current Agent runtime**. Pi installs the Pi extension, Codex installs Codex hooks, and an unrecognized runtime installs Claude Code hooks plus the managed `CLAUDE.md` fallback. Existing project instructions outside managed blocks are preserved.
+
+The activation files only answer **which workflow to load**. They never become a source of project truth. Once activated, the Skill must resume from `.orchestrator/`, SDD authority, Policy, and Evidence.
+
+#### What a bare `start` means
+
+A short prompt such as `start`, `continue`, `resume`, `开始`, or `继续` is treated as a control intent, not as a product requirement. The activation layer routes it to:
 
 ```bash
-./coding-orchestrator doctor
-./coding-orchestrator status
-./coding-orchestrator intake "Add a user lookup REST API"
-./coding-orchestrator resume
-./coding-orchestrator verify
+./.agents/skills/coding-agent-orchestrator/coding-orchestrator --repo . start
 ```
 
-Install a new host explicitly when needed:
+The command then deterministically chooses the next legal action:
+
+```text
+UNBOOTSTRAPPED -> Safe Auto init
+active work -> resume current work
+blocked work -> surface blockers
+no active work + no actionable requirement -> ask the user for the first requirement
+no active work + one high-confidence requirement -> auto intake
+no active work + multiple requirements -> ACTION_REQUIRED / ask the user to select
+```
+
+The router never starts production coding merely because the user said `start`. Generic Requirement Discovery ignores `.agents/`, `.orchestrator/`, host config, build output, and ordinary install-only READMEs.
+
+Recommended project layout after initialization:
+
+```text
+project/
+├── AGENTS.md                         # generated/merged activation stub
+├── CLAUDE.md                         # only when Claude Code applies
+├── .agents/
+│   └── skills/
+│       └── coding-agent-orchestrator/
+│           ├── SKILL.md
+│           ├── references/
+│           ├── scripts/
+│           └── ...
+├── .orchestrator/                    # project runtime truth
+├── .claude/ .codex/ .pi/             # host integration only
+└── src/
+```
+
+After initialization, from the project root:
 
 ```bash
-./coding-orchestrator host install pi
-./coding-orchestrator host install claude-code
-./coding-orchestrator host install codex
+ORCH=./.agents/skills/coding-agent-orchestrator/coding-orchestrator
+$ORCH --repo . doctor
+$ORCH --repo . status
+$ORCH --repo . start
+$ORCH --repo . intake "Add a user lookup REST API"
+$ORCH --repo . resume
+$ORCH --repo . verify
+```
+
+Host switching is normally automatic on the next Bootstrap Guard activation. Explicit installation remains available when you want to preinstall or override detection:
+
+```bash
+$ORCH --repo . host install pi
+$ORCH --repo . host install claude-code
+$ORCH --repo . host install codex
 ```
 
 Machine/CI usage:
 
 ```bash
-./coding-orchestrator --json discover
-./coding-orchestrator --json doctor
-./coding-orchestrator init --ci
+$ORCH --repo . --json discover
+$ORCH --repo . --json doctor
+$ORCH --repo . init --ci
 ```
 
 `--ci` returns non-zero when authority ambiguity cannot be resolved safely.
@@ -847,6 +955,28 @@ Check health:
 ```bash
 python scripts/cbm_provider.py health
 ```
+
+The health output includes the detected CBM CLI protocol. `coding-orchestrator doctor` also runs
+a non-mutating CLI smoke probe. For modern schema CLI builds the adapter requests explicit JSON
+with `cli <tool> --... --format json`; older builds use stdin/inline JSON compatibility only after
+protocol detection. It also checks common install locations such as `~/.local/bin` when an Agent
+process has a reduced PATH. Runtime/indexing failures are never masked by syntax fallbacks. On
+current CBM builds, a direct index smoke test is:
+
+```bash
+codebase-memory-mcp cli index_repository --repo-path /absolute/path/to/repo --format json
+```
+
+A CBM operational failure now opens a persistent provider incident instead of triggering endless
+semantic-intake retries. Inspect/reset it with:
+
+```bash
+coding-orchestrator --repo . provider status codebase-memory-mcp
+coding-orchestrator --repo . provider reset codebase-memory-mcp
+```
+
+The first failure stays fail-closed; repeated automatic attempts return `PROVIDER_BLOCKED` with
+`next_action=repair_cbm_provider`. A binary/version change automatically permits one fresh attempt.
 
 CBM helps the Orchestrator derive:
 
@@ -1413,25 +1543,12 @@ Do not inject complete history, the full CBM graph, or the full policy corpus.
 
 ### Pre Tool
 
-Before a production-code mutation, perform lightweight synchronous checks:
-
-```text
-Execution State exists?
-Decision classified?
-Current phase == implementation?
-Role allowed to mutate?
-Context fresh enough for first mutation?
-```
-
-Deny the tool call if a required condition is not met.
-
-Example:
-
-```text
-phase = planning
-Agent wants Write UserService.java
-→ DENY
-```
+Normalize the tool payload, then call the shared Action Guard. `read` and document/
+governance `prepare` actions remain available; `mutate_code` requires current analysis,
+ready SDD, no active blocker, the implementation phase, and a writable role. The
+tracked edit-window exception applies only to code freshness, not changed authority
+inputs. See [Action Authorization](references/action-authorization.md) for the exact
+contract and diagnostic command; adapters must not recreate these checks.
 
 ### Post Tool
 
@@ -1529,17 +1646,10 @@ Example:
 ```yaml
 version: 1
 enabled: true
-mode: enforce
-
-require_state_for_code_mutation: true
-require_classified_decision_for_code_mutation: true
-require_fresh_context_before_first_mutation: true
 post_mutation_policy_feedback: true
 completion_claim_only: true
 max_stop_blocks_per_session: 3
 
-allowed_code_mutation_phases:
-  - implementation
 ```
 
 After host adapters are installed, a project may maintain:
@@ -1548,14 +1658,10 @@ After host adapters are installed, a project may maintain:
 .orchestrator/enforcement.yaml
 ```
 
-Avoid casually disabling:
-
-```text
-require_state_for_code_mutation
-require_classified_decision_for_code_mutation
-```
-
-Doing so removes much of the value of runtime enforcement.
+Permission conditions are defined by the shared Action Guard. Legacy `require_*`,
+phase/path override, and `mode` settings no longer weaken those conditions.
+`enabled: false` disables the host hook only; state/CLI checks still apply.
+The retry budget limits automatic continuation, never closure requirements.
 
 ---
 
@@ -1933,7 +2039,7 @@ python3 -m unittest discover \
 Current V6.5 package:
 
 ```text
-115 tests
+177 tests
 ```
 
 Coverage includes:
@@ -1947,6 +2053,7 @@ Engineering Policy
 Context Plane
 Session Bootstrap / Handoff
 Host Enforcement
+Project Activation
 ```
 
 Pressure scenarios:

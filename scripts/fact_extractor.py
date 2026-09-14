@@ -17,6 +17,8 @@ import sys
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
+import repository_snapshot
+
 MANIFESTS = (
     "pom.xml", "build.gradle", "build.gradle.kts", "settings.gradle", "settings.gradle.kts",
     "package.json", "pyproject.toml", "go.mod", "Cargo.toml", "Gemfile", "composer.json",
@@ -157,6 +159,8 @@ def add_provenance(
     })
 
 
+
+
 def collect_changed_files(root: Path, base_ref: Optional[str]) -> Tuple[List[str], Dict[str, Any]]:
     commands: List[Sequence[str]] = []
     if base_ref:
@@ -173,7 +177,7 @@ def collect_changed_files(root: Path, base_ref: Optional[str]) -> Tuple[List[str
         traces.append({"command": " ".join(cmd), "exit_code": code})
         if code == 0 and out:
             files.extend(x.strip().replace("\\", "/") for x in out.splitlines() if x.strip())
-    return sorted(set(files)), {"commands": traces, "base_ref": base_ref}
+    return sorted(f for f in set(files) if not repository_snapshot.is_generated(f)), {"commands": traces, "base_ref": base_ref}
 
 
 def is_test_or_doc(path: str) -> bool:

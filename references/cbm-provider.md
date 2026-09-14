@@ -32,8 +32,19 @@ python scripts/cbm_provider.py collect --repo . --scope all --depth 3 \
   --output .orchestrator/intake/semantic-impact.json
 ```
 
-The adapter invokes CBM CLI mode with JSON input. Before impact collection it refreshes
-the repository index by default so newly-created files are not silently absent.
+The adapter first inspects the installed tool-specific CLI help. On schema-generated CLI builds
+that advertise `--format`, it invokes `cli <tool> --... --format json`; this avoids mistaking
+CBM's compact/tree human output for a provider failure. Older builds fall back to JSON on stdin,
+then legacy inline JSON only after a proven invocation-shape error. `--raw` is attempted only
+when help proves that the installed build supports it. Runtime/indexing failures are terminal and
+are never overwritten by compatibility fallbacks. Each invocation is bounded by
+`ORCHESTRATOR_CBM_TIMEOUT_SECONDS` (default 120 seconds).
+
+Binary discovery does not rely only on the Agent process PATH. It also honors
+`ORCHESTRATOR_CBM_BINARY` / `CBM_BINARY` and checks common installer paths such as
+`~/.local/bin/codebase-memory-mcp`, `/opt/homebrew/bin`, and `/usr/local/bin`.
+Before impact collection the adapter refreshes the repository index by default so newly-created
+files are not silently absent.
 
 For branch impact:
 
@@ -73,17 +84,39 @@ The semantic snapshot binds:
 
 Changing source bytes therefore changes the impact snapshot.
 
+## CLI compatibility diagnostics
+
+`python scripts/cbm_provider.py health` reports the detected CBM version and CLI protocol.
+`coding-orchestrator doctor` also performs a non-mutating `list_projects` smoke probe.
+
+For manual verification on current CBM builds:
+
+```bash
+codebase-memory-mcp cli index_repository --repo-path /absolute/path/to/repo --format json
+```
+
+Do not treat allocator/version-cohort informational lines on stderr as the failure by themselves.
+When a command fails, preserve the first real tool/indexing error; do not replace it with a
+secondary compatibility error such as `unknown tool: --raw`.
+
 ## Failure policy
 
 The semantic-impact pipeline is fail-closed for the provider by default:
 
 ```text
-CBM unavailable -> PROVIDER_UNAVAILABLE
+CBM first operational failure -> PROVIDER_UNAVAILABLE + persisted provider incident
+repeat automatic attempt       -> PROVIDER_BLOCKED / repair_cbm_provider
 ```
 
-It does not convert the missing graph into a low-impact result. A caller may explicitly
-use `--allow-cbm-unavailable`; then mechanically extracted Work Facts remain conservative and unresolved semantic
-facts must still be resolved through ordinary evidence.
+The incident is persisted at `.orchestrator/providers/codebase-memory-mcp.json`. The same
+binary/version is not automatically retried again, so provider failure cannot become an endless
+`NEEDS_EVIDENCE -> semantic intake -> provider failure` loop. After fixing the local provider,
+run `coding-orchestrator provider reset codebase-memory-mcp`; installing a different CBM binary
+or version also permits one fresh attempt automatically. `coding-orchestrator provider status
+codebase-memory-mcp` exposes the resolved binary, version, CLI probe, and current incident.
+
+The graph is still fail-closed: provider failure never becomes evidence of low impact. A caller
+may explicitly use `--allow-cbm-unavailable`, but unresolved semantic facts remain conservative.
 
 ## Known limitation boundary
 

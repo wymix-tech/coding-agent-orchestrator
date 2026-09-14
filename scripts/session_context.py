@@ -338,6 +338,15 @@ def build_bootstrap(repo: Path, *, role: str = "implementer", session_type: str 
         raise ValueError(f"invalid session_type: {stype}")
 
     if state is None:
+        project_initialized = (repo / ".orchestrator" / "config.yaml").exists()
+        if project_initialized:
+            bootstrap_status = "READY_FOR_INTAKE"
+            blockers = []
+            next_action = "run_intake_for_first_work_item"
+        else:
+            bootstrap_status = "UNBOOTSTRAPPED"
+            blockers = [{"code": "PROJECT_NOT_BOOTSTRAPPED", "detail": "Orchestrator project configuration is missing"}]
+            next_action = "run_safe_auto_init"
         doc: dict[str, Any] = {
             "schema_version": SCHEMA_VERSION,
             "kind": "session_bootstrap",
@@ -346,16 +355,17 @@ def build_bootstrap(repo: Path, *, role: str = "implementer", session_type: str 
             "host": host,
             "session_id": session_id,
             "role": role,
-            "status": "UNINITIALIZED",
+            "status": bootstrap_status,
             "project": {"repo": str(repo), "name": repo.name},
             "current": None,
             "authorities": {},
-            "blockers": [{"code": "STATE_NOT_INITIALIZED", "detail": "Canonical Execution State is missing"}],
-            "next_action": "initialize_execution_state_and_run_intake",
+            "blockers": blockers,
+            "next_action": next_action,
             "latest_handoff": None,
+            "source_of_truth": "This bootstrap is a prompt projection only; project configuration and later SDD/Decision/Execution State/Policy/Evidence remain authoritative.",
         }
     else:
-        resume = sm.resume_summary(state)
+        resume = sm.resume_summary(state, repo)
         manifest_fresh = context_plane.validate_manifest(repo, manifest) if manifest else {"status": "MISSING", "changes": []}
         pack_valid = None
         if pack:
@@ -451,13 +461,19 @@ def build_bootstrap(repo: Path, *, role: str = "implementer", session_type: str 
 
 
 def render_bootstrap(doc: dict[str, Any], *, max_chars: Optional[int] = None) -> str:
-    if doc.get("status") == "UNINITIALIZED":
+    if doc.get("status") in {"UNBOOTSTRAPPED", "READY_FOR_INTAKE", "UNINITIALIZED"}:
+        status = doc.get("status")
+        detail = (
+            "Project bootstrap has not run yet; Safe Auto initialization is required before normal work."
+            if status == "UNBOOTSTRAPPED"
+            else "Project bootstrap is complete and no active work item exists yet."
+        )
         text = "\n".join([
             "# Orchestrator Session Bootstrap",
             "",
-            "- Status: **UNINITIALIZED**",
-            "- Canonical Execution State is missing.",
-            "- Reads/discovery are allowed; do not mutate production code before intake/classification.",
+            f"- Status: **{status}**",
+            f"- {detail}",
+            "- Do not mutate production code before intake/classification.",
             f"- Next action: `{doc.get('next_action')}`",
             "",
             "> This bootstrap is a projection, not a source of truth.",

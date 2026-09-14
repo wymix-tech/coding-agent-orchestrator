@@ -8,15 +8,24 @@ import pathlib
 from typing import Any, Dict, List, Optional
 
 
-def _bounded_find(root: pathlib.Path, names: set[str], max_depth: int = 5) -> List[pathlib.Path]:
+def _bounded_find(root: pathlib.Path, names: set[str], max_depth: int = 6) -> List[pathlib.Path]:
     out: List[pathlib.Path] = []
     root = root.resolve()
+    excluded_segments = {"templates", "template", "examples", "example", ".agents", "node_modules"}
+    install_roots = {"_bmad", ".bmad", "bmad"}
     for path in root.rglob("*"):
         try:
             rel = path.relative_to(root)
         except ValueError:
             continue
         if len(rel.parts) > max_depth:
+            continue
+        lower_parts = {x.lower() for x in rel.parts}
+        if lower_parts & excluded_segments:
+            continue
+        # BMAD installation/resource roots are markers, not execution output. A real
+        # sprint-status should live in an output/workspace area or explicit config.
+        if rel.parts and rel.parts[0].lower() in install_roots:
             continue
         if path.is_file() and path.name.lower() in names:
             out.append(path)

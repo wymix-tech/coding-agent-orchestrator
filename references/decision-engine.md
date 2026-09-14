@@ -88,7 +88,7 @@ Create a `work-facts.json` object with all required fields. Booleans must be `tr
 
 `provenance` maps fact paths to evidence entries. Accepted final strengths are `authoritative`, `observed`, and `derived`. `heuristic` is hint-only and is rejected by strict evidence validation. For non-authoritative `false` claims, provenance must also contain `negative_proof` describing the bounded scope that was inspected.
 
-Use `references/fact-extractor.md` for the extraction/resolution protocol. Legacy `evidence` maps may be informative but do not satisfy v4 strict evidence mode.
+Use `references/fact-extractor.md` for the extraction/resolution protocol. Legacy `evidence` maps may be informative but do not satisfy strict evidence mode.
 
 ## Fact extraction rules
 

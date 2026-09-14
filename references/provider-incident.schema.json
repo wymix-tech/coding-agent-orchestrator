@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "provider-incident.schema.json",
+  "title": "Coding Agent Orchestrator Provider Incident",
+  "type": "object",
+  "required": ["schema_version", "provider", "status"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "provider": {"const": "codebase-memory-mcp"},
+    "status": {"enum": ["open", "healthy", "reset"]},
+    "error_class": {"type": ["string", "null"]},
+    "error": {"type": ["string", "null"]},
+    "binary": {"type": ["string", "null"]},
+    "version": {"type": ["string", "null"]},
+    "provider_identity": {"type": ["string", "null"]},
+    "failure_fingerprint": {"type": ["string", "null"]},
+    "attempt_count": {"type": "integer", "minimum": 0},
+    "automatic_retry": {"type": "boolean"},
+    "next_action": {"type": ["string", "null"]},
+    "diagnostics": {"type": "object"}
+  },
+  "additionalProperties": true
+}

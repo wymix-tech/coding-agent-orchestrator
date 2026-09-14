@@ -1,5 +1,5 @@
 {
-  "description": "Coding Agent Orchestrator V6.4 runtime enforcement + session bootstrap",
+  "description": "Coding Agent Orchestrator runtime enforcement + session bootstrap",
   "hooks": {
     "SessionStart": [{"matcher": "startup|resume|clear|compact", "hooks": [{"type": "command", "command": "python3 \"__KERNEL__\" host --host codex", "statusMessage": "Loading orchestrator context", "additionalContextLimit": 8000, "timeout": 15}]}],
     "UserPromptSubmit": [{"hooks": [{"type": "command", "command": "python3 \"__KERNEL__\" host --host codex", "additionalContextLimit": 6000, "timeout": 10}]}],

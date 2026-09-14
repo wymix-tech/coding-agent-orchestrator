@@ -10,6 +10,15 @@
             "null"
           ]
         },
+        "authority_hashes": {
+          "additionalProperties": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "type": "object"
+        },
         "context_manifest_ref": {
           "type": [
             "string",
@@ -29,6 +38,18 @@
           ]
         },
         "decision_ref": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "decision_status": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "evidence_snapshot_id": {
           "type": [
             "string",
             "null"
@@ -63,6 +84,21 @@
             "string",
             "null"
           ]
+        },
+        "repository_snapshot_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "requirement_ref": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "semantic_complete": {
+          "type": "boolean"
         },
         "semantic_impact_ref": {
           "type": [
@@ -126,6 +162,94 @@
     },
     "blockers": {
       "type": "array"
+    },
+    "completion_record": {
+      "properties": {
+        "analysis_snapshot_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "authorization": {
+          "properties": {
+            "decision": {
+              "enum": [
+                "allow"
+              ]
+            },
+            "reason_codes": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "state_revision": {
+              "type": [
+                "integer",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "decision",
+            "reason_codes"
+          ],
+          "type": "object"
+        },
+        "closed_at": {
+          "type": "string"
+        },
+        "closed_by": {
+          "type": "string"
+        },
+        "execution_snapshot_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "repository_snapshot_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "requirement_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "requirement_revision": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "status": {
+          "enum": [
+            "completed"
+          ]
+        },
+        "work_item_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "status",
+        "closed_at",
+        "closed_by",
+        "work_item_id",
+        "authorization"
+      ],
+      "type": [
+        "object",
+        "null"
+      ]
     },
     "enforcement": {
       "properties": {
@@ -208,12 +332,43 @@
       ]
     },
     "quality_gates": {
+      "additionalProperties": {
+        "properties": {
+          "evidence_snapshot_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "snapshot_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
       "type": "object"
     },
     "readiness": {
       "type": "object"
     },
     "review": {
+      "properties": {
+        "evidence_snapshot_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "snapshot_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
       "type": "object"
     },
     "revision": {
@@ -234,6 +389,90 @@
       ]
     },
     "verification": {
+      "properties": {
+        "evidence_snapshot_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "snapshot_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "verification_obligations": {
+      "additionalProperties": {
+        "properties": {
+          "disposition": {
+            "type": [
+              "object",
+              "null"
+            ]
+          },
+          "gate_name": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "required": {
+            "type": "boolean"
+          },
+          "requirement_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "requirement_revision": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "source": {
+            "type": "string"
+          },
+          "source_ref": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "status": {
+            "enum": [
+              "active",
+              "superseded",
+              "not_applicable",
+              "waived"
+            ]
+          },
+          "work_item_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "gate_name",
+          "required",
+          "status"
+        ],
+        "type": "object"
+      },
       "type": "object"
     },
     "work_item": {
@@ -241,6 +480,12 @@
         "id": {
           "minLength": 1,
           "type": "string"
+        },
+        "native_work_item_id": {
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "progress": {
           "properties": {
@@ -258,6 +503,24 @@
             "total"
           ],
           "type": "object"
+        },
+        "requirement_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "requirement_revision": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "requirement_source_ref": {
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "title": {
           "minLength": 1,
@@ -292,6 +555,6 @@
     "review",
     "verification"
   ],
-  "title": "Adaptive SDD Coding Orchestrator Execution State v1 (V6.4 compatible)",
+  "title": "Adaptive SDD Coding Orchestrator Execution State v1",
   "type": "object"
 }

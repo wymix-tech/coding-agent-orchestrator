@@ -15,7 +15,11 @@ import json
 import os
 import pathlib
 import sys
+import time
 import uuid
+
+import action_guard
+import repository_snapshot
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 try:
@@ -24,22 +28,13 @@ except Exception:  # pragma: no cover
     yaml = None
 
 SCHEMA_VERSION = 1
-PHASES = [
-    "discovery",
-    "specification",
-    "design",
-    "planning",
-    "implementation",
-    "review",
-    "verification",
-    "release",
-    "closed",
-]
-STATUSES = {"pending", "ready", "in_progress", "completed", "failed", "cancelled"}
+PHASES = list(action_guard.PHASES)
+STATUSES = action_guard.STATUSES
 FLOW_RANK = {"TRIVIAL": 0, "FAST": 1, "STANDARD": 2, "DEEP": 3}
 ACCEPTED_GATE_STATUS = {"pending", "passed", "failed", "skipped", "not_required"}
 ACCEPTED_REVIEW_STATUS = {"pending", "passed", "failed", "not_required"}
 ACCEPTED_VERIFICATION_STATUS = {"pending", "passed", "failed"}
+ACCEPTED_OBLIGATION_STATUS = {"active", "superseded", "not_applicable", "waived"}
 AUTHORITY_MODES = {"native", "hybrid", "orchestrator"}
 PROVIDERS = {"bmad", "openspec", "generic", "other"}
 
@@ -53,7 +48,8 @@ class RevisionConflict(StateError):
 
 
 class TransitionDenied(StateError):
-    def __init__(self, reasons: Iterable[str]):
+    def __init__(self, reasons: Iterable[str], authorization: Optional[Dict[str, Any]] = None):
+        self.authorization = authorization
         self.reasons = list(reasons)
         super().__init__("transition denied: " + "; ".join(self.reasons))
 
@@ -66,21 +62,37 @@ def utc_now() -> str:
     return dt.datetime.now(dt.timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
-def _dump(data: Any, path: pathlib.Path) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
+def _serialize(data: Any, path: pathlib.Path) -> str:
     suffix = path.suffix.lower()
     if suffix in {".yaml", ".yml"}:
         if yaml is None:
             raise StateError("PyYAML is required for YAML state files")
-        text = yaml.safe_dump(data, sort_keys=False, allow_unicode=True)
-    else:
-        text = json.dumps(data, indent=2, ensure_ascii=False) + "\n"
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text(text, encoding="utf-8")
-    os.replace(tmp, path)
+        return yaml.safe_dump(data, sort_keys=False, allow_unicode=True)
+    return json.dumps(data, indent=2, ensure_ascii=False) + "\n"
 
 
-def _load(path: pathlib.Path) -> Dict[str, Any]:
+def _atomic_write_text(path: pathlib.Path, text: str) -> None:
+    """Atomically replace one file without reusing a shared temporary filename."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(f".{path.name}.{os.getpid()}.{uuid.uuid4().hex}.tmp")
+    try:
+        with tmp.open("w", encoding="utf-8") as f:
+            f.write(text)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, path)
+    finally:
+        try:
+            tmp.unlink()
+        except FileNotFoundError:
+            pass
+
+
+def _dump(data: Any, path: pathlib.Path) -> None:
+    _atomic_write_text(path, _serialize(data, path))
+
+
+def _load_raw(path: pathlib.Path) -> Dict[str, Any]:
     if not path.exists():
         raise StateError(f"state file not found: {path}")
     text = path.read_text(encoding="utf-8")
@@ -96,16 +108,170 @@ def _load(path: pathlib.Path) -> Dict[str, Any]:
     return data
 
 
+def _load(path: pathlib.Path) -> Dict[str, Any]:
+    # Any interrupted state/history commit is completed before callers observe state.
+    _recover_transaction(path)
+    return _load_raw(path)
+
+
 def _history_path(state_path: pathlib.Path) -> pathlib.Path:
     stem = state_path.stem
     return state_path.with_name(stem.replace("execution-state", "execution-history") + ".jsonl")
 
 
+def _history_event_ids(state_path: pathlib.Path) -> set[str]:
+    hp = _history_path(state_path)
+    if not hp.exists():
+        return set()
+    out: set[str] = set()
+    for line in hp.read_text(encoding="utf-8", errors="replace").splitlines():
+        try:
+            item = json.loads(line)
+        except Exception:
+            continue
+        if isinstance(item, dict) and item.get("event_id"):
+            out.add(str(item["event_id"]))
+    return out
+
+
 def _append_history(state_path: pathlib.Path, event: Dict[str, Any]) -> None:
+    """Append an event exactly once and fsync it before reporting success."""
+    if str(event.get("event_id")) in _history_event_ids(state_path):
+        return
     hp = _history_path(state_path)
     hp.parent.mkdir(parents=True, exist_ok=True)
     with hp.open("a", encoding="utf-8") as f:
         f.write(json.dumps(event, ensure_ascii=False, sort_keys=True) + "\n")
+        f.flush()
+        os.fsync(f.fileno())
+
+
+LOCK_TIMEOUT_SECONDS = float(os.environ.get("ORCHESTRATOR_STATE_LOCK_TIMEOUT", "5"))
+
+
+def _lock_path(state_path: pathlib.Path) -> pathlib.Path:
+    return state_path.with_name(f".{state_path.name}.lock")
+
+
+def _journal_path(state_path: pathlib.Path) -> pathlib.Path:
+    return state_path.with_name(f".{state_path.name}.transaction.json")
+
+
+def _pid_alive(pid: int) -> bool:
+    if pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError:
+        return True
+    return True
+
+
+class _StateFileLock:
+    """Portable cross-process lock based on atomic directory creation.
+
+    The lock contains owner metadata. If the owner process no longer exists, the
+    stale lock is reclaimed. This intentionally protects only the short durable
+    commit/recovery boundary, never CBM/test execution.
+    """
+    def __init__(self, state_path: pathlib.Path, timeout: float = LOCK_TIMEOUT_SECONDS):
+        self.path = _lock_path(state_path)
+        self.timeout = timeout
+        self.acquired = False
+
+    def __enter__(self):
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        deadline = time.monotonic() + self.timeout
+        while True:
+            try:
+                self.path.mkdir(parents=False)
+                owner = {"pid": os.getpid(), "acquired_at": utc_now()}
+                _atomic_write_text(self.path / "owner.json", json.dumps(owner, sort_keys=True) + "\n")
+                self.acquired = True
+                return self
+            except FileExistsError:
+                owner_path = self.path / "owner.json"
+                stale = False
+                try:
+                    owner = json.loads(owner_path.read_text(encoding="utf-8"))
+                    stale = not _pid_alive(int(owner.get("pid", -1)))
+                except Exception:
+                    # A just-created lock can briefly exist before owner metadata. Give it
+                    # a small grace period; old malformed locks are reclaimable.
+                    try:
+                        stale = (time.time() - self.path.stat().st_mtime) > 1.0
+                    except OSError:
+                        stale = False
+                if stale:
+                    try:
+                        for child in self.path.iterdir():
+                            child.unlink(missing_ok=True)
+                        self.path.rmdir()
+                        continue
+                    except OSError:
+                        pass
+                if time.monotonic() >= deadline:
+                    raise StateError(f"state lock timeout: {self.path}")
+                time.sleep(0.03)
+
+    def __exit__(self, exc_type, exc, tb):
+        if self.acquired:
+            try:
+                for child in self.path.iterdir():
+                    child.unlink(missing_ok=True)
+                self.path.rmdir()
+            except FileNotFoundError:
+                pass
+            self.acquired = False
+
+
+def _fault(point: str) -> None:
+    if os.environ.get("ORCHESTRATOR_TXN_CRASH_AT") == point:
+        raise RuntimeError(f"injected transaction crash at {point}")
+
+
+def _write_journal(state_path: pathlib.Path, journal: Dict[str, Any]) -> None:
+    _atomic_write_text(_journal_path(state_path), json.dumps(journal, ensure_ascii=False, sort_keys=True, indent=2) + "\n")
+
+
+def _recover_transaction_locked(state_path: pathlib.Path) -> None:
+    jp = _journal_path(state_path)
+    if not jp.exists():
+        return
+    try:
+        txn = json.loads(jp.read_text(encoding="utf-8"))
+    except Exception as exc:
+        raise StateError(f"cannot recover transaction journal {jp}: {exc}") from exc
+    new_state = txn.get("state")
+    event = txn.get("event")
+    if not isinstance(new_state, dict) or not isinstance(event, dict):
+        raise StateError(f"invalid transaction journal: {jp}")
+    validate_state(new_state)
+    target_rev = int(event.get("revision_after", new_state.get("revision", -1)))
+    current_rev = -1
+    if state_path.exists():
+        current = _load_raw(state_path)
+        current_rev = int(current.get("revision", -1))
+        if current_rev > target_rev:
+            raise StateError(f"transaction journal revision {target_rev} is behind current state {current_rev}")
+        if current_rev == target_rev and current != new_state:
+            raise StateError("transaction journal conflicts with current state at same revision")
+    if current_rev < target_rev:
+        _dump(new_state, state_path)
+    _append_history(state_path, event)
+    jp.unlink(missing_ok=True)
+
+
+def _recover_transaction(state_path: pathlib.Path) -> None:
+    jp = _journal_path(state_path)
+    if not jp.exists():
+        return
+    with _StateFileLock(state_path):
+        _recover_transaction_locked(state_path)
 
 
 def _event_id(event: Dict[str, Any]) -> str:
@@ -146,6 +312,10 @@ def create_state(
     native_state_ref: Optional[str] = None,
     iteration_type: str = "continuous",
     iteration_id: Optional[str] = None,
+    requirement_id: Optional[str] = None,
+    requirement_revision: Optional[str] = None,
+    requirement_source_ref: Optional[str] = None,
+    native_work_item_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     flow = flow_profile.upper()
     provider = provider.lower()
@@ -194,6 +364,10 @@ def create_state(
             "id": work_id,
             "type": work_type,
             "title": title,
+            "requirement_id": requirement_id,
+            "requirement_revision": requirement_revision,
+            "requirement_source_ref": requirement_source_ref,
+            "native_work_item_id": native_work_item_id,
             "progress": {"completed": 0, "total": 0},
         },
         "iteration": {
@@ -219,6 +393,7 @@ def create_state(
             "acceptance_satisfied": False,
         },
         "quality_gates": {},
+        "verification_obligations": {},
         "review": _default_review(flow),
         "verification": {
             "required": True,
@@ -301,6 +476,14 @@ def validate_state(state: Dict[str, Any]) -> None:
             raise StateError(f"quality gate {name!r} has invalid status")
         if not isinstance(gate.get("required"), bool):
             raise StateError(f"quality gate {name!r} required must be boolean")
+    obligations = state.get("verification_obligations") or {}
+    if not isinstance(obligations, dict):
+        raise StateError("verification_obligations must be an object")
+    for oid, obligation in obligations.items():
+        if not isinstance(obligation, dict) or obligation.get("status") not in ACCEPTED_OBLIGATION_STATUS:
+            raise StateError(f"verification obligation {oid!r} has invalid status")
+        if not isinstance(obligation.get("required", False), bool):
+            raise StateError(f"verification obligation {oid!r} required must be boolean")
 
 
 def _require_revision(state: Dict[str, Any], expected_revision: Optional[int]) -> None:
@@ -310,94 +493,73 @@ def _require_revision(state: Dict[str, Any], expected_revision: Optional[int]) -
         )
 
 
+def _durable_transaction(state_path: pathlib.Path, new_state: Dict[str, Any], event: Dict[str, Any]) -> None:
+    txn = {
+        "transaction_id": uuid.uuid4().hex,
+        "prepared_at": utc_now(),
+        "state_path": str(state_path),
+        "history_path": str(_history_path(state_path)),
+        "state": copy.deepcopy(new_state),
+        "event": copy.deepcopy(event),
+    }
+    _write_journal(state_path, txn)
+    _fault("after_journal")
+    _dump(new_state, state_path)
+    _fault("after_state")
+    _append_history(state_path, event)
+    _fault("after_history")
+    _journal_path(state_path).unlink(missing_ok=True)
+
+
 def _commit(
     state_path: pathlib.Path,
     state: Dict[str, Any],
     event: Dict[str, Any],
     expected_revision: Optional[int] = None,
 ) -> Dict[str, Any]:
-    current = _load(state_path)
-    _require_revision(current, expected_revision)
-    if current["revision"] != event["revision_before"]:
-        raise RevisionConflict(
-            f"event was built from revision {event['revision_before']}, current is {current['revision']}"
-        )
-    state["revision"] = current["revision"] + 1
-    state["updated_at"] = utc_now()
-    event["revision_after"] = state["revision"]
-    validate_state(state)
-    _dump(state, state_path)
-    _append_history(state_path, event)
-    return state
+    with _StateFileLock(state_path):
+        _recover_transaction_locked(state_path)
+        current = _load_raw(state_path)
+        _require_revision(current, expected_revision)
+        if current["revision"] != event["revision_before"]:
+            raise RevisionConflict(
+                f"event was built from revision {event['revision_before']}, current is {current['revision']}"
+            )
+        state["revision"] = current["revision"] + 1
+        state["updated_at"] = utc_now()
+        event["revision_after"] = state["revision"]
+        event.setdefault("commit_id", uuid.uuid4().hex)
+        validate_state(state)
+        _durable_transaction(state_path, state, event)
+        return state
 
 
 def initialize(state_path: pathlib.Path, state: Dict[str, Any], actor: str = "orchestrator") -> Dict[str, Any]:
-    if state_path.exists():
-        raise StateError(f"state already exists: {state_path}")
-    _dump(state, state_path)
-    event = _new_event(state, "STATE_INITIALIZED", actor, initial_state=copy.deepcopy(state))
-    event["revision_after"] = state["revision"]
-    _append_history(state_path, event)
-    return state
+    with _StateFileLock(state_path):
+        _recover_transaction_locked(state_path)
+        if state_path.exists():
+            raise StateError(f"state already exists: {state_path}")
+        validate_state(state)
+        event = _new_event(state, "STATE_INITIALIZED", actor, initial_state=copy.deepcopy(state))
+        event["revision_after"] = state["revision"]
+        event.setdefault("commit_id", uuid.uuid4().hex)
+        _durable_transaction(state_path, state, event)
+        return state
 
 
-def required_gate_failures(state: Dict[str, Any]) -> List[str]:
-    failures = []
-    for name, gate in state.get("quality_gates", {}).items():
-        if gate.get("required") and gate.get("status") != "passed":
-            failures.append(f"required gate {name} is {gate.get('status')}")
-    return failures
+def required_gate_failures(state: Dict[str, Any], repo: Optional[pathlib.Path] = None) -> List[str]:
+    evidence = action_guard.collect_evidence(repo, state) if repo is not None else {}
+    gates = state.get("quality_gates") or {}
+    return [f"required gate {name} is {(gates.get(name) or {}).get('status', 'missing')}"
+            for name in action_guard.required_gates(state, evidence)
+            if (gates.get(name) or {}).get("status") != "passed"]
 
 
-def transition_guard(state: Dict[str, Any], to_phase: str, to_status: str = "in_progress") -> List[str]:
-    reasons: List[str] = []
-    if to_phase not in PHASES:
-        return [f"invalid target phase: {to_phase}"]
-    if to_status not in STATUSES:
-        return [f"invalid target status: {to_status}"]
-    if state.get("blocked") and to_phase not in {state["phase"], "closed"}:
-        reasons.append("active blocker prevents phase advance")
-
-    readiness = state.get("readiness", {})
-    if to_phase == "implementation":
-        if not readiness.get("sdd_ready"):
-            reasons.append("SDD/native planning state is not implementation-ready")
-        if readiness.get("behavior_change") is True and not readiness.get("acceptance_criteria_present"):
-            reasons.append("behavior change requires acceptance criteria")
-
-    if to_phase in {"review", "verification", "release", "closed"}:
-        if not readiness.get("implementation_tasks_complete"):
-            reasons.append("implementation tasks are not complete")
-        enforcement = state.get("enforcement") or {}
-        if enforcement.get("enabled"):
-            if enforcement.get("dirty"):
-                reasons.append("runtime enforcement evidence is dirty after material mutation")
-            if enforcement.get("semantic_fresh") is False:
-                reasons.append("semantic impact evidence is stale")
-            if enforcement.get("policy_fresh") is False:
-                reasons.append("engineering policy evaluation is stale")
-
-    if to_phase in {"verification", "release", "closed"} and state["review"].get("required"):
-        if state["review"].get("status") != "passed":
-            reasons.append("required review has not passed")
-        if int(state["review"].get("blocking_findings", 0)) > 0:
-            reasons.append("blocking review findings remain")
-
-    if to_phase == "closed":
-        if state.get("blocked"):
-            reasons.append("active blocker prevents close")
-        if not readiness.get("acceptance_satisfied"):
-            reasons.append("acceptance criteria are not recorded as satisfied")
-        reasons.extend(required_gate_failures(state))
-        ver = state.get("verification", {})
-        if ver.get("status") != "passed":
-            reasons.append("final verification has not passed")
-        if not ver.get("fresh"):
-            reasons.append("final verification evidence is not fresh")
-        current_snapshot = state.get("execution_snapshot_id")
-        if current_snapshot and ver.get("snapshot_id") != current_snapshot:
-            reasons.append("verification snapshot does not match current execution snapshot")
-    return reasons
+def transition_guard(state: Dict[str, Any], to_phase: str, to_status: str = "in_progress",
+                     repo: Optional[pathlib.Path] = None, native_confirmed: bool = False) -> List[str]:
+    decision = action_guard.authorize(repo, state, "close" if to_phase == "closed" else "advance",
+                                      target_phase=to_phase, target_status=to_status, native_confirmed=native_confirmed)
+    return [r["message"] for r in decision["reasons"]]
 
 
 def transition(
@@ -410,20 +572,44 @@ def transition(
     native_confirmed: bool = False,
     evidence_ref: Optional[str] = None,
 ) -> Dict[str, Any]:
-    state = _load(state_path)
-    _require_revision(state, expected_revision)
-    if state["authority"]["mode"] == "native" and not native_confirmed:
-        raise NativeAuthorityRequired(
-            "native authority owns phase/status; update via the native adapter, then retry with native_confirmed"
-        )
-    reasons = transition_guard(state, to_phase, to_status)
-    if reasons:
-        raise TransitionDenied(reasons)
+    state = _load(state_path) if state_path.exists() else None
+    if state is not None:
+        _require_revision(state, expected_revision)
+    authorization = action_guard.authorize(
+        repository_snapshot.repo_from_state(state_path), state,
+        "close" if to_phase == "closed" else "advance", target_phase=to_phase,
+        target_status=to_status, native_confirmed=native_confirmed,
+    )
+    if "NATIVE_AUTHORITY_REQUIRED" in authorization["reason_codes"]:
+        error = NativeAuthorityRequired("native authority owns phase/status; use the native adapter")
+        error.authorization = authorization
+        raise error
+    if not authorization["allowed"]:
+        raise TransitionDenied([r["message"] for r in authorization["reasons"]], authorization)
     before = {"phase": state["phase"], "status": state["status"]}
     new_state = copy.deepcopy(state)
     new_state["phase"] = to_phase
     new_state["status"] = to_status
-    new_state["cursor"]["next_action"] = compute_next_action(new_state)
+    if to_phase == "closed" and to_status == "completed":
+        wi = new_state.get("work_item") or {}
+        analysis = new_state.get("analysis") or {}
+        new_state["completion_record"] = {
+            "status": "completed",
+            "closed_at": utc_now(),
+            "closed_by": actor,
+            "work_item_id": wi.get("id"),
+            "requirement_id": wi.get("requirement_id"),
+            "requirement_revision": wi.get("requirement_revision"),
+            "execution_snapshot_id": new_state.get("execution_snapshot_id"),
+            "analysis_snapshot_id": analysis.get("analysis_snapshot_id"),
+            "repository_snapshot_id": analysis.get("repository_snapshot_id"),
+            "authorization": {
+                "decision": authorization.get("decision"),
+                "reason_codes": authorization.get("reason_codes") or [],
+                "state_revision": authorization.get("state_revision"),
+            },
+        }
+    new_state["cursor"]["next_action"] = compute_next_action(new_state, repository_snapshot.repo_from_state(state_path))
     event = _new_event(
         state,
         "TRANSITION",
@@ -433,6 +619,71 @@ def transition(
         reason=reason,
         evidence_ref=evidence_ref,
         native_confirmed=native_confirmed,
+    )
+    return _commit(state_path, new_state, event, expected_revision)
+
+
+def revise_work_item(
+    state_path: pathlib.Path,
+    requirement_id: str,
+    requirement_revision: str,
+    actor: str,
+    evidence_ref: str,
+    expected_revision: Optional[int] = None,
+    requirement_source_ref: Optional[str] = None,
+    native_work_item_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Apply an explicit revision of the active requirement and invalidate derived evidence."""
+    state = _load(state_path)
+    _require_revision(state, expected_revision)
+    current = state.get("work_item") or {}
+    if current.get("requirement_id") not in {None, requirement_id}:
+        raise StateError("cannot revise active work item to a different requirement identity")
+    if current.get("requirement_revision") == requirement_revision:
+        return state
+    new_state = copy.deepcopy(state)
+    wi = new_state["work_item"]
+    old_revision = wi.get("requirement_revision")
+    wi["requirement_id"] = requirement_id
+    wi["requirement_revision"] = requirement_revision
+    wi["requirement_source_ref"] = requirement_source_ref
+    wi["native_work_item_id"] = native_work_item_id
+    wi["progress"] = {"completed": 0, "total": 0}
+    new_state["readiness"].update({
+        "sdd_ready": False,
+        "acceptance_criteria_present": False,
+        "implementation_tasks_complete": False,
+        "acceptance_satisfied": False,
+    })
+    new_state["quality_gates"] = {}
+    new_state["verification_obligations"] = {}
+    new_state["review"] = _default_review(new_state["flow_profile"])
+    new_state["verification"] = {
+        "required": True, "status": "pending", "snapshot_id": None, "fresh": False,
+        "evidence": [], "verified_at": None,
+    }
+    analysis = new_state.get("analysis") or {}
+    for key in list(analysis):
+        if key in {"provider"}:
+            continue
+        if isinstance(analysis.get(key), bool):
+            analysis[key] = False
+        elif isinstance(analysis.get(key), dict):
+            analysis[key] = {}
+        else:
+            analysis[key] = None
+    new_state["analysis"] = analysis
+    enf = new_state.get("enforcement") or {}
+    enf.update({"dirty": True, "semantic_fresh": False, "context_fresh": False, "policy_fresh": False, "last_event": "requirement_revision"})
+    new_state["enforcement"] = enf
+    if new_state.get("authority", {}).get("mode") != "native":
+        new_state["phase"] = "discovery"
+        new_state["status"] = "in_progress"
+    new_state["cursor"] = {"current_task_id": None, "current_task_title": None, "next_action": "run_semantic_intake"}
+    event = _new_event(
+        state, "REQUIREMENT_REVISED", actor, requirement_id=requirement_id,
+        old_requirement_revision=old_revision, requirement_revision=requirement_revision,
+        evidence_ref=evidence_ref,
     )
     return _commit(state_path, new_state, event, expected_revision)
 
@@ -458,7 +709,7 @@ def set_readiness(
     _require_revision(state, expected_revision)
     new_state = copy.deepcopy(state)
     new_state["readiness"][key] = value
-    new_state["cursor"]["next_action"] = compute_next_action(new_state)
+    new_state["cursor"]["next_action"] = compute_next_action(new_state, repository_snapshot.repo_from_state(state_path))
     event = _new_event(
         state,
         "READINESS_UPDATED",
@@ -551,7 +802,7 @@ def resolve_blocker(
     target["resolution"] = resolution
     target["resolution_evidence_ref"] = evidence_ref
     new_state["blocked"] = any(b.get("resolved_at") is None for b in new_state["blockers"])
-    new_state["cursor"]["next_action"] = compute_next_action(new_state)
+    new_state["cursor"]["next_action"] = compute_next_action(new_state, repository_snapshot.repo_from_state(state_path))
     event = _new_event(
         state,
         "UNBLOCKED" if not new_state["blocked"] else "BLOCKER_RESOLVED",
@@ -560,6 +811,117 @@ def resolve_blocker(
         resolution=resolution,
         evidence_ref=evidence_ref,
     )
+    return _commit(state_path, new_state, event, expected_revision)
+
+
+def reconcile_verification_obligations(
+    state_path: pathlib.Path,
+    plan: Dict[str, Any],
+    actor: str,
+    expected_revision: Optional[int] = None,
+) -> Dict[str, Any]:
+    """Add newly required obligations without silently deleting older active ones.
+
+    Plan shrinkage never erases an obligation. Removal requires dispose_verification_obligation
+    with an explicit audited disposition.
+    """
+    state = _load(state_path)
+    _require_revision(state, expected_revision)
+    new_state = copy.deepcopy(state)
+    obligations = new_state.setdefault("verification_obligations", {})
+    wi = new_state.get("work_item") or {}
+    desired: list[Dict[str, Any]] = []
+    for item in plan.get("items", []):
+        if item.get("required_by_impact"):
+            desired.append({
+                "id": item.get("obligation_id") or f"obl-impact-{hashlib.sha256(str(item.get('gate_name')).encode()).hexdigest()[:12]}",
+                "source": item.get("source") or "semantic_impact",
+                "gate_name": item.get("gate_name") or "impact:" + str(item.get("kind")),
+                "required": True,
+                "reason": item.get("reason"),
+                "source_ref": item.get("evidence_ref"),
+            })
+    for item in plan.get("policy_gates", []):
+        if item.get("required_by_policy"):
+            gate_name = item.get("gate_name") or ("policy:" + str(item.get("rule_id")) + ":" + str(item.get("gate") or item.get("engine") or "policy"))
+            desired.append({
+                "id": item.get("obligation_id") or f"obl-policy-{hashlib.sha256(str(gate_name).encode()).hexdigest()[:12]}",
+                "source": item.get("source") or "engineering_policy",
+                "gate_name": gate_name,
+                "required": True,
+                "reason": f"project policy {item.get('rule_id')}",
+                "source_ref": item.get("rule_id"),
+            })
+    changed = False
+    for d in desired:
+        oid = str(d["id"])
+        existing = obligations.get(oid)
+        if existing and existing.get("status") == "active":
+            # Refresh descriptive/source fields but never downgrade established requiredness.
+            existing.update({k: v for k, v in d.items() if k != "id" and v is not None})
+            existing["required"] = bool(existing.get("required") or d.get("required"))
+            existing["last_seen_plan_id"] = plan.get("plan_id")
+            changed = True
+            continue
+        obligations[oid] = {
+            **d,
+            "status": "active",
+            "work_item_id": wi.get("id"),
+            "requirement_id": wi.get("requirement_id"),
+            "requirement_revision": wi.get("requirement_revision"),
+            "created_at": utc_now(),
+            "created_by": actor,
+            "last_seen_plan_id": plan.get("plan_id"),
+            "disposition": None,
+        }
+        changed = True
+    if not changed:
+        return state
+    event = _new_event(state, "VERIFICATION_OBLIGATIONS_RECONCILED", actor,
+                       plan_id=plan.get("plan_id"), active_ids=[d["id"] for d in desired])
+    return _commit(state_path, new_state, event, expected_revision)
+
+
+def dispose_verification_obligation(
+    state_path: pathlib.Path,
+    obligation_id: str,
+    disposition: str,
+    reason: str,
+    authority: str,
+    evidence_ref: str,
+    actor: str,
+    expected_revision: Optional[int] = None,
+) -> Dict[str, Any]:
+    if disposition not in {"superseded", "not_applicable", "waived"}:
+        raise StateError("obligation disposition must be superseded, not_applicable, or waived")
+    if not reason.strip() or not authority.strip() or not evidence_ref.strip():
+        raise StateError("obligation disposition requires reason, authority, and evidence_ref")
+    state = _load(state_path)
+    _require_revision(state, expected_revision)
+    current = (state.get("verification_obligations") or {}).get(obligation_id)
+    if not current or current.get("status") != "active":
+        raise StateError(f"active verification obligation not found: {obligation_id}")
+    new_state = copy.deepcopy(state)
+    target = new_state["verification_obligations"][obligation_id]
+    target["status"] = disposition
+    target["disposition"] = {
+        "reason": reason,
+        "authority": authority,
+        "evidence_ref": evidence_ref,
+        "at": utc_now(),
+        "by": actor,
+    }
+    gate_name = target.get("gate_name")
+    if gate_name and gate_name in new_state.get("quality_gates", {}):
+        gate = new_state["quality_gates"][gate_name]
+        gate["required"] = False
+        gate["status"] = "not_required"
+        gate["disposition"] = copy.deepcopy(target["disposition"])
+        gate["updated_at"] = utc_now()
+        gate["updated_by"] = actor
+    event = _new_event(state, "VERIFICATION_OBLIGATION_DISPOSED", actor,
+                       obligation_id=obligation_id, disposition=disposition,
+                       reason=reason, authority=authority, evidence_ref=evidence_ref)
     return _commit(state_path, new_state, event, expected_revision)
 
 
@@ -581,16 +943,20 @@ def record_gate(
     state = _load(state_path)
     _require_revision(state, expected_revision)
     new_state = copy.deepcopy(state)
+    if (state.get("quality_gates", {}).get(name) or {}).get("required") and not required:
+        raise StateError("an established required gate cannot be downgraded by recording a result")
     new_state["quality_gates"][name] = {
         "required": required,
         "status": status,
         "stage": stage,
+        "snapshot_id": state.get("execution_snapshot_id"),
+        "evidence_snapshot_id": (state.get("analysis") or {}).get("evidence_snapshot_id"),
         "evidence_ref": evidence_ref,
         "command": command,
         "updated_at": utc_now(),
         "updated_by": actor,
     }
-    new_state["cursor"]["next_action"] = compute_next_action(new_state)
+    new_state["cursor"]["next_action"] = compute_next_action(new_state, repository_snapshot.repo_from_state(state_path))
     event = _new_event(
         state,
         "QUALITY_GATE_RECORDED",
@@ -621,11 +987,13 @@ def record_review(
     new_state = copy.deepcopy(state)
     if new_state["review"]["required"] and status == "not_required":
         raise StateError("review is required for this flow")
+    new_state["review"]["snapshot_id"] = state.get("execution_snapshot_id")
+    new_state["review"]["evidence_snapshot_id"] = (state.get("analysis") or {}).get("evidence_snapshot_id")
     new_state["review"]["status"] = status
     new_state["review"]["blocking_findings"] = blocking_findings
     if evidence_ref:
         new_state["review"]["evidence"].append(evidence_ref)
-    new_state["cursor"]["next_action"] = compute_next_action(new_state)
+    new_state["cursor"]["next_action"] = compute_next_action(new_state, repository_snapshot.repo_from_state(state_path))
     event = _new_event(
         state,
         "REVIEW_RECORDED",
@@ -651,7 +1019,7 @@ def set_execution_snapshot(
     new_state["execution_snapshot_id"] = snapshot_id
     if new_state["verification"].get("snapshot_id") != snapshot_id:
         new_state["verification"]["fresh"] = False
-    new_state["cursor"]["next_action"] = compute_next_action(new_state)
+    new_state["cursor"]["next_action"] = compute_next_action(new_state, repository_snapshot.repo_from_state(state_path))
     event = _new_event(
         state,
         "EXECUTION_SNAPSHOT_UPDATED",
@@ -690,7 +1058,7 @@ def set_flow_profile(
             new_state["review"]["required"] = True
             if new_state["review"].get("status") == "not_required":
                 new_state["review"]["status"] = "pending"
-    new_state["cursor"]["next_action"] = compute_next_action(new_state)
+    new_state["cursor"]["next_action"] = compute_next_action(new_state, repository_snapshot.repo_from_state(state_path))
     event = _new_event(
         state,
         "FLOW_PROFILE_UPDATED",
@@ -717,6 +1085,7 @@ def attach_analysis(
     policy_snapshot_id: Optional[str] = None,
     context_manifest_ref: Optional[str] = None,
     context_pack_ref: Optional[str] = None,
+    requirement_ref: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Attach V6 analysis artifacts without claiming their conclusions as native SDD state."""
     state = _load(state_path)
@@ -736,6 +1105,7 @@ def attach_analysis(
         "context_manifest_ref": context_manifest_ref,
         "context_pack_ref": context_pack_ref,
         "analysis_snapshot_id": analysis_snapshot_id,
+        "requirement_ref": requirement_ref,
         "provider": provider,
         "updated_at": utc_now(),
     }
@@ -745,13 +1115,18 @@ def attach_analysis(
         new_state["execution_snapshot_id"] = analysis_snapshot_id
         if new_state["verification"].get("snapshot_id") != analysis_snapshot_id:
             new_state["verification"]["fresh"] = False
+    binding = action_guard.bind_analysis(repository_snapshot.repo_from_state(state_path), new_state["analysis"])
+    new_state["analysis"].update(binding)
+    if old.get("evidence_snapshot_id") != binding["evidence_snapshot_id"]:
+        new_state["verification"]["fresh"] = False
     enforcement = new_state.setdefault("enforcement", {})
     if enforcement.get("enabled"):
-        enforcement["semantic_fresh"] = True
+        ready = binding["decision_status"] == "CLASSIFIED" and binding["semantic_complete"]
+        enforcement["semantic_fresh"] = bool(ready)
         enforcement["policy_fresh"] = True if policy_snapshot_id else enforcement.get("policy_fresh")
         enforcement["context_fresh"] = None
-        enforcement["dirty"] = False
-    new_state["cursor"]["next_action"] = compute_next_action(new_state)
+        enforcement["dirty"] = not ready
+    new_state["cursor"]["next_action"] = compute_next_action(new_state, repository_snapshot.repo_from_state(state_path))
     event = _new_event(
         state,
         "ANALYSIS_ATTACHED",
@@ -847,12 +1222,13 @@ def record_verification(
         {
             "status": status,
             "snapshot_id": snapshot_id,
+            "evidence_snapshot_id": (state.get("analysis") or {}).get("evidence_snapshot_id"),
             "fresh": fresh,
             "verified_at": utc_now(),
         }
     )
     new_state["verification"]["evidence"].append(evidence_ref)
-    new_state["cursor"]["next_action"] = compute_next_action(new_state)
+    new_state["cursor"]["next_action"] = compute_next_action(new_state, repository_snapshot.repo_from_state(state_path))
     event = _new_event(
         state,
         "VERIFICATION_RECORDED",
@@ -935,7 +1311,7 @@ def sync_native(
         "native_revision": native_revision,
         "native_state_ref": native_state_ref,
     }
-    new_state["cursor"]["next_action"] = compute_next_action(new_state)
+    new_state["cursor"]["next_action"] = compute_next_action(new_state, repository_snapshot.repo_from_state(state_path))
     event = _new_event(
         state,
         "NATIVE_STATE_SYNCED",
@@ -949,81 +1325,61 @@ def sync_native(
     return _commit(state_path, new_state, event, expected_revision)
 
 
-def compute_next_action(state: Dict[str, Any]) -> str:
-    active = [b for b in state.get("blockers", []) if b.get("resolved_at") is None]
-    if active:
-        return f"resolve_blocker:{active[0]['id']}"
-    r = state.get("readiness", {})
-    phase = state.get("phase")
-    if phase in {"discovery", "specification", "design", "planning"}:
-        if not r.get("sdd_ready"):
-            return "advance_native_sdd_to_ready"
-        if r.get("behavior_change") is True and not r.get("acceptance_criteria_present"):
-            return "define_acceptance_criteria"
-        return "transition_to_implementation"
-    if phase == "implementation":
-        if not r.get("implementation_tasks_complete"):
-            task = state.get("cursor", {}).get("current_task_id")
-            return f"implement_task:{task}" if task else "implement_next_task"
-        if state.get("review", {}).get("required"):
-            return "transition_to_review"
-        return "transition_to_verification"
-    if phase == "review":
-        review = state.get("review", {})
-        if review.get("status") != "passed" or review.get("blocking_findings", 0):
-            return "complete_required_review"
-        return "transition_to_verification"
-    if phase == "verification":
-        for name, gate in state.get("quality_gates", {}).items():
-            if gate.get("required") and gate.get("status") != "passed":
-                return f"run_required_gate:{name}"
-        ver = state.get("verification", {})
-        if ver.get("status") != "passed" or not ver.get("fresh"):
-            return "run_fresh_final_verification"
-        if not r.get("acceptance_satisfied"):
-            return "verify_acceptance_criteria"
-        return "transition_to_closed"
-    if phase == "release":
-        return "complete_release_or_transition_to_closed"
-    if phase == "closed":
-        return "none"
-    return "inspect_state"
+def compute_next_action(state: Dict[str, Any], repo: Optional[pathlib.Path] = None) -> str:
+    facts = action_guard.collect_evidence(repo, state) if repo is not None else None
+    return action_guard.next_action(state, facts)
 
 
+def completion_status(state: Optional[Dict[str, Any]], repo: Optional[pathlib.Path] = None,
+                      evidence: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """Separate immutable historical completion from current close readiness.
 
-def completion_status(state: Dict[str, Any]) -> Dict[str, Any]:
-    failures = transition_guard(state, "closed", "completed")
-    native_complete = state.get("phase") == "closed" and state.get("status") == "completed"
-    governance_complete = not failures
+    Once a work item has legally transitioned to closed/completed, later repository changes
+    must not resurrect it. Current close readiness still evaluates live evidence and may become
+    false after later edits; callers deciding whether a *new* close is allowed must use
+    governance_close_ready/authorization, not done.
+    """
+    facts = evidence if evidence is not None else action_guard.collect_evidence(repo, state)
+    decision = action_guard.evaluate(state, "close", evidence=facts)
+    canonical_closed = (state or {}).get("phase") == "closed" and (state or {}).get("status") == "completed"
+    record = (state or {}).get("completion_record") or {}
+    record_matches = bool(
+        canonical_closed
+        and record.get("status") == "completed"
+        and record.get("work_item_id") == (((state or {}).get("work_item") or {}).get("id"))
+    )
+    # Legacy orchestrator-owned closed/completed states predate completion_record. Preserve
+    # those historical facts, but never treat a native authority merely reporting
+    # closed/completed as Governance Done without a recorded governance close.
+    authority_mode = (((state or {}).get("authority") or {}).get("mode"))
+    historical_complete = bool(record_matches or (canonical_closed and authority_mode != "native" and not record))
     return {
-        "native_or_canonical_closed": native_complete,
-        "governance_close_ready": governance_complete,
-        "done": native_complete and governance_complete,
-        "close_guard_failures": failures,
+        "native_or_canonical_closed": canonical_closed,
+        "historically_completed": historical_complete,
+        "completion_recorded": record_matches,
+        "completion_record": record or None,
+        "governance_close_ready": decision["allowed"],
+        "done": historical_complete,
+        "close_guard_failures": [r["message"] for r in decision["reasons"]],
+        "authorization": decision,
     }
 
-def resume_summary(state: Dict[str, Any]) -> Dict[str, Any]:
+
+def resume_summary(state: Dict[str, Any], repo: Optional[pathlib.Path] = None) -> Dict[str, Any]:
+    facts = action_guard.collect_evidence(repo, state)
     return {
-        "work_item": state["work_item"],
-        "iteration": state["iteration"],
-        "authority": state["authority"],
-        "flow_profile": state["flow_profile"],
-        "phase": state["phase"],
-        "status": state["status"],
-        "blocked": state["blocked"],
-        "active_blockers": [b for b in state["blockers"] if b.get("resolved_at") is None],
-        "assignments": state["assignments"],
-        "cursor": state["cursor"],
-        "next_action": compute_next_action(state),
-        "readiness": state["readiness"],
-        "quality_gates": state["quality_gates"],
-        "review": state["review"],
-        "verification": state["verification"],
+        "work_item": state["work_item"], "iteration": state["iteration"],
+        "authority": state["authority"], "flow_profile": state["flow_profile"],
+        "phase": state["phase"], "status": state["status"], "blocked": bool(active_blockers := action_guard.active_blockers(state)) or state["blocked"],
+        "active_blockers": active_blockers, "assignments": state["assignments"],
+        "cursor": state["cursor"], "next_action": action_guard.next_action(state, facts),
+        "readiness": state["readiness"], "quality_gates": state["quality_gates"],
+        "verification_obligations": state.get("verification_obligations", {}),
+        "review": state["review"], "verification": state["verification"],
         "execution_snapshot_id": state["execution_snapshot_id"],
-        "analysis": state.get("analysis", {}),
-        "enforcement": state.get("enforcement", {}),
-        "completion": completion_status(state),
-        "revision": state["revision"],
+        "analysis": state.get("analysis", {}), "enforcement": state.get("enforcement", {}),
+        "completion": completion_status(state, repo, facts), "revision": state["revision"],
+        "authorization": action_guard.evaluate(state, "mutate_code", evidence=facts),
     }
 
 
@@ -1102,7 +1458,16 @@ def build_parser() -> argparse.ArgumentParser:
     x.add_argument("--stage", default="verification")
     x.add_argument("--actor", required=True)
     x.add_argument("--evidence-ref")
-    x.add_argument("--command")
+    x.add_argument("--command", dest="gate_command")
+    x.add_argument("--expected-revision", type=int)
+
+    x = sub.add_parser("dispose-obligation")
+    x.add_argument("--id", required=True)
+    x.add_argument("--disposition", required=True, choices=["superseded", "not_applicable", "waived"])
+    x.add_argument("--reason", required=True)
+    x.add_argument("--authority", required=True)
+    x.add_argument("--evidence-ref", required=True)
+    x.add_argument("--actor", required=True)
     x.add_argument("--expected-revision", type=int)
 
     x = sub.add_parser("review")
@@ -1143,6 +1508,7 @@ def build_parser() -> argparse.ArgumentParser:
     x.add_argument("--policy-snapshot-id")
     x.add_argument("--context-manifest-ref")
     x.add_argument("--context-pack-ref")
+    x.add_argument("--requirement-ref")
     x.add_argument("--provider", default="codebase-memory-mcp")
     x.add_argument("--actor", required=True)
     x.add_argument("--expected-revision", type=int)
@@ -1192,7 +1558,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         elif args.command == "show":
             result = _load(path)
         elif args.command == "resume":
-            result = resume_summary(_load(path))
+            result = resume_summary(_load(path), repository_snapshot.repo_from_state(path))
         elif args.command == "validate":
             result = {"status": "VALID", "revision": _load(path)["revision"]}
         elif args.command == "transition":
@@ -1206,7 +1572,9 @@ def main(argv: Optional[List[str]] = None) -> int:
         elif args.command == "unblock":
             result = resolve_blocker(path, args.blocker_id, args.resolution, args.actor, args.evidence_ref, args.expected_revision)
         elif args.command == "gate":
-            result = record_gate(path, args.name, args.required, args.status, args.actor, args.stage, args.evidence_ref, args.command, args.expected_revision)
+            result = record_gate(path, args.name, args.required, args.status, args.actor, args.stage, args.evidence_ref, args.gate_command, args.expected_revision)
+        elif args.command == "dispose-obligation":
+            result = dispose_verification_obligation(path, args.id, args.disposition, args.reason, args.authority, args.evidence_ref, args.actor, args.expected_revision)
         elif args.command == "review":
             result = record_review(path, args.status, args.actor, args.blocking_findings, args.evidence_ref, args.expected_revision)
         elif args.command == "snapshot":
@@ -1226,6 +1594,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                 policy_snapshot_id=args.policy_snapshot_id,
                 context_manifest_ref=args.context_manifest_ref,
                 context_pack_ref=args.context_pack_ref,
+                requirement_ref=args.requirement_ref,
             )
         elif args.command == "assign":
             result = assign_role(path, args.role, args.assignee, args.actor, args.expected_revision)
@@ -1238,7 +1607,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         print(json.dumps(result, indent=2, ensure_ascii=False))
         return 0
     except (StateError, RevisionConflict, TransitionDenied, NativeAuthorityRequired) as exc:
-        print(json.dumps({"status": "ERROR", "error": type(exc).__name__, "message": str(exc)}, ensure_ascii=False), file=sys.stderr)
+        print(json.dumps({"status": "ERROR", "error": type(exc).__name__, "message": str(exc), "authorization": getattr(exc, "authorization", None)}, ensure_ascii=False), file=sys.stderr)
         return 2
 
 

@@ -1,7 +1,6 @@
 ---
-name: orchestrating-sdd-coding
-alias: adaptive-sdd-coding-orchestrator
-description: Use when coding work should be governed through an existing or generic SDD flow with evidence-backed classification, semantic impact, Engineering Policy, durable execution state, minimal role-aware context, resumable session context, and runtime enforcement.
+name: coding-agent-orchestrator
+description: Coding workflow for start/resume/continue, implementation, debugging, review, and verification, including 开始, 继续, start, continue, and resume. Uses SDD authority, evidence-backed classification, semantic impact, Policy, state, and minimal context.
 ---
 
 # Adaptive SDD Coding Orchestrator
@@ -17,17 +16,22 @@ Act as the control plane for coding work without replacing project-owned enginee
 - **Execution State** owns where work is and what comes next.
 - **Context Plane** owns which current sources a role should read.
 - **Session Context** projects compact cold-start, resume, and handoff state.
-- **Enforcement Kernel** guards host actions; state/CI remain final boundaries.
+- **Action Guard** decides execution, advance, and closure; host/state adapters consume it.
 - **Superpowers** governs implementation discipline.
+- **Activation stubs** load this Skill; they never own project truth.
+
+## Bootstrap & Start Intent Guard
+
+Ensure `.orchestrator/config.yaml` exists; if missing, Safe Auto initialize once and continue the same request. For `开始`, `继续`, `start`, `continue`, or `resume`, run packaged `coding-orchestrator --repo <repo-root> start`. Follow its route: resume active work, surface blockers, auto-intake one high-confidence requirement, ask when none exists, or require selection when several exist. Never invent scope, fake a work item, or code from a bare start intent. On `ACTION_REQUIRED`, stop mutation and surface the decision.
 
 ## Lazy Reference Loading Contract
 
 Treat this Skill package as a knowledge store, not a prompt bundle.
 
 1. **Never preload all references.** Load only the reference needed for the current decision or stage.
-2. **Normally load at most 1–2 references at a time.** Add another only when the current reference explicitly requires it or evidence is insufficient.
+2. **Normally load at most 1–2 references at a time.** Add more only when required or evidence is insufficient.
 3. **Do not recursively follow every link.** References are retrieval targets, not an import graph.
-4. **Prefer current project artifacts over generic reference text.** State, SDD, Policy, Context Pack, and Evidence are current facts; references explain rules.
+4. **Prefer current project artifacts.** State, SDD, Policy, Context Pack, and Evidence supply facts; references explain rules.
 5. **Keep heavy material lazy.** Full code graphs, execution history, policy corpora, test logs, and old handoffs stay out of prompt context unless directly needed.
 6. **Discard stale projections.** Context Packs, Session Bootstrap, Handoff, semantic analysis, and verification must match current authoritative snapshots before reliance.
 
@@ -60,6 +64,7 @@ Load references lazily according to the current need:
 | Code-change impact | `references/semantic-impact-engine.md`; read provider details only when debugging/integrating the provider |
 | Project rules / policy routing | `references/engineering-policy-layer.md`; load framework-specific or ECC material only when applicable |
 | Execution state / transitions | `references/execution-state-manager.md`; load exactly one state adapter when needed |
+| Whether execution, advance, or closure is allowed | `references/action-authorization.md` |
 | Role/stage context or stale context | `references/context-plane.md` |
 | Cold start / resume / handoff | `references/session-context.md` |
 | Implementation discipline | `references/superpowers-policy.md` |
@@ -70,26 +75,18 @@ Do not load framework-specific examples for unrelated stacks. Do not load all SD
 
 ## Runtime Workflow
 
-Use the unified front controller for normal operation:
-
-```bash
-./coding-orchestrator init
-./coding-orchestrator intake "<requirement>"
-./coding-orchestrator status
-./coding-orchestrator resume
-./coding-orchestrator verify
-```
+Use the packaged unified front controller for normal operation. Lower-level scripts are for debugging or integration only.
 
 Operate through these phases:
 
-1. **BOOTSTRAP**: discover repository, SDD/state authority, technology, host, and safe project policy. Stop at `ACTION_REQUIRED` when authority is ambiguous.
+1. **BOOTSTRAP / START**: run the Bootstrap & Start Intent Guard first; resolve current state before intake or resume, and stop at `ACTION_REQUIRED` when authority or requirement selection is ambiguous.
 2. **INTAKE**: extract facts and evidence, measure semantic impact when relevant, route policy, classify process rigor, and plan verification.
 3. **CONTEXT**: build/refresh the Context Manifest and minimal role/stage Context Pack; on cold start or handoff, project compact Session Context from authoritative state.
-4. **IMPLEMENT**: work in traceable slices under project Policy and Superpowers discipline. Runtime hooks perform cheap checks and mark affected analysis/verification stale after material mutations.
+4. **IMPLEMENT**: use `check --action mutate_code`; work in traceable slices under Policy and Superpowers. Hooks mark material mutations stale.
 5. **REVIEW / VERIFY**: refresh required semantic/policy evidence, clear blocking findings, run required gates, and bind final verification to the current execution snapshot.
-6. **CLOSE**: allow closure only when the Completion Contract passes.
+6. **ADVANCE / CLOSE**: consume Action Guard results via `check --action advance --phase <phase>` or `check --action close`; never derive permission from status labels alone.
 
-Use lower-level scripts only for debugging, custom integration, or explicit automation. If required code-intelligence evidence is unavailable, fail closed; never reinterpret provider absence as low impact.
+If required code-intelligence evidence is unavailable, fail closed; never reinterpret provider absence as low impact.
 
 ## Completion Contract
 

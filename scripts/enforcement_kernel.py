@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""V6.3 host-neutral runtime enforcement kernel.
+"""Host-neutral runtime enforcement kernel.
 
 Host adapters translate Claude Code / Codex / Pi lifecycle events into this kernel.
 The kernel does not own governance truth: Decision, Context, Policy, and Execution State
@@ -23,24 +23,22 @@ try:
 except Exception:  # pragma: no cover
     yaml = None
 
+import bootstrap_guard
+import action_guard
+import repository_snapshot
+import tool_actions
 import context_plane
 import execution_state_manager as sm
 import policy_engine
 import session_context
+import start_router
 
 DEFAULT_CONFIG = {
     "version": 1,
     "enabled": True,
-    "mode": "enforce",
-    "require_state_for_code_mutation": True,
-    "require_classified_decision_for_code_mutation": True,
-    "require_fresh_context_before_first_mutation": True,
     "post_mutation_policy_feedback": True,
     "completion_claim_only": True,
     "max_stop_blocks_per_session": 3,
-    "allowed_code_mutation_phases": ["implementation"],
-    "source_roots": ["src/", "app/", "lib/", "packages/", "services/", "modules/"],
-    "non_code_prefixes": [".orchestrator/", ".claude/", ".codex/", ".pi/", "openspec/", "docs/"],
 }
 
 COMPLETION_PATTERNS = [
@@ -56,14 +54,6 @@ GLOBAL_COMPLETION_STRONG = [
     r"\bready to merge\b", r"\bready for merge\b", r"\ball (done|finished|completed)\b",
     r"\bimplementation (is )?(done|finished|completed)\b", r"全部完成", r"可以合并", r"可以提交", r"开发完成",
 ]
-READ_ONLY_SHELL = [
-    r"^\s*(cat|head|tail|less|more|grep|rg|find|ls|pwd|git\s+(status|diff|log|show|branch)|mvn\s+.*test|gradle\s+.*test|./gradlew\s+.*test|npm\s+(test|run\s+test)|pytest|python\s+-m\s+pytest)\b"
-]
-MUTATING_SHELL_MARKERS = [
-    ">", "tee ", "sed -i", "perl -pi", "rm ", "mv ", "cp ", "touch ", "mkdir ", "git checkout", "git reset",
-    "git clean", "git restore", "git apply", "patch ", "npm install", "pnpm add", "yarn add", "mvn versions:", "gradle wrapper",
-]
-
 
 def utc_now() -> str:
     return dt.datetime.now(dt.timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
@@ -118,39 +108,7 @@ def repo_root(cwd: str | Path) -> Path:
 
 
 def worktree_snapshot(repo: Path) -> str:
-    """Deterministic fingerprint of material working-tree changes; ignores generated runtime/intake artifacts."""
-    try:
-        raw = subprocess.check_output(["git", "status", "--porcelain=v1", "-z", "--untracked-files=all"], cwd=repo, stderr=subprocess.DEVNULL)
-        parts = raw.split(b"\0")
-        items: list[tuple[str, str, int]] = []
-        for part in parts:
-            if not part:
-                continue
-            text = part.decode("utf-8", errors="replace")
-            path_text = text[3:] if len(text) >= 4 else text
-            if " -> " in path_text:
-                path_text = path_text.split(" -> ", 1)[1]
-            rel = path_text.replace("\\", "/")
-            if rel.startswith(".orchestrator/intake/") or rel.startswith(".orchestrator/runtime/") or rel.startswith(".orchestrator/session/") or rel in {
-                ".orchestrator/execution-state.yaml", ".orchestrator/execution-history.jsonl"
-            }:
-                continue
-            p = repo / rel
-            if p.is_file():
-                data = p.read_bytes()
-                digest = hashlib.sha256(data).hexdigest()
-                items.append((rel, digest, len(data)))
-            else:
-                items.append((rel, "missing", 0))
-        head = ""
-        try:
-            head = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=repo, text=True).strip()
-        except Exception:
-            pass
-        payload = json.dumps({"head": head, "items": sorted(items)}, sort_keys=True, separators=(",", ":")).encode()
-        return "worktree:" + hashlib.sha256(payload).hexdigest()
-    except Exception:
-        return "worktree:unknown"
+    return repository_snapshot.fingerprint(repo)
 
 
 def state_path(repo: Path) -> Path:
@@ -206,7 +164,7 @@ def _pack_text(repo: Path, state: dict[str, Any], role: Optional[str] = None) ->
 
 
 def infer_role(state: dict[str, Any], raw: dict[str, Any]) -> str:
-    explicit = raw.get("orchestrator_role") or raw.get("agent_type") or os.getenv("ORCHESTRATOR_ROLE")
+    explicit = raw.get("orchestrator_role") or raw.get("agent_type") or raw.get("role") or os.getenv("ORCHESTRATOR_ROLE")
     if explicit:
         e = str(explicit).lower()
         for r in ("planner", "implementer", "reviewer", "verifier", "debugger", "resume"):
@@ -231,57 +189,19 @@ def is_completion_claim(text: str) -> bool:
 
 
 def extract_tool(raw: dict[str, Any]) -> tuple[str, Any]:
-    name = str(raw.get("tool_name") or raw.get("toolName") or raw.get("tool") or "")
-    inp = raw.get("tool_input")
-    if inp is None:
-        inp = raw.get("input")
-    if inp is None:
-        inp = raw.get("args")
-    return name, inp or {}
+    return tool_actions.extract_tool(raw)
 
 
 def shell_is_mutating(command: str) -> bool:
-    c = command.strip()
-    if any(re.search(p, c, re.I) for p in READ_ONLY_SHELL):
-        return False
-    low = c.lower()
-    return any(m in low for m in MUTATING_SHELL_MARKERS)
+    return tool_actions.shell_action(command, Path.cwd()) != "read"
 
 
-def mutation_info(raw: dict[str, Any]) -> dict[str, Any]:
-    name, inp = extract_tool(raw)
-    low = name.lower()
-    paths: list[str] = []
-    mutating = False
-    direct_file = False
-    if low in {"write", "edit", "apply_patch", "applypatch"} or "write_file" in low or "edit_file" in low:
-        mutating = True
-        direct_file = True
-        if isinstance(inp, dict):
-            for key in ("file_path", "path", "filename"):
-                if inp.get(key):
-                    paths.append(str(inp[key]))
-        if low == "apply_patch" and isinstance(inp, dict):
-            cmd = str(inp.get("command") or inp.get("patch") or "")
-            paths += re.findall(r"(?:\+\+\+ b/|--- a/|\*\*\* (?:Update|Add|Delete) File: )([^\n]+)", cmd)
-    elif low in {"bash", "shell", "exec_command"}:
-        cmd = str(inp.get("command") if isinstance(inp, dict) else inp)
-        mutating = shell_is_mutating(cmd)
-    return {"mutating": mutating, "direct_file": direct_file, "paths": paths, "tool": name, "input": inp}
+def mutation_info(raw: dict[str, Any], repo: Optional[Path] = None) -> dict[str, Any]:
+    return tool_actions.describe(raw, repo or Path.cwd())
 
 
 def path_is_code(repo: Path, path: str, cfg: dict[str, Any]) -> bool:
-    p = path.replace("\\", "/")
-    try:
-        abs_p = Path(path).resolve() if Path(path).is_absolute() else (repo / path).resolve()
-        p = abs_p.relative_to(repo).as_posix()
-    except Exception:
-        pass
-    if any(p.startswith(x) for x in cfg.get("non_code_prefixes", [])):
-        return False
-    if any(p.startswith(x) for x in cfg.get("source_roots", [])):
-        return True
-    return Path(p).suffix.lower() in {".java", ".kt", ".kts", ".py", ".go", ".rs", ".ts", ".tsx", ".js", ".jsx", ".cs", ".cpp", ".c", ".h", ".sql"}
+    return tool_actions.is_code(repo, path)
 
 
 def canonical(event: str, *, decision: str = "allow", reason: Optional[str] = None, context: Optional[str] = None,
@@ -290,8 +210,8 @@ def canonical(event: str, *, decision: str = "allow", reason: Optional[str] = No
             "actions": actions or [], "metadata": metadata or {}}
 
 
-def _state_context(state: dict[str, Any]) -> str:
-    r = sm.resume_summary(state)
+def _state_context(state: dict[str, Any], repo: Path) -> str:
+    r = sm.resume_summary(state, repo)
     completion = r.get("completion") or {}
     return (
         f"Orchestrator state: flow={r.get('flow_profile')}; phase={r.get('phase')}; status={r.get('status')}; "
@@ -302,27 +222,34 @@ def _state_context(state: dict[str, Any]) -> str:
 
 def _ensure_external_change(repo: Path, runtime: dict[str, Any], state: Optional[dict[str, Any]], host: str, event: str) -> tuple[dict[str, Any], Optional[dict[str, Any]]]:
     current = worktree_snapshot(repo)
-    # A successful semantic re-analysis clears canonical dirty state outside the hook path.
-    # Re-baseline runtime tracking on the next lifecycle event so future external edits are detectable.
-    if state is not None and runtime.get("dirty") and not (state.get("enforcement") or {}).get("dirty"):
-        runtime["dirty"] = False
-        runtime["dirty_reason"] = None
-        runtime["last_repo_snapshot"] = current
-        return runtime, state
-    prior = runtime.get("last_repo_snapshot")
-    if prior and prior != current and not runtime.get("dirty") and state is not None:
+    expected = ((state or {}).get("analysis") or {}).get("repository_snapshot_id")
+    if state is not None and expected and current != expected and not (state.get("enforcement") or {}).get("dirty"):
         try:
-            updated = sm.mark_enforcement_dirty(state_path(repo), "external_change", [], host, current, "external/unobserved working tree change", state["revision"])
-            state = updated
-            runtime["dirty"] = True
-            runtime["dirty_reason"] = "external_change_detected"
-        except Exception:
-            pass
+            state = sm.mark_enforcement_dirty(state_path(repo), "external_change", [], host, current,
+                                               "material repository content differs from analyzed input", state["revision"])
+        except sm.StateError:
+            # Authorization still compares live content, so a failed dirty write cannot grant access.
+            state = sm._load(state_path(repo))
+    runtime["dirty"] = bool(((state or {}).get("enforcement") or {}).get("dirty"))
     runtime["last_repo_snapshot"] = current
     return runtime, state
 
 
 def handle(repo: Path, host: str, event: str, raw: dict[str, Any]) -> dict[str, Any]:
+    auto_bootstrap = None
+    if event in {"session_start", "prompt_submit", "subagent_start"}:
+        auto_bootstrap = bootstrap_guard.ensure(repo, host=host, activation=True)
+        if auto_bootstrap.get("status") == "ACTION_REQUIRED":
+            detail = auto_bootstrap.get("detail") or "Project bootstrap requires an explicit authority/configuration decision."
+            unresolved = auto_bootstrap.get("unresolved") or []
+            if unresolved:
+                detail += " " + "; ".join(str(x.get("detail") or x.get("code")) for x in unresolved[:4])
+            return canonical(
+                event,
+                context=f"Orchestrator bootstrap is ACTION_REQUIRED: {detail}",
+                actions=[str(auto_bootstrap.get("next_action") or "resolve_init_ambiguity")],
+                metadata={"bootstrap_guard": auto_bootstrap.get("status"), "auto_bootstrap_performed": auto_bootstrap.get("performed", False)},
+            )
     cfg = load_config(repo)
     if not cfg.get("enabled", True):
         return canonical(event)
@@ -333,16 +260,56 @@ def handle(repo: Path, host: str, event: str, raw: dict[str, Any]) -> dict[str, 
     runtime.setdefault("events", []).append({"at": utc_now(), "host": host, "event": event})
     runtime["events"] = runtime["events"][-50:]
 
+    start_route = None
+    if event == "prompt_submit":
+        prompt_text = str(raw.get("prompt") or raw.get("user_prompt") or raw.get("userPrompt") or raw.get("message") or "")
+        if start_router.is_start_intent(prompt_text):
+            start_route = start_router.resolve(repo, ensure_bootstrap=False, host=host)
+            route = start_route.get("route")
+            if route == "REQUEST_REQUIREMENT":
+                save_runtime(repo, runtime)
+                prefix = "Safe Auto project bootstrap completed in this session. " if (auto_bootstrap and auto_bootstrap.get("performed")) else ""
+                return canonical(event, context=(
+                    prefix + "Start Intent Router: project is READY_FOR_INTAKE, but no actionable requirement was found. "
+                    "Ask the user for the first project goal/feature. Do not create production code or a fake work item."
+                ), actions=["ask_for_first_requirement"], metadata={
+                    "start_route": route,
+                    "bootstrap_guard": (auto_bootstrap or {}).get("status"),
+                    "auto_bootstrap_performed": (auto_bootstrap or {}).get("performed", False),
+                })
+            if route == "SELECT_REQUIREMENT":
+                cands = (start_route.get("requirements") or {}).get("candidates") or []
+                choices = "; ".join(f"{i+1}. {c.get('title')} [{c.get('path')}]" for i, c in enumerate(cands[:8]))
+                save_runtime(repo, runtime)
+                return canonical(event, context=f"Start Intent Router requires requirement selection: {choices}", actions=["select_requirement"], metadata={"start_route": route, "auto_bootstrap_performed": (auto_bootstrap or {}).get("performed", False)})
+            if route == "AUTO_INTAKE_CANDIDATE":
+                c = start_route.get("candidate") or {}
+                save_runtime(repo, runtime)
+                return canonical(event, context=(
+                    f"Start Intent Router found exactly one high-confidence requirement: {c.get('title')} [{c.get('path')}]. "
+                    "Run the packaged `coding-orchestrator --repo . start` command to perform canonical intake, then follow its resulting state."
+                ), actions=["run_coding_orchestrator_start"], metadata={"start_route": route, "requirement_path": c.get("path"), "auto_bootstrap_performed": (auto_bootstrap or {}).get("performed", False)})
+            if route == "SURFACE_BLOCKER":
+                save_runtime(repo, runtime)
+                return canonical(event, context="Start Intent Router found the active work item blocked. Surface the current blocker(s) and resolve them before continuing.", actions=[str(start_route.get("next_action") or "resolve_blocker")], metadata={"start_route": route, "auto_bootstrap_performed": (auto_bootstrap or {}).get("performed", False)})
+
     if event in {"session_start", "prompt_submit", "subagent_start"}:
         if state is None:
-            if event in {"session_start", "subagent_start"}:
+            if event in {"session_start", "subagent_start"} or (auto_bootstrap and auto_bootstrap.get("performed")):
                 bootstrap = session_context.build_bootstrap(repo, role="implementer", host=host, session_id=str(raw.get("session_id") or raw.get("sessionId") or ""))
                 _, md_path = session_context.persist_bootstrap(repo, bootstrap)
                 msg = md_path.read_text(encoding="utf-8")
             else:
-                msg = "Orchestrator is installed but Canonical Execution State is not initialized. Reads are allowed; initialize/classify before production-code mutation."
+                msg = "Project is bootstrapped but no active work item exists. Run intake/classification before production-code mutation."
+            if auto_bootstrap and auto_bootstrap.get("performed"):
+                msg = "Safe Auto project bootstrap completed in this session.\n\n" + msg
             save_runtime(repo, runtime)
-            return canonical(event, context=msg, actions=["initialize_execution_state", "run_intake"])
+            return canonical(
+                event,
+                context=msg,
+                actions=["run_intake"],
+                metadata={"bootstrap_guard": (auto_bootstrap or {}).get("status"), "auto_bootstrap_performed": (auto_bootstrap or {}).get("performed", False)},
+            )
         role = infer_role(state, raw)
         if event in {"session_start", "subagent_start"}:
             bootstrap = session_context.build_bootstrap(
@@ -353,9 +320,14 @@ def handle(repo: Path, host: str, event: str, raw: dict[str, Any]) -> dict[str, 
             runtime["last_bootstrap_snapshot_id"] = bootstrap.get("bootstrap_snapshot_id")
             base = md_path.read_text(encoding="utf-8")
             save_runtime(repo, runtime)
-            return canonical(event, context=base, metadata={"role": role, "bootstrap_snapshot_id": bootstrap.get("bootstrap_snapshot_id")})
+            return canonical(event, context=base, metadata={
+                "role": role,
+                "bootstrap_snapshot_id": bootstrap.get("bootstrap_snapshot_id"),
+                "bootstrap_guard": (auto_bootstrap or {}).get("status"),
+                "auto_bootstrap_performed": (auto_bootstrap or {}).get("performed", False),
+            })
         # Prompt-submit is intentionally delta-only. Do not re-inject a full cold-start pack on every turn.
-        base = _state_context(state)
+        base = _state_context(state, repo)
         manifest_path, manifest = _manifest_from_state(repo, state)
         if manifest is not None:
             fresh = context_plane.validate_manifest(repo, manifest)
@@ -370,51 +342,23 @@ def handle(repo: Path, host: str, event: str, raw: dict[str, Any]) -> dict[str, 
             except Exception:
                 base += " Latest handoff could not be validated; do not rely on it."
         save_runtime(repo, runtime)
-        return canonical(event, context=base, metadata={"role": role, "context_mode": "delta_only"})
+        return canonical(event, context=base, metadata={"role": role, "context_mode": "delta_only", "start_route": (start_route or {}).get("route")})
 
     if event == "pre_tool":
-        info = mutation_info(raw)
-        if not info["mutating"]:
-            save_runtime(repo, runtime)
-            return canonical(event)
-        if state is None:
-            save_runtime(repo, runtime)
-            if cfg.get("require_state_for_code_mutation", True):
-                return canonical(event, decision="deny", reason="Canonical Execution State is missing; run intake/init before mutation.", actions=["initialize_execution_state"])
-            return canonical(event, context="Mutation is occurring without Canonical Execution State.")
-        code_paths = [p for p in info["paths"] if path_is_code(repo, p, cfg)]
-        code_mutation = bool(code_paths) or (not info["direct_file"] and info["tool"].lower() in {"bash", "shell", "exec_command"})
-        if code_mutation:
-            decision_doc = _decision_from_state(repo, state)
-            if cfg.get("require_classified_decision_for_code_mutation", True) and (not decision_doc or decision_doc.get("status") != "CLASSIFIED"):
-                save_runtime(repo, runtime)
-                return canonical(event, decision="deny", reason="Production-code mutation requires a CLASSIFIED Decision Engine result.", actions=["run_semantic_intake"])
-            if state.get("phase") not in set(cfg.get("allowed_code_mutation_phases", ["implementation"])):
-                save_runtime(repo, runtime)
-                return canonical(event, decision="deny", reason=f"Code mutation is not allowed in phase={state.get('phase')}; transition legally to implementation first.", actions=["transition_to_implementation"])
-            role = infer_role(state, raw)
-            if role in {"reviewer", "verifier"}:
-                save_runtime(repo, runtime)
-                return canonical(event, decision="deny", reason=f"Role {role} is read/verify-oriented and may not mutate production code.")
-            manifest_path, manifest = _manifest_from_state(repo, state)
-            enf = state.get("enforcement") or {}
-            if cfg.get("require_fresh_context_before_first_mutation", True) and not enf.get("dirty"):
-                if manifest is None:
-                    save_runtime(repo, runtime)
-                    return canonical(event, decision="deny", reason="Context Manifest is missing before first code mutation.", actions=["build_context_manifest"])
-                fresh = context_plane.validate_manifest(repo, manifest)
-                if fresh.get("status") != "FRESH":
-                    save_runtime(repo, runtime)
-                    return canonical(event, decision="deny", reason="Context Manifest is stale before code mutation.", actions=["refresh_context"])
+        info = mutation_info(raw, repo)
+        authorization = action_guard.authorize(repo, state, info["action"], role=infer_role(state, raw) if state else "implementer")
         save_runtime(repo, runtime)
-        return canonical(event, context="Mutation permitted by runtime guard; any successful material change will invalidate semantic/context/final-verification freshness.")
+        return canonical(event, decision=authorization["decision"],
+                         reason="; ".join(r["message"] for r in authorization["reasons"]) or None,
+                         actions=[authorization["next_action"]] if authorization["next_action"] else [],
+                         metadata={"authorization": authorization})
 
     if event in {"post_tool", "file_changed"}:
-        info = mutation_info(raw) if event == "post_tool" else {"mutating": True, "paths": [str(raw.get("file_path") or "")], "tool": "FileChanged"}
-        if info.get("mutating") and state is not None:
+        info = mutation_info(raw, repo) if event == "post_tool" else {"mutating": True, "action": "mutate_code", "paths": [str(raw.get("file_path") or "")], "tool": "FileChanged"}
+        if info.get("action") == "mutate_code" and state is not None:
             snap = worktree_snapshot(repo)
             try:
-                state = sm.mark_enforcement_dirty(sp, "mutation", info.get("paths") or [], host, snap, f"{host}:{event}", state["revision"])
+                state = sm.mark_enforcement_dirty(sp, "mutation" if event == "post_tool" else "external_change", info.get("paths") or [], host, snap, f"{host}:{event}", state["revision"])
                 runtime["dirty"] = True
                 runtime["last_repo_snapshot"] = snap
                 ctx = "Material change recorded. Semantic impact, Context Pack, and final verification are stale until re-analysis/context refresh. Continued implementation edits are allowed; review/verification/close are blocked by state guards."
@@ -442,38 +386,31 @@ def handle(repo: Path, host: str, event: str, raw: dict[str, Any]) -> dict[str, 
         return canonical(event)
 
     if event in {"stop", "subagent_stop"}:
-        if state is None:
-            save_runtime(repo, runtime)
-            return canonical(event)
         last = str(raw.get("last_assistant_message") or raw.get("message") or raw.get("assistant_message") or "")
-        role = infer_role(state, raw)
-        if event == "subagent_stop":
-            if role == "reviewer" and state.get("review", {}).get("required") and state.get("review", {}).get("status") == "pending":
-                save_runtime(repo, runtime)
-                return canonical(event, decision="deny", reason="Reviewer cannot finish before recording review outcome/evidence.")
-            if role == "verifier" and state.get("verification", {}).get("status") != "passed":
-                save_runtime(repo, runtime)
-                return canonical(event, decision="deny", reason="Verifier cannot finish before recording verification outcome/evidence.")
-        should_check = (not cfg.get("completion_claim_only", True)) or is_completion_claim(last) or state.get("phase") in {"verification", "release", "closed"}
+        role = infer_role(state, raw) if state else "implementer"
+        if event == "subagent_stop" and role in {"reviewer", "verifier"}:
+            authorization = action_guard.authorize(repo, state, "finish_role", role=role)
+            save_runtime(repo, runtime)
+            return canonical(event, decision=authorization["decision"],
+                             reason="; ".join(r["message"] for r in authorization["reasons"]) or None,
+                             actions=[authorization["next_action"]] if authorization["next_action"] else [],
+                             metadata={"authorization": authorization})
+        should_check = (not cfg.get("completion_claim_only", True)) or is_completion_claim(last) or (state or {}).get("phase") in {"verification", "release", "closed"}
         if not should_check:
             save_runtime(repo, runtime)
             return canonical(event)
-        failures = list(sm.transition_guard(state, "closed", "completed"))
-        enf = state.get("enforcement") or {}
-        if enf.get("enabled") and enf.get("dirty"):
-            failures.append("runtime enforcement marks semantic/context evidence stale after material mutation")
-        if failures:
+        authorization = action_guard.authorize(repo, state, "close")
+        if not authorization["allowed"]:
             sid = str(raw.get("session_id") or raw.get("sessionId") or "default")
             counts = runtime.setdefault("stop_blocks", {})
-            count = int(counts.get(sid, 0))
-            if count < int(cfg.get("max_stop_blocks_per_session", 3)):
-                counts[sid] = count + 1
-                save_runtime(repo, runtime)
-                return canonical(event, decision="deny", reason="Cannot claim completion: " + "; ".join(failures), actions=[sm.compute_next_action(state)])
+            count = int(counts.get(sid, 0)) + 1
+            counts[sid] = count
+            retry = count <= int(cfg.get("max_stop_blocks_per_session", 3))
             save_runtime(repo, runtime)
-            return canonical(event, metadata={"warning": "completion_not_governance_ready", "failures": failures})
+            return canonical(event, decision="deny", reason="Cannot claim completion: " + "; ".join(r["message"] for r in authorization["reasons"]),
+                             actions=[authorization["next_action"]], metadata={"authorization": authorization, "retry_recommended": retry})
         save_runtime(repo, runtime)
-        return canonical(event)
+        return canonical(event, metadata={"authorization": authorization})
 
     save_runtime(repo, runtime)
     return canonical(event)

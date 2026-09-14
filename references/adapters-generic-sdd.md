@@ -48,6 +48,6 @@ Use Superpowers to provide missing process discipline:
 
 The resulting design/plan may be the primary specification only when the repository has no stronger SDD authority.
 
-## Execution state integration (v5)
+## Execution state integration
 
 Use `references/state-adapter-generic.md`. If no native execution-state authority exists, `.orchestrator/execution-state.yaml` becomes the durable execution authority while existing project specs/issues remain the requirement authority.

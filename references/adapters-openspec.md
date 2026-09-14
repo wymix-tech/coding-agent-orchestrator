@@ -55,6 +55,6 @@ Only run the repository's normal OpenSpec verify/sync/archive/completion flow af
 4. blocking review findings are resolved;
 5. verification evidence is fresh.
 
-## Execution state integration (v5)
+## Execution state integration
 
 Use `references/state-adapter-openspec.md`. Default to `hybrid`: OpenSpec owns change/artifact/task planning state, while the Execution State Manager owns missing implementation/review/verification runtime state. Native OpenSpec readiness must be reconciled before implementation advancement.

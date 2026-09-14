@@ -1,28 +1,104 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://example.local/orchestrator/session-bootstrap.schema.json",
-  "title": "V6.4 Session Bootstrap",
+  "title": "Session Bootstrap",
   "type": "object",
-  "required": ["schema_version", "kind", "generated_at", "session_type", "role", "status", "project", "bootstrap_snapshot_id"],
+  "required": [
+    "schema_version",
+    "kind",
+    "generated_at",
+    "session_type",
+    "role",
+    "status",
+    "project",
+    "bootstrap_snapshot_id"
+  ],
   "properties": {
-    "schema_version": {"const": 1},
-    "kind": {"const": "session_bootstrap"},
-    "generated_at": {"type": "string"},
-    "session_type": {"enum": ["fresh_project", "session_resume", "agent_handoff"]},
-    "host": {"type": ["string", "null"]},
-    "session_id": {"type": ["string", "null"]},
-    "role": {"type": "string"},
-    "status": {"enum": ["READY", "ATTENTION_REQUIRED", "UNINITIALIZED"]},
-    "project": {"type": "object"},
-    "current": {"type": ["object", "null"]},
-    "authorities": {"type": "object"},
-    "snapshots": {"type": "object"},
-    "context": {"type": "object"},
-    "required_policy_ids": {"type": "array", "items": {"type": "string"}},
-    "recent_events": {"type": "array"},
-    "latest_handoff": {"type": ["object", "null"]},
-    "blockers": {"type": "array"},
-    "next_action": {"type": ["string", "null"]},
-    "bootstrap_snapshot_id": {"type": "string", "minLength": 8}
+    "schema_version": {
+      "const": 1
+    },
+    "kind": {
+      "const": "session_bootstrap"
+    },
+    "generated_at": {
+      "type": "string"
+    },
+    "session_type": {
+      "enum": [
+        "fresh_project",
+        "session_resume",
+        "agent_handoff"
+      ]
+    },
+    "host": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "session_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "role": {
+      "type": "string"
+    },
+    "status": {
+      "enum": [
+        "READY",
+        "ATTENTION_REQUIRED",
+        "READY_FOR_INTAKE",
+        "UNBOOTSTRAPPED",
+        "UNINITIALIZED"
+      ]
+    },
+    "project": {
+      "type": "object"
+    },
+    "current": {
+      "type": [
+        "object",
+        "null"
+      ]
+    },
+    "authorities": {
+      "type": "object"
+    },
+    "snapshots": {
+      "type": "object"
+    },
+    "context": {
+      "type": "object"
+    },
+    "required_policy_ids": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "recent_events": {
+      "type": "array"
+    },
+    "latest_handoff": {
+      "type": [
+        "object",
+        "null"
+      ]
+    },
+    "blockers": {
+      "type": "array"
+    },
+    "next_action": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "bootstrap_snapshot_id": {
+      "type": "string",
+      "minLength": 8
+    }
   }
 }
