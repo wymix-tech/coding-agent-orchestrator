@@ -47,6 +47,17 @@ If the launcher is not executable, invoke the same commands through Python:
 python3 <skill-root>/scripts/coding_orchestrator.py --repo . start
 ```
 
+On an existing project, host reconciliation checks the installed adapter against the
+current runtime and project paths. It replaces old Orchestrator hooks, including hooks
+without `--repo`, and removes duplicate managed registrations while preserving other
+user hooks and settings. Repeated reconciliation is idempotent. Pi's generated adapter
+is refreshed when its content no longer matches the installed runtime.
+
+Host paths are serialized as arguments before being embedded in JSON or TypeScript.
+POSIX command hooks use shell quoting; Windows command hooks transport the argument
+list as encoded JSON to Python so shell expansion cannot alter filesystem paths.
+An explicit kernel `--repo` is used as supplied, including inside a parent Git tree.
+
 Use `--json` before the subcommand for machine-readable output.
 
 ## Safe Auto principles

@@ -2,8 +2,13 @@
 from __future__ import annotations
 
 from pathlib import Path
+import json
+import os
 import re
 import shlex
+
+import yaml
+import skill_runtime
 
 ROOT = Path(__file__).resolve().parents[1]
 CODE_SUFFIXES = {".java", ".kt", ".kts", ".py", ".go", ".rs", ".ts", ".tsx", ".js", ".jsx", ".cs", ".cpp", ".c", ".h", ".sql", ".sh"}
@@ -25,7 +30,6 @@ GOVERNANCE_DIRS = {
     ".orchestrator/policies",
     ".orchestrator/requirements",
 }
-GOVERNANCE_TOKENS = tuple(sorted(GOVERNANCE_FILES | GOVERNANCE_DIRS))
 
 
 def extract_tool(raw: dict) -> tuple[str, object]:
@@ -52,36 +56,133 @@ def is_code(repo: Path, path: str) -> bool:
     return True  # unknown formats may change production behavior, including build/config files
 
 
-def governance_class(repo: Path, path: str) -> str | None:
-    """Return the governance area for a path, or None when the path is not a governance input.
+def _mapping(path: Path) -> dict:
+    try:
+        text = path.read_text(encoding="utf-8")
+        doc = json.loads(text) if path.suffix == ".json" else yaml.safe_load(text)
+        return doc if isinstance(doc, dict) else {}
+    except (OSError, ValueError, yaml.YAMLError):
+        return {}
 
-    Only files/directories that *grant* authority are governed. Generated outputs such as
-    work-items, evidence, session, and context projections are not, and neither are SDD
-    artifacts under docs/ or openspec/, which agents are expected to author.
+
+def _absolute(base: Path, path: str | Path) -> Path:
+    # Keep '..' until resolve() has followed intermediate symlinks. Collapsing it
+    # first can turn link/../policy.yaml into a different filesystem target.
+    return base.absolute() / str(path).replace("\\", "/")
+
+
+def governance_targets(repo: Path) -> list[tuple[Path, bool]]:
+    """Configured and currently analyzed authority inputs, including external packs."""
+    repo = repo.resolve()
+    targets = {(_absolute(repo, p), False) for p in GOVERNANCE_FILES}
+    targets.update((_absolute(repo, p), True) for p in GOVERNANCE_DIRS)
+    manifests = {repo / ".orchestrator/policies/manifest.yaml"}
+    orch = _mapping(repo / ".orchestrator/config.yaml").get("orchestrator") or {}
+    if not isinstance(orch, dict):
+        orch = {}
+    policy = orch.get("engineering_policy") or {}
+    if isinstance(policy, dict) and policy.get("manifest"):
+        manifests.add(_absolute(repo, policy["manifest"]))
+    state_paths = {repo / ".orchestrator/execution-state.yaml"}
+    for section, key in (("runtime", "execution_state"), ("execution_state", "state_file")):
+        config = orch.get(section) or {}
+        if isinstance(config, dict) and config.get(key):
+            state_paths.add(_absolute(repo, config[key]))
+    for state_path in state_paths:
+        targets.add((state_path, False))
+        analysis = _mapping(state_path).get("analysis") or {}
+        if not isinstance(analysis, dict) or not analysis.get("policy_plan_ref"):
+            continue
+        plan = _mapping(_absolute(repo, analysis["policy_plan_ref"]))
+        if plan.get("manifest"):
+            manifest = _absolute(repo, plan["manifest"])
+            manifests.add(manifest)
+            # Keep protecting the last analyzed sources even if the live manifest
+            # has changed and a replacement analysis has not yet been attached.
+            for source in plan.get("policy_sources") or []:
+                if isinstance(source, dict) and source.get("ref"):
+                    targets.add((_absolute(manifest.parent, source["ref"]), False))
+    manifests.update(path.resolve() for path in list(manifests))
+    for manifest in manifests:
+        targets.add((manifest, False))
+        for pack in _mapping(manifest).get("packs") or []:
+            if isinstance(pack, dict) and pack.get("path") and pack.get("enabled", True):
+                targets.add((_absolute(manifest.parent, pack["path"]), False))
+    # Resolve aliases on both sides, including a protected file that is itself a symlink.
+    normalized = {(Path(os.path.abspath(path)), directory) for path, directory in targets}
+    normalized.update((path.resolve(), directory) for path, directory in targets)
+    return sorted(normalized, key=lambda row: (str(row[0]), row[1]))
+
+
+def governance_class(repo: Path, path: str, *, cwd: Path | None = None,
+                     ancestors: bool = False, targets=None) -> str | None:
+    """Classify a literal target without granting a preparation exemption.
+
+    Directory removal/move operations also protect ancestors of authority inputs.
+    Ordinary SDD documents and generated projections remain preparation material.
     """
     try:
-        target = Path(path)
-        target = target.resolve() if target.is_absolute() else (repo / target).resolve()
-        rel = target.relative_to(repo.resolve())
+        target = _absolute(cwd or repo, path)
+        candidates = {Path(os.path.abspath(target)), target.resolve()}
+        for protected, directory in targets if targets is not None else governance_targets(repo):
+            for candidate in candidates:
+                if (candidate == protected or directory and protected in candidate.parents
+                        or ancestors and candidate in protected.parents):
+                    try:
+                        return protected.relative_to(repo.resolve()).as_posix()
+                    except ValueError:
+                        return str(protected)
     except (ValueError, OSError):
         return None  # unresolvable targets fall through to existing conservative handling
-    rel_posix = rel.as_posix()
-    if rel_posix in GOVERNANCE_FILES:
-        return rel_posix
-    if len(rel.parts) >= 2 and f"{rel.parts[0]}/{rel.parts[1]}" in GOVERNANCE_DIRS:
-        return f"{rel.parts[0]}/{rel.parts[1]}"
     return None
 
 
-def mentions_governance(command: str) -> bool:
-    return any(token in command for token in GOVERNANCE_TOKENS)
+def shell_words(command: str, *, windows: bool | None = None) -> list[str]:
+    windows = os.name == "nt" if windows is None else windows
+    lexer = shlex.shlex(command, posix=not windows, punctuation_chars=";&|<>()")
+    lexer.whitespace_split = True
+    lexer.commenters = ""
+    words = list(lexer)
+    if windows:
+        words = [w[1:-1] if len(w) >= 2 and w[0] == w[-1] and w[0] in "\"'" else w for w in words]
+    return words
 
 
-def shell_action(command: str, repo: Path) -> str:
-    action = _shell_action_base(command, repo)
+def shell_governance_paths(command: str, repo: Path, cwd: Path | None = None) -> list[str]:
+    targets = governance_targets(repo)
+    try:
+        words = shell_words(command)
+    except ValueError:
+        words = []
+    # Also inspect literal filenames inside script arguments and option=value forms.
+    literals = re.findall(r"[^\s\"'`=;|<>()\[\]{},]+", command)
+    bases = {cwd or repo}
+    for index, word in enumerate(words[:-1]):
+        if word in {"cd", "pushd"}:
+            bases.update(_absolute(base, words[index + 1]) for base in list(bases))
+    parent_operation = any(Path(w).name.lower() in {
+        "rm", "rmdir", "mv", "move", "rename", "ren", "remove-item", "move-item", "rename-item",
+    } for w in words)
+    found = set()
+    for word in words[1:] + literals:
+        if not word or word.startswith("-") or word in {";", "&&", "||", "|", ">", ">>"}:
+            continue
+        # A glob targeting an authority directory must not hide its literal prefix.
+        literal = re.split(r"[*?\[]", word, maxsplit=1)[0] if parent_operation else word
+        if not literal:
+            continue
+        for base in bases:
+            match = governance_class(repo, literal, cwd=base, ancestors=parent_operation, targets=targets)
+            if match:
+                found.add(match)
+    return sorted(found)
+
+
+def shell_action(command: str, repo: Path, cwd: Path | None = None) -> str:
+    action = _shell_action_base(command, cwd or repo)
     # A mutating shell command that names a governance input is escalated, never downgraded.
     # Read-only commands (cat/grep) and packaged CLI invocations keep their own classification.
-    if action == "mutate_code" and mentions_governance(command):
+    if action == "mutate_code" and shell_governance_paths(command, repo, cwd):
         return "mutate_governance"
     return action
 
@@ -92,10 +193,7 @@ def _shell_action_base(command: str, repo: Path) -> str:
     if "$" in command or "`" in command or "\n" in command:
         return "mutate_code"
     try:
-        lexer = shlex.shlex(command, posix=True, punctuation_chars=";&|<>()")
-        lexer.whitespace_split = True
-        lexer.commenters = ""
-        words = list(lexer)
+        words = shell_words(command)
     except ValueError:
         return "mutate_code"
     if not words or any(w and all(c in ";&|<>()" for c in w) for w in words):
@@ -112,7 +210,7 @@ def _shell_action_base(command: str, repo: Path) -> str:
             return "read"
     entry = Path(words[0])
     entry = entry if entry.is_absolute() else repo / entry
-    if entry.resolve() == ROOT / "coding-orchestrator":
+    if entry.resolve() in skill_runtime.front_controllers():
         return "prepare"
     if binary in {"cat", "head", "tail", "less", "more", "rg", "grep", "ls", "pwd", "echo", "printf", "pytest"}:
         return "read"
@@ -129,6 +227,8 @@ def _shell_action_base(command: str, repo: Path) -> str:
 def describe(raw: dict, repo: Path) -> dict:
     name, inp = extract_tool(raw)
     low = name.lower().split(".")[-1]
+    working_dir = (inp.get("workdir") or inp.get("cwd")) if isinstance(inp, dict) else None
+    cwd = _absolute(repo, working_dir or raw.get("cwd") or repo)
     paths: list[str] = []
     governance: list[str] = []
     direct = low in {"write", "edit", "apply_patch", "applypatch"} or "write_file" in low or "edit_file" in low
@@ -138,15 +238,16 @@ def describe(raw: dict, repo: Path) -> dict:
         if low in {"apply_patch", "applypatch"}:
             patch = inp if isinstance(inp, str) else str(inp.get("command") or inp.get("patch") or inp.get("input") or "")
             paths += re.findall(r"(?:\+\+\+ b/|--- a/|\*\*\* (?:Update|Add|Delete) File: |\*\*\* Move to: )([^\n]+)", patch)
-        governance = [g for g in (governance_class(repo, path) for path in paths) if g]
+        targets = governance_targets(repo)
+        governance = [g for g in (governance_class(repo, path, cwd=cwd, targets=targets) for path in paths) if g]
         if governance:
             action = "mutate_governance"
         else:
-            action = "prepare" if paths and all(not is_code(repo, path) for path in paths) else "mutate_code"
+            action = "prepare" if paths and all(not is_code(repo, str(_absolute(cwd, path))) for path in paths) else "mutate_code"
     elif low in {"bash", "shell", "exec_command"}:
         command = str(inp.get("command") or inp.get("cmd") or "") if isinstance(inp, dict) else str(inp)
-        action = shell_action(command, repo)
-        governance = [token for token in GOVERNANCE_TOKENS if token in command] if action == "mutate_governance" else []
+        action = shell_action(command, repo, cwd)
+        governance = shell_governance_paths(command, repo, cwd) if action == "mutate_governance" else []
     elif low in {"read", "read_file", "view_image", "list", "glob", "grep"}:
         action = "read"
     elif low == "write_stdin" and isinstance(inp, dict) and not inp.get("chars"):

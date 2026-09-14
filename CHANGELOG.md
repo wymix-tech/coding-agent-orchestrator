@@ -1,5 +1,15 @@
 # Changelog
 
+## 6.5 revision — Runtime/Governance Review Corrections
+
+- Normalize literal governance targets across direct tools and shell commands, including relative aliases, native separators, symlinks, tool working directories, and parent-directory removal/moves.
+- Protect configured and currently analyzed policy manifests/packs outside the default policy directory while retaining ordinary SDD preparation.
+- Share packaged front-controller identity with tool classification, keeping the Windows `.cmd` recovery entry available before intake creates state.
+- Reconcile stale host adapters by replacing managed hooks, preserving unrelated user hooks/settings, and avoiding duplicate registration on reinstall.
+- Serialize host arguments separately from JSON/TS strings; preserve special characters in project/runtime paths and honor an explicit kernel `--repo` inside a parent Git tree.
+- Create evidence scaffolds exclusively at new paths, preserving previously filled files on repeated fixed-directory intake and through file aliases.
+- Isolate retry-detection tests with a CBM fixture and check the pipeline status before assertions; add review regression coverage for the six reported defects.
+
 ## 6.5 revision — Deployment-Independent Runtime Location
 
 - Fixed agents repeatedly failing to locate the Skill's scripts. The install directory name is a deployment choice, but documentation and fallback paths hardcoded `.agents/skills/coding-agent-orchestrator/`, so any other name forced guessing and retries.

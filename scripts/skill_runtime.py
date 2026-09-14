@@ -40,6 +40,11 @@ def windows_cli_path() -> Path:
     return SKILL_ROOT / WINDOWS_CLI
 
 
+def front_controllers() -> tuple[Path, Path]:
+    """Packaged entry points shared by launcher selection and tool classification."""
+    return cli_path(), windows_cli_path()
+
+
 def python_entry() -> Path:
     return SKILL_ROOT / PYTHON_ENTRY
 

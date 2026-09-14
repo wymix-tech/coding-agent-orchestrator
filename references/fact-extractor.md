@@ -82,6 +82,12 @@ python scripts/semantic_intake_pipeline.py --repo . --request-file request.txt \
 Each entry needs `path`, `value`, `source_type`, `source`, `evidence`, and `strength`. Delete
 entries you cannot evidence yet rather than guessing; unfilled facts simply stay unresolved.
 
+Use the `artifacts.resolutions_template` path returned by the current run. Template
+creation never overwrites an existing file: repeated intake into a fixed output
+directory emits a uniquely named template for the remaining facts. A filled template
+can therefore be supplied directly through `--resolutions` without losing its contents,
+including when the input is a symlink or hard link to the original output path.
+
 The Coding Agent resolves queued facts by inspecting authoritative requirements, active SDD artifacts, architecture boundaries, changed symbols, dependencies, and relevant code.
 
 Each resolution is structured:

@@ -10,6 +10,7 @@ import argparse
 import copy
 import json
 import sys
+import uuid
 from pathlib import Path
 from typing import Any, Dict, Iterable, List
 
@@ -106,6 +107,25 @@ def apply_resolutions(draft: Dict[str, Any], resolution_doc: Dict[str, Any]) -> 
 
 def value_type(path: str) -> str:
     return "non_negative_integer" if path in INT_PATHS else "boolean"
+
+
+def write_resolution_template(output_dir: Path, facts: Dict[str, Any], *, source_ref: str | None = None) -> Path:
+    """Publish a new scaffold without replacing any existing, possibly filled, file.
+
+    Exclusive creation also protects inputs reached through aliases or hard links.
+    Callers must report the returned path, which may differ on a repeated intake.
+    """
+    output_dir.mkdir(parents=True, exist_ok=True)
+    template = build_resolution_template(facts, source_ref=source_ref)
+    path = output_dir / "fact-resolutions.template.json"
+    while True:
+        try:
+            with path.open("x", encoding="utf-8") as stream:
+                json.dump(template, stream, ensure_ascii=False, indent=2, sort_keys=True)
+                stream.write("\n")
+            return path
+        except FileExistsError:
+            path = output_dir / f"fact-resolutions.{uuid.uuid4().hex}.template.json"
 
 
 def build_resolution_template(facts: Dict[str, Any], *, source_ref: str | None = None) -> Dict[str, Any]:
