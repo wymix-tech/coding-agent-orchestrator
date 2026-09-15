@@ -19,6 +19,7 @@ from typing import Any, Dict, Iterable, Iterator, List, Optional, Sequence, Set,
 
 from code_intelligence_provider import CodeIntelligenceProvider, ProviderError
 import fact_extractor
+import repository_snapshot
 
 PROVIDER_ID = "codebase-memory-mcp"
 RELATIONS = {
@@ -331,6 +332,7 @@ def normalize_detect_changes(
     project: Optional[str] = None,
     provider_version: Optional[str] = None,
     coverage_raw: Any = None,
+    base_ref: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Normalize CBM's evolving detect_changes JSON into a stable V6 document."""
     repo = repo.resolve()
@@ -399,7 +401,8 @@ def normalize_detect_changes(
             unknown_distance += 1
 
     snapshot_material = {
-        "git_head": _git_head(repo),
+        "repository_snapshot_id": repository_snapshot.fingerprint(repo),
+        "comparison_basis": repository_snapshot.comparison_basis(repo, base_ref),
         "changed_file_hashes": {p: _file_hash(repo, p) for p in changed_files},
         "provider_payload": payload,
         "project": project,
@@ -437,7 +440,9 @@ def normalize_detect_changes(
         },
         "snapshot": {
             "id": snapshot_id,
-            "git_head": snapshot_material["git_head"],
+            "git_head": _git_head(repo),  # trace only; excluded from snapshot identity
+            "repository_snapshot_id": snapshot_material["repository_snapshot_id"],
+            "comparison_basis": snapshot_material["comparison_basis"],
             "changed_file_hashes": snapshot_material["changed_file_hashes"],
         },
         "changes": {
@@ -928,6 +933,7 @@ class CBMProvider(CodeIntelligenceProvider):
             repo=repo,
             project=project,
             provider_version=self._version(),
+            base_ref=base_branch,
         )
         evidence_paths = sorted(set(normalized["changes"]["changed_files"]) | set(normalized["impact"]["affected_files"]))
         if evidence_paths:

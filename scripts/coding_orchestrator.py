@@ -44,6 +44,17 @@ import start_router
 
 ROOT = Path(__file__).resolve().parents[1]
 VERSION = "6.5"
+READINESS_KEYS = {"behavior_change", "sdd_ready", "acceptance_criteria_present",
+                  "implementation_tasks_complete", "acceptance_satisfied"}
+
+
+def _bool_arg(value: str) -> bool:
+    v = value.strip().lower()
+    if v in {"true", "1", "yes", "y"}:
+        return True
+    if v in {"false", "0", "no", "n"}:
+        return False
+    raise argparse.ArgumentTypeError("expected true/false")
 
 
 def _load_yaml(path: Path) -> dict[str, Any]:
@@ -368,7 +379,51 @@ def cmd_status(args: argparse.Namespace) -> tuple[int, dict[str, Any], str]:
         f"Next: {resume.get('next_action')}",
         f"Revision: {resume.get('revision')}",
     ])
+    # A blocked state must name the CLI that clears it; otherwise the only remaining
+    # option looks like editing execution state, which is denied.
+    for command in (resume.get("authorization") or {}).get("recovery") or []:
+        text += f"\nRecovery: {command}"
     return 0, result, text
+
+
+RESET_DISCARDS = (
+    "phase returns to discovery",
+    "readiness (sdd_ready, acceptance_criteria_present, implementation_tasks_complete, acceptance_satisfied) is cleared",
+    "quality gates and verification obligations are cleared",
+    "work item progress returns to 0/0",
+)
+
+
+def _resets_in_flight_work(state: dict[str, Any]) -> bool:
+    """Whether revising the requirement would discard work already past planning."""
+    progress = ((state.get("work_item") or {}).get("progress") or {})
+    return state.get("phase") in action_guard.GUARDED_PHASES or int(progress.get("completed") or 0) > 0
+
+
+def _reset_warning(state: dict[str, Any]) -> str:
+    progress = ((state.get("work_item") or {}).get("progress") or {})
+    done = int(progress.get("completed") or 0)
+    total = int(progress.get("total") or 0)
+    return (f"Revising now discards in-flight work (phase={state.get('phase')}, progress={done}/{total}): "
+            + "; ".join(RESET_DISCARDS) + ".")
+
+
+def _revision_changed_message(state: dict[str, Any], requirement_id: str) -> str:
+    lines = [f"Requirement content changed for {requirement_id}."]
+    if _resets_in_flight_work(state):
+        lines.append(_reset_warning(state))
+        lines.append("If the requirement did not really change (a resume/continue prompt rephrased it), "
+                     "resume the existing work with `coding-orchestrator start` instead of re-running intake.")
+        lines.append("Otherwise confirm the reset explicitly: `intake --revise-current --confirm-reset`.")
+    else:
+        lines.append("Re-run intake with --revise-current to invalidate derived evidence explicitly.")
+    return " ".join(lines)
+
+
+def _reset_confirmation_message(state: dict[str, Any]) -> str:
+    return (_reset_warning(state)
+            + " Confirm with `intake --revise-current --confirm-reset`, or resume the existing work with "
+              "`coding-orchestrator start` when the requirement did not change.")
 
 
 def _artifact_segment(value: str) -> str:
@@ -398,6 +453,8 @@ def cmd_intake(args: argparse.Namespace) -> tuple[int, dict[str, Any], str]:
         explicit_work_id=args.work_id, request_text=request,
     )
     req_rev = getattr(args, "requirement_revision", None) or requirement_identity.revision_id(request)
+    source_rev = requirement_identity.source_revision_id(repo, source_ref)
+    rephrased_request = False
     state_path = repo / ".orchestrator" / "execution-state.yaml"
     if state_path.exists():
         existing = sm._load(state_path)
@@ -420,11 +477,24 @@ def cmd_intake(args: argparse.Namespace) -> tuple[int, dict[str, Any], str]:
                     "active_work_item": wi.get("id"),
                 }, "A different work item is active. Close/cancel/switch it explicitly before intake."
             if str(existing_rev) != str(req_rev):
-                if not getattr(args, "revise_current", False):
+                if source_rev and requirement_identity.last_source_revision(repo, str(req_id)) == source_rev:
+                    # Only the request wording changed; the authoritative source did not. A resume
+                    # prompt must never masquerade as a requirement change and discard progress.
+                    req_rev = str(existing_rev)
+                    rephrased_request = True
+                elif not getattr(args, "revise_current", False):
                     return 2, {
                         "status": "ACTION_REQUIRED", "error": "REQUIREMENT_REVISION_CHANGED",
                         "requirement_id": req_id, "active_revision": existing_rev, "incoming_revision": req_rev,
-                    }, "Requirement content changed. Re-run intake with --revise-current to invalidate derived evidence explicitly."
+                        "resets_in_flight_work": _resets_in_flight_work(existing),
+                        "next_action": "resume_current_work" if _resets_in_flight_work(existing) else "confirm_requirement_revision",
+                    }, _revision_changed_message(existing, req_id)
+                elif _resets_in_flight_work(existing) and not getattr(args, "confirm_reset", False):
+                    return 2, {
+                        "status": "ACTION_REQUIRED", "error": "REVISION_RESET_REQUIRES_CONFIRMATION",
+                        "requirement_id": req_id, "active_revision": existing_rev, "incoming_revision": req_rev,
+                        "next_action": "confirm_requirement_revision",
+                    }, _reset_confirmation_message(existing)
                 existing = sm.revise_work_item(
                     state_path, req_id, req_rev, args.actor, source_ref or "direct-request",
                     existing["revision"], requirement_source_ref=source_ref,
@@ -439,6 +509,7 @@ def cmd_intake(args: argparse.Namespace) -> tuple[int, dict[str, Any], str]:
         repo, requirement_id=req_id, revision_id=req_rev,
         work_item_id=str((state.get("work_item") or {}).get("id")), provider=provider,
         source_path=source_ref, native_id=getattr(args, "native_id", None), status="active",
+        source_revision=source_rev,
     )
     base_state_revision = state["revision"]
     run_id = uuid.uuid4().hex[:16]
@@ -479,6 +550,7 @@ def cmd_intake(args: argparse.Namespace) -> tuple[int, dict[str, Any], str]:
             repo, requirement_id=req_id, revision_id=req_rev,
             work_item_id=str((state.get("work_item") or {}).get("id")), provider=provider,
             source_path=source_ref, native_id=getattr(args, "native_id", None), status="active",
+            source_revision=source_rev,
         )
     bootstrap = session_context.build_bootstrap(repo, role=args.role, session_type="auto")
     bp_json, bp_md = session_context.persist_bootstrap(repo, bootstrap)
@@ -488,10 +560,14 @@ def cmd_intake(args: argparse.Namespace) -> tuple[int, dict[str, Any], str]:
         "analysis_run": {"id": run_id, "dir": str(outdir), "base_state_revision": base_state_revision},
         "work_item": (sm._load(state_path).get("work_item") if state_path.exists() else None),
         "pipeline": pipeline,
+        "request_rephrased_source_unchanged": rephrased_request,
         "bootstrap": {"json": str(bp_json), "markdown": str(bp_md), "session_type": bootstrap.get("session_type")},
     }
     flow = pipeline.get("flow_profile")
     text = f"Intake: {pipeline.get('status')}\nFlow: {flow or 'not classified'}\nWork item: {(result.get('work_item') or {}).get('id')}\nNext: {bootstrap.get('next_action')}"
+    if rephrased_request:
+        text += ("\nNOTE REQUEST_REPHRASED_SOURCE_UNCHANGED: the request wording changed but the requirement "
+                 "source did not; the existing requirement revision was kept and no derived evidence was invalidated.")
     for warning in pipeline.get("warnings") or []:
         text += f"\nWARNING {warning.get('code')}: {warning.get('message')}\n-> {warning.get('next_action')}"
     if pipeline.get("status") == "NEEDS_EVIDENCE":
@@ -517,6 +593,7 @@ def cmd_start(args: argparse.Namespace) -> tuple[int, dict[str, Any], str]:
             f"Phase: {execution.get('phase')} / {execution.get('status')}",
             f"Task: {cursor.get('current_task_id') or '-'} {cursor.get('current_task_title') or ''}".rstrip(),
             f"Next: {routed.get('next_action')}",
+            "Resume: continue with the reported task; a rephrased request is not a requirement change, so do not re-run intake unless the requirement source changed.",
         ])
         return 0, routed, text
 
@@ -627,6 +704,8 @@ def cmd_check(args: argparse.Namespace) -> tuple[int, dict[str, Any], str]:
         text += "\n" + reason["code"] + ": " + reason["message"]
     if result["next_action"]:
         text += "\nNext: " + result["next_action"]
+    for command in result.get("recovery") or []:
+        text += "\nRecovery: " + command
     return (0 if result["allowed"] else 1), result, text
 
 
@@ -664,6 +743,65 @@ def cmd_provider_reset(args: argparse.Namespace) -> tuple[int, dict[str, Any], s
     return 0, doc, "CBM provider incident reset. The next semantic intake is allowed one fresh attempt."
 
 
+def _state_path(repo: Path) -> Path:
+    return repo / ".orchestrator" / "execution-state.yaml"
+
+
+def _missing_state() -> tuple[int, dict[str, Any], str]:
+    result = {"status": "ACTION_REQUIRED", "error": "STATE_MISSING", "next_action": "run_intake"}
+    return 2, result, "No active execution state. Run `coding-orchestrator intake` before changing execution state."
+
+
+def cmd_readiness(args: argparse.Namespace) -> tuple[int, dict[str, Any], str]:
+    """Record a readiness fact through the orchestrator CLI, never by editing state files."""
+    path = _state_path(args.repo)
+    if not path.exists():
+        return _missing_state()
+    state = sm.set_readiness(path, args.key, args.value, args.actor, args.evidence_ref, args.expected_revision)
+    next_action = (state.get("cursor") or {}).get("next_action")
+    result = {"status": "READINESS_UPDATED", "key": args.key, "value": args.value,
+              "readiness": state.get("readiness"), "revision": state.get("revision"), "next_action": next_action}
+    return 0, result, (f"Readiness {args.key}={str(args.value).lower()}\n"
+                       f"Revision: {state.get('revision')}\nNext: {next_action}")
+
+
+def cmd_progress(args: argparse.Namespace) -> tuple[int, dict[str, Any], str]:
+    path = _state_path(args.repo)
+    if not path.exists():
+        return _missing_state()
+    state = sm.set_progress(path, args.completed, args.total, args.actor, args.evidence_ref,
+                            args.expected_revision, args.native_confirmed)
+    next_action = (state.get("cursor") or {}).get("next_action")
+    result = {"status": "PROGRESS_UPDATED", "progress": ((state.get("work_item") or {}).get("progress") or {}),
+              "revision": state.get("revision"), "next_action": next_action}
+    return 0, result, (f"Progress: {args.completed}/{args.total}\n"
+                       f"Revision: {state.get('revision')}\nNext: {next_action}")
+
+
+def cmd_transition(args: argparse.Namespace) -> tuple[int, dict[str, Any], str]:
+    path = _state_path(args.repo)
+    if not path.exists():
+        return _missing_state()
+    try:
+        state = sm.transition(path, args.phase, args.status, args.actor, args.reason,
+                              args.expected_revision, args.native_confirmed, args.evidence_ref)
+    except sm.TransitionDenied as exc:
+        auth = getattr(exc, "authorization", {}) or {}
+        reasons = "; ".join(r["message"] for r in auth.get("reasons") or [])
+        result = {"status": "DENIED", "error": "TRANSITION_DENIED", "authorization": auth,
+                  "next_action": auth.get("next_action"), "recovery": auth.get("recovery") or []}
+        text = "\n".join([f"Transition denied: {args.phase}/{args.status}", reasons,
+                          f"Next: {auth.get('next_action')}"])
+        for command in result["recovery"]:
+            text += f"\nRecovery: {command}"
+        return 1, result, text
+    next_action = (state.get("cursor") or {}).get("next_action")
+    result = {"status": "TRANSITIONED", "phase": state.get("phase"), "status_detail": state.get("status"),
+              "revision": state.get("revision"), "next_action": next_action}
+    return 0, result, (f"Phase: {state.get('phase')} / {state.get('status')}\n"
+                       f"Revision: {state.get('revision')}\nNext: {next_action}")
+
+
 def build_parser() -> argparse.ArgumentParser:
     p=argparse.ArgumentParser(prog="coding-orchestrator",description=__doc__)
     p.add_argument("--version",action="version",version=f"%(prog)s {VERSION}")
@@ -694,6 +832,7 @@ def build_parser() -> argparse.ArgumentParser:
     x.add_argument("--request-file",type=Path)
     x.add_argument("--work-id"); x.add_argument("--title")
     x.add_argument("--revise-current", action="store_true", help="explicitly accept a new revision of the active requirement and invalidate derived evidence")
+    x.add_argument("--confirm-reset", action="store_true", help="with --revise-current: accept that in-flight implementation state (phase, readiness, gates, progress) is discarded")
     x.add_argument("--requirement-id", help=argparse.SUPPRESS)
     x.add_argument("--requirement-revision", help=argparse.SUPPRESS)
     x.add_argument("--native-id", help=argparse.SUPPRESS)
@@ -735,6 +874,33 @@ def build_parser() -> argparse.ArgumentParser:
     x.add_argument("--governance-path", action="append", dest="governance_paths", metavar="PATH",
                    help="governance input being changed, for --action mutate_governance")
     x.set_defaults(func=cmd_check)
+
+    x=sub.add_parser("readiness",help="record a readiness fact (the legal replacement for editing execution state)")
+    x.add_argument("--key",required=True,choices=sorted(READINESS_KEYS))
+    x.add_argument("--value",required=True,type=_bool_arg)
+    x.add_argument("--evidence-ref",required=True,help="artifact proving the readiness fact (spec, plan, or test evidence)")
+    x.add_argument("--actor",default="coding-orchestrator")
+    x.add_argument("--expected-revision",type=int)
+    x.set_defaults(func=cmd_readiness)
+
+    x=sub.add_parser("progress",help="record implementation task progress")
+    x.add_argument("--completed",type=int,required=True)
+    x.add_argument("--total",type=int,required=True)
+    x.add_argument("--evidence-ref",required=True)
+    x.add_argument("--actor",default="coding-orchestrator")
+    x.add_argument("--expected-revision",type=int)
+    x.add_argument("--native-confirmed",action="store_true",help="native adapter has confirmed the progress")
+    x.set_defaults(func=cmd_progress)
+
+    x=sub.add_parser("transition",help="advance/close the active work item through the Action Guard")
+    x.add_argument("--phase",required=True,choices=action_guard.PHASES)
+    x.add_argument("--status",default="in_progress",choices=sorted(action_guard.STATUSES))
+    x.add_argument("--reason",required=True)
+    x.add_argument("--evidence-ref")
+    x.add_argument("--actor",default="coding-orchestrator")
+    x.add_argument("--expected-revision",type=int)
+    x.add_argument("--native-confirmed",action="store_true",help="native adapter has confirmed the target phase/status")
+    x.set_defaults(func=cmd_transition)
 
     pr=sub.add_parser("provider",help="inspect/reset semantic provider operational state"); prs=pr.add_subparsers(dest="provider_command",required=True)
     x=prs.add_parser("status"); x.add_argument("provider",choices=["codebase-memory-mcp"]); x.set_defaults(func=cmd_provider_status)

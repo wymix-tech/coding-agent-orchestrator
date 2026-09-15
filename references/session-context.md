@@ -59,6 +59,8 @@ Production-code mutation remains blocked until intake/classification creates and
 
 Used when durable State exists and no fresh handoff applies. It projects the current work item, Flow, phase, task cursor, blockers, gates, snapshots, Context Manifest/Pack pointers, recent state events, and next action.
 
+**Resume never re-intakes.** A `READY_FOR_WORK` resume means the work item is already classified: continue with the projected phase/task. A rephrased request (“继续”, “continue”, “resume”) is not a requirement change, so re-running `intake` on it is wrong; intake keeps the existing requirement revision when the requirement source is unchanged. Re-run `intake` only when the requirement source itself changed, and then `--revise-current --confirm-reset` is required, because revising discards in-flight implementation state (phase returns to discovery; readiness, gates, and progress are cleared).
+
 ### `agent_handoff`
 
 Used when a fresh `latest-handoff.json` is available. It adds the explicit previous-task summary, known risks, assumptions, and handoff next action.

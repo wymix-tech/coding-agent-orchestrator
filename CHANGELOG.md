@@ -1,5 +1,24 @@
 # Changelog
 
+## 6.5 revision — Resume Must Not Revise, and Denials Must Be Executable
+
+- Fixed a session-ending deadlock found in a real run. An agent resumed an implementation-stage work item with "继续", re-ran `intake`, was told `Requirement content changed`, used `--revise-current`, and silently lost the implementation phase, readiness flags, quality gates, and task progress. The resulting `advance_native_sdd_to_ready` then had no legal CLI path, so the agent could only hand five manual commands back to the operator.
+- `requirement_identity.source_revision_id()` hashes the requirement source document, and `record()`/`last_source_revision()` keep that content revision per requirement. When only the request wording changed, intake now reports `REQUEST_REPHRASED_SOURCE_UNCHANGED`, keeps the existing requirement revision, and invalidates nothing.
+- `intake --revise-current` now refuses to discard in-flight work without `--confirm-reset` (`REVISION_RESET_REQUIRES_CONFIRMATION`), and the plain `REQUIREMENT_REVISION_CHANGED` message names what the reset would discard plus `coding-orchestrator start` as the resume alternative. `_resets_in_flight_work()` treats implementation or later, or any completed task, as in-flight.
+- Added the missing recovery surface to the front controller: `coding-orchestrator readiness`, `coding-orchestrator progress`, and `coding-orchestrator transition`. All three are classified as `prepare`, so they are the supported way to change execution state; direct `execution_state_manager.py` edits stay denied. A denied `transition` now reports `TRANSITION_DENIED` with the authorization and recovery commands instead of raising.
+- `action_guard.RECOVERY_COMMANDS` maps `advance_native_sdd_to_ready`, `define_acceptance_criteria`, `transition_to_implementation`, and `reconfigure_governance_explicitly` to runnable commands. `evaluate()` returns them as `recovery`, `check` prints them, and host `pre_tool` denials append them to the reason so a blocked agent can act immediately.
+- `SKILL.md` states the two rules that were missing: resume never re-intakes, and blocked states are recovered through the CLI. `references/action-authorization.md` documents `recovery`; `MANIFEST.json` lists the new subcommands.
+- Added `tests/test_resume_guard.py` (**6 tests**) covering a rephrased resume request, source-change confirmation, the CLI readiness/progress/transition path, `prepare` classification of recovery commands, and recovery output on `SDD_NOT_READY`.
+
+## 6.5 revision — Content Snapshots Independent of Git Commits
+
+- Remove HEAD identity from material fingerprints and keep deleted paths absent before and after their deletion is committed.
+- Retain Git HEAD as trace metadata in Work Facts/CBM output; bind analysis IDs to material content and explicit diff bases.
+- Check base and merge-base trees separately, rejecting changed or missing comparison inputs with `COMPARISON_BASE_CHANGED`.
+- Preserve current gate/review/verification evidence after no-op code-mutation events, including staging, commits, and message-only amendments; actual hook edits and stale authority inputs still invalidate it.
+- Add 21 real Git regression tests and a GitHub Actions workflow for focused/full tests and context footprint validation.
+- Existing active work needs one refresh when migrating from the previous HEAD-bound fingerprint.
+
 ## 6.5 revision — Runtime/Governance Review Corrections
 
 - Normalize literal governance targets across direct tools and shell commands, including relative aliases, native separators, symlinks, tool working directories, and parent-directory removal/moves.

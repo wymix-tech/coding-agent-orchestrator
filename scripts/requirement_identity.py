@@ -25,6 +25,25 @@ def revision_id(text: str) -> str:
     return 'rev-' + hashlib.sha256(_canonical_text(text).encode('utf-8')).hexdigest()[:16]
 
 
+def source_revision_id(repo: Path, source_ref: str | None) -> str | None:
+    """Content revision of a source-backed requirement, or None when it cannot be read.
+
+    A resume prompt such as "continue" must not look like a requirement change. When a
+    requirement is identified by a source document, its revision is the content of that
+    document, never the wording of the request that pointed at it.
+    """
+    if not source_ref:
+        return None
+    path = Path(source_ref)
+    candidate = path if path.is_absolute() else (Path(repo).resolve() / path)
+    try:
+        content = candidate.read_text(encoding='utf-8')
+    except (OSError, UnicodeDecodeError):
+        return None
+    norm = Path(source_ref).as_posix().lstrip('./')
+    return revision_id(f'{norm}\n{content}')
+
+
 def stable_requirement_id(*, provider: str, source_type: str | None = None,
                           source_path: str | None = None, native_id: str | None = None,
                           explicit_work_id: str | None = None, request_text: str = '') -> str:
@@ -85,7 +104,8 @@ def save_registry(repo: Path, registry: dict[str, Any]) -> None:
 
 def record(repo: Path, *, requirement_id: str, revision_id: str, work_item_id: str,
            provider: str, source_path: str | None = None, native_id: str | None = None,
-           status: str, completed_at: str | None = None) -> None:
+           status: str, completed_at: str | None = None,
+           source_revision: str | None = None) -> None:
     reg = load_registry(repo)
     req = reg['requirements'].setdefault(requirement_id, {
         'provider': provider, 'source_path': source_path, 'native_id': native_id,
@@ -94,12 +114,21 @@ def record(repo: Path, *, requirement_id: str, revision_id: str, work_item_id: s
     req['provider'] = provider
     if source_path: req['source_path'] = source_path
     if native_id: req['native_id'] = native_id
+    if source_revision: req['source_revision'] = source_revision
     rev = req['revisions'].setdefault(revision_id, {})
     rev.update({'status': status, 'work_item_id': work_item_id})
     if completed_at: rev['completed_at'] = completed_at
     if work_item_id not in req['work_items']:
         req['work_items'].append(work_item_id)
     save_registry(repo, reg)
+
+
+def last_source_revision(repo: Path, requirement_id: str) -> str | None:
+    """Last recorded content revision of a source-backed requirement, if any."""
+    reg = load_registry(repo)
+    req = (reg.get('requirements') or {}).get(requirement_id) or {}
+    value = req.get('source_revision')
+    return str(value) if value else None
 
 
 def processed(repo: Path, requirement_id: str, revision_id: str) -> bool:

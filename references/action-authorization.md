@@ -42,9 +42,23 @@ python3 ./coding-orchestrator --repo /path/to/project --json check --action clos
 
 `check` is read-only: exit `0` allows, exit `1` denies. The returned object contains
 `action`, `target_phase`, `allowed`, `decision`, `reason_codes`, detailed `reasons`,
-`next_action`, `state_revision`, and `work_item_id`. Reasons have stable machine codes,
-a message, and a recovery action. Multiple failures remain visible in deterministic
-order. The actual mutation/transition must recheck; a prior check is only a diagnostic.
+`next_action`, `recovery`, `state_revision`, and `work_item_id`. Reasons have stable
+machine codes, a message, and a recovery action. Multiple failures remain visible in
+deterministic order. The actual mutation/transition must recheck; a prior check is only
+a diagnostic.
+
+`recovery` lists the orchestrator CLI commands that clear the denial, derived from
+`RECOVERY_COMMANDS` in `action_guard.py`. Host `pre_tool` denials append them to the
+reason, so an agent never has to guess how to unblock itself:
+
+```bash
+coding-orchestrator readiness --key sdd_ready --value true --evidence-ref <approved spec or plan>
+coding-orchestrator progress --completed 0 --total 5 --evidence-ref <plan>
+coding-orchestrator transition --phase implementation --status in_progress --reason "plan is approved" --evidence-ref <plan>
+```
+
+Every one of them is classified as `prepare`, which is why executable state changes go
+through the front controller instead of `scripts/execution_state_manager.py`.
 
 | Consumer | Shared action/result |
 |---|---|
@@ -79,6 +93,23 @@ Required gates are derived from both state and current plans. Individual gate/re
 verification results bind `snapshot_id` and `evidence_snapshot_id`; a required gate
 cannot be downgraded by recording a result. Stop retries never convert a denial into
 permission, and state-only helpers cannot prove freshness without the repository.
+
+## Content and Git comparison identity
+
+Material repository fingerprints cover live file paths, bytes, executable modes, and
+symlink targets. HEAD, index placement, and already absent tracked paths are not
+content: staging, ordinary commits, empty commits, and message-only amendments
+preserve evidence when the analyzed inputs stay unchanged. Git hooks that edit
+those inputs still invalidate evidence.
+
+An explicit intake `--base-ref` is bound separately to its base tree and merge-base
+trees. Changed or unavailable comparison inputs produce `COMPARISON_BASE_CHANGED`
+even if the current worktree is identical. Git commit IDs remain trace metadata in
+Work Facts and semantic-impact artifacts.
+
+Content fingerprint version 2 intentionally differs from older HEAD-bound
+fingerprints. Existing active work needs one fresh intake/context/verification
+cycle after upgrading; old pass flags must not be copied onto the new binding.
 
 ## Existing-project migration and limits
 

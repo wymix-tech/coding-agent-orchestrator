@@ -23,6 +23,26 @@ GUARDED_PHASES = LATE_PHASES | {"implementation"}
 ANALYSIS_REFS = ("decision_ref", "semantic_impact_ref", "work_facts_ref", "verification_plan_ref",
                  "policy_plan_ref", "policy_evaluation_ref", "policy_context_ref", "requirement_ref")
 
+# A denial must name the legal way forward. Execution state is not agent-writable, so every
+# readiness/phase recovery has to be expressible as an orchestrator CLI invocation.
+RECOVERY_COMMANDS = {
+    "advance_native_sdd_to_ready": [
+        "coding-orchestrator readiness --key sdd_ready --value true --evidence-ref APPROVED_SPEC_OR_PLAN_PATH",
+        "coding-orchestrator readiness --key acceptance_criteria_present --value true --evidence-ref ACCEPTANCE_CRITERIA_PATH",
+        "coding-orchestrator transition --phase implementation --status in_progress --reason \"planning artifacts are approved\" --evidence-ref APPROVED_PLAN_PATH",
+    ],
+    "define_acceptance_criteria": [
+        "coding-orchestrator readiness --key acceptance_criteria_present --value true --evidence-ref ACCEPTANCE_CRITERIA_PATH",
+    ],
+    "transition_to_implementation": [
+        "coding-orchestrator transition --phase implementation --status in_progress --reason \"planning artifacts are approved\" --evidence-ref APPROVED_PLAN_PATH",
+    ],
+    "reconfigure_governance_explicitly": [
+        "coding-orchestrator readiness --key READINESS_KEY --value true --evidence-ref EVIDENCE_PATH",
+        "coding-orchestrator transition --phase PHASE --status STATUS --reason \"reason for the change\" --evidence-ref EVIDENCE_PATH",
+    ],
+}
+
 
 def active_blockers(state: dict | None) -> list[dict]:
     return [b for b in (state or {}).get("blockers", []) if b.get("resolved_at") is None]
@@ -81,7 +101,15 @@ def bind_analysis(repo: Path, analysis: dict) -> dict:
     decision = _json(repo, analysis.get("decision_ref"))
     impact = _json(repo, analysis.get("semantic_impact_ref"))
     complete = semantic_complete(impact)
+    facts = _json(repo, analysis.get("work_facts_ref")) or {}
+    observations = (facts.get("extraction") or {}).get("observations") or {}
+    comparison = observations.get("comparison_basis")
+    if comparison is None:
+        # Compatibility with previously emitted facts; content snapshot v2 still
+        # requires one fresh analysis before older bindings can be reused.
+        comparison = snapshots.comparison_basis(repo, (observations.get("git") or {}).get("base_ref"))
     binding = {"repository_snapshot_id": snapshots.fingerprint(repo), "authority_hashes": hashes,
+               "comparison_basis": comparison,
                "decision_status": (decision or {}).get("status"), "semantic_complete": complete}
     # Caller-supplied analysis IDs can be reused even when requirements or policy
     # content changes. Gate/review/verification evidence must bind to actual inputs.
@@ -162,6 +190,11 @@ def collect_evidence(repo: Path | None, state: dict | None) -> dict:
         current = None
     evidence["repository_snapshot_id"] = current
     evidence["repository_fresh"] = bool(current and current == analysis.get("repository_snapshot_id"))
+    comparison = analysis.get("comparison_basis")
+    evidence["comparison_fresh"] = comparison is None or (
+        comparison.get("status") == "resolved"
+        and comparison == snapshots.comparison_basis(repo, comparison.get("base_ref"))
+    )
     hashes = analysis.get("authority_hashes") or {}
     stale_authorities = []
     for ref, expected in hashes.items():
@@ -275,6 +308,8 @@ def evaluate(state: dict | None, action: str, *, evidence: dict | None = None,
                 if action != "mutate_code" or not tracked_edit:
                     if not facts.get("repository_fresh"):
                         deny("REPOSITORY_CHANGED", "Repository content no longer matches the analyzed snapshot.", "run_semantic_intake")
+                if not facts.get("comparison_fresh", True):
+                    deny("COMPARISON_BASE_CHANGED", "The analyzed Git comparison base or merge-base trees changed or are unavailable.", "run_semantic_intake")
                 if action != "mutate_code":
                     enf = state.get("enforcement") or {}
                     if dirty or enf.get("semantic_fresh") is False or enf.get("policy_fresh") is False:
@@ -316,10 +351,12 @@ def evaluate(state: dict | None, action: str, *, evidence: dict | None = None,
                 deny("VERIFICATION_NOT_PASSED", "Final verification has not passed.", "run_fresh_final_verification")
             if not current or not ver.get("fresh") or not evidence_matches(state, ver):
                 deny("VERIFICATION_STALE", "Final verification is not fresh for the current execution snapshot.", "run_fresh_final_verification")
+    recovery = [command for command in dict.fromkeys(
+        command for reason in reasons for command in RECOVERY_COMMANDS.get(reason["next_action"], []))]
     return {"schema_version": 1, "action": action, "target_phase": "closed" if action == "close" else target_phase,
             "allowed": not reasons, "decision": "deny" if reasons else "allow", "reasons": reasons,
             "reason_codes": list(dict.fromkeys(r["code"] for r in reasons)),
-            "next_action": reasons[0]["next_action"] if reasons else None,
+            "next_action": reasons[0]["next_action"] if reasons else None, "recovery": recovery,
             "state_revision": (state or {}).get("revision"), "work_item_id": ((state or {}).get("work_item") or {}).get("id")}
 
 
