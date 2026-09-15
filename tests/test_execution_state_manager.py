@@ -135,7 +135,8 @@ class ExecutionStateTests(unittest.TestCase):
             s = fx.state()
             sm.set_execution_snapshot(fx.state_path, "snap-1", "agent", "final code", s["revision"])
             s = fx.state()
-            sm.record_verification(fx.state_path, "passed", "verifier", "snap-1", "verify:1", s["revision"])
+            sm.record_verification(fx.state_path, "passed", "verifier", "snap-1",
+                                   evidence_factory.result_document(fx.root, "verify-1.json"), s["revision"])
             s = fx.state()
             with self.assertRaises(sm.TransitionDenied) as ctx:
                 sm.transition(fx.state_path, "closed", "completed", "agent", "done", s["revision"])
@@ -158,7 +159,8 @@ class ExecutionStateTests(unittest.TestCase):
             s = fx.state()
             sm.set_execution_snapshot(fx.state_path, "snap-1", "agent", "code", s["revision"])
             s = fx.state()
-            sm.record_verification(fx.state_path, "passed", "verifier", "snap-1", "v1", s["revision"])
+            sm.record_verification(fx.state_path, "passed", "verifier", "snap-1",
+                                   evidence_factory.result_document(fx.root, "v1.json"), s["revision"])
             self.assertTrue(fx.state()["verification"]["fresh"])
             s = fx.state()
             sm.set_execution_snapshot(fx.state_path, "snap-2", "agent", "code changed", s["revision"])

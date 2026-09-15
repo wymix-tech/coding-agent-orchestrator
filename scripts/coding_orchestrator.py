@@ -577,10 +577,16 @@ def cmd_intake(args: argparse.Namespace) -> tuple[int, dict[str, Any], str]:
                             incoming_revision=str(req_rev) if req_rev else None,
                             source_ref=source_ref))
                 if _resets_in_flight_work(existing):
+                    # The incoming revision is what the request actually carries: the source
+                    # revision when there is a source, the request revision when there is not.
+                    # A direct request has no source to skip behind.
+                    incoming_revision = source_rev if source_rev else req_rev
                     confirmation = requirement_identity.check_revision_confirmation(
-                        repo, requirement_id=str(req_id), source_revision=source_rev,
+                        repo, requirement_id=str(req_id), source_revision=incoming_revision,
                         phase=existing.get("phase"), status=existing.get("status"),
                         active_revision=str(existing_rev) if existing_rev else None,
+                        repo_ref=str(repo), request_ref=str(args.request_file) if args.request_file else None,
+                        request=None if args.request_file else request,
                         # The observed state revision is what makes the confirmation expire when
                         # anything else moved: progress, gates and evidence included.
                         state_revision=str(existing.get("revision")),
@@ -614,9 +620,12 @@ def cmd_intake(args: argparse.Namespace) -> tuple[int, dict[str, Any], str]:
                             "processed; re-issue it against what is there now: "
                             + requirement_identity.confirmation_command(
                                 str(req_id), active_revision=str(existing_rev),
-                                incoming_source_revision=source_rev,
+                                incoming_source_revision=(source_rev if source_rev else req_rev),
                                 state_revision=str(latest.get("revision")),
-                                phase=latest.get("phase"), status=latest.get("status")))
+                                phase=latest.get("phase"), status=latest.get("status"),
+                                repo=str(repo),
+                                request_ref=str(args.request_file) if args.request_file else None,
+                                request=None if args.request_file else request))
                 existing = sm.revise_work_item(state_path, req_id, req_rev, args.actor, source_ref or "direct-request",
                                                 existing["revision"], requirement_source_ref=source_ref,
                                                 native_work_item_id=getattr(args, "native_id", None))
@@ -655,6 +664,13 @@ def cmd_intake(args: argparse.Namespace) -> tuple[int, dict[str, Any], str]:
         "--sdd-provider", provider,
     ]
     if args.base_ref: argv += ["--base-ref", args.base_ref]
+    # Explicit inputs have to reach the pipeline, otherwise the version and the references the
+    # caller asked for are silently dropped and the work is analyzed as if none were given.
+    for reference in (getattr(args, "evidence_refs", None) or []):
+        argv += ["--evidence-ref", str(reference)]
+    if getattr(args, "requirement_revision", None):
+        argv += ["--requirement-revision", str(args.requirement_revision)]
+    if getattr(args, "reanalyze", False): argv += ["--reanalyze"]
     if args.resolutions: argv += ["--resolutions", str(args.resolutions)]
     if args.cbm_fixture: argv += ["--cbm-fixture", str(args.cbm_fixture)]
     if args.degraded: argv += ["--allow-cbm-unavailable"]

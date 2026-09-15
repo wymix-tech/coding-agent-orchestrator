@@ -89,20 +89,105 @@ def _evidence_module():
         return module
 
 
+def evidence_result(resolution: Dict[str, Any], repo: Path | None = None) -> Dict[str, Any]:
+    """Verify the evidence a resolution cites. Returns the full result of *this* check."""
+    record = resolution.get("evidence_record")
+    if not isinstance(record, dict) or repo is None:
+        return {"validation_status": "unverified", "reason_code": "EVIDENCE_UNVERIFIED"}
+    ep = _evidence_module()
+    result = ep.revalidate(
+        repo, record, policy=ep.load_policy(repo),
+        work_item_id=str(resolution.get("work_item_id") or "") or None,
+        requirement_revision=str(resolution.get("requirement_revision") or "") or None,
+    )
+    return result if isinstance(result, dict) else {"validation_status": "unverified"}
+
+
 def evidence_validation(resolution: Dict[str, Any], repo: Path | None = None) -> str:
     """A recorded evidence string is not a verification; only a checked record can be verified.
 
     Without a repo there is nothing to check against, which is `unverified`, never `verified`.
     """
-    record = resolution.get("evidence_record")
-    if not isinstance(record, dict) or repo is None:
-        return "unverified"
-    result = _evidence_module().revalidate(
-        repo, record,
-        work_item_id=str(resolution.get("work_item_id") or "") or None,
-        requirement_revision=str(resolution.get("requirement_revision") or "") or None,
-    )
-    return str(result.get("validation_status") or "unverified")
+    return str(evidence_result(resolution, repo).get("validation_status") or "unverified")
+
+
+NEGATIVE_PROOF_ERRORS = {
+    "NEGATIVE_PROOF_SHAPE_INVALID",
+    "NEGATIVE_PROOF_SOURCE_UNRESOLVED",
+    "NEGATIVE_PROOF_SCOPE_MISSING",
+    "NEGATIVE_PROOF_CONTRADICTED",
+    "NEGATIVE_PROOF_COUNT_MISMATCH",
+}
+
+
+def _proof_scopes(repo: Path, proof: Dict[str, Any]) -> tuple[list[Path] | None, str | None]:
+    """Resolve the files a negative proof searched. `None` means the scope is unusable."""
+    refs = proof.get("paths")
+    if not isinstance(refs, list) or not refs:
+        single = proof.get("ref")
+        refs = [single] if single else []
+    if not refs:
+        return None, "NEGATIVE_PROOF_SCOPE_MISSING"
+    root = Path(repo).resolve()
+    resolved: list[Path] = []
+    for ref in refs:
+        if not isinstance(ref, str) or not ref:
+            return None, "NEGATIVE_PROOF_SCOPE_MISSING"
+        candidate = Path(ref)
+        candidate = candidate if candidate.is_absolute() else root / candidate
+        try:
+            if not candidate.is_file():
+                return None, "NEGATIVE_PROOF_SOURCE_UNRESOLVED"
+            if root not in candidate.resolve().parents and candidate.resolve() != root:
+                return None, "NEGATIVE_PROOF_SOURCE_UNRESOLVED"
+        except OSError:
+            return None, "NEGATIVE_PROOF_SOURCE_UNRESOLVED"
+        resolved.append(candidate)
+    return resolved, None
+
+
+def check_negative_proof(proof: Any, repo: Path | None = None) -> Dict[str, Any]:
+    """A negative fact is an observation, not a label: the search has to be re-runnable.
+
+    `{"ref": "does-not-exist", "matches": 0}` claims a search that never happened. The
+    scope is resolved and the search is redone here; only a search that really finds
+    nothing can carry a false fact.
+    """
+    if not isinstance(proof, dict):
+        return {"valid": False, "error": "NEGATIVE_PROOF_SHAPE_INVALID",
+                "message": ("a bounded description is not a search: negative_proof must name the "
+                            "scope that was searched (paths/ref) and how many matches it found")}
+    query = proof.get("search") or proof.get("query")
+    if not isinstance(query, str) or not query.strip():
+        return {"valid": False, "error": "NEGATIVE_PROOF_SHAPE_INVALID",
+                "message": "negative_proof must name what was searched for (search/query)"}
+    matches = proof.get("matches")
+    if isinstance(matches, bool) or not isinstance(matches, int):
+        return {"valid": False, "error": "NEGATIVE_PROOF_SHAPE_INVALID",
+                "message": "negative_proof.matches must be an integer"}
+    if repo is None:
+        return {"valid": False, "error": "NEGATIVE_PROOF_SOURCE_UNRESOLVED",
+                "message": "a negative proof cannot be checked without the project it searched"}
+    scopes, error = _proof_scopes(repo, proof)
+    if error or scopes is None:
+        return {"valid": False, "error": error or "NEGATIVE_PROOF_SOURCE_UNRESOLVED",
+                "message": "the negative proof names no file inside the project that was searched"}
+    found = 0
+    for path in scopes:
+        try:
+            found += path.read_text(encoding="utf-8", errors="replace").count(query)
+        except OSError:
+            return {"valid": False, "error": "NEGATIVE_PROOF_SOURCE_UNRESOLVED",
+                    "message": f"{path.name} could not be read to redo the search"}
+    if found != matches:
+        return {"valid": False, "error": "NEGATIVE_PROOF_COUNT_MISMATCH",
+                "message": (f"the negative proof records matches={matches} but the search finds "
+                            f"{found} in the same scope"), "observed_matches": found}
+    if found != 0:
+        return {"valid": False, "error": "NEGATIVE_PROOF_CONTRADICTED",
+                "message": f"the search found {found} occurrence(s), so this is not a negative fact",
+                "observed_matches": found}
+    return {"valid": True, "searched": [str(p) for p in scopes], "matches": found}
 
 
 def apply_resolutions(draft: Dict[str, Any], resolution_doc: Dict[str, Any],
@@ -113,12 +198,20 @@ def apply_resolutions(draft: Dict[str, Any], resolution_doc: Dict[str, Any],
     validations: List[Dict[str, Any]] = []
     for r in resolution_doc.get("resolutions", []):
         validate_resolution(r)
-        validation = evidence_validation(r, repo)
+        result = evidence_result(r, repo)
+        validation = str(result.get("validation_status") or "unverified")
         has_record = isinstance(r.get("evidence_record"), dict)
         if r.get("strength") == "authoritative" and has_record and validation != "verified":
             raise ValueError(
                 f"authoritative resolution requires verified evidence, got {validation}: {r['path']}")
-        if r.get("value") is False and not r.get("negative_proof") and validation != "verified":
+        proof_check = None
+        if r.get("negative_proof") is not None:
+            proof_check = check_negative_proof(r["negative_proof"], repo)
+            if r.get("value") is False and not proof_check["valid"]:
+                raise ValueError(
+                    f"false resolution requires a negative proof that can be re-run: "
+                    f"{proof_check['error']}: {proof_check['message']} ({r['path']})")
+        if r.get("value") is False and r.get("negative_proof") is None and validation != "verified":
             raise ValueError(
                 f"false resolution requires negative_proof or verified evidence, got {validation}: {r['path']}")
         path = r["path"]
@@ -138,11 +231,18 @@ def apply_resolutions(draft: Dict[str, Any], resolution_doc: Dict[str, Any],
             # The Decision Engine consumes this, never `strength` alone.
             "verified_authority": validation == "verified",
             "verification_status": validation,
+            "evidence_outcome": result.get("outcome"),
         }
         if isinstance(r.get("evidence_record"), dict):
             entry["evidence_id"] = r["evidence_record"].get("evidence_id")
-        if r.get("negative_proof"):
+        if r.get("negative_proof") is not None:
             entry["negative_proof"] = r["negative_proof"]
+            entry["negative_proof_verified"] = bool(proof_check and proof_check.get("valid"))
+            entry["negative_proof_check"] = {
+                "error": (proof_check or {}).get("error"),
+                "message": (proof_check or {}).get("message"),
+                "observed_matches": (proof_check or {}).get("observed_matches"),
+            }
         provenance.setdefault(path, []).append(entry)
         changes.append({"path": path, "old": old, "new": r["value"]})
         validations.append({

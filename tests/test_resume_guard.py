@@ -158,10 +158,12 @@ class ResumeMustNotReviseRequirement(unittest.TestCase):
                 evidence_factory.establish_readiness(state_path, key, repo=repo)
             state = sm._load(state_path)
             state = sm.transition(state_path, "implementation", "in_progress", "test", "start", state["revision"])
-            state = sm.record_gate(state_path, "unit", True, "passed", "test", evidence_ref="requirements.md",
+            state = sm.record_gate(state_path, "unit", True, "passed", "test",
+                                   evidence_ref=evidence_factory.result_document(repo, "unit-results.json"),
                                    expected_revision=state["revision"])
             state = sm.record_verification(state_path, "passed", "test", state["execution_snapshot_id"],
-                                           "requirements.md", state["revision"])
+                                           evidence_factory.result_document(repo, "final-verification.json"),
+                                           state["revision"])
             before = sm._load(state_path)
 
             args = cli.build_parser().parse_args(["--repo", str(repo), "intake", "Continue approved login implementation.",
@@ -283,7 +285,7 @@ class CliRecoveryPath(unittest.TestCase):
             self.assertEqual(0, code, text)
             self.assertTrue(sm._load(state_path)["readiness"]["sdd_ready"])
 
-            progress = evidence_factory.establish_progress(state_path, repo=repo, completed=3)["evidence_id"]
+            progress = evidence_factory.establish_progress(state_path, repo=repo, completed=3, total=5)["evidence_id"]
             code, result, text = self._run(repo, ["progress", "--completed", "3", "--total", "5",
                                                   "--evidence-ref", progress])
             self.assertEqual(0, code, text)

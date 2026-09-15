@@ -50,8 +50,10 @@ class ActionGuardTests(unittest.TestCase):
     def ready(self):
         for key in ("implementation_tasks_complete", "acceptance_satisfied"):
             evidence_factory.establish_readiness(self.fx.state_path, key, repo=self.fx.repo)
-        sm.record_review(self.fx.state_path, "passed", "reviewer", evidence_ref="review")
-        sm.record_verification(self.fx.state_path, "passed", "verifier", self.state()["execution_snapshot_id"], "verification")
+        sm.record_review(self.fx.state_path, "passed", "reviewer",
+                         evidence_ref=evidence_factory.result_document(self.fx.repo, "review-result.json"))
+        sm.record_verification(self.fx.state_path, "passed", "verifier", self.state()["execution_snapshot_id"],
+                               evidence_factory.result_document(self.fx.repo, "verification-result.json"))
 
     def test_pure_evaluator_is_deterministic_and_does_not_mutate_inputs(self):
         state = self.state()
@@ -144,7 +146,8 @@ class ActionGuardTests(unittest.TestCase):
         with contextlib.redirect_stdout(io.StringIO()):
             code = sm.main(["--state", str(self.fx.state_path), "gate", "--name", "unit",
                             "--required", "true", "--status", "passed", "--actor", "test",
-                            "--command", "pytest -q", "--evidence-ref", "unit-results"])
+                            "--command", "pytest -q",
+                            "--evidence-ref", evidence_factory.result_document(self.fx.repo, "unit-results.json")])
         self.assertEqual(0, code)
         self.assertEqual("pytest -q", self.state()["quality_gates"]["unit"]["command"])
 
@@ -240,14 +243,17 @@ class ActionGuardTests(unittest.TestCase):
         denied = self.check("close")
         self.assertIn("REQUIRED_GATE_NOT_PASSED", denied["reason_codes"])
         self.assertIn("impact:integration_tests", str(denied))
-        sm.record_gate(self.fx.state_path, "impact:integration_tests", True, "passed", "test", evidence_ref="current-test-report")
+        sm.record_gate(self.fx.state_path, "impact:integration_tests", True, "passed", "test",
+                       evidence_ref=evidence_factory.result_document(self.fx.repo, "integration-tests.json"))
         self.assertTrue(self.check("close")["allowed"])
 
     def test_gate_and_review_must_match_new_snapshot(self):
         self.ready()
-        sm.record_gate(self.fx.state_path, "unit", True, "passed", "test", evidence_ref="A1")
+        sm.record_gate(self.fx.state_path, "unit", True, "passed", "test",
+                       evidence_ref=evidence_factory.result_document(self.fx.repo, "unit-a1.json"))
         self.reanalyze("A2")
-        sm.record_verification(self.fx.state_path, "passed", "test", "A2", "new final")
+        sm.record_verification(self.fx.state_path, "passed", "test", "A2",
+                               evidence_factory.result_document(self.fx.repo, "final-a2.json"))
         result = self.check("close")
         self.assertIn("GATE_EVIDENCE_STALE", result["reason_codes"])
         self.assertIn("REVIEW_STALE", result["reason_codes"])
@@ -260,7 +266,8 @@ class ActionGuardTests(unittest.TestCase):
 
     def test_reused_analysis_id_cannot_reuse_evidence_after_authority_change(self):
         self.ready()
-        sm.record_gate(self.fx.state_path, "unit", True, "passed", "test", evidence_ref="old unit")
+        sm.record_gate(self.fx.state_path, "unit", True, "passed", "test",
+                       evidence_ref=evidence_factory.result_document(self.fx.repo, "unit-old.json"))
         snapshot = self.state()["execution_snapshot_id"]
         (self.fx.intake / "request-context.md").write_text("Revised acceptance criteria")
         self.reanalyze(snapshot)
@@ -268,7 +275,8 @@ class ActionGuardTests(unittest.TestCase):
         for code in ("GATE_EVIDENCE_STALE", "REVIEW_STALE", "VERIFICATION_STALE"):
             self.assertIn(code, result["reason_codes"])
         self.ready()
-        sm.record_gate(self.fx.state_path, "unit", True, "passed", "test", evidence_ref="new unit")
+        sm.record_gate(self.fx.state_path, "unit", True, "passed", "test",
+                       evidence_ref=evidence_factory.result_document(self.fx.repo, "unit-new.json"))
         self.assertTrue(self.check("close")["allowed"])
 
     def test_state_and_context_projection_changes_do_not_dirty_material_snapshot(self):

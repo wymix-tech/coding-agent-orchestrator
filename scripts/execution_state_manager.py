@@ -35,6 +35,11 @@ ACCEPTED_GATE_STATUS = {"pending", "passed", "failed", "skipped", "not_required"
 ACCEPTED_REVIEW_STATUS = {"pending", "passed", "failed", "not_required"}
 ACCEPTED_VERIFICATION_STATUS = {"pending", "passed", "failed"}
 ACCEPTED_OBLIGATION_STATUS = {"active", "superseded", "not_applicable", "waived"}
+# Statuses that assert a result happened. `pending`/`skipped`/`not_required` assert nothing,
+# so they carry no binding; `passed` and `failed` must name what produced them.
+RESULT_BINDING_STATUSES = {"passed", "failed"}
+# Claim types that say how many tasks were finished. Progress is a task fact, so it needs one.
+PROGRESS_CLAIM_TYPES = {"task_progress", "implementation_tasks", "verification", "test_result"}
 AUTHORITY_MODES = {"native", "hybrid", "orchestrator"}
 PROVIDERS = {"bmad", "openspec", "generic", "other"}
 
@@ -797,7 +802,7 @@ def _verify_evidence_record(state_path: pathlib.Path, record: dict, *,
     state = state if state is not None else _load(state_path)
     context = _work_item_context(state)
     result = ep.revalidate(
-        repo, record, state=state,
+        repo, record, state=state, policy=ep.load_policy(repo),
         work_item_id=work_item_id if work_item_id is not None else context["work_item_id"],
         requirement_revision=(requirement_revision if requirement_revision is not None
                               else context["requirement_revision"]),
@@ -834,11 +839,81 @@ def load_evidence_reference(repo: pathlib.Path, reference: str | None) -> Option
     return doc if isinstance(doc, dict) and doc.get("evidence_id") else None
 
 
-def _bind_report(state_path: pathlib.Path, status: str, report_path: Optional[str],
-                 exit_code: Optional[int], argv: Optional[list]) -> Optional[Dict[str, Any]]:
-    """Bind the report that was actually produced. A real failure is recorded as a failure."""
-    if not report_path and exit_code is None:
+def _bind_alternative_result(state_path: pathlib.Path, *, state: Optional[Dict[str, Any]] = None,
+                             evidence_ref: Optional[str] = None) -> Dict[str, Any]:
+    """Bind a passed result that did not come from a report the caller ran.
+
+    Two legal collection paths exist: a stored evidence record that verifies now, and a
+    result document inside the project (a policy evaluation, an imported result). Anything
+    else is a label, and a label cannot make a gate pass.
+    """
+    repo = repository_snapshot.repo_from_state(state_path)
+    ep = _evidence_module()
+    record = load_evidence_reference(repo, evidence_ref)
+    if record is not None:
+        result = _verify_evidence_record(state_path, record, state=state)
+        if result.get("validation_status") != "verified" or \
+                str(result.get("outcome")) not in {"passed", "approved"}:
+            raise StateError(
+                f"EVIDENCE_REPORT_REQUIRED: evidence {result.get('evidence_id')} is "
+                f"{result.get('validation_status')}/{result.get('outcome')} "
+                f"({result.get('reason_code')}); a passed gate needs a result that verifies now")
+        return {"evidence_id": result.get("evidence_id"), "status": result.get("outcome"),
+                "exit_code": 0, "binding": "evidence_record",
+                "validation_status": result.get("validation_status")}
+    document = _result_document(repo, evidence_ref)
+    if document is not None and str(document.get("status")) == "passed" \
+            and document.get("exit_code") in (None, 0):
+        return {"path": document.get("path"), "status": "passed",
+                "exit_code": document.get("exit_code"), "digest": document.get("digest"),
+                "binding": "result_document"}
+    raise StateError(
+        f"EVIDENCE_REPORT_REQUIRED: {evidence_ref or '<no evidence ref>'} is neither a report "
+        "of a command that ran, a verifiable evidence id, nor a result document inside the "
+        "project; record the real result with --report or import it as verifiable evidence "
+        "(see `coding-orchestrator evidence index`)")
+
+
+def _result_document(repo: pathlib.Path, ref: Optional[str]) -> Optional[Dict[str, Any]]:
+    """Read a result document that lives inside the project. A label is not a binding."""
+    if not ref:
         return None
+    path = pathlib.Path(str(ref))
+    candidate = path if path.is_absolute() else repo / path
+    try:
+        if not candidate.is_file():
+            return None
+        doc = json.loads(candidate.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(doc, dict) or not isinstance(doc.get("status"), str):
+        return None
+    try:
+        digest = repository_snapshot.digest_path(candidate)
+    except OSError:
+        digest = None
+    return {"path": str(ref), "status": str(doc.get("status")).lower(),
+            "exit_code": doc.get("exit_code"), "digest": digest,
+            "document": {"status": doc.get("status"), "exit_code": doc.get("exit_code")}}
+
+
+def _bind_report(state_path: pathlib.Path, status: str, report_path: Optional[str],
+                 exit_code: Optional[int], argv: Optional[list],
+                 *, state: Optional[Dict[str, Any]] = None,
+                 evidence_ref: Optional[str] = None) -> Optional[Dict[str, Any]]:
+    """Bind the result that was actually produced. A real failure is recorded as a failure.
+
+    `passed` is never accepted without a result binding. Legal bindings are the mechanical
+    report of a command that ran, a verified evidence record, or a result document that
+    lives inside the project (policy evaluation, imported results). Every one of them is
+    read here; none of them is a token the caller asserts.
+    """
+    if status not in RESULT_BINDING_STATUSES:
+        return None
+    if not report_path and exit_code is None:
+        if status != "passed":
+            return None
+        return _bind_alternative_result(state_path, state=state, evidence_ref=evidence_ref)
     repo = repository_snapshot.repo_from_state(state_path)
     reported_status = None
     digest = None
@@ -862,6 +937,14 @@ def _bind_report(state_path: pathlib.Path, status: str, report_path: Optional[st
         raise StateError(
             f"EVIDENCE_REPORT_CONTRADICTION: report status={reported_status!r} exit_code={exit_code!r} "
             "cannot record a passed result")
+    if status == "passed":
+        # A report that does not say what ran and how it ended is not a result: it is a file.
+        if reported_status is None:
+            raise StateError("EVIDENCE_REPORT_REQUIRED: a passed result needs a report that "
+                             "records its own status; an unexecuted declaration is not a result")
+        if exit_code is None:
+            raise StateError("EVIDENCE_REPORT_REQUIRED: a passed result needs the exit code of "
+                             "the command that produced it")
     return {
         "path": report_path,
         "status": reported_status,
@@ -948,6 +1031,47 @@ def set_readiness(
     return _commit(state_path, new_state, event, expected_revision)
 
 
+def _counts(value: Any) -> Optional[Dict[str, int]]:
+    """Read a task count out of a result object. Booleans are never counts."""
+    if not isinstance(value, dict):
+        return None
+    completed = value.get("completed")
+    if completed is None and isinstance(value.get("passed"), int):
+        completed = value.get("passed")
+    total = value.get("total")
+    if isinstance(completed, bool) or not isinstance(completed, int):
+        return None
+    if isinstance(total, bool) or not isinstance(total, int):
+        total = completed
+    return {"completed": completed, "total": total}
+
+
+def evidence_progress(repo: pathlib.Path, record: Dict[str, Any]) -> Optional[Dict[str, int]]:
+    """How many tasks the evidence itself says were finished, if it says so at all."""
+    for holder in (record.get("extra") or {}, record.get("source") or {}):
+        for key in ("progress", "tasks"):
+            found = _counts(holder.get(key))
+            if found:
+                return found
+    found = _counts(record.get("extra"))
+    if found:
+        return found
+    report_path = (record.get("report") or {}).get("path")
+    if report_path:
+        path = pathlib.Path(report_path)
+        path = path if path.is_absolute() else repo / path
+        try:
+            doc = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            doc = None
+        if isinstance(doc, dict):
+            for key in ("progress", "tasks", "tests"):
+                found = _counts(doc.get(key))
+                if found:
+                    return found
+    return None
+
+
 def set_progress(
     state_path: pathlib.Path,
     completed: int,
@@ -994,6 +1118,26 @@ def set_progress(
                 f"work_item.progress is not satisfied by {result.get('evidence_id')}: "
                 f"validation_status={result.get('validation_status')} "
                 f"reason={result.get('reason_code')}; re-collect it through the verification entry point")
+        # A verified record is not automatically evidence *of tasks*. Progress needs a task
+        # fact: the right kind of claim, a success outcome, and the count it observed.
+        if str(result.get("claim_type") or "") not in PROGRESS_CLAIM_TYPES:
+            raise StateError(
+                f"work_item.progress is not satisfied by {result.get('evidence_id')}: a "
+                f"{result.get('claim_type')!r} claim does not say which tasks were finished; "
+                f"use one of {sorted(PROGRESS_CLAIM_TYPES)}")
+        if str(result.get("outcome") or "") not in {"passed", "approved"}:
+            raise StateError(
+                f"work_item.progress is not satisfied by {result.get('evidence_id')}: outcome "
+                f"{result.get('outcome')!r} is not a success; only completed work counts as progress")
+        observed = evidence_progress(repo, record)
+        if observed is None:
+            raise StateError(
+                f"work_item.progress is not satisfied by {result.get('evidence_id')}: the "
+                "evidence records no task count, so no progress number can be derived from it")
+        if observed != {"completed": completed, "total": total}:
+            raise StateError(
+                f"work_item.progress is not satisfied by {result.get('evidence_id')}: it "
+                f"observed {observed['completed']}/{observed['total']}, not {completed}/{total}")
         ep.persist_raw_record(repo, record)
         records = new_state.setdefault("evidence", {}).setdefault("records", [])
         stored = dict(record, evidence_id=result["evidence_id"])
@@ -1207,7 +1351,8 @@ def record_gate(
         raise StateError("a required gate cannot be skipped or marked not_required")
     state = _load(state_path)
     _require_revision(state, expected_revision)
-    report = _bind_report(state_path, status, report_path, exit_code, argv)
+    report = _bind_report(state_path, status, report_path, exit_code, argv,
+                          state=state, evidence_ref=evidence_ref)
     new_state = copy.deepcopy(state)
     if (state.get("quality_gates", {}).get(name) or {}).get("required") and not required:
         raise StateError("an established required gate cannot be downgraded by recording a result")
@@ -1486,7 +1631,8 @@ def record_verification(
         raise StateError(f"invalid verification status: {status}")
     state = _load(state_path)
     _require_revision(state, expected_revision)
-    report = _bind_report(state_path, status, report_path, exit_code, argv)
+    report = _bind_report(state_path, status, report_path, exit_code, argv,
+                          state=state, evidence_ref=evidence_ref)
     new_state = copy.deepcopy(state)
     current = new_state.get("execution_snapshot_id")
     fresh = status == "passed" and current is not None and current == snapshot_id

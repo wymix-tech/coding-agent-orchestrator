@@ -53,21 +53,28 @@ def write_requirement(repo: pathlib.Path, rel: str = DEFAULT_REQUIREMENT,
     return write_source(repo, rel, content)
 
 
-def pick_source(repo: pathlib.Path, preferred: tuple[str, ...] = (DEFAULT_SOURCE,)) -> str:
+def pick_source(repo: pathlib.Path, preferred: tuple[str, ...] = (DEFAULT_SOURCE,),
+                *, exclude: str | None = None) -> str:
     """Prefer a file that is already part of the analyzed content.
 
     A dependency that a test creates after analysis would silently invalidate the snapshot the
     test is about to trust, so existing tracked files are used whenever the repository has any.
+    `exclude` keeps the object under test from being the requirement document: a claim that
+    verifies the code against the requirement must name two different objects.
     """
     for name in preferred:
-        if (repo / name).is_file():
+        if (repo / name).is_file() and name != exclude:
             return name
     candidates = [n for n in _tracked(repo)
                   if not n.startswith(".orchestrator") and (repo / n).is_file()
-                  and len(n.encode("utf-8")) < 4096]
+                  and len(n.encode("utf-8")) < 4096 and n != exclude
+                  and not n.endswith((".md", ".txt"))]
     if candidates:
         return sorted(candidates)[0]
-    return write_source(repo)
+    target = write_source(repo)
+    if target == exclude:
+        target = write_source(repo, "src/module.py")
+    return target
 
 
 def dependency(repo: pathlib.Path, object_kind: str, object_id: str) -> dict:
@@ -79,10 +86,13 @@ def dependency(repo: pathlib.Path, object_kind: str, object_id: str) -> dict:
     return {**bare, "revision": resolution["revision"]}
 
 
-def code_dependency(repo: pathlib.Path, rel: str | None = None) -> dict:
-    target = rel or pick_source(repo)
+def code_dependency(repo: pathlib.Path, rel: str | None = None, *,
+                    exclude: str | None = None) -> dict:
+    target = rel or pick_source(repo, exclude=exclude)
     if rel:
         write_source(repo, rel)
+    if target == exclude:
+        target = write_source(repo, "src/module.py")
     return dependency(repo, "code_under_test", target)
 
 
@@ -131,10 +141,10 @@ def native_dependency(repo: pathlib.Path, rel: str = "docs/sprint-status.yaml",
 
 def write_negative_proof(repo: pathlib.Path, fact_path: str, *,
                          query: str = "no contradicting requirement found",
-                         matches: int = 0) -> str:
+                         matches: int = 0, scope: list[str] | None = None) -> str:
     """Record the search that found nothing. A negative fact needs that search, not a title."""
     rel = f".orchestrator/evidence/negative-proof/{fact_path.replace('.', '-')}.json"
-    payload = {"fact": fact_path, "search": query, "matches": matches,
+    payload = {"fact": fact_path, "search": query, "matches": matches, "scope": scope or [],
                "command": f"rg -n '{query}' --stats ."}
     target = repo / rel
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -142,10 +152,26 @@ def write_negative_proof(repo: pathlib.Path, fact_path: str, *,
     return rel
 
 
+def search_scope(repo: pathlib.Path) -> str:
+    """The content a negative proof really searched: the analyzed content, not the proof file.
+
+    Searching the proof document itself would find the query inside its own description and
+    "prove" nothing was found while the record is literally full of it.
+    """
+    for name in ("requirements/story.md", "README.md", "docs/spec.md"):
+        if (repo / name).is_file():
+            return name
+    return write_requirement(repo)
+
+
 def negative_proof_entry(repo: pathlib.Path, fact_path: str, **kwargs) -> dict:
-    """A negative proof object in the shape `fact_resolver` expects."""
-    return {"ref": write_negative_proof(repo, fact_path, **kwargs),
-            "search": kwargs.get("query", "no contradicting requirement found"),
+    """A negative proof the resolver can re-run: what was searched, where, and the count."""
+    query = kwargs.get("query", "no contradicting requirement found")
+    scope = kwargs.get("scope") or [search_scope(repo)]
+    return {"ref": write_negative_proof(repo, fact_path, query=query,
+                                        matches=kwargs.get("matches", 0), scope=scope),
+            "paths": scope,
+            "search": query,
             "matches": kwargs.get("matches", 0)}
 
 
@@ -183,6 +209,16 @@ def write_approval(repo: pathlib.Path, *, approval_id: str = "appr-1", subject: 
     return path
 
 
+def result_document(repo: pathlib.Path, name: str = "gate-result.json", *,
+                    status: str = "passed", exit_code: int = 0) -> str:
+    """A result document inside the project that a gate, review or verification can bind.
+
+    A gate that claims "passed" has to name the artifact the claim came from, and that
+    artifact has to be re-readable: a bare label binds nothing.
+    """
+    return write_report(repo, name, status=status, exit_code=exit_code)["path"]
+
+
 def build_readiness_record(repo: pathlib.Path, key: str, *, work_item_id: str = "W-1",
                            requirement_revision: str | None = None,
                            kind: str | None = None, outcome: str | None = None,
@@ -194,9 +230,10 @@ def build_readiness_record(repo: pathlib.Path, key: str, *, work_item_id: str = 
     kind = kind or READINESS_KINDS.get(key, "mechanical_observation")
     rule = ep.READINESS_SOURCE_RULES.get(key) or {}
     claim_type = str(rule.get("claim_type") or "readiness")
-    depends_on: list[dict] = [requirement_dependency(repo)]
+    requirement = requirement_dependency(repo)
+    depends_on: list[dict] = [requirement]
     if kind == "mechanical_observation":
-        depends_on.append(code_dependency(repo))
+        depends_on.append(code_dependency(repo, exclude=requirement["object_id"]))
     depends_on.extend(extra_dependencies or [])
     record = ep.build_record(
         kind=kind, claim_type=claim_type, work_item_id=work_item_id,

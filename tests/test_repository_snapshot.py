@@ -245,12 +245,20 @@ class CommitAuthorizationTests(unittest.TestCase):
         refresh_context(self.repo, self.path)
 
     def ready(self):
+        # readiness bound at intake refers to the code as it was then. If a test moved that
+        # code, the claims are re-evidenced against the current content before anything else
+        # is allowed to depend on them.
+        for key in ("behavior_change", "acceptance_criteria_present"):
+            evidence_factory.establish_readiness(self.path, key, repo=self.repo)
         for key in ("implementation_tasks_complete", "acceptance_satisfied"):
             evidence_factory.establish_readiness(self.path, key, repo=self.repo)
-        state_manager.record_gate(self.path, "unit", True, "passed", "test", evidence_ref="unit-test-evidence")
-        state_manager.record_review(self.path, "passed", "reviewer", evidence_ref="review-evidence")
+        state_manager.record_gate(self.path, "unit", True, "passed", "test",
+                                  evidence_ref=evidence_factory.result_document(self.repo, "unit-results.json"))
+        state_manager.record_review(self.path, "passed", "reviewer",
+                                    evidence_ref=evidence_factory.result_document(self.repo, "review-result.json"))
         state_manager.record_verification(
-            self.path, "passed", "verifier", self.state()["execution_snapshot_id"], "verification-evidence",
+            self.path, "passed", "verifier", self.state()["execution_snapshot_id"],
+            evidence_factory.result_document(self.repo, "final-verification.json"),
         )
         self.assert_can_close()
 

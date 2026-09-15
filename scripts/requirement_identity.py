@@ -10,6 +10,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import shlex
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -479,20 +480,36 @@ CONFIRMATION_BINDINGS = ('requirement_id', 'source_revision', 'incoming_source_r
 
 def confirmation_command(requirement_id: str, *, active_revision: str | None,
                          incoming_source_revision: str | None, state_revision: str | None,
-                         phase: str | None = None, status: str | None = None) -> str:
-    """The complete, runnable confirmation command for exactly this move."""
-    parts = [
-        "python3 scripts/coding_orchestrator.py intake",
-        f"--requirement-id {requirement_id or '<requirement-id>'}",
+                         phase: str | None = None, status: str | None = None,
+                         repo: str | None = None, request_ref: str | None = None,
+                         request: str | None = None) -> str:
+    """The complete, runnable confirmation command for exactly this move.
+
+    A printed command has to actually run: it names the entry point, the project, and the
+    request it is confirming. Values are quoted, so a revision or a sentence with spaces
+    survives being copied back into a shell.
+    """
+    def quote(value: Any) -> str:
+        return shlex.quote(str(value))
+
+    parts = ["python3 scripts/coding_orchestrator.py intake"]
+    if repo:
+        parts.append(f"--repo {quote(repo)}")
+    if request_ref:
+        parts.append(f"--request-file {quote(request_ref)}")
+    elif request:
+        parts.append(f"--request {quote(request)}")
+    parts += [
+        f"--requirement-id {quote(requirement_id or '<requirement-id>')}",
         "--revise-current --confirm-reset",
-        f"--confirm-revision {active_revision or '<old-active-source-revision>'}",
-        f"--confirm-incoming-revision {incoming_source_revision or '<new-source-revision>'}",
-        f"--confirm-state-revision {state_revision if state_revision is not None else '<observed-state-revision>'}",
+        f"--confirm-revision {quote(active_revision or '<old-active-source-revision>')}",
+        f"--confirm-incoming-revision {quote(incoming_source_revision or '<new-source-revision>')}",
+        f"--confirm-state-revision {quote(state_revision if state_revision is not None else '<observed-state-revision>')}",
     ]
     if phase:
-        parts.append(f"--confirm-phase {phase}")
+        parts.append(f"--confirm-phase {quote(phase)}")
     if status:
-        parts.append(f"--confirm-status {status}")
+        parts.append(f"--confirm-status {quote(status)}")
     return " ".join(parts)
 
 
@@ -500,7 +517,10 @@ def check_revision_confirmation(repo: Path, *, requirement_id: str, source_revis
                                 phase: str | None, status: str | None,
                                 confirmation: dict[str, Any] | None,
                                 active_revision: str | None = None,
-                                state_revision: str | None = None) -> dict[str, Any]:
+                                state_revision: str | None = None,
+                                repo_ref: str | None = None,
+                                request_ref: str | None = None,
+                                request: str | None = None) -> dict[str, Any]:
     """A destructive-revision confirmation is valid only for the exact move it was issued for.
 
     All four bindings are required: which requirement, which *old* source revision it was
@@ -514,7 +534,8 @@ def check_revision_confirmation(repo: Path, *, requirement_id: str, source_revis
                 'confirm_command': confirmation_command(
                     requirement_id, active_revision=active_revision or last_source_revision(repo, requirement_id),
                     incoming_source_revision=source_revision, state_revision=state_revision,
-                    phase=phase, status=status),
+                    phase=phase, status=status, repo=repo_ref, request_ref=request_ref,
+                    request=request),
                 'next_action': 'confirm_requirement_revision', **extra}
 
     if not confirmation:
@@ -561,6 +582,33 @@ def check_revision_confirmation(repo: Path, *, requirement_id: str, source_revis
     return {'allowed': True}
 
 
+def _alias_sources(alias: dict[str, Any] | None) -> list[str]:
+    """The history entries an alias claims to carry over. Both shapes exist: one key, or many."""
+    if not isinstance(alias, dict):
+        return []
+    sources = alias.get('from')
+    if isinstance(sources, list):
+        return [str(item) for item in sources if item is not None]
+    return [str(sources)] if sources is not None else []
+
+
+def _alias_links(aliases: dict[str, Any], *, from_key: str, to_revision: str) -> bool:
+    """Does a justified alias carry `from_key`'s history over to `to_revision`?
+
+    Aliases are keyed by the revision they were written for, not by the history they came
+    from, so the lookup has to walk them: keying by the old revision silently misses all of
+    them, and a missing alias then looks like "not completed".
+    """
+    for alias in (aliases or {}).values():
+        if not isinstance(alias, dict) or not alias.get('justified'):
+            continue
+        if str(alias.get('to')) != str(to_revision):
+            continue
+        if str(from_key) in _alias_sources(alias):
+            return True
+    return False
+
+
 def historical_mapping(repo: Path, requirement_id: str, *, content_revision: str | None) -> dict[str, Any]:
     """How pre-migration history relates to the current content revision.
 
@@ -595,12 +643,14 @@ def historical_mapping(repo: Path, requirement_id: str, *, content_revision: str
         current_raw = resolved.get('raw_digest')
     completed_keys = [key for key, value in revisions.items()
                       if isinstance(value, dict) and value.get('status') in {'completed', 'archived'}]
+    aliases = entry.get('revision_aliases') or {}
     for key in completed_keys:
-        recorded_raw = (revisions.get(key) or {}).get('raw_digest') or entry.get('baseline_raw_digest')
-        alias = (entry.get('revision_aliases') or {}).get(key)
-        if alias and alias.get('justified') and alias.get('to') == content_revision:
+        # Only what that revision recorded about itself is evidence of what it was. The digest
+        # of the file *now* is not: it says nothing about the content the work was done against.
+        recorded_raw = (revisions.get(key) or {}).get('raw_digest')
+        if _alias_links(aliases, from_key=key, to_revision=content_revision):
             mapping['derived_from'] = key
-            mapping['justified_by'] = alias.get('justified_by') or 'recorded migration alias'
+            mapping['justified_by'] = 'recorded migration alias or explicit confirmation'
             return mapping
         if recorded_raw and current_raw and recorded_raw == current_raw:
             continue
@@ -622,8 +672,11 @@ def processed(repo: Path, requirement_id: str, revision_id: str) -> bool:
         return True
     alias = (entry.get('revision_aliases') or {}).get(revision_id)
     if isinstance(alias, dict) and alias.get('justified'):
-        old = revisions.get(str(alias.get('from'))) or {}
-        return old.get('status') in {'completed', 'archived'}
+        # `from` may name one history entry or several; str() of a list is not a revision key.
+        for source in _alias_sources(alias):
+            old = revisions.get(source) or {}
+            if old.get('status') in {'completed', 'archived'}:
+                return True
     return False
 
 
@@ -697,7 +750,10 @@ def _map_history(repo: Path, entry: dict[str, Any], resolution: dict[str, Any],
     raw_now = resolution.get('raw_digest')
     revisions = entry.get('revisions') or {}
     aliases = dict(entry.get('revision_aliases') or {})
-    updates: dict[str, Any] = {'baseline_raw_digest': raw_now, 'revision_aliases': aliases}
+    # The baseline is what was true *before* this migration. Writing the digest just read back
+    # over it would make history appear provable by definition, on the next run and forever.
+    updates: dict[str, Any] = {'baseline_raw_digest': previous_raw or entry.get('baseline_raw_digest'),
+                              'revision_aliases': aliases}
     justified_by = None
     pending: list[str] = []
     for key, value in revisions.items():
@@ -708,7 +764,7 @@ def _map_history(repo: Path, entry: dict[str, Any], resolution: dict[str, Any],
                                 'justified_by': 'history was already keyed by this content revision'}
             justified_by = justified_by or 'existing content revision key'
             continue
-        recorded = previous_raw or value.get('raw_digest')
+        recorded = value.get('raw_digest') or previous_raw
         if recorded and raw_now and str(recorded) == str(raw_now):
             aliases[new_key] = {'from': key, 'to': new_key, 'justified': True,
                                 'justified_by': 'raw content digest recorded before migration '
@@ -751,10 +807,29 @@ def confirm_history(repo: Path, *, requirement_id: str, content_revision: str, a
         return {'status': 'ACTION_REQUIRED', 'error': 'SOURCE_UNREADABLE',
                 'message': 'the requirement source cannot be read, so history cannot be compared',
                 'next_action': 'repair_source_members', 'applied': False}
+    # The confirmation is issued for the content revision that is current *now*. Confirming a
+    # revision that no longer describes the source would bind history to the wrong content.
+    current_revision = resolution.get('source_revision')
+    if current_revision and str(current_revision) != str(content_revision):
+        return {'status': 'ACTION_REQUIRED', 'error': 'HISTORY_CONFIRMATION_REVISION_MISMATCH',
+                'message': (f'the source now reads as {current_revision}, not the confirmed '
+                            f'{content_revision}; re-issue the confirmation against the current content'),
+                'current_content_revision': current_revision,
+                'next_action': 'confirm_history_mapping', 'applied': False}
+    pending_entries = sorted(
+        key for key, value in (entry.get('revisions') or {}).items()
+        if isinstance(value, dict) and value.get('status') in {'completed', 'archived'}
+        and str(key) != str(content_revision))
+    if not pending_entries:
+        return {'status': 'ACTION_REQUIRED', 'error': 'HISTORY_NOTHING_PENDING',
+                'message': f'{requirement_id} has no completed history entry awaiting confirmation',
+                'next_action': 'confirm_history_mapping', 'applied': False}
     aliases = dict(entry.get('revision_aliases') or {})
     aliases[str(content_revision)] = {
-        'from': sorted((entry.get('revisions') or {}).keys()),
+        'from': pending_entries,
         'to': str(content_revision),
+        'confirmed_content_revision': str(current_revision or content_revision),
+        'confirmed_raw_digest': raw_now,
         'justified': True,
         'justified_by': f'explicit history confirmation by {actor} against raw digest {raw_now[:12]}',
         'confirmed_by': actor,

@@ -383,7 +383,11 @@ class EndToEndRepairAcceptanceTests(unittest.TestCase):
         ev = repo / ".orchestrator/evidence" / f"{label}.log"
         ev.parent.mkdir(parents=True, exist_ok=True)
         ev.write_text("$ python -m unittest discover -s tests -v\n" + proc.stdout + proc.stderr, encoding="utf-8")
-        return ev
+        # The gate binds a result document, not a label: what a check can re-read is the proof.
+        report = repo / ".orchestrator/evidence" / f"{label}.json"
+        report.write_text(json.dumps({"status": "passed", "exit_code": 0,
+                                      "command": "python -m unittest discover -s tests -v"}), encoding="utf-8")
+        return report
 
     def _resolution_doc(self, facts: dict, repo: pathlib.Path) -> dict:
         resolutions=[]
@@ -445,7 +449,10 @@ class EndToEndRepairAcceptanceTests(unittest.TestCase):
             code,result,_=cli.cmd_intake(intake_args)
             self.assertEqual(0,code); self.assertEqual("CLASSIFIED",result["status"])
             state=sm._load(sp)
-            evidence_factory.establish_readiness(sp, "implementation_tasks_complete")
+            # The implementation edited the code the earlier readiness claims described, so
+            # those claims are re-evidenced against the content that now exists.
+            for key in ("behavior_change","acceptance_criteria_present","implementation_tasks_complete"):
+                evidence_factory.establish_readiness(sp,key,repo=repo)
             state=sm._load(sp)
             state=evidence_factory.establish_progress(sp,1,1,repo=repo,actor="T8")["state"]
             state=sm.transition(sp,"review","in_progress","T8","implementation complete",state["revision"])
@@ -465,7 +472,7 @@ class EndToEndRepairAcceptanceTests(unittest.TestCase):
             state=sm.transition(sp,"closed","completed","T8","all current evidence passed",state["revision"])
             self.assertTrue(sm.completion_status(state,repo)["done"])
 
-            nxt=repo/"requirements/next-spec.md"; nxt.parent.mkdir(); nxt.write_text("# Requirements\n\nThe system must support account deletion.\nAcceptance criteria: deleted users cannot log in.\n",encoding="utf-8")
+            nxt=repo/"requirements/next-spec.md"; nxt.parent.mkdir(exist_ok=True); nxt.write_text("# Requirements\n\nThe system must support account deletion.\nAcceptance criteria: deleted users cannot log in.\n",encoding="utf-8")
             after_new_requirement=sm.completion_status(sm._load(sp),repo)
             self.assertTrue(after_new_requirement["done"])
             self.assertTrue(after_new_requirement["historically_completed"])

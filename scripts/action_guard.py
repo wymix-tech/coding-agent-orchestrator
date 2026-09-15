@@ -109,6 +109,29 @@ def _json(repo: Path, ref: str | None) -> dict | None:
         return None
 
 
+def _content_revision(repo: Path, ref: str | None) -> str | None:
+    """Requirement content revision of one source, or None when it is not a requirement source.
+
+    Runtime progress written into the same file (ticked tasks, dev records) is not a
+    requirement change, so every freshness layer has to ask the requirement itself.
+    """
+    if not ref:
+        return None
+    try:
+        import requirement_identity
+    except ImportError:  # pragma: no cover - import shim only
+        import importlib.util as _ilu
+        _spec = _ilu.spec_from_file_location(
+            "requirement_identity", Path(__file__).resolve().parent / "requirement_identity.py")
+        requirement_identity = _ilu.module_from_spec(_spec)
+        _spec.loader.exec_module(requirement_identity)
+    try:
+        resolved = requirement_identity.requirement_content_revision(repo, resolve_ref(repo, ref))
+    except Exception:
+        return None
+    return resolved.get("source_revision") if isinstance(resolved, dict) else None
+
+
 def semantic_complete(impact: dict | None) -> bool:
     if not isinstance(impact, dict):
         return False
@@ -157,6 +180,15 @@ def bind_analysis(repo: Path, analysis: dict) -> dict:
     binding = {"repository_snapshot_id": snapshots.fingerprint(repo), "authority_hashes": hashes,
                "comparison_basis": comparison,
                "decision_status": (decision or {}).get("status"), "semantic_complete": complete}
+    # Where a bound authority is a requirement source, its content revision is recorded too, so
+    # that freshness later asks the requirement what changed instead of hashing the whole file.
+    revisions = {}
+    for ref in sorted(set(refs)):
+        revision = _content_revision(repo, ref)
+        if revision:
+            revisions[ref] = revision
+    if revisions:
+        binding["content_revisions"] = revisions
     # Caller-supplied analysis IDs can be reused even when requirements or policy
     # content changes. Gate/review/verification evidence must bind to actual inputs.
     binding["evidence_snapshot_id"] = hashlib.sha256(json.dumps({
@@ -242,8 +274,16 @@ def collect_evidence(repo: Path | None, state: dict | None) -> dict:
         and comparison == snapshots.comparison_basis(repo, comparison.get("base_ref"))
     )
     hashes = analysis.get("authority_hashes") or {}
+    content_revisions = analysis.get("content_revisions") or {}
     stale_authorities = []
     for ref, expected in hashes.items():
+        expected_revision = content_revisions.get(ref)
+        if expected_revision:
+            # Where the source publishes a requirement content revision, that revision decides
+            # freshness: ticking a task checkbox is runtime progress, not a requirement change.
+            if _content_revision(repo, ref) != expected_revision:
+                stale_authorities.append(ref)
+            continue
         try:
             actual = snapshots.digest_path(resolve_ref(repo, ref))
         except OSError:
@@ -257,6 +297,10 @@ def collect_evidence(repo: Path | None, state: dict | None) -> dict:
     for src in (manifest or {}).get("sources", []):
         if src.get("id") in {"execution_state", "execution_history"}:
             continue  # current state is supplied directly, not trusted through a projection
+        if src.get("content_revision"):
+            if _content_revision(repo, src.get("ref")) != src.get("content_revision"):
+                stale_sources.append(src.get("id"))
+            continue
         try:
             actual = snapshots.digest_path(resolve_ref(repo, src["ref"]))
         except (OSError, KeyError, TypeError):
@@ -308,43 +352,84 @@ def _revalidate_bound_evidence(repo: Path, state: dict, evidence: dict) -> None:
     never scanned. Unverifiable evidence is reported as unverified, never silently trusted.
     An unverified record is not invalid: it simply cannot support a judgement, so the
     consumer decides whether that judgement was required.
+
+    The results of *this* run, keyed by evidence id, are what the authorization decision
+    consumes. A verdict that was recorded when the evidence was written is history, not a
+    current result.
     """
     evidence["evidence_invalid"] = []
     evidence["evidence_unverified"] = []
+    evidence["evidence_invalid_audit"] = []
+    results: dict[str, Any] = {}
     records = (state.get("evidence") or {}).get("records") or []
     work_item = (state.get("work_item") or {})
     # Identity lives under `work_item`; a missing scope is a failure, not permission skipped.
     work_item_id = work_item.get("id") or state.get("work_item_id")
     requirement_revision = work_item.get("requirement_revision")
+    policy = evidence_provenance.load_policy(repo)
+    # Only what is in force now can block an action. A record that a key already replaced by a
+    # newer one is kept for audit; it must not keep denying work that was re-evidenced.
+    # Anything no binding speaks for is still in force: it was recorded as evidence of
+    # something, and there is nothing to say it was superseded.
+    bound_ids = {str(entry.get("evidence_id"))
+                 for entry in (state.get("readiness_evidence") or {}).values()
+                 if isinstance(entry, dict) and entry.get("evidence_id")}
+
+    def _result(record: dict) -> dict:
+        try:
+            return evidence_provenance.revalidate(
+                repo, record, state=state, policy=policy, work_item_id=work_item_id,
+                requirement_revision=requirement_revision)
+        except (OSError, ValueError, TypeError):
+            return {"evidence_id": record.get("evidence_id"),
+                    "reason_code": "EVIDENCE_REPORT_UNPARSABLE",
+                    "validation_status": "invalid"}
+
+    # A record that a key has already replaced by a newer one is kept for audit only: it must
+    # not keep denying work that was re-evidenced. "Replaced" means a later record of the same
+    # claim is the one the state binds now. A record no binding speaks for is still in force.
+    checked: list[tuple[dict, dict]] = []
     for record in records:
         if not isinstance(record, dict):
             continue
-        try:
-            result = evidence_provenance.revalidate(
-                repo, record, state=state, work_item_id=work_item_id,
-                requirement_revision=requirement_revision)
-        except (OSError, ValueError, TypeError):
-            evidence["evidence_invalid"].append(
-                {"evidence_id": record.get("evidence_id"), "reason_code": "EVIDENCE_REPORT_UNPARSABLE"})
-            continue
+        result = _result(record)
+        ident = str(result.get("evidence_id"))
+        results[ident] = result
+        checked.append((record, {**result, "evidence_id": ident}))
+    bound_positions = {i for i, (_, r) in enumerate(checked) if r["evidence_id"] in bound_ids}
+    for index, (record, result) in enumerate(checked):
+        claim = str(record.get("claim_type") or "")
+        ident = str(result["evidence_id"])
+        replaced = any(
+            position in bound_positions
+            and str(records[position].get("claim_type") or "") == claim
+            and str(records[position].get("work_item_id") or "") == str(record.get("work_item_id") or "")
+            for position in range(index + 1, len(checked)))
         entry = {
-            "evidence_id": result.get("evidence_id"),
-            "claim_type": result.get("claim_type"),
-            "kind": result.get("kind"),
-            "outcome": result.get("outcome"),
+            "evidence_id": ident,
+            "claim_type": result.get("claim_type") or record.get("claim_type"),
+            "kind": result.get("kind") or record.get("kind"),
+            "outcome": result.get("outcome") or record.get("outcome"),
             "reason_code": result.get("reason_code"),
         }
         if result.get("validation_status") == "invalid":
-            evidence["evidence_invalid"].append(entry)
+            if not bound_ids or ident in bound_ids or not replaced:
+                evidence["evidence_invalid"].append(entry)
+            else:
+                evidence["evidence_invalid_audit"].append(entry)
         elif result.get("validation_status") == "unverified":
             evidence["evidence_unverified"].append(entry)
+    evidence["evidence_results"] = results
+    evidence["evidence_policy"] = policy
 
 
-def unsupported_readiness(state: dict | None) -> list[dict[str, Any]]:
+def unsupported_readiness(state: dict | None, results: dict | None = None) -> list[dict[str, Any]]:
     """Readiness facts that are true without verified evidence backing them right now.
 
     A readiness fact is a judgement, so it is only worth its last verification: both the
-    binding to this key and the verification result are re-read here.
+    binding to this key and the verification result are re-read here. `results` are the
+    revalidations of this run; without them the stored verdict is all there is, and a
+    stored verdict is history, never a current result.
     """
     if not state:
         return []
@@ -359,12 +444,15 @@ def unsupported_readiness(state: dict | None) -> list[dict[str, Any]]:
             unsupported.append({"key": key, "error": "READINESS_WITHOUT_EVIDENCE",
                                 "message": f"{key!r} is true but no evidence is bound to it"})
             continue
-        decision = ep.readiness_decision(key, {
-            "kind": entry.get("kind"),
-            "claim_type": entry.get("claim_type"),
-            "validation_status": entry.get("validation_status"),
-            "outcome": entry.get("outcome"),
-        })
+        current = (results or {}).get(str(entry.get("evidence_id")))
+        if current is None and results is not None:
+            unsupported.append({"key": key, "error": "EVIDENCE_UNVERIFIED",
+                                "message": (f"the evidence bound to {key!r} was not re-checked at "
+                                            "use time; a recorded verdict is not a current result"),
+                                "evidence_id": entry.get("evidence_id")})
+            continue
+        source = current if isinstance(current, dict) else entry
+        decision = ep.readiness_decision(key, source)
         if not decision["allowed"]:
             unsupported.append({"key": key, "error": decision["error"],
                                 "message": decision["message"],
@@ -417,7 +505,24 @@ def evaluate(state: dict | None, action: str, *, evidence: dict | None = None,
             deny("BOOTSTRAP_UNRESOLVED", facts["bootstrap_error"], "resolve_init_ambiguity")
         guarded = action in {"mutate_code", "close"} or phase in GUARDED_PHASES
         if guarded:
+            # A tracked inner-loop mutation is the agent's own work: the code a readiness claim
+            # described has moved by definition, so its drift must surface as analysis dirt
+            # (blocking advance, close and verify) instead of deadlocking the loop on the very
+            # next edit. Anything else the evidence fails on still denies.
+            enf = state.get("enforcement") or {}
+            inner_loop = (action == "mutate_code" and bool(enf.get("dirty"))
+                          and enf.get("last_event") == "mutation"
+                          and enf.get("last_mutation_snapshot_id") == facts.get("repository_snapshot_id"))
+            results = facts.get("evidence_results") or {}
+
+            def drift_caused(entry: dict) -> bool:
+                result = results.get(str(entry.get("evidence_id"))) or {}
+                return result.get("reason_code") == "EVIDENCE_DEPENDENCY_DRIFT" \
+                    or entry.get("reason_code") == "EVIDENCE_DEPENDENCY_DRIFT"
+
             invalid_evidence = facts.get("evidence_invalid") or []
+            if inner_loop:
+                invalid_evidence = [e for e in invalid_evidence if not drift_caused(e)]
             if invalid_evidence:
                 failed = invalid_evidence[0]
                 deny(
@@ -443,6 +548,8 @@ def evaluate(state: dict | None, action: str, *, evidence: dict | None = None,
             unsupported = facts.get("readiness_unsupported")
             if unsupported is None:
                 unsupported = unsupported_readiness(state)
+            if inner_loop:
+                unsupported = [e for e in unsupported if not drift_caused(e)]
             for item in unsupported:
                 deny(
                     "READINESS_UNSUPPORTED",

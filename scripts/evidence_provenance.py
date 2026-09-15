@@ -102,7 +102,10 @@ _REASONS = {
     "EVIDENCE_APPROVAL_UNRESOLVED",
     "EVIDENCE_APPROVAL_NOT_FOUND",
     "EVIDENCE_APPROVAL_SUBJECT_MISMATCH",
+    "EVIDENCE_APPROVAL_REVISION_MISMATCH",
     "EVIDENCE_APPROVER_NOT_AUTHORIZED",
+    "EVIDENCE_OBJECT_MISSING",
+    "EVIDENCE_DEPENDENCY_OBJECT_CONFLICT",
     "EVIDENCE_NATIVE_UNRESOLVED",
     "EVIDENCE_NATIVE_REVISION_MISMATCH",
     "EVIDENCE_SNAPSHOT_STALE",
@@ -118,6 +121,53 @@ AUDIT_FIELDS = {"validation_status", "reason_code", "checked_at", "missing_depen
 
 class EvidenceConflict(Exception):
     """The same evidence identity was claimed twice with different content."""
+
+
+# --- project policy ------------------------------------------------------------------
+
+POLICY_RELS = (".orchestrator/policies/evidence.yaml",
+               ".orchestrator/policies/manifest.yaml",
+               ".orchestrator/config.yaml")
+
+
+def load_policy(repo: Path | None) -> Optional[Dict[str, Any]]:
+    """Read the project's evidence policy, if it publishes one.
+
+    A missing policy is never "no policy": consumers must pass what the project declares so
+    that approval authorities and mandatory objects actually reach verification.
+    """
+    if repo is None:
+        return None
+    root = Path(repo).resolve()
+    for rel in POLICY_RELS:
+        doc = _read_doc(root, rel)
+        if not isinstance(doc, dict):
+            continue
+        orch = doc.get("orchestrator") if isinstance(doc.get("orchestrator"), dict) else doc
+        section = orch.get("evidence") if isinstance(orch, dict) else None
+        if isinstance(section, dict):
+            return {"evidence": section, "policy_ref": rel}
+    return None
+
+
+def required_objects(*, claim_type: str, policy: dict | None = None) -> List[Dict[str, str]]:
+    """Concrete objects the project mandates for a conclusion type, in addition to the kinds.
+
+    Kinds only say "some code under test"; a project may require the real one. Callers may
+    add objects, never remove them.
+    """
+    section = ((policy or {}).get("evidence") or {}).get("required_objects")
+    if not isinstance(section, dict):
+        return []
+    entries = section.get(claim_type)
+    if not isinstance(entries, list):
+        return []
+    out: List[Dict[str, str]] = []
+    for item in entries:
+        if isinstance(item, dict) and item.get("object_kind") and item.get("object_id"):
+            out.append({"object_kind": str(item["object_kind"]),
+                        "object_id": str(item["object_id"])})
+    return out
 
 
 def _loaded(name: str):
@@ -497,7 +547,10 @@ def _collect_native(repo: Path, record: Dict[str, Any], *, state: dict | None = 
         "available": True,
         "source": projection.source_ref,
         "revision": projection.native_state_revision,
+        # Two different identities: the id the native source addresses this work item with,
+        # and the local governance id it is projected onto. They are never interchangeable.
         "work_item_id": projection.work_item_id,
+        "local_work_item_id": projection.local_work_item_id,
         "phase": projection.phase,
         "status_detail": projection.status_detail,
     }
@@ -609,8 +662,10 @@ def verify(record: Dict[str, Any], *, inputs: Dict[str, Any], policy: dict | Non
     # same as "no scope check needed": consumers must pass their real identifiers.
     if work_item_id is not None and record.get("work_item_id") != work_item_id:
         return invalid("EVIDENCE_SCOPE_MISMATCH")
+    # A record that omits the revision is not "unscoped": the consumer's revision is the
+    # scope, and an empty identity can never be equal to it.
     declared_revision = record.get("requirement_revision")
-    if declared_revision and declared_revision != requirement_revision:
+    if requirement_revision and str(declared_revision or "") != str(requirement_revision):
         return invalid("EVIDENCE_SCOPE_MISMATCH")
 
     # Fixture identities never enter a production judgement.
@@ -659,6 +714,27 @@ def verify(record: Dict[str, Any], *, inputs: Dict[str, Any], policy: dict | Non
             result["drifted_dependency"] = f"{dep.get('object_kind')}::{dep.get('object_id')}"
             return invalid("EVIDENCE_DEPENDENCY_DRIFT")
 
+    # Mandatory concrete objects: a project may require the real code under test, not just
+    # "some code". Kinds remain the floor; the policy may only add objects.
+    for obj in required_objects(claim_type=claim_type, policy=policy):
+        if not any(str(d.get("object_kind")) == obj["object_kind"]
+                   and str(d.get("object_id")) == obj["object_id"] for d in depends_on):
+            result["missing_object"] = obj
+            return invalid("EVIDENCE_OBJECT_MISSING")
+
+    # The object under test is not the requirement document. A claim may not satisfy both
+    # dependencies with the same file: that would verify nothing.
+    observed_refs: Dict[str, str] = {}
+    for dep in depends_on:
+        observed = _dependency_observation(dep, inputs) or {}
+        if observed.get("object_ref"):
+            observed_refs[str(dep.get("object_kind"))] = str(observed["object_ref"])
+    code_ref = observed_refs.get("code_under_test")
+    requirement_ref = observed_refs.get("requirement_revision")
+    if code_ref and requirement_ref and code_ref == requirement_ref:
+        result["conflicting_object"] = code_ref
+        return invalid("EVIDENCE_DEPENDENCY_OBJECT_CONFLICT")
+
     # Report binding: claimed outcome must match the report that was actually produced.
     report = record.get("report")
     if report:
@@ -706,6 +782,10 @@ def verify(record: Dict[str, Any], *, inputs: Dict[str, Any], policy: dict | Non
             return unverified(observed.get("error") or "EVIDENCE_APPROVAL_UNRESOLVED")
         if observed.get("error"):
             return unverified(observed["error"])
+        # An approval without an approver is not an approval: no subject means no authority,
+        # and a missing name must never default to valid.
+        if not str(observed.get("approver") or "").strip():
+            return unverified("EVIDENCE_APPROVER_NOT_AUTHORIZED")
         authorities = ((policy or {}).get("evidence") or {}).get("approval_authorities")
         if isinstance(authorities, list) and authorities:
             approver = str(observed.get("approver") or "")
@@ -714,6 +794,17 @@ def verify(record: Dict[str, Any], *, inputs: Dict[str, Any], policy: dict | Non
         elif str(observed.get("approver") or "") == str(record.get("producer") or ""):
             # Self-approval declares itself; it cannot be the authority it claims.
             return unverified("EVIDENCE_APPROVER_NOT_AUTHORIZED")
+        # The approval must be about *this* work item, not merely about whatever subject the
+        # claim named. A file that exists is not yet an approval for the object being judged.
+        if work_item_id and str(observed.get("subject") or "") \
+                and str(observed.get("subject")) != str(work_item_id):
+            return unverified("EVIDENCE_APPROVAL_SUBJECT_MISMATCH")
+        # And it must have been issued for the revision that is active now.
+        approval_revision = observed.get("requirement_revision")
+        if requirement_revision and approval_revision \
+                and str(approval_revision) != str(requirement_revision):
+            result["approval_revision"] = approval_revision
+            return unverified("EVIDENCE_APPROVAL_REVISION_MISMATCH")
         if str(observed.get("decision") or "").lower() not in {"approved", "accepted", "passed"} \
                 and result["outcome"] in SUCCESS_OUTCOMES:
             return unverified("EVIDENCE_APPROVAL_SUBJECT_MISMATCH")
@@ -726,7 +817,12 @@ def verify(record: Dict[str, Any], *, inputs: Dict[str, Any], policy: dict | Non
             return unverified(observed.get("error") or "EVIDENCE_NATIVE_UNRESOLVED")
         if observed.get("error"):
             return unverified(observed["error"])
-        if work_item_id and observed.get("work_item_id") not in {None, work_item_id}:
+        # Local and native identities are different categories. The projection must be the one
+        # produced for this local work item; its native id is what the native source knows.
+        local_id = observed.get("local_work_item_id")
+        if work_item_id and local_id and str(local_id) != str(work_item_id):
+            return unverified("EVIDENCE_SCOPE_MISMATCH")
+        if work_item_id and not local_id and observed.get("work_item_id") not in {None, work_item_id}:
             return unverified("EVIDENCE_SCOPE_MISMATCH")
 
     if unproven:
@@ -795,13 +891,42 @@ def persist_raw_record(repo: Path, record: Dict[str, Any]) -> Dict[str, Any]:
     return payload
 
 
+def _check_files(repo: Path, ident: str) -> List[Tuple[str, int, str, Dict[str, Any]]]:
+    """All checks of one record, ordered by (checked_at, sequence, name).
+
+    Ordering by a hash of the timestamp would be ordering by noise: two checks one second
+    apart can sort in any direction. The sequence is what makes the order real.
+    """
+    directory = checks_dir(repo)
+    if not directory.exists():
+        return []
+    entries: List[Tuple[str, int, str, Dict[str, Any]]] = []
+    for path in directory.glob(f"{ident}.*.json"):
+        parts = path.stem.split(".")
+        seq = int(parts[1]) if len(parts) >= 2 and parts[1].isdigit() else -1
+        doc = _read_json(path)
+        if doc is None:
+            continue
+        entries.append((str(doc.get("checked_at") or ""), seq, path.name, doc))
+    entries.sort(key=lambda item: (item[0], item[1], item[2]))
+    return entries
+
+
 def persist_check(repo: Path, result: Dict[str, Any], *, checked_at: str) -> Path:
-    """Write this run's validation outcome. Checks are append-only, never overwriting."""
+    """Write this run's validation outcome. Checks are append-only, never overwriting.
+
+    Two checks taken at the same instant are two events: each gets its own sequence, so a
+    later result can never overwrite an earlier one.
+    """
     check = {k: v for k, v in result.items() if k != "checked_at"}
     check["checked_at"] = checked_at
     ident = str(check.get("evidence_id") or "unknown")
-    stamp = hashlib.sha256(checked_at.encode("utf-8")).hexdigest()[:8]
-    path = checks_dir(repo) / f"{ident}.{stamp}.json"
+    existing = _check_files(repo, ident)
+    seq = (existing[-1][1] + 1) if existing else 1
+    stamp = hashlib.sha256(
+        f"{checked_at}\n{seq}\n{json.dumps(check, ensure_ascii=False, sort_keys=True)}"
+        .encode("utf-8")).hexdigest()[:8]
+    path = checks_dir(repo) / f"{ident}.{seq:08d}.{stamp}.json"
     _atomic_write(path, check)
     return path
 
@@ -823,13 +948,20 @@ def load_records(repo: Path) -> Dict[str, Dict[str, Any]]:
 
 
 def latest_check(repo: Path, evidence_id_: str) -> Optional[Dict[str, Any]]:
-    directory = checks_dir(repo)
-    if not directory.exists():
+    entries = _check_files(repo, evidence_id_)
+    return entries[-1][3] if entries else None
+
+
+def latest_check_path(repo: Path, evidence_id_: str) -> Optional[str]:
+    """Where the newest check of this record lives, relative to the project root."""
+    entries = _check_files(repo, evidence_id_)
+    if not entries:
         return None
-    candidates = sorted(directory.glob(f"{evidence_id_}.*.json"))
-    if not candidates:
-        return None
-    return _read_json(candidates[-1])
+    root = Path(repo).resolve()
+    try:
+        return (checks_dir(root) / entries[-1][2]).relative_to(root).as_posix()
+    except (OSError, ValueError):  # pragma: no cover - defensive
+        return f"{CHECKS_DIR}/{entries[-1][2]}"
 
 
 def store_evidence(repo: Path, record: Dict[str, Any], *, checked_at: str,
@@ -840,8 +972,8 @@ def store_evidence(repo: Path, record: Dict[str, Any], *, checked_at: str,
     payload = persist_raw_record(repo, record)
     result = revalidate(repo, record, policy=policy, state=state, work_item_id=work_item_id,
                         requirement_revision=requirement_revision)
-    persist_check(repo, result, checked_at=checked_at)
-    _refresh_index_entry(repo, payload, result, checked_at)
+    check_path = persist_check(repo, result, checked_at=checked_at)
+    _refresh_index_entry(repo, payload, result, checked_at, check_path=check_path)
     return {"record": payload, "check": result}
 
 
@@ -853,12 +985,14 @@ def persist_verification(repo: Path, record: Dict[str, Any], *, checked_at: str,
 
 
 def _refresh_index_entry(repo: Path, record: Dict[str, Any], result: Dict[str, Any],
-                         checked_at: str) -> None:
+                         checked_at: str, *, check_path: Path | None = None) -> None:
     index_path = Path(repo).resolve() / INDEX_REL
     index = _read_json(index_path) or {"schema_version": 2, "records": {}}
     index.setdefault("schema_version", 2)
     index.setdefault("records", {})
     ident = str(record["evidence_id"])
+    root = Path(repo).resolve()
+    relative = _relative(root, check_path)
     index["records"][ident] = {
         "work_item_id": record.get("work_item_id"),
         "claim_type": record.get("claim_type"),
@@ -868,9 +1002,18 @@ def _refresh_index_entry(repo: Path, record: Dict[str, Any], result: Dict[str, A
         "reason_code": result.get("reason_code"),
         "checked_at": checked_at,
         "path": f"{RECORDS_DIR}/{ident}.json",
-        "check_path": f"{CHECKS_DIR}/{ident}.{hashlib.sha256(checked_at.encode('utf-8')).hexdigest()[:8]}.json",
+        "check_path": relative or latest_check_path(root, ident),
     }
     _atomic_write(index_path, index)
+
+
+def _relative(root: Path, path: Path | None) -> Optional[str]:
+    if path is None:
+        return None
+    try:
+        return Path(path).resolve().relative_to(root).as_posix()
+    except (OSError, ValueError):  # pragma: no cover - defensive
+        return f"{CHECKS_DIR}/{Path(path).name}"
 
 
 def rebuild_index(repo: Path) -> Dict[str, Any]:
@@ -891,13 +1034,12 @@ def rebuild_index(repo: Path) -> Dict[str, Any]:
         }
         check = latest_check(root, ident)
         if check:
-            check_path = checks_dir(root).relative_to(root).as_posix()
             records[ident].update({
                 "validation_status": check.get("validation_status"),
                 "outcome": check.get("outcome"),
                 "reason_code": check.get("reason_code"),
                 "checked_at": check.get("checked_at"),
-                "check_path": f"{check_path}/{ident}.{hashlib.sha256(str(check.get('checked_at')).encode('utf-8')).hexdigest()[:8]}.json",
+                "check_path": latest_check_path(root, ident),
             })
     index = {"schema_version": 2, "records": records}
     _atomic_write(root / INDEX_REL, index)

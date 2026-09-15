@@ -153,12 +153,26 @@ class FactExtractorTests(unittest.TestCase):
 
 
 class StrictEvidenceTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.repo = pathlib.Path(self.tmp.name)
+        sh(self.repo, "git", "init", "-q")
+        sh(self.repo, "git", "config", "user.email", "test@example.com")
+        sh(self.repo, "git", "config", "user.name", "Test")
+        (self.repo / "README.md").write_text("fixture project\n")
+        sh(self.repo, "git", "add", ".")
+        sh(self.repo, "git", "commit", "-qm", "base")
+
     def complete_facts(self):
+        """Facts whose provenance was really resolved: a false carries a search that re-runs."""
         facts = json.loads((ROOT / "examples" / "work-facts-trivial.json").read_text())
         facts["provenance"] = {}
+        resolutions = []
         for path in decision.REQUIRED_PATHS:
             value = decision.get_path(facts, path)
             entry = {
+                "path": path,
                 "value": value,
                 "source_type": "fixture",
                 "source": "bounded test fixture",
@@ -166,13 +180,11 @@ class StrictEvidenceTests(unittest.TestCase):
                 "strength": "authoritative",
             }
             if value is False:
-                # A false is only carried by the search that found nothing, never by the
-                # fixture describing itself as authoritative.
-                entry["negative_proof"] = {"ref": f"examples/negative-proof/{path}.json",
-                                           "search": f"no occurrence of {path} in the analyzed content",
-                                           "matches": 0}
-            facts["provenance"][path] = [entry]
-        return facts
+                # A false is only carried by the search that found nothing, and that search has
+                # to be re-runnable against content that really exists, never by a declared ref.
+                entry["negative_proof"] = evidence_factory.negative_proof_entry(self.repo, path)
+            resolutions.append(entry)
+        return resolver.apply_resolutions(facts, {"resolutions": resolutions}, repo=self.repo)
 
     def test_strict_mode_accepts_complete_provenance(self):
         result = decision.classify(self.complete_facts(), strict_evidence=True)
@@ -214,7 +226,7 @@ class StrictEvidenceTests(unittest.TestCase):
                 if value is False:
                     entry["negative_proof"] = evidence_factory.negative_proof_entry(repo, path)
                 resolutions.append(entry)
-            resolved = resolver.apply_resolutions(draft, {"resolutions": resolutions})
+            resolved = resolver.apply_resolutions(draft, {"resolutions": resolutions}, repo=repo)
             result = decision.classify(resolved, strict_evidence=True)
             self.assertEqual("CLASSIFIED", result["status"])
             self.assertEqual("TRIVIAL", result["flow_profile"])
