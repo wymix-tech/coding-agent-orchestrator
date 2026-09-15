@@ -1,13 +1,21 @@
 # Changelog
 
+## 6.5 follow-up — Resume Recovery Paths Are Freshness-Aware
+
+- A rephrased intake now bypasses semantic analysis only when repository, authority, comparison, context, semantic, policy, and enforcement inputs are current. If any input is stale, it refreshes analysis under the same requirement revision and preserves in-flight phase and progress instead of falsely reporting that evidence was reused; a new binding correctly makes prior verification stale.
+- Source-content comparison is independent of request wording. A source change now reaches the revision-confirmation path before any registry baseline is recorded; an unhashable legacy source requires an explicit baseline rather than being assumed unchanged.
+- Recovery actions remain pure in `action_guard.evaluate()`, then `authorize()` renders actual platform-aware front-controller commands with an absolute repository path. This prevents a returned command from being reclassified as production mutation because the launcher is missing from PATH or the host uses another working directory.
+- Native-authority transition denials now return `NATIVE_AUTHORITY_REQUIRED` with recovery. Added `native-sync`, which verifies an in-repository native state reference and its supplied SHA-256 digest before recording the native lifecycle projection; it has no `--native-confirmed` bypass.
+- Updated the runtime guidance, session contract, authorization reference, manifest, and resume regression coverage. The focused suite now covers real classified intake/resume evidence reuse, stale same-revision refresh, actual rendered recovery classification, source-change confirmation, and native sync.
+
 ## 6.5 revision — Resume Must Not Revise, and Denials Must Be Executable
 
 - Fixed a session-ending deadlock found in a real run. An agent resumed an implementation-stage work item with "继续", re-ran `intake`, was told `Requirement content changed`, used `--revise-current`, and silently lost the implementation phase, readiness flags, quality gates, and task progress. The resulting `advance_native_sdd_to_ready` then had no legal CLI path, so the agent could only hand five manual commands back to the operator.
-- `requirement_identity.source_revision_id()` hashes the requirement source document, and `record()`/`last_source_revision()` keep that content revision per requirement. When only the request wording changed, intake now reports `REQUEST_REPHRASED_SOURCE_UNCHANGED`, keeps the existing requirement revision, and invalidates nothing.
+- `requirement_identity.source_revision_id()` hashes the requirement source document, and `record()`/`last_source_revision()` keep that content revision per requirement. A source-stable rephrase keeps the existing requirement revision; later follow-up ensures evidence is reused only when every analyzed input remains current.
 - `intake --revise-current` now refuses to discard in-flight work without `--confirm-reset` (`REVISION_RESET_REQUIRES_CONFIRMATION`), and the plain `REQUIREMENT_REVISION_CHANGED` message names what the reset would discard plus `coding-orchestrator start` as the resume alternative. `_resets_in_flight_work()` treats implementation or later, or any completed task, as in-flight.
 - Added the missing recovery surface to the front controller: `coding-orchestrator readiness`, `coding-orchestrator progress`, and `coding-orchestrator transition`. All three are classified as `prepare`, so they are the supported way to change execution state; direct `execution_state_manager.py` edits stay denied. A denied `transition` now reports `TRANSITION_DENIED` with the authorization and recovery commands instead of raising.
 - `action_guard.RECOVERY_COMMANDS` maps `advance_native_sdd_to_ready`, `define_acceptance_criteria`, `transition_to_implementation`, and `reconfigure_governance_explicitly` to runnable commands. `evaluate()` returns them as `recovery`, `check` prints them, and host `pre_tool` denials append them to the reason so a blocked agent can act immediately.
-- `SKILL.md` states the two rules that were missing: resume never re-intakes, and blocked states are recovered through the CLI. `references/action-authorization.md` documents `recovery`; `MANIFEST.json` lists the new subcommands.
+- `SKILL.md` and the recovery references document the resume and CLI recovery rules; `MANIFEST.json` lists the new subcommands.
 - Added `tests/test_resume_guard.py` (**6 tests**) covering a rephrased resume request, source-change confirmation, the CLI readiness/progress/transition path, `prepare` classification of recovery commands, and recovery output on `SDD_NOT_READY`.
 
 ## 6.5 revision — Content Snapshots Independent of Git Commits

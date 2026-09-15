@@ -6,7 +6,7 @@
   "provider_count": 1,
   "policy_layer": "project-owned engineering policy with optional ECC external guidance",
   "governance_authority": "orchestrator",
-  "test_count": 284,
+  "test_count": 293,
   "key_entrypoints": [
     "scripts/project_discovery.py",
     "scripts/project_bootstrap.py",
@@ -49,7 +49,7 @@
   "enforcement_kernel": "scripts/enforcement_kernel.py",
   "session_context": "JSON canonical bootstrap/handoff + YAML config + Markdown prompt projection",
   "project_bootstrap": "self-bootstrap guard + current-Agent host selection/reconciliation + safe-auto discovery + idempotent initialization + no fake active work item",
-  "unified_cli": "coding-orchestrator: init/discover/doctor/where/status/start/intake/resume/check/verify/readiness/progress/transition/provider status|reset/host install",
+  "unified_cli": "coding-orchestrator: init/discover/doctor/where/status/start/intake/resume/check/verify/readiness/progress/transition/native-sync/provider status|reset/host install",
   "context_loading": "small SKILL runtime router + lazy 1–2 reference retrieval; heavy corpus remains non-resident",
   "project_activation": "managed AGENTS.md / CLAUDE.md activation stubs + current-Agent adapter selection (Pi/Codex runtime signals, Claude Code fallback) + host switching reconciliation; project truth remains in .orchestrator/ and authoritative sources",
   "readme_layout": {
@@ -62,7 +62,7 @@
     "READY_FOR_WORK"
   ],
   "start_intent_router": "bare start/resume/continue intents resolve authoritative project state; zero requirements asks, one high-confidence requirement auto-intakes, multiple candidates require selection",
-  "resume_guard": "a rephrased request never revises a source-backed requirement; revising an in-flight work item requires --revise-current --confirm-reset; readiness/progress/transition are CLI-only and every denial prints its recovery commands",
+  "resume_guard": "a rephrased request preserves a source-backed requirement revision; fresh analysis is reused and stale inputs refresh analysis without resetting in-flight state; source changes require --revise-current --confirm-reset; readiness/progress/transition/native-sync are CLI-only and every denial renders recovery commands with the resolved runtime and absolute repository",
   "action_authorization": "One pure evaluator with live evidence collection; read/prepare/mutate_code/mutate_governance/advance/close/finish_role shared by state, CLI, start/resume, and host kernel",
   "cbm_cli_compatibility": "verified current schema: detect scope files|impact; coverage requires paths/scopes; schema flags + explicit JSON only when advertised; empty greenfield bypass; persistent provider retry circuit",
   "host_auto_selection": {
@@ -90,10 +90,10 @@
   },
   "repair_validation": {
     "previous_full_baseline": "263/263 PASS before content snapshot revision",
-    "current_discovered_tests": 284,
-    "current_affected_regression": "21 Git snapshot regression tests added; execution pending GitHub Actions",
-    "standard_unittest_current": "PENDING GitHub Actions; local execution environment unavailable for this revision",
-    "context_footprint": "PASS: 104 lines, 7497 bytes, 940 words",
+    "current_discovered_tests": 293,
+    "current_affected_regression": "9 resume recovery regression tests; full suite passes locally.",
+    "standard_unittest_current": "PASS: 293 tests locally (2026-09-15).",
+    "context_footprint": "PASS: 103 lines, 7400 bytes, 918 words (2026-09-15)",
     "external_live_integrations": "CBM upstream source/schema verified at 339b3f4; native binary build failed at link in repair container, so target-binary execution remains required",
     "report": "REPAIR_REPORT.md",
     "runtime_review": "Six 6fec51a review defects corrected; CBM retry tests isolated with fixtures; native Windows host integration remains unverified"

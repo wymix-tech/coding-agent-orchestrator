@@ -26,22 +26,54 @@ ANALYSIS_REFS = ("decision_ref", "semantic_impact_ref", "work_facts_ref", "verif
 # A denial must name the legal way forward. Execution state is not agent-writable, so every
 # readiness/phase recovery has to be expressible as an orchestrator CLI invocation.
 RECOVERY_COMMANDS = {
-    "advance_native_sdd_to_ready": [
-        "coding-orchestrator readiness --key sdd_ready --value true --evidence-ref APPROVED_SPEC_OR_PLAN_PATH",
-        "coding-orchestrator readiness --key acceptance_criteria_present --value true --evidence-ref ACCEPTANCE_CRITERIA_PATH",
-        "coding-orchestrator transition --phase implementation --status in_progress --reason \"planning artifacts are approved\" --evidence-ref APPROVED_PLAN_PATH",
-    ],
-    "define_acceptance_criteria": [
-        "coding-orchestrator readiness --key acceptance_criteria_present --value true --evidence-ref ACCEPTANCE_CRITERIA_PATH",
-    ],
-    "transition_to_implementation": [
-        "coding-orchestrator transition --phase implementation --status in_progress --reason \"planning artifacts are approved\" --evidence-ref APPROVED_PLAN_PATH",
-    ],
-    "reconfigure_governance_explicitly": [
-        "coding-orchestrator readiness --key READINESS_KEY --value true --evidence-ref EVIDENCE_PATH",
-        "coding-orchestrator transition --phase PHASE --status STATUS --reason \"reason for the change\" --evidence-ref EVIDENCE_PATH",
-    ],
+    "advance_native_sdd_to_ready": (
+        ("readiness --key sdd_ready --value true --evidence-ref APPROVED_SPEC_OR_PLAN_PATH",
+         "approved SDD or plan path"),
+        ("readiness --key acceptance_criteria_present --value true --evidence-ref ACCEPTANCE_CRITERIA_PATH",
+         "acceptance criteria path"),
+        ('transition --phase implementation --status in_progress --reason "planning artifacts are approved" --evidence-ref APPROVED_PLAN_PATH',
+         "approved plan path"),
+    ),
+    "define_acceptance_criteria": (
+        ("readiness --key acceptance_criteria_present --value true --evidence-ref ACCEPTANCE_CRITERIA_PATH",
+         "acceptance criteria path"),
+    ),
+    "transition_to_implementation": (
+        ('transition --phase implementation --status in_progress --reason "planning artifacts are approved" --evidence-ref APPROVED_PLAN_PATH',
+         "approved plan path"),
+    ),
+    "advance_native_state": (
+        ("native-sync --phase IMPLEMENTATION_PHASE --status in_progress --native-state-ref BMAD_NATIVE_STATE_PATH --native-revision SHA256_OF_CURRENT_NATIVE_STATE",
+         "a completed native BMAD workflow and its current state file"),
+    ),
+    "reconfigure_governance_explicitly": (
+        ("readiness --key READINESS_KEY --value true --evidence-ref EVIDENCE_PATH",
+         "the approved evidence path"),
+    ),
 }
+
+
+def recovery_actions(reasons: list[dict]) -> list[dict]:
+    """Return pure action descriptors; callers render commands for their runtime."""
+    out = []
+    for reason in reasons:
+        for subcommand, requires in RECOVERY_COMMANDS.get(reason["next_action"], ()):
+            item = {"action": reason["next_action"], "subcommand": subcommand, "requires": requires}
+            if item not in out:
+                out.append(item)
+    return out
+
+
+def render_recovery(repo: Path | None, authorization: dict) -> list[dict]:
+    """Render recovery actions only at the IO boundary, using the real Skill location."""
+    if repo is None:
+        return []
+    try:
+        import skill_runtime
+        return [{**item, "command": skill_runtime.recovery_command(repo, item["subcommand"])}
+                for item in authorization.get("recovery") or []]
+    except Exception:
+        return []
 
 
 def active_blockers(state: dict | None) -> list[dict]:
@@ -351,8 +383,7 @@ def evaluate(state: dict | None, action: str, *, evidence: dict | None = None,
                 deny("VERIFICATION_NOT_PASSED", "Final verification has not passed.", "run_fresh_final_verification")
             if not current or not ver.get("fresh") or not evidence_matches(state, ver):
                 deny("VERIFICATION_STALE", "Final verification is not fresh for the current execution snapshot.", "run_fresh_final_verification")
-    recovery = [command for command in dict.fromkeys(
-        command for reason in reasons for command in RECOVERY_COMMANDS.get(reason["next_action"], []))]
+    recovery = recovery_actions(reasons)
     return {"schema_version": 1, "action": action, "target_phase": "closed" if action == "close" else target_phase,
             "allowed": not reasons, "decision": "deny" if reasons else "allow", "reasons": reasons,
             "reason_codes": list(dict.fromkeys(r["code"] for r in reasons)),
@@ -362,8 +393,11 @@ def evaluate(state: dict | None, action: str, *, evidence: dict | None = None,
 
 def authorize(repo: Path | None, state: dict | None, action: str, **kwargs: Any) -> dict:
     if action in {"read", "prepare"}:
-        return evaluate(state, action, **kwargs)
-    return evaluate(state, action, evidence=collect_evidence(repo, state), **kwargs)
+        result = evaluate(state, action, **kwargs)
+    else:
+        result = evaluate(state, action, evidence=collect_evidence(repo, state), **kwargs)
+    result["recovery"] = render_recovery(repo, result)
+    return result
 
 
 def next_action(state: dict | None, evidence: dict | None = None) -> str:
