@@ -57,6 +57,46 @@ class MixedContentBoundaryTests(unittest.TestCase):
         self.assertNotEqual(before["raw_digest"], after["raw_digest"])
         self.assertIn("Tasks / Subtasks", " ".join(after["runtime_sections"]))
 
+    def test_subsection_of_a_task_section_inherits_runtime_ownership(self):
+        """Tick-boxes live under `### Implementation` inside `## Tasks`, not at the top level."""
+        body = (STORY.format(task="[ ]")
+                .replace("## Tasks / Subtasks\n\n- [ ] [ ]",
+                         "## Tasks\n\n### Implementation\n\n- [ ] write the endpoint"))
+        self._write("docs/story.md", body)
+        before = self._revision("docs/story.md")
+        self.assertIn("Tasks > Implementation", " ".join(before["runtime_sections"]))
+        self._write("docs/story.md", body.replace("- [ ] write the endpoint", "- [x] write the endpoint"))
+        after = self._revision("docs/story.md")
+        self.assertEqual(before["source_revision"], after["source_revision"])
+        self.assertNotEqual(before["raw_digest"], after["raw_digest"])
+
+    def test_status_api_section_is_not_the_runtime_status_section(self):
+        """A section whose title merely contains "Status" is requirement content, exactly."""
+        base = STORY.format(task="[ ]")
+        with_api = base.replace("## Dev Agent Record",
+                                "## Status API\n\nReturn 200 when the token is valid.\n\n## Dev Agent Record")
+        self._write("docs/story.md", base)
+        before = self._revision("docs/story.md")["source_revision"]
+        self._write("docs/story.md", with_api)
+        first = self._revision("docs/story.md")
+        self.assertNotEqual(before, first["source_revision"])
+        self.assertIn("Status API", " ".join(first["requirement_sections"]))
+        self._write("docs/story.md", with_api.replace("Return 200", "Return 500"))
+        self.assertNotEqual(first["source_revision"],
+                            self._revision("docs/story.md")["source_revision"])
+
+    def test_prose_before_the_first_heading_is_requirement_content(self):
+        body = ("As a user I want auditability.\n\n## Acceptance Criteria\n\nEvery change is logged.\n"
+                "\n## Tasks\n\n- [ ] log rotation\n")
+        self._write("docs/story.md", body)
+        result = self._revision("docs/story.md")
+        self.assertTrue(result["source_revision"])
+        self.assertTrue(result["requirement_sections"])
+        self.assertIn("preamble", " ".join(result["requirement_sections"]).lower())
+        self._write("docs/story.md", body.replace("auditability.", "auditability today."))
+        self.assertNotEqual(result["source_revision"],
+                            self._revision("docs/story.md")["source_revision"])
+
     def test_acceptance_criteria_edit_changes_the_requirement_revision(self):
         self._write("docs/story.md", STORY.format(task="[ ]"))
         before = self._revision("docs/story.md")["source_revision"]
@@ -74,14 +114,21 @@ class MixedContentBoundaryTests(unittest.TestCase):
         self._write("docs/story.md", "## Status\n\ndone\n\n## Need1\n\nreal requirement\n")
         result = self._revision("docs/story.md", boundary={"runtime_sections": ["Status"]})
         self.assertTrue(result["source_revision"])
-        self.assertEqual(["docs/story.md:Status"], result["runtime_sections"])
+        self.assertIn("Status", " ".join(result["runtime_sections"]))
 
     def test_unknown_section_is_kept_and_reported(self):
-        self._write("docs/story.md", STORY.format(task="[ ]") + "\n## Mystery Section\n\nsurprise\n")
+        """An unknown heading is never dropped: it stays content and is reported as unmapped."""
+        body = ("## Mystery Section\n\nsurprise\n\n## Acceptance Criteria\n\nmust hold\n"
+                "\n## Tasks\n\n- [ ] do it\n")
+        self._write("docs/story.md", body)
         result = self._revision("docs/story.md")
         self.assertTrue(result["source_revision"])
         self.assertEqual("SOURCE_SECTION_UNMAPPED", result["diagnostics"][0]["code"])
-        self.assertIn("Mystery Section", result["diagnostics"][0]["headings"])
+        headings = " ".join(str(entry.get("heading")) for entry in result["diagnostics"][0]["headings"])
+        self.assertIn("Mystery Section", headings)
+        # Keeping it means its text is part of the requirement content: edit it, revision moves.
+        self._write("docs/story.md", body.replace("surprise", "surprise two"))
+        self.assertNotEqual(result["source_revision"], self._revision("docs/story.md")["source_revision"])
 
     def test_plain_document_keeps_whole_file_semantics(self):
         self._write("docs/spec.md", "# Spec\n\nLogin with JWT.\n")

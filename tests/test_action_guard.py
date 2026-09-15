@@ -20,6 +20,7 @@ import start_router
 import tool_actions
 from governance_fixture import refresh_context
 from test_enforcement_kernel import EnforcementFixture
+import evidence_factory
 
 
 class ActionGuardTests(unittest.TestCase):
@@ -48,7 +49,7 @@ class ActionGuardTests(unittest.TestCase):
 
     def ready(self):
         for key in ("implementation_tasks_complete", "acceptance_satisfied"):
-            sm.set_readiness(self.fx.state_path, key, True, "test", "evidence")
+            evidence_factory.establish_readiness(self.fx.state_path, key, repo=self.fx.repo)
         sm.record_review(self.fx.state_path, "passed", "reviewer", evidence_ref="review")
         sm.record_verification(self.fx.state_path, "passed", "verifier", self.state()["execution_snapshot_id"], "verification")
 
@@ -93,7 +94,7 @@ class ActionGuardTests(unittest.TestCase):
     def test_needs_evidence_denies_both_code_and_phase_advance(self):
         (self.fx.intake / "decision.json").write_text(json.dumps({"status": "NEEDS_EVIDENCE"}))
         self.reanalyze()
-        sm.set_readiness(self.fx.state_path, "implementation_tasks_complete", True, "test", "tasks")
+        evidence_factory.establish_readiness(self.fx.state_path, "implementation_tasks_complete")
         self.assertTrue(self.state()["enforcement"]["dirty"])
         self.assertEqual("resolve_fact_evidence", sm.resume_summary(self.state(), self.fx.repo)["next_action"])
         for action, kwargs in [("mutate_code", {}), ("advance", {"target_phase": "review"}), ("close", {})]:
@@ -122,9 +123,12 @@ class ActionGuardTests(unittest.TestCase):
         self.assertIn("INVALID_TRANSITION", self.check("advance", target_phase="made_up")["reason_codes"])
 
     def test_native_authority_is_visible_in_the_shared_decision(self):
+        # Readiness is set through the entry point, so the shared decision sees bound evidence
+        # instead of a state file that was edited into readiness.
+        evidence_factory.establish_readiness(self.fx.state_path, "implementation_tasks_complete",
+                                             repo=self.fx.repo)
         state = self.state()
         state["authority"]["mode"] = "native"
-        state["readiness"]["implementation_tasks_complete"] = True
         facts = guard.collect_evidence(self.fx.repo, state)
         denied = guard.evaluate(state, "advance", target_phase="review", evidence=facts)
         self.assertIn("NATIVE_AUTHORITY_REQUIRED", denied["reason_codes"])

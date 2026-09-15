@@ -5,6 +5,8 @@ import subprocess
 import tempfile
 import unittest
 
+import evidence_factory
+
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 
 
@@ -163,6 +165,12 @@ class StrictEvidenceTests(unittest.TestCase):
                 "evidence": "explicit fixture declaration",
                 "strength": "authoritative",
             }
+            if value is False:
+                # A false is only carried by the search that found nothing, never by the
+                # fixture describing itself as authoritative.
+                entry["negative_proof"] = {"ref": f"examples/negative-proof/{path}.json",
+                                           "search": f"no occurrence of {path} in the analyzed content",
+                                           "matches": 0}
             facts["provenance"][path] = [entry]
         return facts
 
@@ -194,14 +202,18 @@ class StrictEvidenceTests(unittest.TestCase):
             for path in decision.REQUIRED_PATHS:
                 if decision.get_path(draft, path) is not None:
                     continue
-                resolutions.append({
+                value = decision.get_path(trivial, path)
+                entry = {
                     "path": path,
-                    "value": decision.get_path(trivial, path),
+                    "value": value,
                     "source_type": "fixture",
                     "source": "bounded authoritative fixture",
                     "evidence": "explicit test declaration",
                     "strength": "authoritative"
-                })
+                }
+                if value is False:
+                    entry["negative_proof"] = evidence_factory.negative_proof_entry(repo, path)
+                resolutions.append(entry)
             resolved = resolver.apply_resolutions(draft, {"resolutions": resolutions})
             result = decision.classify(resolved, strict_evidence=True)
             self.assertEqual("CLASSIFIED", result["status"])

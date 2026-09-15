@@ -22,6 +22,7 @@ import repository_snapshot as snapshots
 import semantic_intake_pipeline as pipeline
 from governance_fixture import refresh_context
 from test_enforcement_kernel import EnforcementFixture
+import evidence_factory
 
 
 def git(repo, *args):
@@ -245,7 +246,7 @@ class CommitAuthorizationTests(unittest.TestCase):
 
     def ready(self):
         for key in ("implementation_tasks_complete", "acceptance_satisfied"):
-            state_manager.set_readiness(self.path, key, True, "test", "evidence")
+            evidence_factory.establish_readiness(self.path, key, repo=self.repo)
         state_manager.record_gate(self.path, "unit", True, "passed", "test", evidence_ref="unit-test-evidence")
         state_manager.record_review(self.path, "passed", "reviewer", evidence_ref="review-evidence")
         state_manager.record_verification(

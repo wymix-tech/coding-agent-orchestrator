@@ -12,6 +12,7 @@ sys.path.insert(0, str(SCRIPTS))
 import context_plane
 import enforcement_kernel as ek
 import execution_state_manager as sm
+import evidence_factory
 
 
 class EnforcementFixture:
@@ -34,8 +35,8 @@ class EnforcementFixture:
         s = sm._load(self.state_path)
         sm.set_enforcement_enabled(self.state_path, True, "test", s["revision"])
         if phase == "implementation":
-            for k, v in [("behavior_change", True), ("acceptance_criteria_present", True), ("sdd_ready", True)]:
-                s = sm._load(self.state_path); sm.set_readiness(self.state_path, k, v, "test", "e", s["revision"])
+            for k in ("behavior_change", "acceptance_criteria_present", "sdd_ready"):
+                evidence_factory.establish_readiness(self.state_path, k, repo=self.repo)
         decision = {"status": "CLASSIFIED" if classified else "NEEDS_EVIDENCE", "flow_profile": "STANDARD" if classified else None}
         (self.intake / "decision.json").write_text(json.dumps(decision), encoding="utf-8")
         (self.intake / "semantic-impact.json").write_text(json.dumps({"snapshot":{"id":"A1"},"changes":{"changed_symbols":[]},"impact":{"impacted_symbol_count":0,"affected_modules":[],"affected_services":[]},"boundaries":{},"completeness":{"complete":True}}), encoding="utf-8")
@@ -106,7 +107,7 @@ class EnforcementKernelTests(unittest.TestCase):
             p=fx.repo/"src/main/java/com/acme/App.java"; p.write_text("class App { int x; }\n",encoding="utf-8")
             ek.handle(fx.repo,"claude-code","post_tool",{"tool_name":"Write","tool_input":{"file_path":str(p)}})
             s=sm._load(fx.state_path)
-            sm.set_readiness(fx.state_path,"implementation_tasks_complete",True,"test","tasks",s["revision"])
+            evidence_factory.establish_readiness(fx.state_path, "implementation_tasks_complete")
             s=sm._load(fx.state_path)
             with self.assertRaises(sm.TransitionDenied):
                 sm.transition(fx.state_path,"review","in_progress","test","review",s["revision"])

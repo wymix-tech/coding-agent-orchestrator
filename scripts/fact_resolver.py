@@ -62,8 +62,12 @@ def validate_resolution(r: Dict[str, Any]) -> None:
         raise ValueError(f"resolution value must be boolean: {path}")
     if r["strength"] not in ALLOWED_STRENGTH:
         raise ValueError(f"resolution strength must be one of {sorted(ALLOWED_STRENGTH)}; heuristic is hint-only")
-    if r["value"] is False and r["strength"] != "authoritative" and not r.get("negative_proof"):
-        raise ValueError(f"false resolution requires negative_proof unless authoritative: {r['path']}")
+    # `authoritative` is a claim about the source, not a proof: a negative fact needs either
+    # negative proof or a verification result, which apply_resolutions checks against the repo.
+    if r["value"] is False and not r.get("negative_proof") and r["strength"] == "authoritative" \
+            and not isinstance(r.get("evidence_record"), dict):
+        raise ValueError(
+            f"false resolution requires negative_proof or a verifiable evidence_record: {r['path']}")
     if r["value"] is None:
         raise ValueError(f"resolution cannot finalize null: {r['path']}")
     for field in ("source_type", "source", "evidence"):
@@ -86,11 +90,18 @@ def _evidence_module():
 
 
 def evidence_validation(resolution: Dict[str, Any], repo: Path | None = None) -> str:
-    """A recorded evidence string is not a verification; only a checked record can be verified."""
+    """A recorded evidence string is not a verification; only a checked record can be verified.
+
+    Without a repo there is nothing to check against, which is `unverified`, never `verified`.
+    """
     record = resolution.get("evidence_record")
     if not isinstance(record, dict) or repo is None:
         return "unverified"
-    result = _evidence_module().revalidate(repo, record)
+    result = _evidence_module().revalidate(
+        repo, record,
+        work_item_id=str(resolution.get("work_item_id") or "") or None,
+        requirement_revision=str(resolution.get("requirement_revision") or "") or None,
+    )
     return str(result.get("validation_status") or "unverified")
 
 
@@ -103,10 +114,13 @@ def apply_resolutions(draft: Dict[str, Any], resolution_doc: Dict[str, Any],
     for r in resolution_doc.get("resolutions", []):
         validate_resolution(r)
         validation = evidence_validation(r, repo)
-        if r.get("strength") == "authoritative" and isinstance(r.get("evidence_record"), dict) \
-                and validation != "verified":
+        has_record = isinstance(r.get("evidence_record"), dict)
+        if r.get("strength") == "authoritative" and has_record and validation != "verified":
             raise ValueError(
                 f"authoritative resolution requires verified evidence, got {validation}: {r['path']}")
+        if r.get("value") is False and not r.get("negative_proof") and validation != "verified":
+            raise ValueError(
+                f"false resolution requires negative_proof or verified evidence, got {validation}: {r['path']}")
         path = r["path"]
         old = get_path(out, path)
         if old is not None and old != r["value"]:
@@ -121,7 +135,12 @@ def apply_resolutions(draft: Dict[str, Any], resolution_doc: Dict[str, Any],
             "evidence": r["evidence"],
             "strength": r["strength"],
             "resolver": r.get("resolver", "semantic_resolver"),
+            # The Decision Engine consumes this, never `strength` alone.
+            "verified_authority": validation == "verified",
+            "verification_status": validation,
         }
+        if isinstance(r.get("evidence_record"), dict):
+            entry["evidence_id"] = r["evidence_record"].get("evidence_id")
         if r.get("negative_proof"):
             entry["negative_proof"] = r["negative_proof"]
         provenance.setdefault(path, []).append(entry)

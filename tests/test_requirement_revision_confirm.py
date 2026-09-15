@@ -28,49 +28,91 @@ class RevisionConfirmationTests(unittest.TestCase):
                   provider="generic", source_path="docs/spec.md", status="active",
                   source_revision=self.source_revision)
 
-    def _check(self, confirmation, *, phase="implementation", status="in_progress", active_revision="rev-active"):
+    def _check(self, confirmation, *, phase="implementation", status="in_progress",
+               active_revision="rev-active", source_revision=None, state_revision="st-1"):
         return ri.check_revision_confirmation(
-            self.repo, requirement_id=REQ, source_revision=self.source_revision,
-            phase=phase, status=status, confirmation=confirmation, active_revision=active_revision)
+            self.repo, requirement_id=REQ,
+            source_revision=source_revision or self.source_revision,
+            phase=phase, status=status, confirmation=confirmation,
+            active_revision=active_revision, state_revision=state_revision)
+
+    def _full(self, **overrides):
+        full = {"requirement_id": REQ, "source_revision": "rev-active",
+                "incoming_source_revision": self.source_revision, "state_revision": "st-1",
+                "phase": "implementation", "status": "in_progress"}
+        full.update(overrides)
+        return full
 
     def test_missing_confirmation_is_refused(self):
         result = self._check(None)
         self.assertFalse(result["allowed"])
         self.assertEqual("REVISION_CONFIRMATION_REQUIRED", result["error"])
+        # A refusal has to be actionable: the command carries every binding it needs.
+        self.assertIn("--confirm-state-revision", result["confirm_command"])
 
     def test_confirmation_for_another_requirement_is_not_reusable(self):
-        result = self._check({"requirement_id": "generic:source:docs/other.md",
-                              "source_revision": "rev-active",
-                              "phase": "implementation", "status": "in_progress"})
+        result = self._check({**self._full(), "requirement_id": "generic:source:docs/other.md"})
         self.assertFalse(result["allowed"])
         self.assertEqual("REVISION_CONFIRMATION_MISMATCH", result["error"])
 
+    def test_every_required_binding_is_checked(self):
+        for missing in ("source_revision", "incoming_source_revision", "state_revision"):
+            confirmation = self._full()
+            confirmation.pop(missing)
+            result = self._check(confirmation)
+            self.assertFalse(result["allowed"], missing)
+            self.assertEqual("REVISION_CONFIRMATION_REQUIRED", result["error"])
+            self.assertIn(missing, result["missing_bindings"])
+
     def test_confirmation_must_be_reissued_after_the_phase_moves(self):
-        result = self._check({"requirement_id": REQ, "source_revision": "rev-active",
-                              "phase": "discovery", "status": "in_progress"})
+        result = self._check({**self._full(), "phase": "discovery"})
         self.assertFalse(result["allowed"])
         self.assertEqual("REVISION_CONFIRMATION_SUPERSEDED", result["error"])
         self.assertEqual("confirm_requirement_revision", result["next_action"])
 
     def test_confirmation_must_be_reissued_after_the_status_moves(self):
-        result = self._check({"requirement_id": REQ, "source_revision": "rev-active",
-                              "phase": "implementation", "status": "blocked"})
+        result = self._check({**self._full(), "status": "blocked"})
         self.assertFalse(result["allowed"])
         self.assertEqual("REVISION_CONFIRMATION_SUPERSEDED", result["error"])
 
     def test_stale_source_revision_is_not_accepted(self):
-        (self.repo / "docs" / "spec.md").write_text("# Spec\n\nlogin with jwt and refresh tokens\n", encoding="utf-8")
-        moved = ri.requirement_content_revision(self.repo, "docs/spec.md")["source_revision"]
-        result = ri.check_revision_confirmation(
-            self.repo, requirement_id=REQ, source_revision=moved, phase="implementation", status="in_progress",
-            confirmation={"requirement_id": REQ, "source_revision": "rev-stale-old",
-                          "phase": "implementation", "status": "in_progress"})
+        result = self._check({**self._full(), "source_revision": "rev-stale-old"})
         self.assertFalse(result["allowed"])
         self.assertEqual("REVISION_CONFIRMATION_SUPERSEDED", result["error"])
 
+    def test_an_old_confirmation_cannot_approve_a_later_source_change(self):
+        """A confirmation approves exactly one incoming revision, not every future one."""
+        self._write_spec("login with jwt and refresh tokens")
+        moved = ri.requirement_content_revision(self.repo, "docs/spec.md")["source_revision"]
+        result = ri.check_revision_confirmation(
+            self.repo, requirement_id=REQ, source_revision=moved, phase="implementation",
+            status="in_progress", active_revision="rev-active", state_revision="st-1",
+            confirmation={"requirement_id": REQ, "source_revision": "rev-active",
+                          "incoming_source_revision": self.source_revision,
+                          "state_revision": "st-1", "phase": "implementation",
+                          "status": "in_progress"})
+        self.assertFalse(result["allowed"])
+        self.assertEqual("REVISION_CONFIRMATION_SUPERSEDED", result["error"])
+        self.assertEqual(moved, result["current_source_revision"])
+
+    def test_progress_inside_the_same_phase_still_needs_reconfirmation(self):
+        """Phase and status are diagnostics; the state revision is what binds the decision."""
+        result = self._check({**self._full(), "state_revision": "st-old"})
+        self.assertFalse(result["allowed"])
+        self.assertEqual("REVISION_CONFIRMATION_SUPERSEDED", result["error"])
+        self.assertEqual("st-1", result["current_state_revision"])
+
+    def test_phase_may_be_omitted_when_the_state_revision_is_bound(self):
+        confirmation = self._full()
+        confirmation.pop("phase")
+        result = self._check(confirmation, phase=None)
+        self.assertTrue(result["allowed"])
+
+    def _write_spec(self, requirement_text):
+        (self.repo / "docs" / "spec.md").write_text(f"# Spec\n\n{requirement_text}\n", encoding="utf-8")
+
     def test_a_properly_bound_confirmation_is_accepted(self):
-        result = self._check({"requirement_id": REQ, "source_revision": "rev-active",
-                              "phase": "implementation", "status": "in_progress"})
+        result = self._check(self._full())
         self.assertTrue(result["allowed"])
 
 

@@ -72,29 +72,98 @@ def _read_source_bytes(repo: Path, source_ref: str) -> tuple[bytes, None] | tupl
         return None, f"{type(exc).__name__}"
 
 
-def _headings(text: str) -> list[tuple[str, str]]:
-    """Split markdown into (heading, body) pairs. Unknown layout yields an empty list."""
-    sections: list[tuple[str, str]] = []
-    current: str | None = None
-    body: list[str] = []
+def _normalize_title(title: str) -> str:
+    """Comparable heading text: case, punctuation and trailing enumeration do not matter."""
+    cleaned = title.replace('`', '').replace('*', '').strip().lower()
+    while cleaned and cleaned[-1] in {':', '.', ')'}:
+        cleaned = cleaned[:-1].strip()
+    return ' '.join(cleaned.split())
+
+
+def _outline(text: str) -> list[dict[str, Any]]:
+    """Parse markdown into a heading tree. Level, parent chain and preamble are preserved.
+
+    Flattening headings loses the only information that distinguishes "## Tasks" from
+    "### Implementation" inside it, and loses prose written before the first heading.
+    """
+    sections: list[dict[str, Any]] = []
+    stack: list[dict[str, Any]] = []
+    preamble: list[str] = []
+    current: dict[str, Any] | None = None
     for line in text.split('\n'):
         stripped = line.strip()
         if stripped.startswith('#') and len(stripped) > 1 and stripped.lstrip('#').startswith((' ', '\t')):
-            if current is not None:
-                sections.append((current, '\n'.join(body)))
-            current = stripped.lstrip('#').strip()
-            body = []
+            level = len(stripped) - len(stripped.lstrip('#'))
+            while stack and stack[-1]['level'] >= level:
+                stack.pop()
+            parent = stack[-1] if stack else None
+            current = {
+                'level': level,
+                'title': stripped.lstrip('#').strip(),
+                'parents': [p['title'] for p in stack],
+                'parent_classification': (parent or {}).get('inherited_classification'),
+                'body': [],
+            }
+            sections.append(current)
+            stack.append(current)
             continue
-        if current is not None:
-            body.append(line)
-    if current is not None:
-        sections.append((current, '\n'.join(body)))
-    return sections
+        target = current['body'] if current is not None else preamble
+        target.append(line)
+    result: list[dict[str, Any]] = []
+    if any(line.strip() for line in preamble):
+        # Prose before the first heading is requirement content, not runtime noise.
+        result.append({'level': 0, 'title': '(preamble)', 'parents': [],
+                       'parent_classification': None, 'body': '\n'.join(preamble)})
+    for section in sections:
+        section['body'] = '\n'.join(section['body'])
+        result.append(section)
+    return result
 
 
-def _matches(title: str, names: tuple[str, ...] | list[str]) -> bool:
-    lowered = title.strip().lower()
-    return any(str(name).strip().lower() in lowered for name in names)
+# Known spellings of one and the same section. A multi-word heading such as
+# "Tasks / Subtasks" still has to match exactly; what must not happen is "Status" claiming
+# "Status API" because it appears somewhere inside it.
+SECTION_ALIASES: dict[str, tuple[str, ...]] = {
+    "tasks": ("tasks", "tasks / subtasks", "tasks and subtasks", "tasks & subtasks", "subtasks",
+              "checklist"),
+    "change log": ("change log", "changelog", "change history"),
+    "dev agent record": ("dev agent record", "dev agent records", "agent model used",
+                         "debug log references", "completion notes list", "implementation notes"),
+    "status": ("status",),
+}
+
+
+def _expand_names(names: tuple[str, ...] | list[str]) -> set[str]:
+    expanded: set[str] = set()
+    for name in names:
+        raw = str(name or "").strip()
+        if not raw:
+            continue
+        normalized = _normalize_title(raw)
+        expanded.add(normalized)
+        expanded.update(_normalize_title(alias) for alias in SECTION_ALIASES.get(normalized, ()))
+    return expanded
+
+
+def _exact_match(title: str, names: tuple[str, ...] | list[str]) -> bool:
+    """Headings are matched in full; a substring like "Status" never claims "Status API"."""
+    return _normalize_title(title) in _expand_names(names)
+
+
+def _classify(section: dict[str, Any], runtime_names: list[str],
+              requirement_names: list[str]) -> tuple[str, str]:
+    """Return (classification, reason) for one heading, honouring parent ownership."""
+    if _exact_match(section['title'], runtime_names):
+        return 'runtime', 'heading matches a runtime section exactly'
+    if _exact_match(section['title'], requirement_names):
+        return 'requirement', 'heading matches a requirement section exactly'
+    if section.get('parent_classification') == 'runtime':
+        # A subsection of "Tasks" carries its parent's runtime ownership: ticking
+        # "### Implementation" under it must never look like a requirement change.
+        return 'runtime', 'inherited from a runtime parent section'
+    if section.get('parent_classification') == 'requirement':
+        return 'requirement', 'inherited from a requirement parent section'
+    return 'requirement', 'unknown heading kept as requirement content (never dropped)'
 
 
 def _requirement_region(repo: Path, source_ref: str, raw: bytes, *, boundary: dict | None) -> dict:
@@ -102,7 +171,8 @@ def _requirement_region(repo: Path, source_ref: str, raw: bytes, *, boundary: di
 
     Runtime sections (task tick-boxes, dev records, change logs) are excluded from the
     content revision; every other section is kept, so content is never silently dropped.
-    An unrecognised layout needs an explicit boundary instead of a broad regex.
+    Unrecognised headings stay in the requirement content and are reported, so a missing
+    boundary declaration is visible instead of changing revisions behind someone's back.
     """
     boundary = boundary or {}
     runtime_names = [str(n) for n in (boundary.get('runtime_sections') or RUNTIME_SECTIONS)]
@@ -112,31 +182,55 @@ def _requirement_region(repo: Path, source_ref: str, raw: bytes, *, boundary: di
     except UnicodeDecodeError:
         return {'error': 'MIXED_CONTENT_UNMAPPED', 'message': 'source is not UTF-8 text; declare an explicit boundary',
                 'next_action': 'configure_content_boundary'}
-    sections = _headings(text)
-    runtime_present = [title for title, _ in sections if _matches(title, runtime_names)]
-    # Only a source that actually mixes runtime progress into the requirement file is split.
-    # A plain requirement document stays whole-file: its content revision never changes shape
-    # for existing records.
-    if not sections or not runtime_present:
+    sections = _outline(text)
+    if not sections:
         return {'content': _canonical_text(text), 'boundary': 'whole_file', 'runtime_sections': [],
                 'requirement_sections': [], 'diagnostics': []}
+    classified: list[tuple[dict[str, Any], str, str]] = []
+    running: dict[int, str | None] = {}
+    for section in sections:
+        inherited = None
+        for level in sorted((lv for lv in running if lv < section['level']), reverse=True):
+            if running[level]:
+                inherited = running[level]
+                break
+        if inherited:
+            section['parent_classification'] = inherited
+        classification, reason = _classify(section, runtime_names, requirement_names)
+        running[section['level']] = classification
+        for level in [lv for lv in running if lv > section['level']]:
+            running.pop(level, None)
+        classified.append((section, classification, reason))
+
+    runtime_present = [s['title'] for s, c, _ in classified if c == 'runtime' and s['level'] > 0
+                       and _exact_match(s['title'], runtime_names)]
+    if not runtime_present:
+        # Nothing mixes runtime progress into this document; keep the historical whole-file
+        # revision so existing baselines stay comparable.
+        return {'content': _canonical_text(text), 'boundary': 'whole_file', 'runtime_sections': [],
+                'requirement_sections': [], 'diagnostics': []}
+
     kept, dropped, unmapped = [], [], []
-    for title, body in sections:
-        if _matches(title, runtime_names):
-            dropped.append(title)
-        else:
-            kept.append((title, body))
-            if not _matches(title, requirement_names) and not _matches(title, runtime_names):
-                unmapped.append(title)
+    for section, classification, reason in classified:
+        path = ' > '.join([*section['parents'], section['title']]).strip()
+        if classification == 'runtime':
+            dropped.append(path)
+            continue
+        kept.append((path, section['body']))
+        if (not _exact_match(section['title'], requirement_names)
+                and 'unknown heading' in reason and section['title'] != '(preamble)'):
+            # Only genuinely unrecognised headings are reported. Sections that inherit their
+            # parent's ownership are understood, they just do not need their own entry.
+            unmapped.append({'heading': path, 'reason': reason})
     if dropped and not kept:
         return {'error': 'MIXED_CONTENT_NO_REQUIREMENT_REGION',
                 'message': 'every section of this source is runtime content; declare an explicit boundary',
                 'next_action': 'configure_content_boundary', 'runtime_sections': dropped}
-    content = '\n\n'.join(f'{title}\n{_canonical_text(body)}' for title, body in kept)
+    content = '\n\n'.join(f'{path}\n{_canonical_text(body)}' for path, body in kept)
     return {
         'content': content,
         'boundary': 'explicit' if boundary else 'default_headings',
-        'requirement_sections': [t for t, _ in kept],
+        'requirement_sections': [path for path, _ in kept],
         'runtime_sections': dropped,
         'diagnostics': [{'code': 'SOURCE_SECTION_UNMAPPED', 'headings': unmapped}] if unmapped else [],
     }
@@ -362,11 +456,6 @@ def last_source_revision(repo: Path, requirement_id: str) -> str | None:
     return str(value) if value else None
 
 
-def processed(repo: Path, requirement_id: str, revision_id: str) -> bool:
-    reg = load_registry(repo)
-    rev = (((reg.get('requirements') or {}).get(requirement_id) or {}).get('revisions') or {}).get(revision_id) or {}
-    return rev.get('status') in {'completed', 'archived'}
-
 
 def is_legacy_entry(entry: dict[str, Any]) -> bool:
     """An entry whose source content revision was never recorded is not migration-free."""
@@ -385,37 +474,157 @@ def mark_legacy(registry: dict[str, Any]) -> dict[str, Any]:
     return registry
 
 
+CONFIRMATION_BINDINGS = ('requirement_id', 'source_revision', 'incoming_source_revision', 'state_revision')
+
+
+def confirmation_command(requirement_id: str, *, active_revision: str | None,
+                         incoming_source_revision: str | None, state_revision: str | None,
+                         phase: str | None = None, status: str | None = None) -> str:
+    """The complete, runnable confirmation command for exactly this move."""
+    parts = [
+        "python3 scripts/coding_orchestrator.py intake",
+        f"--requirement-id {requirement_id or '<requirement-id>'}",
+        "--revise-current --confirm-reset",
+        f"--confirm-revision {active_revision or '<old-active-source-revision>'}",
+        f"--confirm-incoming-revision {incoming_source_revision or '<new-source-revision>'}",
+        f"--confirm-state-revision {state_revision if state_revision is not None else '<observed-state-revision>'}",
+    ]
+    if phase:
+        parts.append(f"--confirm-phase {phase}")
+    if status:
+        parts.append(f"--confirm-status {status}")
+    return " ".join(parts)
+
+
 def check_revision_confirmation(repo: Path, *, requirement_id: str, source_revision: str | None,
                                 phase: str | None, status: str | None,
                                 confirmation: dict[str, Any] | None,
-                                active_revision: str | None = None) -> dict[str, Any]:
-    """A destructive-revision confirmation is valid only for the state it was issued against."""
+                                active_revision: str | None = None,
+                                state_revision: str | None = None) -> dict[str, Any]:
+    """A destructive-revision confirmation is valid only for the exact move it was issued for.
+
+    All four bindings are required: which requirement, which *old* source revision it was
+    issued against, which *incoming* source revision it approves, and which execution state
+    revision was observed. An old confirmation therefore cannot keep approving later source
+    or state changes, and phase/status are diagnostics that never replace the state revision.
+    """
+    def required_shell(error: str, message: str, **extra: Any) -> dict[str, Any]:
+        return {'allowed': False, 'error': error, 'message': message,
+                'required_bindings': list(CONFIRMATION_BINDINGS),
+                'confirm_command': confirmation_command(
+                    requirement_id, active_revision=active_revision or last_source_revision(repo, requirement_id),
+                    incoming_source_revision=source_revision, state_revision=state_revision,
+                    phase=phase, status=status),
+                'next_action': 'confirm_requirement_revision', **extra}
+
     if not confirmation:
-        return {'allowed': False, 'error': 'REVISION_CONFIRMATION_REQUIRED',
-                'message': 'confirming a destructive revision requires --requirement-revision and --current-state.',
-                'next_action': 'confirm_requirement_revision'}
+        return required_shell('REVISION_CONFIRMATION_REQUIRED',
+                              'confirming a destructive revision requires the full binding set.')
     if str(confirmation.get('requirement_id') or '') != str(requirement_id):
-        return {'allowed': False, 'error': 'REVISION_CONFIRMATION_MISMATCH',
-                'message': 'the confirmation was issued for a different requirement.',
-                'next_action': 'confirm_requirement_revision'}
+        return required_shell('REVISION_CONFIRMATION_MISMATCH',
+                              'the confirmation was issued for a different requirement.',
+                              confirmed_requirement_id=confirmation.get('requirement_id'))
+    missing = [name for name in CONFIRMATION_BINDINGS if str(confirmation.get(name) or '') == '']
+    missing = [m for m in missing if m != 'requirement_id']
+    if missing:
+        return required_shell('REVISION_CONFIRMATION_REQUIRED',
+                              'the confirmation is missing required bindings.', missing_bindings=missing)
     recorded = last_source_revision(repo, requirement_id)
-    accepted = {str(value) for value in (source_revision, recorded, active_revision) if value}
-    if source_revision and recorded and str(confirmation.get('source_revision') or '') not in accepted:
-        return {'allowed': False, 'error': 'REVISION_CONFIRMATION_SUPERSEDED',
-                'message': 'the requirement source revision moved after the confirmation was issued.',
-                'confirmed_source_revision': confirmation.get('source_revision'), 'current_source_revision': source_revision,
-                'next_action': 'confirm_requirement_revision'}
+    old_revisions = {str(value) for value in (active_revision, recorded) if value}
+    if old_revisions and str(confirmation.get('source_revision')) not in old_revisions:
+        return required_shell('REVISION_CONFIRMATION_SUPERSEDED',
+                              'the confirmation was issued against an older source revision.',
+                              confirmed_source_revision=confirmation.get('source_revision'),
+                              current_source_revision=source_revision)
+    if source_revision and str(confirmation.get('incoming_source_revision')) != str(source_revision):
+        return required_shell('REVISION_CONFIRMATION_SUPERSEDED',
+                              'the requirement source moved after the confirmation was issued; '
+                              'a confirmation approves one incoming revision only.',
+                              approved_incoming_revision=confirmation.get('incoming_source_revision'),
+                              current_source_revision=source_revision)
+    if state_revision is not None and str(confirmation.get('state_revision')) != str(state_revision):
+        return required_shell('REVISION_CONFIRMATION_SUPERSEDED',
+                              'the execution state moved after the confirmation was issued; '
+                              're-confirm against the current state.',
+                              confirmed_state_revision=confirmation.get('state_revision'),
+                              current_state_revision=state_revision)
+    # Phase and status are diagnostics only: they describe the state, they never replace the
+    # state revision binding, and a mismatch always means re-confirmation.
     if phase is not None and confirmation.get('phase') is not None and str(confirmation.get('phase')) != str(phase):
-        return {'allowed': False, 'error': 'REVISION_CONFIRMATION_SUPERSEDED',
-                'message': 'the work item phase changed after the confirmation was issued; re-confirm against the current state.',
-                'confirmed_phase': confirmation.get('phase'), 'current_phase': phase,
-                'next_action': 'confirm_requirement_revision'}
+        return required_shell('REVISION_CONFIRMATION_SUPERSEDED',
+                              'the work item phase changed after the confirmation was issued.',
+                              confirmed_phase=confirmation.get('phase'), current_phase=phase)
     if status is not None and confirmation.get('status') is not None and str(confirmation.get('status')) != str(status):
-        return {'allowed': False, 'error': 'REVISION_CONFIRMATION_SUPERSEDED',
-                'message': 'the work item status changed after the confirmation was issued; re-confirm against the current state.',
-                'confirmed_status': confirmation.get('status'), 'current_status': status,
-                'next_action': 'confirm_requirement_revision'}
+        return required_shell('REVISION_CONFIRMATION_SUPERSEDED',
+                              'the work item status changed after the confirmation was issued.',
+                              confirmed_status=confirmation.get('status'), current_status=status)
     return {'allowed': True}
+
+
+def historical_mapping(repo: Path, requirement_id: str, *, content_revision: str | None) -> dict[str, Any]:
+    """How pre-migration history relates to the current content revision.
+
+    Migration may never assume that today's file content is the content past work was done
+    against. History is only carried over when it is provable: the recorded raw digest has to
+    match the content now, or the old key has to already be the current content revision.
+    Otherwise the entry stays completed but is marked as awaiting an explicit confirmation,
+    so it is neither silently re-opened nor silently marked done.
+    """
+    reg = load_registry(repo)
+    entry = (reg.get('requirements') or {}).get(requirement_id) or {}
+    revisions = entry.get('revisions') or {}
+    mapping: dict[str, Any] = {
+        'requirement_id': requirement_id,
+        'content_revision': content_revision,
+        'derived_from': None,
+        'justified_by': None,
+        'pending_confirmation': [],
+        'next_action': None,
+    }
+    if not content_revision or not revisions:
+        return mapping
+    direct = revisions.get(content_revision) or {}
+    if direct.get('status') in {'completed', 'archived'}:
+        mapping['derived_from'] = content_revision
+        mapping['justified_by'] = 'direct content revision'
+        return mapping
+    current_raw = None
+    if entry.get('source_path') or entry.get('members'):
+        resolved = requirement_content_revision(Path(repo).resolve(), entry.get('source_path'),
+                                                members=entry.get('members'))
+        current_raw = resolved.get('raw_digest')
+    completed_keys = [key for key, value in revisions.items()
+                      if isinstance(value, dict) and value.get('status') in {'completed', 'archived'}]
+    for key in completed_keys:
+        recorded_raw = (revisions.get(key) or {}).get('raw_digest') or entry.get('baseline_raw_digest')
+        alias = (entry.get('revision_aliases') or {}).get(key)
+        if alias and alias.get('justified') and alias.get('to') == content_revision:
+            mapping['derived_from'] = key
+            mapping['justified_by'] = alias.get('justified_by') or 'recorded migration alias'
+            return mapping
+        if recorded_raw and current_raw and recorded_raw == current_raw:
+            continue
+        mapping['pending_confirmation'].append(key)
+    if mapping['pending_confirmation']:
+        mapping['next_action'] = (
+            f"python3 scripts/requirement_identity.py --repo . --confirm-history "
+            f"{requirement_id} --revision {content_revision}")
+    return mapping
+
+
+def processed(repo: Path, requirement_id: str, revision_id: str) -> bool:
+    """Has this content revision been completed already, without assuming history?"""
+    reg = load_registry(repo)
+    entry = (reg.get('requirements') or {}).get(requirement_id) or {}
+    revisions = entry.get('revisions') or {}
+    rev = revisions.get(revision_id) or {}
+    if rev.get('status') in {'completed', 'archived'}:
+        return True
+    alias = (entry.get('revision_aliases') or {}).get(revision_id)
+    if isinstance(alias, dict) and alias.get('justified'):
+        old = revisions.get(str(alias.get('from'))) or {}
+        return old.get('status') in {'completed', 'archived'}
+    return False
 
 
 # --- migration: preview -> backup -> atomic replace, idempotent and resumable --------------
@@ -476,6 +685,91 @@ def _resolve_legacy_source(repo: Path, entry: dict[str, Any]) -> dict[str, Any]:
             'members': resolved.get('members')}
 
 
+def _map_history(repo: Path, entry: dict[str, Any], resolution: dict[str, Any],
+                 previous_raw: str | None) -> dict[str, Any]:
+    """Carry completion history over only when the mapping is provable.
+
+    What can be proven here: the raw content digest recorded before a change still describes
+    the content now, or history was already keyed by this content revision. What cannot be
+    proven is left pending with a command, instead of being inherited silently.
+    """
+    new_key = str(resolution.get('source_revision') or '')
+    raw_now = resolution.get('raw_digest')
+    revisions = entry.get('revisions') or {}
+    aliases = dict(entry.get('revision_aliases') or {})
+    updates: dict[str, Any] = {'baseline_raw_digest': raw_now, 'revision_aliases': aliases}
+    justified_by = None
+    pending: list[str] = []
+    for key, value in revisions.items():
+        if not isinstance(value, dict) or value.get('status') not in {'completed', 'archived'}:
+            continue
+        if key == new_key:
+            aliases[new_key] = {'from': key, 'to': new_key, 'justified': True,
+                                'justified_by': 'history was already keyed by this content revision'}
+            justified_by = justified_by or 'existing content revision key'
+            continue
+        recorded = previous_raw or value.get('raw_digest')
+        if recorded and raw_now and str(recorded) == str(raw_now):
+            aliases[new_key] = {'from': key, 'to': new_key, 'justified': True,
+                                'justified_by': 'raw content digest recorded before migration '
+                                                'matches the content now'}
+            justified_by = justified_by or 'recorded raw digest matches current content'
+        else:
+            pending.append(key)
+    if pending:
+        updates['history_baseline'] = 'unknown'
+        updates['pending_history_confirmation'] = True
+        updates['history_next_action'] = (
+            f"python3 scripts/requirement_identity.py --repo . --confirm-history "
+            f"{entry.get('requirement_id') or '<requirement-id>'} --revision {new_key} "
+            f"--actor <operator>")
+    elif justified_by:
+        updates['history_baseline'] = 'justified'
+        updates['pending_history_confirmation'] = False
+    return {'entry_updates': updates, 'justified_by': justified_by, 'pending': pending}
+
+
+def confirm_history(repo: Path, *, requirement_id: str, content_revision: str, actor: str) -> dict[str, Any]:
+    """Record that an operator compared the history and confirmed it applies to this content.
+
+    This records who decided and against which digest. It does not pretend to be mechanical
+    proof, and it never runs silently: the operator must say who they are.
+    """
+    root = repo.resolve()
+    registry = load_registry(root)
+    entry = (registry.get('requirements') or {}).get(requirement_id)
+    if entry is None:
+        return {'status': 'ACTION_REQUIRED', 'error': 'REQUIREMENT_UNKNOWN',
+                'message': f'{requirement_id} is not in the registry', 'applied': False}
+    if not actor or str(actor).strip().lower() in {'unspecified', 'agent', 'unknown'}:
+        return {'status': 'ACTION_REQUIRED', 'error': 'HISTORY_CONFIRMATION_ACTOR_REQUIRED',
+                'message': 'an explicit human or named agent must own this confirmation (--actor)',
+                'next_action': 'confirm_history_mapping', 'applied': False}
+    resolution = _resolve_legacy_source(root, entry)
+    raw_now = resolution.get('raw_digest')
+    if not raw_now:
+        return {'status': 'ACTION_REQUIRED', 'error': 'SOURCE_UNREADABLE',
+                'message': 'the requirement source cannot be read, so history cannot be compared',
+                'next_action': 'repair_source_members', 'applied': False}
+    aliases = dict(entry.get('revision_aliases') or {})
+    aliases[str(content_revision)] = {
+        'from': sorted((entry.get('revisions') or {}).keys()),
+        'to': str(content_revision),
+        'justified': True,
+        'justified_by': f'explicit history confirmation by {actor} against raw digest {raw_now[:12]}',
+        'confirmed_by': actor,
+        'confirmed_at': datetime.now(timezone.utc).isoformat(),
+    }
+    entry['revision_aliases'] = aliases
+    entry['history_baseline'] = 'confirmed_by_operator'
+    entry['pending_history_confirmation'] = False
+    entry.pop('history_next_action', None)
+    save_registry(root, registry)
+    return {'status': 'HISTORY_CONFIRMED', 'requirement_id': requirement_id,
+            'revision': content_revision, 'raw_digest': raw_now, 'confirmed_by': actor,
+            'applied': True}
+
+
 def migrate(repo: Path, *, dry_run: bool = False) -> dict[str, Any]:
     """Migrate v1 entries to v2 in one atomic step, resuming from the journal after a crash."""
     root = repo.resolve()
@@ -512,13 +806,19 @@ def migrate(repo: Path, *, dry_run: bool = False) -> dict[str, Any]:
             entry['legacy'] = True
             entry['migration_command'] = LEGACY_MIGRATION_COMMAND
             continue
+        previous_raw = entry.get('baseline_raw_digest')
         entry['source_revision'] = resolution['source_revision']
         entry['members'] = resolution.get('members') or entry.get('members') or []
         entry['identity_version'] = IDENTITY_VERSION
         entry.pop('legacy', None)
         entry.pop('legacy_reason', None)
         entry.pop('migration_command', None)
-        migrated.append({'requirement_id': requirement_id, 'source_revision': resolution['source_revision']})
+        history = _map_history(root, entry, resolution, previous_raw)
+        entry.update({key: value for key, value in history['entry_updates'].items()})
+        migrated.append({'requirement_id': requirement_id,
+                         'source_revision': resolution['source_revision'],
+                         'history_derivation': history['justified_by'] or 'awaiting_explicit_confirmation',
+                         'pending_history_confirmation': bool(history['pending'])})
         completed.add(requirement_id)
         journal['completed'] = sorted(completed)
         # Every accepted step is journalled before the next one begins.
@@ -548,9 +848,16 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument('--repo', type=Path, default=Path('.'))
     p.add_argument('--migrate', action='store_true', help='migrate v1 requirement identities to v2')
     p.add_argument('--dry-run', action='store_true', help='preview only; write nothing')
+    p.add_argument('--confirm-history', help='record an explicit history-to-content mapping '
+                                             'for one requirement after comparing the sources')
+    p.add_argument('--revision', help='content revision a --confirm-history decision applies to')
+    p.add_argument('--actor', default='unspecified', help='who owns --confirm-history')
     args = p.parse_args(argv)
     repo = args.repo.resolve()
-    if args.migrate:
+    if args.confirm_history:
+        result = confirm_history(repo, requirement_id=args.confirm_history,
+                                 content_revision=args.revision or '', actor=args.actor)
+    elif args.migrate:
         result = migrate(repo, dry_run=args.dry_run)
     else:
         result = preview_migration(repo)

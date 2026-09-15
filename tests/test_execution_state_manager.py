@@ -5,6 +5,7 @@ import tempfile
 import unittest
 
 from governance_fixture import attach_fixture_analysis
+import evidence_factory
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 SPEC = importlib.util.spec_from_file_location("execution_state_manager", ROOT / "scripts" / "execution_state_manager.py")
@@ -51,11 +52,11 @@ class StateFixture:
 
     def set_ready_for_impl(self):
         s = self.state()
-        sm.set_readiness(self.state_path, "behavior_change", True, "planner", "req", s["revision"])
+        evidence_factory.establish_readiness(self.state_path, "behavior_change")
         s = self.state()
-        sm.set_readiness(self.state_path, "acceptance_criteria_present", True, "planner", "spec", s["revision"])
+        evidence_factory.establish_readiness(self.state_path, "acceptance_criteria_present")
         s = self.state()
-        sm.set_readiness(self.state_path, "sdd_ready", True, "planner", "sdd", s["revision"])
+        evidence_factory.establish_readiness(self.state_path, "sdd_ready")
         attach_fixture_analysis(sm, self.state_path)
 
 
@@ -85,7 +86,7 @@ class ExecutionStateTests(unittest.TestCase):
         fx = StateFixture()
         try:
             s = fx.state()
-            sm.set_readiness(fx.state_path, "behavior_change", True, "planner", "req", s["revision"])
+            evidence_factory.establish_readiness(fx.state_path, "behavior_change")
             s = fx.state()
             with self.assertRaises(sm.TransitionDenied):
                 sm.transition(fx.state_path, "implementation", "in_progress", "agent", "start", s["revision"])
@@ -103,7 +104,7 @@ class ExecutionStateTests(unittest.TestCase):
             s = fx.state()
             sm.transition(fx.state_path, "implementation", "in_progress", "agent", "start", s["revision"])
             s = fx.state()
-            sm.set_readiness(fx.state_path, "implementation_tasks_complete", True, "agent", "tasks", s["revision"])
+            evidence_factory.establish_readiness(fx.state_path, "implementation_tasks_complete")
             s = fx.state()
             with self.assertRaises(sm.TransitionDenied):
                 sm.transition(fx.state_path, "verification", "in_progress", "agent", "skip review", s["revision"])
@@ -124,11 +125,11 @@ class ExecutionStateTests(unittest.TestCase):
             s = fx.state()
             sm.transition(fx.state_path, "implementation", "in_progress", "agent", "start", s["revision"])
             s = fx.state()
-            sm.set_readiness(fx.state_path, "implementation_tasks_complete", True, "agent", "tasks", s["revision"])
+            evidence_factory.establish_readiness(fx.state_path, "implementation_tasks_complete")
             s = fx.state()
             sm.transition(fx.state_path, "verification", "in_progress", "agent", "verify", s["revision"])
             s = fx.state()
-            sm.set_readiness(fx.state_path, "acceptance_satisfied", True, "verifier", "ac", s["revision"])
+            evidence_factory.establish_readiness(fx.state_path, "acceptance_satisfied")
             s = fx.state()
             sm.record_gate(fx.state_path, "unit_test", True, "failed", "ci", evidence_ref="ci:1", expected_revision=s["revision"])
             s = fx.state()
@@ -242,12 +243,12 @@ class ExecutionStateTests(unittest.TestCase):
             s = fx.state()
             sm.transition(fx.state_path, "implementation", "in_progress", "agent", "start", s["revision"])
             s = fx.state()
-            sm.set_readiness(fx.state_path, "implementation_tasks_complete", True, "agent", "tasks", s["revision"])
+            evidence_factory.establish_readiness(fx.state_path, "implementation_tasks_complete")
             s = fx.state()
             sm.transition(fx.state_path, "verification", "in_progress", "agent", "review optional", s["revision"])
             self.assertEqual("verification", fx.state()["phase"])
             s = fx.state()
-            sm.set_readiness(fx.state_path, "acceptance_satisfied", True, "agent", "ac", s["revision"])
+            evidence_factory.establish_readiness(fx.state_path, "acceptance_satisfied")
             s = fx.state()
             with self.assertRaises(sm.TransitionDenied):
                 sm.transition(fx.state_path, "closed", "completed", "agent", "no verification", s["revision"])

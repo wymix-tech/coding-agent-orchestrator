@@ -222,8 +222,10 @@ def validate_provenance(facts: Dict[str, Any]) -> Dict[str, List[str]]:
             weak.append(path)
             continue
         if value is False:
+            # `strength=authoritative` is how the source describes itself. Only negative proof
+            # or a verification result that the resolver actually obtained can carry a false.
             ok = any(
-                e.get("strength") == "authoritative" or bool(e.get("negative_proof"))
+                bool(e.get("verified_authority")) or bool(e.get("negative_proof"))
                 for e in accepted
             )
             if not ok:

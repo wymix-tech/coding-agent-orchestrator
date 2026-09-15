@@ -124,6 +124,7 @@ def resolve(repo: Path, *, ensure_bootstrap: bool = True, host: str = "auto") ->
         }
     if reqs.get("candidates"):
         remaining = []
+        pending_history: list[dict[str, Any]] = []
         for c in reqs["candidates"]:
             # The source content revision, when one exists, decides identity; the wording of a
             # resume request that merely pointed at it must never look like a new revision.
@@ -133,8 +134,27 @@ def resolve(repo: Path, *, ensure_bootstrap: bool = True, host: str = "auto") ->
                 already_done = True
             if already_done:
                 continue
+            # Completion history keyed by a pre-migration revision is not invisible: when the
+            # mapping cannot be proven it must be surfaced, never quietly re-opened.
+            history = requirement_identity.historical_mapping(
+                repo, identity["requirement_id"], content_revision=identity["revision_id"])
+            if history.get("pending_confirmation"):
+                pending_history.append({**history, "candidate": {**c, **identity}})
+                continue
             c = {**c, **identity}
             remaining.append(c)
+        if pending_history and not remaining:
+            first = pending_history[0]
+            return {
+                "status": "ACTION_REQUIRED",
+                "route": "CONFIRM_REQUIREMENT_HISTORY",
+                "next_action": "confirm_requirement_history_mapping",
+                "error": ("completed work exists for a revision that could not be proven to be this "
+                          "content; it is neither re-opened nor assumed done"),
+                "pending_history": pending_history,
+                "history_next_action": first.get("next_action"),
+                "requirements": reqs,
+            }
         reqs = {**reqs, "candidates": remaining, "count": len(remaining), "status": "NONE" if not remaining else ("ONE" if len(remaining) == 1 else "MULTIPLE")}
     if reqs["status"] == "NONE":
         return {

@@ -1,5 +1,19 @@
 # Changelog
 
+## Phase A follow-up — Evidence Is Bound to Real Objects, and Nothing Is Pre-Verified
+
+- **依赖指向真实存在的对象**：`evidence_provenance` 的每条强制依赖（`path_revision` / `tree_revision` / `object_revision` / 报告 / 审批 / 原生状态）都在校验时读回仓库里的真实对象并比对摘要，调用方只能追加依赖、不能替换或留空；记录与校验结果分离存放（`checks/` 下的最新校验可重放），`resolve_dependency` 对无法定位的对象返回结构化诊断而不是"跳过即通过"。
+- **测试先造真材料再走真入口**：新增 `tests/evidence_factory.py`。readiness / gate / verification / 原生绑定一律通过真实入口建立（真实存在的报告、真实写入的审批文件、真实 digest 的源码文件、真实执行的 `set_progress`），不再把已 `verified` 的对象直接交给 `sm.set_readiness`；此前绕过入口的测试改为先建材料后断言。
+- **readiness 使用时复核**：`action_guard.unsupported_readiness()` 报告"为真但此刻没有已核验证据支撑"的 key（`READINESS_WITHOUT_EVIDENCE`，或 per-key 来源规则不允许该证据时的具体错误码），`evaluate()` 在受保护操作上以 `READINESS_UNSUPPORTED` 拒绝；未核验不等于无效——未核验记录进入 `evidence_unverified`，由消费方判断该条判断是否必需。
+- **身份作用域缺失即失败**：复核时身份只从 `work_item` 读取；缺少 `work_item.id` / `requirement_revision` 不再被当作"未绑定即跳过"。
+- **证据 CLI**：新增 `coding-orchestrator evidence show|verify|index`（查看单条记录、按当前仓库重新校验、从存储记录重建索引），补齐此前只有库内 API 的可操作重建路径。
+- **原生 id 绑定**：新增 `coding-orchestrator native bind --native-id [--work-item]` 与 `sm.bind_native_work_item()`：原生侧用自己的 id 寻址时，只把原生键记到当前工作项上，治理身份与审计轨迹不变，无需编辑 `execution-state.yaml` 或重跑 intake。
+- **混合内容边界按标题树判定**：`requirement_identity` 把 Markdown 解析为带层级与父链的标题树，标题按全名精确匹配（"Status"不再吞掉"Status API"），小节继承父级归属（`## Tasks` 下的 `### Implementation` 勾选不会算作需求变更），首个标题前的正文视为需求内容，未知标题一律保留为需求内容而不静默删除。
+- **破坏性修订确认绑定完整集合**：`--confirm-reset` 现需 `--confirm-revision` / `--confirm-incoming-revision` / `--confirm-state-revision`（含观察到的执行状态版本），确认提示由 `requirement_identity.confirmation_command()` 渲染出可直接执行的完整命令。
+- **需求内容版本独立可取**：`context_plane.requirement_content_revision()` 对单文件或目录返回"仅需求内容"的版本，供上下文/证据绑定复用同一口径。
+- **治理边界独立成测**：新增 `tests/test_governed_transition_boundaries.py`——原生推进到 review 但 `implementation_tasks_complete` 未成立时不推进治理（记 `native_divergence` 且保留原生事实），原生 done 但终验未通过时不生成 `completion_record`，verification 的 `finish_role` 仍要求已记录结论、release 仍需新鲜通过的终验（既有边界不是新的白名单）。
+- 回归：`discover` 实跑 **411 tests / OK**，`context_footprint_check` **PASS**（SKILL.md 103 行 / 7400 bytes / 918 words）。
+
 ## Phase A — Evidence Is Verifiable, Native Projection Is Real, Identity Migrates
 
 - **T1 可核验证据**：新增 `scripts/evidence_provenance.py`。`kind` × `validation_status` × `outcome` 三维分离，可信来源的真实失败报告记为 `verified + failed`，仅来源/格式/工作项/绑定不符才为 `invalid`；强制依赖由验证器按结论类型 + Policy 推导（`required_dependencies()`），调用方只能追加且每项绑定对象与版本；`collect_verification_inputs`（IO）/`verify`（纯函数，时间显式传入）/`persist_verification` 三层分离；证据记录不可变、按内容寻址，索引可重建，孤立证据允许存在。`set_readiness` 按 key 独立来源规则，`record_gate`/`record_verification` 绑定命令、退出码、报告与快照；`action_guard.collect_evidence` 增加使用时复核并映射到实际依赖它的那条判断。

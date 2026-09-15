@@ -17,6 +17,7 @@ sys.path.insert(0, str(SCRIPTS))
 
 import action_guard
 import coding_orchestrator as cli
+import evidence_factory
 import execution_state_manager as sm
 import policy_engine
 import project_bootstrap
@@ -122,8 +123,9 @@ class WorkIdentityRepairTests(unittest.TestCase):
             state = sm.create_state("W", "req", "STANDARD", requirement_id="generic:source:requirements.md", requirement_revision="rev-a")
             sm.initialize(path, state, "test")
             s = sm._load(path)
-            s = sm.set_readiness(path, "acceptance_criteria_present", True, "test", "spec", s["revision"])
-            s = sm.set_readiness(path, "sdd_ready", True, "test", "spec", s["revision"])
+            for key in ("acceptance_criteria_present", "sdd_ready"):
+                evidence_factory.establish_readiness(path, key)
+            s = sm._load(path)
             s = sm.record_gate(path, "unit", True, "pending", "test", expected_revision=s["revision"])
             revised = sm.revise_work_item(path, "generic:source:requirements.md", "rev-b", "test", "requirements.md", s["revision"])
             self.assertEqual("rev-b", revised["work_item"]["requirement_revision"])
@@ -383,7 +385,7 @@ class EndToEndRepairAcceptanceTests(unittest.TestCase):
         ev.write_text("$ python -m unittest discover -s tests -v\n" + proc.stdout + proc.stderr, encoding="utf-8")
         return ev
 
-    def _resolution_doc(self, facts: dict) -> dict:
+    def _resolution_doc(self, facts: dict, repo: pathlib.Path) -> dict:
         resolutions=[]
         for path in (facts.get("extraction") or {}).get("resolution_queue") or []:
             if path in fact_resolver.INT_PATHS:
@@ -394,7 +396,11 @@ class EndToEndRepairAcceptanceTests(unittest.TestCase):
                 value=True
             else:
                 value=False
-            resolutions.append({"path":path,"value":value,"source_type":"acceptance_test","source":"T8","evidence":"explicit controlled acceptance fixture","strength":"authoritative"})
+            entry={"path":path,"value":value,"source_type":"acceptance_test","source":"T8","evidence":"explicit controlled acceptance fixture","strength":"authoritative"}
+            # A negative fact is only worth the search that found nothing.
+            if value is False:
+                entry["negative_proof"]=evidence_factory.negative_proof_entry(repo, path)
+            resolutions.append(entry)
         return {"source":"T8 acceptance","resolutions":resolutions}
 
     def test_empty_repo_to_close_and_next_requirement_with_real_verification_commands(self):
@@ -421,13 +427,15 @@ class EndToEndRepairAcceptanceTests(unittest.TestCase):
             self.assertFalse(refusal["allowed"]); self.assertIn("DECISION_NOT_CLASSIFIED",refusal["reason_codes"])
 
             facts=json.loads(pathlib.Path(state["analysis"]["work_facts_ref"]).read_text())
-            res_path=repo/"resolutions.json"; res_path.write_text(json.dumps(self._resolution_doc(facts)),encoding="utf-8")
+            # The resolution set is an input, so it is kept outside the analyzed repository content.
+            res_path=pathlib.Path(tempfile.mkdtemp())/"resolutions.json"; res_path.write_text(json.dumps(self._resolution_doc(facts, repo)),encoding="utf-8")
             intake_args=cli.build_parser().parse_args(["--repo",str(repo),"intake","--request-file",str(req),"--sdd-ref",str(req),"--resolutions",str(res_path),"--cbm-fixture",str(fixture)]); intake_args.repo=repo
             code,result,_=cli.cmd_intake(intake_args)
             self.assertEqual(0,code); self.assertEqual("CLASSIFIED",result["status"])
             state=sm._load(sp)
-            for key,value in (("behavior_change",True),("acceptance_criteria_present",True),("sdd_ready",True)):
-                state=sm.set_readiness(sp,key,value,"T8","requirements.md",state["revision"])
+            for key in ("behavior_change","acceptance_criteria_present","sdd_ready"):
+                evidence_factory.establish_readiness(sp,key,repo=repo)
+            state=sm._load(sp)
             state=sm.transition(sp,"implementation","in_progress","T8","begin implementation",state["revision"])
 
             app.write_text("def lookup_user(user_id):\n    if user_id == 'missing':\n        return 404, None\n    return 200, {'id': user_id}\n",encoding="utf-8")
@@ -437,8 +445,9 @@ class EndToEndRepairAcceptanceTests(unittest.TestCase):
             code,result,_=cli.cmd_intake(intake_args)
             self.assertEqual(0,code); self.assertEqual("CLASSIFIED",result["status"])
             state=sm._load(sp)
-            state=sm.set_readiness(sp,"implementation_tasks_complete",True,"T8","tasks",state["revision"])
-            state=sm.set_progress(sp,1,1,"T8","tasks",state["revision"])
+            evidence_factory.establish_readiness(sp, "implementation_tasks_complete")
+            state=sm._load(sp)
+            state=evidence_factory.establish_progress(sp,1,1,repo=repo,actor="T8")["state"]
             state=sm.transition(sp,"review","in_progress","T8","implementation complete",state["revision"])
             review_evidence=self._run_project_tests(repo,"review-tests")
             state=sm.record_review(sp,"passed","T8",0,str(review_evidence.relative_to(repo)),state["revision"])
@@ -448,7 +457,8 @@ class EndToEndRepairAcceptanceTests(unittest.TestCase):
                 if gate.get("required"):
                     evidence=self._run_project_tests(repo,"gate-"+re.sub(r"[^A-Za-z0-9._-]+","-",name))
                     state=sm.record_gate(sp,name,True,"passed","T8",evidence_ref=str(evidence.relative_to(repo)),command=gate.get("command"),expected_revision=state["revision"])
-            state=sm.set_readiness(sp,"acceptance_satisfied",True,"T8","acceptance verified",state["revision"])
+            evidence_factory.establish_readiness(sp, "acceptance_satisfied")
+            state=sm._load(sp)
             final_evidence=self._run_project_tests(repo,"final-verification")
             state=sm.record_verification(sp,"passed","T8",state["execution_snapshot_id"],str(final_evidence.relative_to(repo)),state["revision"])
             self.assertEqual([],sm.transition_guard(state,"closed","completed",repo))

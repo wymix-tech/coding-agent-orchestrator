@@ -267,6 +267,7 @@ def collect_evidence(repo: Path | None, state: dict | None) -> dict:
     evidence["context_fresh"] = bool(manifest and {"requirement", "decision", "semantic_impact"} <= source_ids and not stale_sources)
     evidence["stale_context_sources"] = stale_sources
     _revalidate_bound_evidence(repo, state, evidence)
+    evidence["readiness_unsupported"] = unsupported_readiness(state)
     return evidence
 
 
@@ -305,21 +306,23 @@ def _revalidate_bound_evidence(repo: Path, state: dict, evidence: dict) -> None:
 
     Only the evidence actually bound to this work item is examined; the whole repository is
     never scanned. Unverifiable evidence is reported as unverified, never silently trusted.
+    An unverified record is not invalid: it simply cannot support a judgement, so the
+    consumer decides whether that judgement was required.
     """
     evidence["evidence_invalid"] = []
     evidence["evidence_unverified"] = []
     records = (state.get("evidence") or {}).get("records") or []
-    work_item_id = state.get("work_item_id")
-    requirement_revision = None
-    requirement = state.get("requirement")
-    if isinstance(requirement, dict):
-        requirement_revision = requirement.get("source_revision") or requirement.get("revision")
+    work_item = (state.get("work_item") or {})
+    # Identity lives under `work_item`; a missing scope is a failure, not permission skipped.
+    work_item_id = work_item.get("id") or state.get("work_item_id")
+    requirement_revision = work_item.get("requirement_revision")
     for record in records:
         if not isinstance(record, dict):
             continue
         try:
             result = evidence_provenance.revalidate(
-                repo, record, work_item_id=work_item_id, requirement_revision=requirement_revision)
+                repo, record, state=state, work_item_id=work_item_id,
+                requirement_revision=requirement_revision)
         except (OSError, ValueError, TypeError):
             evidence["evidence_invalid"].append(
                 {"evidence_id": record.get("evidence_id"), "reason_code": "EVIDENCE_REPORT_UNPARSABLE"})
@@ -335,6 +338,38 @@ def _revalidate_bound_evidence(repo: Path, state: dict, evidence: dict) -> None:
             evidence["evidence_invalid"].append(entry)
         elif result.get("validation_status") == "unverified":
             evidence["evidence_unverified"].append(entry)
+
+
+def unsupported_readiness(state: dict | None) -> list[dict[str, Any]]:
+    """Readiness facts that are true without verified evidence backing them right now.
+
+    A readiness fact is a judgement, so it is only worth its last verification: both the
+    binding to this key and the verification result are re-read here.
+    """
+    if not state:
+        return []
+    ep = evidence_provenance
+    bound = state.get("readiness_evidence") or {}
+    unsupported: list[dict[str, Any]] = []
+    for key, value in (state.get("readiness") or {}).items():
+        if value is not True:
+            continue
+        entry = bound.get(key)
+        if not isinstance(entry, dict) or not entry.get("evidence_id"):
+            unsupported.append({"key": key, "error": "READINESS_WITHOUT_EVIDENCE",
+                                "message": f"{key!r} is true but no evidence is bound to it"})
+            continue
+        decision = ep.readiness_decision(key, {
+            "kind": entry.get("kind"),
+            "claim_type": entry.get("claim_type"),
+            "validation_status": entry.get("validation_status"),
+            "outcome": entry.get("outcome"),
+        })
+        if not decision["allowed"]:
+            unsupported.append({"key": key, "error": decision["error"],
+                                "message": decision["message"],
+                                "evidence_id": entry.get("evidence_id")})
+    return unsupported
 
 
 def evaluate(state: dict | None, action: str, *, evidence: dict | None = None,
@@ -403,6 +438,17 @@ def evaluate(state: dict | None, action: str, *, evidence: dict | None = None,
             readiness = state.get("readiness") or {}
             if not readiness.get("sdd_ready"):
                 deny("SDD_NOT_READY", "SDD/native planning state is not implementation-ready.", "advance_native_sdd_to_ready")
+            # A readiness fact counts only together with verified evidence that is allowed for
+            # exactly this key, for this purpose, and with a success outcome.
+            unsupported = facts.get("readiness_unsupported")
+            if unsupported is None:
+                unsupported = unsupported_readiness(state)
+            for item in unsupported:
+                deny(
+                    "READINESS_UNSUPPORTED",
+                    f"Readiness {item['key']!r} has no verified support evidence: {item['message']}.",
+                    "replace_invalid_evidence",
+                )
             if readiness.get("behavior_change") is True and not readiness.get("acceptance_criteria_present"):
                 deny("ACCEPTANCE_CRITERIA_MISSING", "Behavior change requires acceptance criteria.", "define_acceptance_criteria")
             if not facts.get("repository_available"):

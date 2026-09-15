@@ -49,7 +49,7 @@
     {"item": "coding_orchestrator.py cmd_native_sync 前端 native-sync", "status": "VERIFIED", "note": "PR2 实测并统一：所有受支持写入入口共用 native_state_parser.resolve_projection，不再由调用方重述已验证投影（原 :853 行号已随代码演进失效）"},
     {"item": "execution_state_manager sync-native 子命令 / main() 直调 sync_native", "status": "VERIFIED", "note": "PR2 实测：底层子命令与 sm.sync_native 共用同一校验，均先算投影再写入（原 :1529-1537 / :1603-1604 行号已随代码演进失效）"},
     {"item": "start_router.py:128 candidate_identity", "status": "VERIFIED", "note": "PR3 实测：candidate_identity 确实存在且原先把请求措辞摘要当作 revision；真正的显式输入吞没在 cmd_intake 的「源未变」分支，已加 explicit_inputs_present 门禁"},
-    {"item": "hosts/* hooks 是否仅走 check（无 native-sync 写入路径）", "status": "PARTIALLY_VERIFIED", "note": "本轮 grep 未见 native-sync 写入路径，PR2 须二次确认"},
+    {"item": "hosts/* hooks 是否仅走 check（无 native-sync 写入路径）", "status": "VERIFIED", "note": "2026-09-15 二次确认：hosts/claude-code|codex/hooks.template.json 与 hosts/pi/coding-orchestrator.template.ts 只调用 `host --host ... --repo ...`（enforcement kernel），整目录 grep 无 native/sync 写入路径"},
     {"item": "CNB skill（cnb-code-commit / cnb-code-review / cnb-pr-summary）可用性", "status": "NOT_VERIFIED", "note": "提交 PR 前核验；不可用则退回手工 git + PR 描述"}
   ],
 
@@ -106,8 +106,7 @@
           "fact_resolver：占位符证据被拒；自声明 authoritative 标记为 validation_status=unverified / authority=self_declared"
         ],
         "partial": [
-          "自声明 authoritative 的遗留「字符串 evidence」路径仍可覆盖机械事实，现已在 resolution.validation 中标记 self_declared 但未阻断；随 PR3 的 identity_version=2 迁移一并收紧",
-          "证据层尚无 CLI 入口（evidence verify / rebuild-index 未实现），因此 RECOVERY_COMMANDS 未引用不存在的命令"
+          "自声明 authoritative 的遗留「字符串 evidence」路径仍可覆盖机械事实，现已在 resolution.validation 中标记 self_declared 但未阻断；随 PR3 的 identity_version=2 迁移一并收紧"
         ]
       }
     },
@@ -210,7 +209,39 @@
     }
   ],
 
+  "follow_up": {
+    "id": "PR3-follow-up",
+    "title": "证据绑定真实对象，测试不再交付预置的已核验证据",
+    "base": "PR3",
+    "status": "DONE",
+    "verification": {
+      "tests": "Ran 411 tests / OK（PR3 的 382 + 证据加固 24 + 治理边界 5）",
+      "footprint": "PASS（SKILL.md 103 行 / 7400 bytes / 918 words，未触碰）",
+      "new_files": ["tests/evidence_factory.py", "tests/test_governed_transition_boundaries.py"],
+      "integrations": [
+        "evidence_provenance：依赖解析读回真实对象（path_revision / tree_revision / object_revision / 报告 / 审批 / 原生），绑定与校验结果分离存放，无法定位返回结构化诊断",
+        "action_guard.unsupported_readiness()：readiness 为真但此刻无已核验证据支撑时报 READINESS_WITHOUT_EVIDENCE / per-key 来源错误码，evaluate 在受保护操作上以 READINESS_UNSUPPORTED 拒绝；unverified 不等于 invalid",
+        "复核身份只从 work_item 读取，缺失作用域不再当作「未绑定即跳过」",
+        "coding-orchestrator evidence show|verify|index：补齐证据层的可操作重建入口（PR1 的 partial 项已消除）",
+        "coding-orchestrator native bind --native-id + sm.bind_native_work_item()：只把原生键记到当前工作项，治理身份与审计轨迹不变",
+        "requirement_identity：混合内容按标题树 + 全名精确匹配 + 父级归属继承判定，首个标题前正文算需求内容，未知标题保留为需求内容",
+        "破坏性修订确认新增 --confirm-incoming-revision / --confirm-state-revision，提示渲染出可直接执行的完整命令",
+        "context_plane.requirement_content_revision()：单文件/目录的「仅需求内容」版本"
+      ],
+      "governed_transition_boundaries": [
+        "tests/test_governed_transition_boundaries.py：原生推进 review 但 implementation_tasks_complete 未成立 → 不推进治理，记录 native_divergence 且保留原生事实；补上真实证据后治理才跟随",
+        "原生 done 但终验未通过 → 不生成 completion_record，phase 不变（VERIFICATION_NOT_PASSED）",
+        "既有边界不变：verification 的 finish_role 仍要求已记录结论（ROLE_OUTCOME_MISSING），release 仍需新鲜通过的终验（VERIFICATION_NOT_PASSED）——原生路径不是新白名单"
+      ],
+      "test_hardening": [
+        "tests/evidence_factory.py：先在临时仓库造出真实材料（真实 digest 的源码、真实写入的报告与审批、真实执行的 progress），再走真实入口建立 readiness / gate / verification / 原生绑定",
+        "此前把预置 verified 对象交给 sm.set_readiness 或直接构造 evidence 记录的用例已改为先建材料后断言"
+      ]
+    }
+  },
+
   "not_run": [
-    "真实宿主集成（Pi / Codex / Claude Code / Windows）：阶段 A 不涉及，标记 NOT_RUN"
+    "真实宿主集成（Pi / Codex / Claude Code / Windows）：阶段 A 不涉及，标记 NOT_RUN",
+    "真实多文件 CBM / 宿主环境目录迁移：本环境无真实宿主，标记 NOT_RUN"
   ]
 }

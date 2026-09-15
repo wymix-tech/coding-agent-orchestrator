@@ -217,6 +217,7 @@ def _source(
     stages: Optional[list[str]] = None,
     snapshot_id: Optional[str] = None,
     required: bool = False,
+    content_revision: Optional[str] = None,
 ) -> Optional[dict[str, Any]]:
     path = _resolve(repo, ref)
     if path is None or not path.exists():
@@ -246,11 +247,38 @@ def _source(
         "required": required,
         "snapshot_id": snapshot_id,
         "content_sha256": digest,
+        # Requirement content, separated from the file that carries it: runtime sections of a
+        # mixed-content source (task tick-boxes, dev records) must not invalidate it.
+        "content_revision": content_revision,
         "size_bytes": size_bytes,
         "file_count": file_count,
         "summary": summary,
         "entrypoints": entrypoints,
     }
+
+
+def requirement_content_revision(repo: Path, ref: Optional[str | Path]) -> Optional[str]:
+    """Requirement-only revision of a source file or directory, when it can be computed."""
+    if ref is None:
+        return None
+    root = Path(repo).resolve()
+    path = _resolve(root, ref)
+    if path is None or not path.exists():
+        return None
+    members = None
+    if path.is_dir():
+        members = sorted({child.relative_to(root).as_posix()
+                          for child in path.rglob("*") if child.is_file()})
+    try:
+        import requirement_identity
+
+        resolved = requirement_identity.requirement_content_revision(
+            root, str(_display_ref(root, path)), members=members,
+        )
+    except Exception:
+        return None
+    value = resolved.get("source_revision") if isinstance(resolved, dict) else None
+    return str(value) if value else None
 
 
 def _load_if(repo: Path, ref: Optional[str | Path]) -> Any:
@@ -292,7 +320,8 @@ def build_manifest(
         if item:
             sources.append(item)
 
-    add(_source(repo, "requirement", "requirement", requirement_ref, requirement_authority, 0, required=True))
+    add(_source(repo, "requirement", "requirement", requirement_ref, requirement_authority, 0,
+                required=True, content_revision=requirement_content_revision(repo, requirement_ref)))
     if sdd_ref and request_ref:
         add(_source(repo, "request_input", "request_input", request_ref, "current_request_input", 1))
     add(_source(repo, "work_facts", "work_facts", intake_dir / "work-facts.resolved.json" if (intake_dir / "work-facts.resolved.json").exists() else intake_dir / "work-facts.semantic-draft.json", "evidence_layer", 1))
@@ -606,6 +635,19 @@ def validate_manifest(repo: Path, manifest: dict[str, Any]) -> dict[str, Any]:
             missing.append({"id": src.get("id"), "ref": src.get("ref")})
             continue
         digest, _, _ = _path_digest(p)
+        # When the source publishes a requirement content revision, that revision decides
+        # freshness: runtime-only edits (ticked tasks, dev records) are not requirement changes.
+        content_revision = src.get("content_revision")
+        if content_revision:
+            current = requirement_content_revision(repo, p)
+            if current is not None:
+                if current == content_revision:
+                    continue
+                stale.append({"id": src.get("id"), "ref": src.get("ref"),
+                              "expected_content_revision": content_revision,
+                              "actual_content_revision": current,
+                              "reason": "requirement content changed"})
+                continue
         if digest != src.get("content_sha256"):
             stale.append({"id": src.get("id"), "ref": src.get("ref"), "expected": src.get("content_sha256"), "actual": digest})
     return {

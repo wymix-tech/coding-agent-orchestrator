@@ -30,6 +30,7 @@ import project_bootstrap
 import repository_snapshot
 import requirement_identity
 import tool_actions
+import evidence_factory
 
 SPEC = "docs/spec.md"
 
@@ -89,7 +90,7 @@ def run_intake(repo: pathlib.Path, request: str, *extra: str) -> tuple[int, dict
     return code, result, text
 
 
-def resolution_document(facts: dict) -> dict:
+def resolution_document(facts: dict, repo: pathlib.Path | None = None) -> dict:
     """Produce bounded, authoritative fixture answers only for unresolved facts."""
     values = {
         "ambiguity.goal_explicit": True,
@@ -102,10 +103,14 @@ def resolution_document(facts: dict) -> dict:
     resolutions = []
     for path in (facts.get("extraction") or {}).get("resolution_queue") or []:
         value = 1 if path in fact_resolver.INT_PATHS else values.get(path, False)
-        resolutions.append({
+        entry = {
             "path": path, "value": value, "source_type": "fixture", "source": "resume guard test",
             "evidence": "controlled acceptance fixture", "strength": "authoritative",
-        })
+        }
+        # A negative fact is only worth the search that found nothing, never its own title.
+        if value is False and repo is not None:
+            entry["negative_proof"] = evidence_factory.negative_proof_entry(repo, path)
+        resolutions.append(entry)
     return {"source": "resume guard test", "resolutions": resolutions}
 
 
@@ -137,8 +142,9 @@ class ResumeMustNotReviseRequirement(unittest.TestCase):
             state_path = repo / ".orchestrator/execution-state.yaml"
             first_state = sm._load(state_path)
             facts = json.loads((repo / first_state["analysis"]["work_facts_ref"]).read_text(encoding="utf-8"))
-            resolutions = repo / "resolutions.json"
-            resolutions.write_text(json.dumps(resolution_document(facts)), encoding="utf-8")
+            # Kept outside the analyzed content: a resolution set is an input, not project source.
+            resolutions = pathlib.Path(tempfile.mkdtemp()) / "resolutions.json"
+            resolutions.write_text(json.dumps(resolution_document(facts, repo)), encoding="utf-8")
             args = cli.build_parser().parse_args(["--repo", str(repo), "intake", "--request-file", str(spec),
                                                    "--sdd", "generic", "--sdd-ref", str(spec),
                                                    "--resolutions", str(resolutions), "--cbm-fixture", str(fixture)])
@@ -148,8 +154,9 @@ class ResumeMustNotReviseRequirement(unittest.TestCase):
             self.assertEqual("CLASSIFIED", result["status"])
 
             state = sm._load(state_path)
-            for key, value in (("behavior_change", True), ("acceptance_criteria_present", True), ("sdd_ready", True)):
-                state = sm.set_readiness(state_path, key, value, "test", "requirements.md", state["revision"])
+            for key in ("behavior_change", "acceptance_criteria_present", "sdd_ready"):
+                evidence_factory.establish_readiness(state_path, key, repo=repo)
+            state = sm._load(state_path)
             state = sm.transition(state_path, "implementation", "in_progress", "test", "start", state["revision"])
             state = sm.record_gate(state_path, "unit", True, "passed", "test", evidence_ref="requirements.md",
                                    expected_revision=state["revision"])
@@ -240,6 +247,9 @@ class ResumeMustNotReviseRequirement(unittest.TestCase):
                 repo, "Implement the revised login spec.",
                 "--revise-current", "--confirm-reset",
                 "--confirm-revision", str(state_before_confirmation["work_item"]["requirement_revision"]),
+                # Both revisions of the move, and the state it would discard.
+                "--confirm-incoming-revision", requirement_identity.source_revision_id(repo, SPEC),
+                "--confirm-state-revision", str(state_before_confirmation["revision"]),
                 "--confirm-phase", state_before_confirmation["phase"],
                 "--confirm-status", state_before_confirmation["status"])
             self.assertNotEqual(2, code, text)
@@ -259,19 +269,23 @@ class CliRecoveryPath(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             repo = pathlib.Path(td); git_init(repo); bootstrap(repo); write_spec(repo)
             start_implementation(repo, "Implement Spring Boot JWT login.")
+            state_path = repo / ".orchestrator" / "execution-state.yaml"
             code, result, text = self._run(repo, ["readiness", "--key", "sdd_ready", "--value", "false",
                                                   "--evidence-ref", SPEC])
             self.assertEqual(0, code, text)
-            state = sm._load(repo / ".orchestrator" / "execution-state.yaml")
+            state = sm._load(state_path)
             self.assertFalse(state["readiness"]["sdd_ready"])
 
+            # The CLI may only be handed evidence that actually verifies.
+            sdd = evidence_factory.establish_readiness(state_path, "sdd_ready", repo=repo)["evidence_id"]
             code, result, text = self._run(repo, ["readiness", "--key", "sdd_ready", "--value", "true",
-                                                  "--evidence-ref", SPEC])
+                                                  "--evidence-ref", sdd])
             self.assertEqual(0, code, text)
-            self.assertTrue(sm._load(repo / ".orchestrator" / "execution-state.yaml")["readiness"]["sdd_ready"])
+            self.assertTrue(sm._load(state_path)["readiness"]["sdd_ready"])
 
+            progress = evidence_factory.establish_progress(state_path, repo=repo, completed=3)["evidence_id"]
             code, result, text = self._run(repo, ["progress", "--completed", "3", "--total", "5",
-                                                  "--evidence-ref", SPEC])
+                                                  "--evidence-ref", progress])
             self.assertEqual(0, code, text)
             self.assertEqual({"completed": 3, "total": 5},
                              sm._load(repo / ".orchestrator" / "execution-state.yaml")["work_item"]["progress"])

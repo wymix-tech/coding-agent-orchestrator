@@ -555,6 +555,38 @@ def required_gate_failures(state: Dict[str, Any], repo: Optional[pathlib.Path] =
             if (gates.get(name) or {}).get("status") != "passed"]
 
 
+def bind_native_work_item(state_path: pathlib.Path, native_id: str, actor: str, *,
+                          work_item_id: str | None = None,
+                          expected_revision: Optional[int] = None) -> Dict[str, Any]:
+    """Bind the id the native source uses to the active work item.
+
+    This is the legal path when native tasks are addressed by their own id. It never asks
+    anyone to edit `execution-state.yaml` or to re-run intake: the local work item id stays
+    the governance identity and keeps its audit trail, only the native key is recorded.
+    """
+    wanted = str(native_id or "").strip()
+    if not wanted:
+        raise StateError("a native work item id is required")
+    with _StateFileLock(state_path):
+        _recover_transaction_locked(state_path)
+        state = _load(state_path)
+        _require_revision(state, expected_revision)
+        work_item = dict(state.get("work_item") or {})
+        local_id = work_item.get("id")
+        if not local_id:
+            raise StateError("no work item is active; nothing to bind a native id to")
+        if work_item_id and str(work_item_id) != str(local_id):
+            raise StateError(f"the active work item is {local_id!r}, not {work_item_id!r}")
+        new_state = copy.deepcopy(state)
+        new_state["work_item"] = {**work_item, "native_work_item_id": wanted}
+        event = _new_event(new_state, "NATIVE_WORK_ITEM_BOUND", actor,
+                           native_work_item_id=wanted, local_work_item_id=local_id)
+        event["revision_after"] = new_state["revision"]
+        event.setdefault("commit_id", uuid.uuid4().hex)
+        _durable_transaction(state_path, new_state, event)
+        return new_state
+
+
 def transition_guard(state: Dict[str, Any], to_phase: str, to_status: str = "in_progress",
                      repo: Optional[pathlib.Path] = None, native_confirmed: bool = False) -> List[str]:
     decision = action_guard.authorize(repo, state, "close" if to_phase == "closed" else "advance",
@@ -737,16 +769,69 @@ def _build_completion_record(state: Dict[str, Any], actor: str, authorization: D
     }
 
 
+def _work_item_context(state: Dict[str, Any]) -> Dict[str, Any]:
+    """The real scope a consumer must check evidence against.
+
+    Identity lives under `work_item`; reading root-level fields silently yielded None and
+    turned every scope check into no check at all. Missing scope is never "no scope needed".
+    """
+    work_item = (state or {}).get("work_item") or {}
+    return {
+        "work_item_id": work_item.get("id") or state.get("work_item_id"),
+        "requirement_id": work_item.get("requirement_id"),
+        "requirement_revision": work_item.get("requirement_revision"),
+    }
+
+
 def _verify_evidence_record(state_path: pathlib.Path, record: dict, *,
-                            work_item_id: str | None = None) -> Dict[str, Any]:
-    """Verify a bound evidence record; invalid evidence never reaches the state."""
+                            state: Dict[str, Any] | None = None,
+                            work_item_id: str | None = None,
+                            requirement_revision: str | None = None) -> Dict[str, Any]:
+    """Verify a bound evidence record against this work item; invalid evidence must not land.
+
+    Verification always happens at use time and always with real inputs: the declared
+    dependencies are resolved against the project, never echoed from the record.
+    """
     ep = _evidence_module()
     repo = repository_snapshot.repo_from_state(state_path)
-    result = ep.revalidate(repo, record, work_item_id=work_item_id)
+    state = state if state is not None else _load(state_path)
+    context = _work_item_context(state)
+    result = ep.revalidate(
+        repo, record, state=state,
+        work_item_id=work_item_id if work_item_id is not None else context["work_item_id"],
+        requirement_revision=(requirement_revision if requirement_revision is not None
+                              else context["requirement_revision"]),
+    )
     if result.get("validation_status") == "invalid":
         raise StateError(
             f"evidence rejected: {result.get('reason_code')} (evidence_id={result.get('evidence_id')})")
     return result
+
+
+def load_evidence_reference(repo: pathlib.Path, reference: str | None) -> Optional[Dict[str, Any]]:
+    """Load a raw evidence claim from an evidence id or from a record file inside the project.
+
+    Returns None when nothing verifiable is there: "no record found" must never become
+    "no check needed".
+    """
+    if not reference:
+        return None
+    ep = _evidence_module()
+    ref = str(reference).strip()
+    doc: Optional[Dict[str, Any]] = None
+    if ref.startswith("ev-"):
+        doc = ep.load_record(repo, ref)
+    if not isinstance(doc, dict) or not doc.get("evidence_id"):
+        path = pathlib.Path(ref)
+        candidate = path if path.is_absolute() else pathlib.Path(repo).resolve() / path
+        try:
+            if candidate.is_file():
+                parsed = json.loads(candidate.read_text(encoding="utf-8"))
+                if isinstance(parsed, dict) and parsed.get("evidence_id"):
+                    doc = parsed
+        except (OSError, ValueError):
+            doc = None
+    return doc if isinstance(doc, dict) and doc.get("evidence_id") else None
 
 
 def _bind_report(state_path: pathlib.Path, status: str, report_path: Optional[str],
@@ -807,24 +892,48 @@ def set_readiness(
     ep = _evidence_module()
     state = _load(state_path)
     _require_revision(state, expected_revision)
+    repo = repository_snapshot.repo_from_state(state_path)
     new_state = copy.deepcopy(state)
-    if evidence_record is not None:
-        result = _verify_evidence_record(state_path, evidence_record,
-                                         work_item_id=state.get("work_item_id"))
-        if not ep.readiness_kind_allowed(key, result.get("kind") or ""):
+    record = evidence_record if isinstance(evidence_record, dict) and evidence_record else None
+    if record is None:
+        record = load_evidence_reference(repo, evidence_ref)
+    if value and record is None:
+        raise StateError(
+            f"readiness key {key!r} cannot be set to true without verifiable evidence: "
+            f"{evidence_ref!r} is neither an evidence id nor a readable evidence record; "
+            "collect it through the verification entry point and pass --evidence-ref <evidence id> "
+            "(see `coding-orchestrator evidence index` for the records this project knows)")
+    if record is not None:
+        result = _verify_evidence_record(state_path, record, state=state)
+        decision = ep.readiness_decision(key, result)
+        if value and not decision["allowed"]:
             raise StateError(
-                f"readiness key {key} cannot be satisfied by a {result.get('kind')!r} claim; "
-                "each key has its own source rule")
+                f"readiness key {key!r} is not satisfied by {result.get('evidence_id')}: "
+                f"{decision['error']}: {decision['message']}")
+        ep.persist_raw_record(repo, record)
         records = new_state.setdefault("evidence", {}).setdefault("records", [])
-        stored = dict(evidence_record, evidence_id=result["evidence_id"])
+        stored = dict(record, evidence_id=result["evidence_id"])
         if stored not in records:
             records.append(stored)
         new_state.setdefault("readiness_evidence", {})[key] = {
             "evidence_id": result["evidence_id"],
             "kind": result.get("kind"),
+            "claim_type": result.get("claim_type"),
             "validation_status": result.get("validation_status"),
             "outcome": result.get("outcome"),
             "recorded_at": utc_now(),
+            "evidence_ref": evidence_ref,
+        }
+    else:
+        # Withdrawing a readiness fact is recorded explicitly; it never keeps an old claim.
+        new_state.setdefault("readiness_evidence", {})[key] = {
+            "evidence_id": None,
+            "kind": None,
+            "validation_status": "unverified",
+            "outcome": None,
+            "recorded_at": utc_now(),
+            "evidence_ref": evidence_ref,
+            "note": "readiness withdrawn; no verifiable evidence is bound",
         }
     new_state["readiness"][key] = value
     new_state["cursor"]["next_action"] = compute_next_action(new_state, repository_snapshot.repo_from_state(state_path))
@@ -847,15 +956,17 @@ def set_progress(
     evidence_ref: str,
     expected_revision: Optional[int] = None,
     native_confirmed: bool = False,
+    evidence_record: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     if completed < 0 or total < 0 or completed > total:
         raise StateError("progress must satisfy 0 <= completed <= total")
     state = _load(state_path)
     _require_revision(state, expected_revision)
+    repo = repository_snapshot.repo_from_state(state_path)
+    new_state = copy.deepcopy(state)
     if state["authority"]["mode"] == "native":
         # Progress is owned by the native source; `--native-confirmed` no longer substitutes for it.
         parser = _native_module()
-        repo = repository_snapshot.repo_from_state(state_path)
         projection, diag = parser.resolve_projection(repo, state)
         if projection is None:
             raise NativeAuthorityRequired(f"{diag['error']}: {diag['message']}")
@@ -864,7 +975,30 @@ def set_progress(
             raise NativeAuthorityRequired(
                 "native authority owns work_item.progress; it must match the parsed native tasks "
                 f"(native={derived}, requested={{'completed': {completed}, 'total': {total}}})")
-    new_state = copy.deepcopy(state)
+    else:
+        # Task progress is a claim that work was done, so it needs the same verifiable evidence
+        # as any other claim. A ref that cannot be resolved is not progress evidence.
+        ep = _evidence_module()
+        record = evidence_record if isinstance(evidence_record, dict) and evidence_record else None
+        if record is None:
+            record = load_evidence_reference(repo, evidence_ref)
+        if record is None:
+            raise StateError(
+                f"work_item.progress cannot be updated without verifiable evidence: {evidence_ref!r} "
+                "is neither an evidence id nor a readable evidence record; collect it through the "
+                "verification entry point and pass --evidence-ref <evidence id> "
+                "(see `coding-orchestrator evidence index` for the records this project knows)")
+        result = _verify_evidence_record(state_path, record, state=state)
+        if result.get("validation_status") != "verified":
+            raise StateError(
+                f"work_item.progress is not satisfied by {result.get('evidence_id')}: "
+                f"validation_status={result.get('validation_status')} "
+                f"reason={result.get('reason_code')}; re-collect it through the verification entry point")
+        ep.persist_raw_record(repo, record)
+        records = new_state.setdefault("evidence", {}).setdefault("records", [])
+        stored = dict(record, evidence_id=result["evidence_id"])
+        if stored not in records:
+            records.append(stored)
     new_state["work_item"]["progress"] = {"completed": completed, "total": total}
     event = _new_event(
         state,

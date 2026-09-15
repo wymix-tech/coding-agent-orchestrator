@@ -13,6 +13,7 @@ import context_plane
 import enforcement_kernel as ek
 import execution_state_manager as sm
 import session_context as sc
+import evidence_factory
 
 
 class SessionFixture:
@@ -34,9 +35,8 @@ class SessionFixture:
         self.state = self.repo / ".orchestrator" / "execution-state.yaml"
         st = sm.create_state("W-42", "Session context feature", "STANDARD")
         sm.initialize(self.state, st, "test")
-        for k, v in [("behavior_change", True), ("acceptance_criteria_present", True), ("sdd_ready", True)]:
-            s = sm._load(self.state)
-            sm.set_readiness(self.state, k, v, "test", "evidence", s["revision"])
+        for k in ("behavior_change", "acceptance_criteria_present", "sdd_ready"):
+            evidence_factory.establish_readiness(self.state, k, repo=self.repo)
         s = sm._load(self.state)
         s = sm._load(self.state)
         sm.set_cursor(self.state, "test", "T4.2", "Implement async reporting", "implement_task:T4.2", s["revision"])

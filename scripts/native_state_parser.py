@@ -41,6 +41,13 @@ STATUS_TO_CANONICAL: Dict[str, Tuple[str, str]] = {
     "completed": ("closed", "completed"),
 }
 
+# Native task states that count as completed, and those that explicitly do not. Anything
+# else is a format error: an unknown value is never projected as progress.
+TASK_COMPLETED_STATES = {"done", "completed", "complete", "passed", "closed", "true"}
+TASK_OPEN_STATES = {"todo", "pending", "waiting", "in-progress", "in_progress", "doing",
+                    "review", "blocked", "failed", "skipped", "false"}
+TASK_STATUS_KEYS = ("status", "state", "done", "completed")
+
 CONTAINER_KEYS = ("development_status", "sprint_status", "stories", "story_status")
 
 
@@ -58,15 +65,18 @@ class NativeProjection:
     must still own the verification that produced it. Type checks must never replace that.
     """
 
-    __slots__ = ("work_item_id", "requirement_revision", "source_ref", "content_digest",
-                 "expected_state_revision", "phase", "status_detail", "progress",
-                 "native_state_revision", "container_key")
+    __slots__ = ("work_item_id", "local_work_item_id", "requirement_revision", "source_ref",
+                 "content_digest", "expected_state_revision", "phase", "status_detail",
+                 "progress", "native_state_revision", "container_key", "identity_source")
 
-    def __init__(self, *, work_item_id: str, requirement_revision: Optional[str], source_ref: str,
+    def __init__(self, *, work_item_id: str, local_work_item_id: Optional[str],
+                 requirement_revision: Optional[str], source_ref: str,
                  content_digest: str, expected_state_revision: Optional[str], phase: str,
                  status_detail: str, progress: Optional[Dict[str, int]],
-                 native_state_revision: str, container_key: Optional[str] = None) -> None:
+                 native_state_revision: str, container_key: Optional[str] = None,
+                 identity_source: str = "unknown") -> None:
         self.work_item_id = work_item_id
+        self.local_work_item_id = local_work_item_id
         self.requirement_revision = requirement_revision
         self.source_ref = source_ref
         self.content_digest = content_digest
@@ -76,11 +86,13 @@ class NativeProjection:
         self.progress = progress
         self.native_state_revision = native_state_revision
         self.container_key = container_key
+        self.identity_source = identity_source
 
     def as_record(self) -> Dict[str, Any]:
         """Audit record of the observation. Not a trust carrier: it cannot be imported back."""
         return {
             "work_item_id": self.work_item_id,
+            "local_work_item_id": self.local_work_item_id,
             "requirement_revision": self.requirement_revision,
             "source_ref": self.source_ref,
             "content_digest": self.content_digest,
@@ -90,6 +102,7 @@ class NativeProjection:
             "progress": dict(self.progress or {}),
             "native_state_revision": self.native_state_revision,
             "container_key": self.container_key,
+            "identity_source": self.identity_source,
         }
 
 
@@ -133,27 +146,100 @@ def _native_status(entry: Any) -> Optional[str]:
     return None
 
 
+def _task_state(value: Any) -> Optional[bool]:
+    """Map one native task value to completed/open. Unknown shapes are a format error.
+
+    Truthiness is never accepted: the string "todo" and the string "failed" are truthful
+    values that do not describe completion, and projecting them as done would lie twice.
+    """
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, dict):
+        for key in TASK_STATUS_KEYS:
+            if key in value:
+                inner = _task_state(value[key])
+                if inner is not None:
+                    return inner
+        return None
+    if isinstance(value, str):
+        token = value.strip().lower()
+        if token in TASK_COMPLETED_STATES:
+            return True
+        if token in TASK_OPEN_STATES:
+            return False
+        return None
+    return None
+
+
 def _progress(entry: Any) -> Optional[Dict[str, int]]:
     if not isinstance(entry, dict):
         return None
     tasks = entry.get("tasks")
-    if isinstance(tasks, dict):
-        return {"completed": sum(1 for v in tasks.values() if v), "total": len(tasks)}
-    return None
+    if not isinstance(tasks, dict):
+        return None
+    completed = 0
+    for name, value in tasks.items():
+        state = _task_state(value)
+        if state is None:
+            raise NativeFormatError(f"task {name!r} has an unsupported task value {value!r}")
+        if state:
+            completed += 1
+    return {"completed": completed, "total": len(tasks)}
+
+
+class NativeFormatError(Exception):
+    """A native source uses a shape this version refuses to guess about."""
+
+
+def _wanted_identities(state: Optional[dict]) -> list[Tuple[str, str]]:
+    """The identities that may address this work item in the native source.
+
+    A state created by `start`/auto intake carries a local work item id and, when it was
+    created from a native source, the id the native provider uses. Both must be tried, in
+    that order: the native id is the one the native source knows.
+    """
+    if not state:
+        return []
+    work_item = state.get("work_item") or {}
+    wanted: list[Tuple[str, str]] = []
+    native_id = work_item.get("native_work_item_id")
+    local_id = work_item.get("id") or state.get("work_item_id")
+    if native_id:
+        wanted.append((str(native_id), "native_work_item_id"))
+    if local_id and str(local_id) != str(native_id or ""):
+        wanted.append((str(local_id), "local_work_item_id"))
+    return wanted
 
 
 def _select_work_item(container: Dict[str, Any], state: Optional[dict]) -> Tuple[Optional[str], str]:
-    wanted = None
-    if state:
-        wanted = (state.get("work_item") or {}).get("id") or state.get("work_item_id")
     keys = [str(k) for k in container.keys()]
-    if wanted and str(wanted) in keys:
-        return str(wanted), "state_work_item"
+    wanted = _wanted_identities(state)
+    for name, _source in wanted:
+        if name in keys:
+            return name, _source
     if wanted:
         return None, "NATIVE_TASK_MISSING"
     if len(keys) == 1:
         return keys[0], "single_entry"
     return None, "NATIVE_WORK_ITEM_AMBIGUOUS"
+
+
+def bind_diagnostic(state: Optional[dict], candidates: list[str]) -> Dict[str, Any]:
+    """A missing native identity is a binding problem, never a prompt to hand-edit state."""
+    work_item = (state or {}).get("work_item") or {}
+    local_id = str(work_item.get("id") or (state or {}).get("work_item_id") or "")
+    native_id = str(work_item.get("native_work_item_id") or "")
+    return {
+        "bind_command": (
+            "python3 scripts/coding_orchestrator.py native bind "
+            f"--native-id <one of {', '.join(candidates[:5]) or 'the native work item id'}>"
+            + (f" --work-item {local_id}" if local_id else "")
+        ),
+        "local_work_item_id": local_id or None,
+        "native_work_item_id": native_id or None,
+        "note": ("bind the native work item id once; the local work item id stays the "
+                 "governance identity and keeps its audit trail"),
+    }
 
 
 def resolve_projection(repo: Path, state: Optional[dict] = None, *,
@@ -192,12 +278,14 @@ def resolve_projection(repo: Path, state: Optional[dict] = None, *,
         if note == "NATIVE_TASK_MISSING":
             return None, _diagnostic(
                 "NATIVE_TASK_MISSING",
-                "the native source does not contain the current work item",
-                "run_native_intake", candidates=candidates)
+                ("the native source does not contain the bound native work item id "
+                 f"({note}); bind the native id instead of editing execution-state.yaml"),
+                "bind_native_work_item", candidates=candidates,
+                **bind_diagnostic(state, candidates))
         return None, _diagnostic(
             "NATIVE_WORK_ITEM_AMBIGUOUS",
             "several native work items are present and none was selected",
-            "select_native_work_item", candidates=candidates)
+            "select_native_work_item", candidates=candidates, **bind_diagnostic(state, candidates))
     entry = entries[work_item_id]
     native_status = _native_status(entry)
     if native_status is None:
@@ -222,17 +310,27 @@ def resolve_projection(repo: Path, state: Optional[dict] = None, *,
     expected = None
     if state:
         expected = ((state.get("authority") or {}).get("last_native_sync") or {}).get("native_revision")
+    try:
+        progress = _progress(entry)
+    except NativeFormatError as exc:
+        return None, _diagnostic(
+            "NATIVE_FORMAT_UNKNOWN", str(exc),
+            "inspect_native_state_format", work_item_id=work_item_id,
+            supported_task_values=sorted(TASK_COMPLETED_STATES | TASK_OPEN_STATES))
+    work_item = (state or {}).get("work_item") or {}
     return NativeProjection(
         work_item_id=work_item_id,
-        requirement_revision=(state or {}).get("work_item", {}).get("requirement_revision"),
+        local_work_item_id=str(work_item.get("id") or "") or None,
+        requirement_revision=work_item.get("requirement_revision"),
         source_ref=source_ref,
         content_digest=digest,
         expected_state_revision=expected,
         phase=phase,
         status_detail=status_detail,
-        progress=_progress(entry),
+        progress=progress,
         native_state_revision=digest,
         container_key=container_key,
+        identity_source=note,
     ), {}
 
 

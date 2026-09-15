@@ -42,6 +42,16 @@ import session_context
 import skill_runtime
 import start_router
 
+try:
+    import evidence_provenance
+except ImportError:  # pragma: no cover - loaded by path when only this file runs
+    import importlib.util as _ilu
+
+    _spec = _ilu.spec_from_file_location("evidence_provenance",
+                                         Path(__file__).resolve().parent / "evidence_provenance.py")
+    evidence_provenance = _ilu.module_from_spec(_spec)
+    _spec.loader.exec_module(evidence_provenance)
+
 ROOT = Path(__file__).resolve().parents[1]
 VERSION = "6.5"
 READINESS_KEYS = {"behavior_change", "sdd_ready", "acceptance_criteria_present",
@@ -420,10 +430,29 @@ def _revision_changed_message(repo: Path, state: dict[str, Any], requirement_id:
     return " ".join(lines)
 
 
-def _reset_confirmation_message(repo: Path, state: dict[str, Any]) -> str:
+def _source_revision_now(repo: Path, source_ref: str | None) -> str | None:
+    """Source content revision read right now; None when the source cannot be read."""
+    if not source_ref:
+        return None
+    try:
+        resolved = requirement_identity.requirement_content_revision(repo, source_ref)
+    except Exception:
+        return None
+    return resolved.get("source_revision") if isinstance(resolved, dict) else None
+
+
+def _reset_confirmation_message(repo: Path, state: dict[str, Any], *, requirement_id: str = "",
+                                active_revision: str | None = None, incoming_revision: str | None = None,
+                                source_ref: str | None = None) -> str:
     return (_reset_warning(state)
-            + f" Confirm with --revise-current --confirm-reset, or resume with {skill_runtime.recovery_command(repo, 'start')} "
-              "when the requirement did not change.")
+            + " Confirm with the complete binding set (requirement, old source revision, incoming "
+              "source revision, observed state revision), or resume with "
+            f"{skill_runtime.recovery_command(repo, 'start')} when the requirement did not change: "
+            + requirement_identity.confirmation_command(
+                requirement_id or str((state.get("work_item") or {}).get("requirement_id") or ""),
+                active_revision=active_revision, incoming_source_revision=incoming_revision,
+                state_revision=str(state.get("revision")), phase=state.get("phase"),
+                status=state.get("status")))
 
 
 def _analysis_is_current(repo: Path, state: dict[str, Any]) -> bool:
@@ -539,30 +568,55 @@ def cmd_intake(args: argparse.Namespace) -> tuple[int, dict[str, Any], str]:
                                "source_changed": source_changed, "resets_in_flight_work": _resets_in_flight_work(existing),
                                "next_action": "resume_current_work" if _resets_in_flight_work(existing) else "confirm_requirement_revision"}, _revision_changed_message(repo, existing, req_id)
                 if _resets_in_flight_work(existing) and not getattr(args, "confirm_reset", False):
-                    return 2, {"status": "ACTION_REQUIRED", "error": "REVISION_RESET_REQUIRES_CONFIRMATION",
+                    return (2, {"status": "ACTION_REQUIRED", "error": "REVISION_RESET_REQUIRES_CONFIRMATION",
                                "requirement_id": req_id, "active_revision": existing_rev, "incoming_revision": req_rev,
-                               "source_changed": source_changed, "next_action": "confirm_requirement_revision"}, _reset_confirmation_message(repo, existing)
+                               "source_changed": source_changed, "next_action": "confirm_requirement_revision"},
+                        _reset_confirmation_message(
+                            repo, existing, requirement_id=str(req_id),
+                            active_revision=str(existing_rev) if existing_rev else None,
+                            incoming_revision=str(req_rev) if req_rev else None,
+                            source_ref=source_ref))
                 if _resets_in_flight_work(existing):
                     confirmation = requirement_identity.check_revision_confirmation(
                         repo, requirement_id=str(req_id), source_revision=source_rev,
                         phase=existing.get("phase"), status=existing.get("status"),
                         active_revision=str(existing_rev) if existing_rev else None,
+                        # The observed state revision is what makes the confirmation expire when
+                        # anything else moved: progress, gates and evidence included.
+                        state_revision=str(existing.get("revision")),
                         confirmation={
                             "requirement_id": str(req_id),
                             "source_revision": getattr(args, "confirm_revision", None),
+                            "incoming_source_revision": getattr(args, "confirm_incoming_revision", None),
+                            "state_revision": getattr(args, "confirm_state_revision", None),
                             "phase": getattr(args, "confirm_phase", None),
                             "status": getattr(args, "confirm_status", None),
-                        } if (getattr(args, "confirm_reset", False) and getattr(args, "confirm_revision", None)) else None,
+                        } if getattr(args, "confirm_reset", False) else None,
                     )
                     if not confirmation["allowed"]:
+                        command = confirmation.get("confirm_command") or (
+                            "intake --revise-current --confirm-reset --confirm-revision <rev> "
+                            "--confirm-incoming-revision <rev> --confirm-state-revision <rev>")
                         return 2, {"status": "ACTION_REQUIRED", **confirmation,
                                    "requirement_id": req_id, "active_revision": existing_rev,
                                    "incoming_revision": req_rev, "source_changed": source_changed,
                                    "resets_in_flight_work": True}, (
-                            confirmation["message"] + " Confirm against the current state: "
-                            "intake --revise-current --confirm-reset --confirm-revision <rev> "
-                            f"--confirm-phase {existing.get('phase')} --confirm-status {existing.get('status')}"
-                        )
+                            confirmation["message"] + f" Confirm against the current state: {command}")
+                    # Re-check immediately before applying: a confirmation issued a second ago
+                    # is already stale if the source or the state moved since.
+                    latest = sm._load(state_path)
+                    if str(latest.get("revision")) != str(existing.get("revision")) or _source_revision_now(repo, source_ref) != source_rev:
+                        return 2, {"status": "ACTION_REQUIRED", "error": "REVISION_CONFIRMATION_SUPERSEDED",
+                                   "requirement_id": req_id, "active_revision": existing_rev,
+                                   "incoming_revision": req_rev, "resets_in_flight_work": True,
+                                   "next_action": "confirm_requirement_revision"}, (
+                            "the state or the requirement source moved while the confirmation was being "
+                            "processed; re-issue it against what is there now: "
+                            + requirement_identity.confirmation_command(
+                                str(req_id), active_revision=str(existing_rev),
+                                incoming_source_revision=source_rev,
+                                state_revision=str(latest.get("revision")),
+                                phase=latest.get("phase"), status=latest.get("status")))
                 existing = sm.revise_work_item(state_path, req_id, req_rev, args.actor, source_ref or "direct-request",
                                                 existing["revision"], requirement_source_ref=source_ref,
                                                 native_work_item_id=getattr(args, "native_id", None))
@@ -843,6 +897,62 @@ def cmd_readiness(args: argparse.Namespace) -> tuple[int, dict[str, Any], str]:
                        f"Revision: {state.get('revision')}\nNext: {next_action}")
 
 
+def cmd_evidence(args: argparse.Namespace) -> tuple[int, dict[str, Any], str]:
+    """Inspect and re-verify evidence through the entry point, never by trusting the record."""
+    repo = args.repo.resolve()
+    path = _state_path(args.repo)
+    state = sm._load(path) if path.exists() else {}
+    if args.evidence_command == "index":
+        index = evidence_provenance.rebuild_index(repo)
+        records = index.get("records") or {}
+        return 0, {"status": "EVIDENCE_INDEX_REBUILT", "count": len(records),
+                   "records": {k: {"path": v.get("path"), "validation_status": v.get("validation_status"),
+                                   "outcome": v.get("outcome"), "claim_type": v.get("claim_type")}
+                               for k, v in records.items()}}, (
+            f"Rebuilt the evidence index from {len(records)} record(s): "
+            + ", ".join(sorted(records)) if records else "no evidence records are stored yet")
+    reference = getattr(args, "evidence_id", None) or getattr(args, "record", None)
+    if not reference:
+        return 2, {"status": "ACTION_REQUIRED", "error": "EVIDENCE_REF_REQUIRED",
+                   "next_action": "provide_evidence_reference"}, (
+            "name the evidence to look at: --evidence-id <id> or --record <path>")
+    record = sm.load_evidence_reference(repo, reference)
+    if record is None:
+        return 2, {"status": "ACTION_REQUIRED", "error": "EVIDENCE_REF_UNRESOLVED",
+                   "reference": reference, "next_action": "rebuild_evidence_index"}, (
+            f"{reference!r} is neither an evidence id nor a readable record inside the project; "
+            "re-collect it through the verification entry point")
+    if args.evidence_command == "show":
+        return 0, {"status": "EVIDENCE_RECORD", "record": record}, _json(record)
+    result = sm._verify_evidence_record(path, record, state=state)
+    verified = result.get("validation_status") == "verified"
+    recovery = ("re-collect it through the verification entry point "
+                "(the verification command that produced it; then `evidence index`)")
+    return (0 if verified else 1), {"status": "EVIDENCE_VERIFIED" if verified else "EVIDENCE_NOT_VERIFIED",
+                                    **result, "recovery_command": recovery if not verified else None}, (
+        f"{result.get('evidence_id')}: {result.get('validation_status')} / {result.get('outcome')}"
+        + (f" ({result.get('reason_code')})" if result.get("reason_code") else "")
+        + ("" if verified else f"\nRecover: {recovery}"))
+
+
+def cmd_native_bind(args: argparse.Namespace) -> tuple[int, dict[str, Any], str]:
+    """Bind the id the native source uses to the local work item. The legal path for F5."""
+    path = _state_path(args.repo)
+    if not path.exists():
+        return _missing_state()
+    try:
+        state = sm.bind_native_work_item(path, args.native_id, args.actor,
+                                        work_item_id=args.work_item)
+    except sm.StateError as exc:
+        return 2, {"status": "ACTION_REQUIRED", "error": "NATIVE_BIND_REFUSED",
+                   "message": str(exc), "next_action": "bind_native_work_item"}, str(exc)
+    local_id = (state.get("work_item") or {}).get("id")
+    return 0, {"status": "NATIVE_ID_BOUND", "work_item_id": local_id,
+               "native_work_item_id": str(args.native_id), "revision": state.get("revision")}, (
+        f"Bound native work item {args.native_id} to local work item {local_id}. "
+        "The local id stays the governance identity; native synchronization now resolves either.")
+
+
 def cmd_progress(args: argparse.Namespace) -> tuple[int, dict[str, Any], str]:
     path = _state_path(args.repo)
     if not path.exists():
@@ -940,13 +1050,34 @@ def build_parser() -> argparse.ArgumentParser:
     x=sub.add_parser("status",help="show active execution status")
     x.add_argument("--role",default="implementer",choices=sorted(session_context.ROLES)); x.set_defaults(func=cmd_status)
 
+    x=sub.add_parser("evidence",help="show, re-verify or index verifiable evidence records")
+    xsub=x.add_subparsers(dest="evidence_command",required=True)
+    y=xsub.add_parser("show",help="print one stored evidence claim")
+    y.add_argument("--evidence-id"); y.add_argument("--record",help="path to an evidence record file")
+    y.set_defaults(func=cmd_evidence)
+    y=xsub.add_parser("verify",help="re-verify an evidence claim against the project right now")
+    y.add_argument("--evidence-id"); y.add_argument("--record",help="path to an evidence record file")
+    y.set_defaults(func=cmd_evidence)
+    y=xsub.add_parser("index",help="rebuild the evidence index from the stored records")
+    y.set_defaults(func=cmd_evidence)
+
+    x=sub.add_parser("native",help="native source ownership and binding")
+    xsub=x.add_subparsers(dest="native_command",required=True)
+    y=xsub.add_parser("bind",help="bind the id the native source uses to the active work item")
+    y.add_argument("--native-id",required=True)
+    y.add_argument("--work-item",help="local work item id the native id belongs to")
+    y.add_argument("--actor",default="coding-orchestrator")
+    y.set_defaults(func=cmd_native_bind)
+
     x=sub.add_parser("intake",help="start or reassess a work item through the V6 semantic intake pipeline")
     x.add_argument("request",nargs="?")
     x.add_argument("--request-file",type=Path)
     x.add_argument("--work-id"); x.add_argument("--title")
     x.add_argument("--revise-current", action="store_true", help="explicitly accept a new revision of the active requirement and invalidate derived evidence")
     x.add_argument("--confirm-reset", action="store_true", help="with --revise-current: accept that in-flight implementation state (phase, readiness, gates, progress) is discarded")
-    x.add_argument("--confirm-revision", help="with --confirm-reset: requirement revision the confirmation is bound to")
+    x.add_argument("--confirm-revision", help="with --confirm-reset: source revision the confirmation was issued against")
+    x.add_argument("--confirm-incoming-revision", help="with --confirm-reset: new source revision this confirmation approves")
+    x.add_argument("--confirm-state-revision", help="with --confirm-reset: execution state revision observed when the confirmation was issued")
     x.add_argument("--confirm-phase", help="with --confirm-reset: work item phase observed when the confirmation was issued")
     x.add_argument("--confirm-status", help="with --confirm-reset: work item status observed when the confirmation was issued")
     x.add_argument("--reanalyze", action="store_true", help="explicit re-analysis intent; defeats the source-unchanged resume shortcut")

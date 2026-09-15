@@ -2,6 +2,30 @@
 
 This report is the durable repair checkpoint for the T1–T8 stability work. The repaired source tree, schemas, documentation, and tests are packaged together; this report distinguishes local verification from external integrations that were unavailable in the repair environment.
 
+## Phase A — verifiable evidence, real native projection, migratable identity — 2026-09-15
+
+Phase A turns a rule-complete workflow that could *record* evidence into one where evidence can
+be *checked*, native state is projected from real content, and requirement identity can migrate.
+It is delivered as stacked PRs on an isolated branch (`PR0` contracts → `PR1` evidence → `PR2`
+native projection → `PR3` identity/migration → `PR3-follow-up`), none of which is merged to
+`main` here.
+
+| Area | What changed | Where it is proven |
+|---|---|---|
+| T1 evidence | `scripts/evidence_provenance.py`: `kind` × `validation_status` × `outcome`; `required_dependencies()` is derived by the verifier and each dependency is resolved against the object that really exists (path/tree/object revision, report, approval, native state); immutable content-addressed records with a rebuildable index | `tests/test_evidence_provenance.py`, `tests/test_evidence_enforcement.py` |
+| T2 native projection | `scripts/native_state_parser.py`: one read → digest + parse → `NativeProjection` (internal type, no import entry) or a structured diagnostic; `native-sync`, `sync-native`, `transition`, `progress` share it; `--native-confirmed` is a compatibility switch, not trust. Governance `phase/status/completion_record` still require `action_guard.authorize(...)` | `tests/test_native_state_parser.py`, `tests/test_native_entrypoint_equivalence.py`, `tests/test_governed_transition_boundaries.py` |
+| T3 identity/migration | `requirement_identity` `identity_version=2` quadruple, deterministic multi-file digests, structured boundaries for mixed-content files, legacy marking instead of "assume unchanged", preview → backup → atomic replace → idempotent re-entry → interrupt recovery | `tests/test_requirement_identity_v2.py`, `tests/test_requirement_revision_confirm.py`, `tests/test_migration_transactions.py`, `tests/test_explicit_input_not_swallowed.py` |
+| Follow-up | dependencies bind real objects, tests build real material first (`tests/evidence_factory.py`), readiness is re-checked at use time, `coding-orchestrator evidence show\|verify\|index` and `coding-orchestrator native bind` | `tests/evidence_factory.py` and the suites above |
+
+Verification: `GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null python3 -m unittest discover -s
+tests -p 'test_*.py'` → **411 tests / OK**; `python3 scripts/context_footprint_check.py --repo .
+--json` → **PASS** (SKILL.md 103 lines / 7400 bytes / 918 words). Per-PR results, behaviour changes
+in existing tests, and the four minimal rebuild paths are in
+`repair/phase-a-verification-summary.json`.
+
+Not run here: real host integration (Pi / Codex / Claude Code / Windows) and a real multi-file CBM
+or host directory migration — both are recorded as `NOT_RUN` rather than claimed.
+
 ## Git commit/content snapshot follow-up — 2026-09-14
 
 The previous fingerprint mixed HEAD identity with material file content, and the

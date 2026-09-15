@@ -15,18 +15,16 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 
 import action_guard as guard
+import evidence_factory
 import evidence_provenance as ep
 import execution_state_manager as sm
 import fact_resolver
 from test_enforcement_kernel import EnforcementFixture
 
 
-CODE_DEP = {"object_kind": "code_under_test", "object_id": "src/app.py", "revision": "sha:aaa"}
-NATIVE_SOURCE_DEP = {"object_kind": "native_source", "object_id": "bmad:story-1", "revision": "n1"}
-
-
-def _deps(extra=None):
-    deps = [{"object_kind": "requirement_revision", "object_id": "req:1", "revision": "rev-1"}]
+def _deps(repo, extra=None):
+    """Dependencies that really resolve in `repo`: the objects exist, the revisions are observed."""
+    deps = [evidence_factory.requirement_dependency(repo)]
     deps.extend(extra or [])
     return deps
 
@@ -40,12 +38,17 @@ class EvidenceEnforcementTests(unittest.TestCase):
         return sm._load(self.fx.state_path)
 
     def _record(self, *, kind="agent_claim", claim_type="readiness", work_item_id=None,
-                depends_on=None, **kwargs):
+                requirement_revision=None, depends_on=None, **kwargs):
+        # Scope is read from the state, not invented: a record that names a different work item
+        # or a revision that is not the active one must be out of scope.
+        state = self._state()
+        work_item = state.get("work_item") or {}
         return ep.build_record(
             kind=kind, claim_type=claim_type,
-            work_item_id=work_item_id or self._state().get("work_item_id") or "W1",
-            requirement_revision="rev-1",
-            depends_on=_deps() if depends_on is None else depends_on, **kwargs)
+            work_item_id=work_item_id or work_item.get("id") or state.get("work_item_id") or "W1",
+            requirement_revision=(requirement_revision if requirement_revision is not None
+                                  else work_item.get("requirement_revision")),
+            depends_on=_deps(self.fx.repo) if depends_on is None else depends_on, **kwargs)
 
     def _report(self, name="report.json", status="failed", exit_code=1):
         path = self.fx.repo / name
@@ -57,7 +60,8 @@ class EvidenceEnforcementTests(unittest.TestCase):
     def test_invalid_bound_evidence_denies_a_guarded_action(self):
         state = self._state()
         bad = self._record(kind="mechanical_observation", claim_type="test_result", outcome="passed",
-                           depends_on=_deps([CODE_DEP]), report={"path": "missing-report.json"})
+                           depends_on=_deps(self.fx.repo, [evidence_factory.code_dependency(
+                               self.fx.repo)]), report={"path": "missing-report.json"})
         state.setdefault("evidence", {})["records"] = [bad]
         evidence = guard.collect_evidence(self.fx.repo, state)
         self.assertEqual(1, len(evidence["evidence_invalid"]))
@@ -135,14 +139,22 @@ class EvidenceEnforcementTests(unittest.TestCase):
         self.assertIn("cannot be satisfied by", str(caught.exception))
 
     def test_readiness_accepts_a_kind_allowed_for_the_key(self):
+        # The native decision is read from the file that holds it, not cited by name, and it
+        # must name the native revision that is really there.
+        work_item_id = (self._state().get("work_item") or {}).get("id") or "W1"
+        native = evidence_factory.native_dependency(self.fx.repo)
+        approvals = evidence_factory.write_approval(self.fx.repo, approval_id=native["revision"],
+                                                    subject=work_item_id, approver="bmad")
         record = self._record(kind="native_result", claim_type="readiness", outcome="passed",
-                              depends_on=_deps([NATIVE_SOURCE_DEP]),
-                              approval={"source": "bmad", "subject": "story-1", "revision": "n1"})
+                              depends_on=_deps(self.fx.repo, [native]),
+                              approval={"source": approvals, "subject": work_item_id,
+                                        "revision": native["revision"]})
         sm.set_readiness(self.fx.state_path, "acceptance_criteria_present", True, "orchestrator",
                          "evidence.json", evidence_record=record)
         state = self._state()
-        self.assertEqual(1, len(state["evidence"]["records"]))
-        self.assertTrue(state["readiness_evidence"]["acceptance_criteria_present"]["evidence_id"])
+        evidence_id = state["readiness_evidence"]["acceptance_criteria_present"]["evidence_id"]
+        self.assertTrue(evidence_id)
+        self.assertIn(evidence_id, [r.get("evidence_id") for r in state["evidence"]["records"]])
 
     # --- resolutions cannot rest on placeholders --------------------------------------
 
@@ -171,7 +183,7 @@ class EvidenceEnforcementTests(unittest.TestCase):
         draft = {"scope": {"public_contract_change": None}}
         record = ep.build_record(kind="agent_claim", claim_type="fact_resolution", work_item_id="W1",
                                  requirement_revision="rev-1", outcome="passed",
-                                 depends_on=_deps())
+                                 depends_on=_deps(self.fx.repo))
         doc = {"resolutions": [{
             "path": "scope.public_contract_change", "value": True,
             "source_type": "agent", "source": "request", "evidence": "claim",

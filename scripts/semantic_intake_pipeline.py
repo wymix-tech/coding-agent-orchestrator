@@ -73,6 +73,71 @@ def intake_fingerprint(request: str, base_ref: str | None, resolutions: Path | N
     return hashlib.sha256(json.dumps(material, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()[:16]
 
 
+def collect_evidence_refs(repo: Path, refs: Iterable[str] | None, *,
+                          state_path: Path | None = None) -> dict:
+    """Load each explicit evidence reference and re-verify it against the current work item.
+
+    An explicit reference that is not consumed here is decoration: it changes the intake
+    fingerprint but nothing downstream, so a retry would still be reported as
+    "no new evidence". Loaded claims are re-validated at this moment, not trusted from storage.
+    """
+    import evidence_provenance
+
+    report: dict[str, Any] = {"refs": [], "verified": [], "unresolved": [], "unverified": []}
+    state = None
+    if state_path is not None and Path(state_path).exists():
+        try:
+            state = execution_state_manager._load(state_path)
+        except Exception:
+            state = None
+    context = execution_state_manager._work_item_context(state) if state else {}
+    for ref in sorted({str(r) for r in (refs or []) if r}):
+        record = execution_state_manager.load_evidence_reference(repo, ref)
+        entry: dict[str, Any] = {"ref": ref}
+        if record is None:
+            entry.update({"evidence_id": None, "validation_status": "unresolved",
+                          "reason_code": "EVIDENCE_REF_UNRESOLVED",
+                          "message": f"{ref!r} is neither an evidence id nor a readable record"})
+            report["unresolved"].append(entry)
+            report["refs"].append(entry)
+            continue
+        result = evidence_provenance.revalidate(
+            repo, record, state=state,
+            work_item_id=context.get("work_item_id"),
+            requirement_revision=context.get("requirement_revision"),
+        )
+        entry.update({
+            "evidence_id": result.get("evidence_id"),
+            "kind": result.get("kind"),
+            "claim_type": result.get("claim_type"),
+            "validation_status": result.get("validation_status"),
+            "outcome": result.get("outcome"),
+            "reason_code": result.get("reason_code"),
+        })
+        report["refs"].append(entry)
+        if result.get("validation_status") == "verified":
+            report["verified"].append(entry)
+        else:
+            report["unverified"].append(entry)
+    return report
+
+
+def _bind_resolution_scope(resolution_doc: dict, state_path: Path | None) -> None:
+    """Give each resolution the real work item scope so its evidence can be checked."""
+    if not isinstance(resolution_doc, dict) or state_path is None or not Path(state_path).exists():
+        return
+    try:
+        state = execution_state_manager._load(state_path)
+    except Exception:
+        return
+    context = execution_state_manager._work_item_context(state)
+    for resolution in resolution_doc.get("resolutions") or []:
+        if not isinstance(resolution, dict):
+            continue
+        resolution.setdefault("work_item_id", context.get("work_item_id"))
+        resolution.setdefault("requirement_revision", context.get("requirement_revision"))
+
+
 def requirement_key(state_path: Path) -> str:
     try:
         state = execution_state_manager._load(state_path)
@@ -296,13 +361,25 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
 
     enriched = impact_mapper.enrich_work_facts(draft, impact)
     enriched.setdefault("extraction", {})["analysis_snapshot_id"] = combined_snapshot(enriched, impact)
+    # Explicit inputs must reach re-analysis, not only the fingerprint that detects retries.
+    evidence_report = collect_evidence_refs(repo, getattr(args, "evidence_refs", None) or [],
+                                           state_path=state_path_resolved)
+    enriched.setdefault("explicit_inputs", {
+        "reanalyze": bool(getattr(args, "reanalyze", False)),
+        "requirement_revision": getattr(args, "requirement_revision", None),
+        "evidence_refs": sorted({str(r) for r in (getattr(args, "evidence_refs", None) or []) if r}),
+    })
+    enriched["explicit_inputs"]["evidence_verification"] = evidence_report
     dump(outdir / "work-facts.semantic-draft.json", enriched)
 
     facts = enriched
     if args.resolutions:
         resolution_doc = json.loads(args.resolutions.read_text(encoding="utf-8"))
-        facts = fact_resolver.apply_resolutions(enriched, resolution_doc)
+        _bind_resolution_scope(resolution_doc, state_path_resolved)
+        facts = fact_resolver.apply_resolutions(enriched, resolution_doc, repo=repo)
         dump(outdir / "work-facts.resolved.json", facts)
+    if getattr(args, "evidence_refs", None):
+        dump(outdir / "evidence-verification.json", evidence_report)
 
     template_path = fact_resolver.write_resolution_template(
         outdir, facts, source_ref=str(args.resolutions) if args.resolutions else str(request_ref) if request_ref else None
