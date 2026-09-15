@@ -66,14 +66,47 @@ def validate_resolution(r: Dict[str, Any]) -> None:
         raise ValueError(f"false resolution requires negative_proof unless authoritative: {r['path']}")
     if r["value"] is None:
         raise ValueError(f"resolution cannot finalize null: {r['path']}")
+    for field in ("source_type", "source", "evidence"):
+        if not str(r.get(field) or "").strip():
+            raise ValueError(
+                f"resolution {field} must reference something checkable, not a placeholder: {r['path']}")
 
 
-def apply_resolutions(draft: Dict[str, Any], resolution_doc: Dict[str, Any]) -> Dict[str, Any]:
+def _evidence_module():
+    try:
+        import evidence_provenance
+        return evidence_provenance
+    except ImportError:  # pragma: no cover - import shim only
+        import importlib.util as _ilu
+        _spec = _ilu.spec_from_file_location(
+            "evidence_provenance", Path(__file__).resolve().parent / "evidence_provenance.py")
+        module = _ilu.module_from_spec(_spec)
+        _spec.loader.exec_module(module)
+        return module
+
+
+def evidence_validation(resolution: Dict[str, Any], repo: Path | None = None) -> str:
+    """A recorded evidence string is not a verification; only a checked record can be verified."""
+    record = resolution.get("evidence_record")
+    if not isinstance(record, dict) or repo is None:
+        return "unverified"
+    result = _evidence_module().revalidate(repo, record)
+    return str(result.get("validation_status") or "unverified")
+
+
+def apply_resolutions(draft: Dict[str, Any], resolution_doc: Dict[str, Any],
+                      *, repo: Path | None = None) -> Dict[str, Any]:
     out = copy.deepcopy(draft)
     provenance = out.setdefault("provenance", {})
     changes: List[Dict[str, Any]] = []
+    validations: List[Dict[str, Any]] = []
     for r in resolution_doc.get("resolutions", []):
         validate_resolution(r)
+        validation = evidence_validation(r, repo)
+        if r.get("strength") == "authoritative" and isinstance(r.get("evidence_record"), dict) \
+                and validation != "verified":
+            raise ValueError(
+                f"authoritative resolution requires verified evidence, got {validation}: {r['path']}")
         path = r["path"]
         old = get_path(out, path)
         if old is not None and old != r["value"]:
@@ -93,7 +126,13 @@ def apply_resolutions(draft: Dict[str, Any], resolution_doc: Dict[str, Any]) -> 
             entry["negative_proof"] = r["negative_proof"]
         provenance.setdefault(path, []).append(entry)
         changes.append({"path": path, "old": old, "new": r["value"]})
+        validations.append({
+            "path": path,
+            "validation_status": validation,
+            "authority": "verified" if validation == "verified" else "self_declared",
+        })
     out.setdefault("resolution", {})["applied"] = changes
+    out["resolution"]["validation"] = validations
     out["resolution"]["source"] = resolution_doc.get("source", "resolution_doc")
     # Refresh queue without knowing Decision Engine implementation.
     queue: List[str] = []

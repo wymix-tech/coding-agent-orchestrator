@@ -688,6 +688,70 @@ def revise_work_item(
     return _commit(state_path, new_state, event, expected_revision)
 
 
+def _evidence_module():
+    """Load the evidence verifier; the sibling module may not be on sys.path."""
+    try:
+        import evidence_provenance
+        return evidence_provenance
+    except ImportError:  # pragma: no cover - import shim only
+        import importlib.util as _ilu
+        import pathlib as _pl
+        _spec = _ilu.spec_from_file_location(
+            "evidence_provenance", _pl.Path(__file__).resolve().parent / "evidence_provenance.py")
+        module = _ilu.module_from_spec(_spec)
+        _spec.loader.exec_module(module)
+        return module
+
+
+def _verify_evidence_record(state_path: pathlib.Path, record: dict, *,
+                            work_item_id: str | None = None) -> Dict[str, Any]:
+    """Verify a bound evidence record; invalid evidence never reaches the state."""
+    ep = _evidence_module()
+    repo = repository_snapshot.repo_from_state(state_path)
+    result = ep.revalidate(repo, record, work_item_id=work_item_id)
+    if result.get("validation_status") == "invalid":
+        raise StateError(
+            f"evidence rejected: {result.get('reason_code')} (evidence_id={result.get('evidence_id')})")
+    return result
+
+
+def _bind_report(state_path: pathlib.Path, status: str, report_path: Optional[str],
+                 exit_code: Optional[int], argv: Optional[list]) -> Optional[Dict[str, Any]]:
+    """Bind the report that was actually produced. A real failure is recorded as a failure."""
+    if not report_path and exit_code is None:
+        return None
+    repo = repository_snapshot.repo_from_state(state_path)
+    reported_status = None
+    digest = None
+    if report_path:
+        path = pathlib.Path(report_path)
+        path = path if path.is_absolute() else repo / path
+        try:
+            doc = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            raise StateError(f"EVIDENCE_REPORT_UNPARSABLE: {exc}")
+        if not isinstance(doc, dict):
+            raise StateError("EVIDENCE_REPORT_UNPARSABLE: report must be a JSON object")
+        reported_status = doc.get("status")
+        if exit_code is None:
+            exit_code = doc.get("exit_code")
+        try:
+            digest = repository_snapshot.digest_path(path)
+        except OSError:
+            digest = None
+    if status == "passed" and (reported_status not in (None, "passed") or (exit_code not in (None, 0))):
+        raise StateError(
+            f"EVIDENCE_REPORT_CONTRADICTION: report status={reported_status!r} exit_code={exit_code!r} "
+            "cannot record a passed result")
+    return {
+        "path": report_path,
+        "status": reported_status,
+        "exit_code": exit_code,
+        "digest": digest,
+        "argv": list(argv or []),
+    }
+
+
 def set_readiness(
     state_path: pathlib.Path,
     key: str,
@@ -695,6 +759,7 @@ def set_readiness(
     actor: str,
     evidence_ref: str,
     expected_revision: Optional[int] = None,
+    evidence_record: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     allowed = {
         "behavior_change",
@@ -705,9 +770,28 @@ def set_readiness(
     }
     if key not in allowed:
         raise StateError(f"unsupported readiness key: {key}")
+    ep = _evidence_module()
     state = _load(state_path)
     _require_revision(state, expected_revision)
     new_state = copy.deepcopy(state)
+    if evidence_record is not None:
+        result = _verify_evidence_record(state_path, evidence_record,
+                                         work_item_id=state.get("work_item_id"))
+        if not ep.readiness_kind_allowed(key, result.get("kind") or ""):
+            raise StateError(
+                f"readiness key {key} cannot be satisfied by a {result.get('kind')!r} claim; "
+                "each key has its own source rule")
+        records = new_state.setdefault("evidence", {}).setdefault("records", [])
+        stored = dict(evidence_record, evidence_id=result["evidence_id"])
+        if stored not in records:
+            records.append(stored)
+        new_state.setdefault("readiness_evidence", {})[key] = {
+            "evidence_id": result["evidence_id"],
+            "kind": result.get("kind"),
+            "validation_status": result.get("validation_status"),
+            "outcome": result.get("outcome"),
+            "recorded_at": utc_now(),
+        }
     new_state["readiness"][key] = value
     new_state["cursor"]["next_action"] = compute_next_action(new_state, repository_snapshot.repo_from_state(state_path))
     event = _new_event(
@@ -935,6 +1019,9 @@ def record_gate(
     evidence_ref: Optional[str] = None,
     command: Optional[str] = None,
     expected_revision: Optional[int] = None,
+    report_path: Optional[str] = None,
+    exit_code: Optional[int] = None,
+    argv: Optional[list] = None,
 ) -> Dict[str, Any]:
     if status not in ACCEPTED_GATE_STATUS:
         raise StateError(f"invalid gate status: {status}")
@@ -942,6 +1029,7 @@ def record_gate(
         raise StateError("a required gate cannot be skipped or marked not_required")
     state = _load(state_path)
     _require_revision(state, expected_revision)
+    report = _bind_report(state_path, status, report_path, exit_code, argv)
     new_state = copy.deepcopy(state)
     if (state.get("quality_gates", {}).get(name) or {}).get("required") and not required:
         raise StateError("an established required gate cannot be downgraded by recording a result")
@@ -953,6 +1041,8 @@ def record_gate(
         "evidence_snapshot_id": (state.get("analysis") or {}).get("evidence_snapshot_id"),
         "evidence_ref": evidence_ref,
         "command": command,
+        "report": report,
+        "exit_code": (report or {}).get("exit_code"),
         "updated_at": utc_now(),
         "updated_by": actor,
     }
@@ -1210,11 +1300,15 @@ def record_verification(
     snapshot_id: str,
     evidence_ref: str,
     expected_revision: Optional[int] = None,
+    report_path: Optional[str] = None,
+    exit_code: Optional[int] = None,
+    argv: Optional[list] = None,
 ) -> Dict[str, Any]:
     if status not in ACCEPTED_VERIFICATION_STATUS:
         raise StateError(f"invalid verification status: {status}")
     state = _load(state_path)
     _require_revision(state, expected_revision)
+    report = _bind_report(state_path, status, report_path, exit_code, argv)
     new_state = copy.deepcopy(state)
     current = new_state.get("execution_snapshot_id")
     fresh = status == "passed" and current is not None and current == snapshot_id
@@ -1225,6 +1319,8 @@ def record_verification(
             "evidence_snapshot_id": (state.get("analysis") or {}).get("evidence_snapshot_id"),
             "fresh": fresh,
             "verified_at": utc_now(),
+            "report": report,
+            "exit_code": (report or {}).get("exit_code"),
         }
     )
     new_state["verification"]["evidence"].append(evidence_ref)

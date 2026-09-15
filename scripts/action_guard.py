@@ -15,6 +15,16 @@ import repository_snapshot as snapshots
 import provider_incident
 import cbm_provider
 
+try:  # sibling module; tests may load this file by path without scripts/ on sys.path
+    import evidence_provenance
+except ImportError:  # pragma: no cover - import shim only
+    import importlib.util as _ilu
+    import pathlib as _pl
+    _spec = _ilu.spec_from_file_location(
+        "evidence_provenance", _pl.Path(__file__).resolve().parent / "evidence_provenance.py")
+    evidence_provenance = _ilu.module_from_spec(_spec)
+    _spec.loader.exec_module(evidence_provenance)
+
 ACTIONS = {"read", "prepare", "mutate_code", "mutate_governance", "advance", "close", "finish_role"}
 PHASES = ("discovery", "specification", "design", "planning", "implementation", "review", "verification", "release", "closed")
 STATUSES = {"pending", "ready", "in_progress", "completed", "failed", "cancelled"}
@@ -49,6 +59,10 @@ RECOVERY_COMMANDS = {
     "reconfigure_governance_explicitly": (
         ("readiness --key READINESS_KEY --value true --evidence-ref EVIDENCE_PATH",
          "the approved evidence path"),
+    ),
+    "replace_invalid_evidence": (
+        ("readiness --key READINESS_KEY --value VALUE --evidence-ref TO_A_CHECKABLE_SOURCE_PATH",
+         "re-bind the key to something checkable; `verifier`, `producer` and `source_type` never establish trust on their own"),
     ),
 }
 
@@ -252,7 +266,45 @@ def collect_evidence(repo: Path | None, state: dict | None) -> dict:
     source_ids = {x.get("id") for x in (manifest or {}).get("sources", [])}
     evidence["context_fresh"] = bool(manifest and {"requirement", "decision", "semantic_impact"} <= source_ids and not stale_sources)
     evidence["stale_context_sources"] = stale_sources
+    _revalidate_bound_evidence(repo, state, evidence)
     return evidence
+
+
+def _revalidate_bound_evidence(repo: Path, state: dict, evidence: dict) -> None:
+    """Re-check evidence at the moment it is used, and map failures to the record that failed.
+
+    Only the evidence actually bound to this work item is examined; the whole repository is
+    never scanned. Unverifiable evidence is reported as unverified, never silently trusted.
+    """
+    evidence["evidence_invalid"] = []
+    evidence["evidence_unverified"] = []
+    records = (state.get("evidence") or {}).get("records") or []
+    work_item_id = state.get("work_item_id")
+    requirement_revision = None
+    requirement = state.get("requirement")
+    if isinstance(requirement, dict):
+        requirement_revision = requirement.get("source_revision") or requirement.get("revision")
+    for record in records:
+        if not isinstance(record, dict):
+            continue
+        try:
+            result = evidence_provenance.revalidate(
+                repo, record, work_item_id=work_item_id, requirement_revision=requirement_revision)
+        except (OSError, ValueError, TypeError):
+            evidence["evidence_invalid"].append(
+                {"evidence_id": record.get("evidence_id"), "reason_code": "EVIDENCE_REPORT_UNPARSABLE"})
+            continue
+        entry = {
+            "evidence_id": result.get("evidence_id"),
+            "claim_type": result.get("claim_type"),
+            "kind": result.get("kind"),
+            "outcome": result.get("outcome"),
+            "reason_code": result.get("reason_code"),
+        }
+        if result.get("validation_status") == "invalid":
+            evidence["evidence_invalid"].append(entry)
+        elif result.get("validation_status") == "unverified":
+            evidence["evidence_unverified"].append(entry)
 
 
 def evaluate(state: dict | None, action: str, *, evidence: dict | None = None,
@@ -300,6 +352,15 @@ def evaluate(state: dict | None, action: str, *, evidence: dict | None = None,
             deny("BOOTSTRAP_UNRESOLVED", facts["bootstrap_error"], "resolve_init_ambiguity")
         guarded = action in {"mutate_code", "close"} or phase in GUARDED_PHASES
         if guarded:
+            invalid_evidence = facts.get("evidence_invalid") or []
+            if invalid_evidence:
+                failed = invalid_evidence[0]
+                deny(
+                    "EVIDENCE_INVALID",
+                    f"Bound evidence failed revalidation at use time: {failed.get('evidence_id')} "
+                    f"({failed.get('reason_code')}).",
+                    "replace_invalid_evidence",
+                )
             provider_block = facts.get("provider_incident") or {}
             if provider_block.get("status") == "open":
                 deny(

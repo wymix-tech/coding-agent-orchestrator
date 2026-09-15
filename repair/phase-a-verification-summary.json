@@ -58,7 +58,12 @@
       "id": "PR0",
       "title": "四份契约（仅文档，不改行为）",
       "base": "main",
-      "status": "NOT_STARTED",
+      "commit": "ca5a87b",
+      "status": "DONE",
+      "verification": {
+        "tests": "Ran 293 tests / OK（契约为文档，行为未改动）",
+        "footprint": "PASS（SKILL.md 103 行 / 7400 bytes / 918 words，未触碰）"
+      },
       "deliverables": [
         "references/contract-evidence-trust.md",
         "references/contract-native-projection.md",
@@ -87,8 +92,24 @@
       "id": "PR1",
       "title": "T1 证据可核验（随 PR 交付事务保障）",
       "base": "PR0",
-      "status": "NOT_STARTED",
-      "guarantee": "不可变证据写入、原子状态绑定；孤立证据允许存在，索引可重建；相关故障注入"
+      "status": "DONE",
+      "guarantee": "不可变证据写入、原子状态绑定；孤立证据允许存在，索引可重建；相关故障注入",
+      "verification": {
+        "tests": "Ran 327 tests / OK（基线 293 + 新增 34：test_evidence_provenance 20、test_evidence_enforcement 14）",
+        "footprint": "PASS（SKILL.md 未改动）",
+        "new_files": ["scripts/evidence_provenance.py", "tests/test_evidence_provenance.py", "tests/test_evidence_enforcement.py"],
+        "integrations": [
+          "action_guard.collect_evidence：使用时复核，仅遍历本 work item 绑定记录；失效证据映射到 EVIDENCE_INVALID 拒绝码",
+          "evaluate：受保护路径下存在 invalid 证据即拒绝（replace_invalid_evidence）",
+          "record_gate / record_verification：绑定 report_path / exit_code / argv / digest；failed 报告不得记为 passed（EVIDENCE_REPORT_CONTRADICTION）",
+          "set_readiness：per-key 来源规则（READINESS_SOURCE_RULES），并写入 readiness_evidence",
+          "fact_resolver：占位符证据被拒；自声明 authoritative 标记为 validation_status=unverified / authority=self_declared"
+        ],
+        "partial": [
+          "自声明 authoritative 的遗留「字符串 evidence」路径仍可覆盖机械事实，现已在 resolution.validation 中标记 self_declared 但未阻断；随 PR3 的 identity_version=2 迁移一并收紧",
+          "证据层尚无 CLI 入口（evidence verify / rebuild-index 未实现），因此 RECOVERY_COMMANDS 未引用不存在的命令"
+        ]
+      }
     },
     {
       "id": "PR2",
