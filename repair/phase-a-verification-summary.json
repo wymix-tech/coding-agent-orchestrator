@@ -115,8 +115,24 @@
       "id": "PR2",
       "title": "T2 原生投影与授权（随 PR 交付提交语义）",
       "base": "PR1",
-      "status": "NOT_STARTED",
-      "guarantee": "原生观察与治理更新的提交语义、版本冲突检查"
+      "status": "DONE",
+      "guarantee": "原生观察与治理更新的提交语义、版本冲突检查",
+      "verification": {
+        "tests": "Ran 349 tests / OK（基线 293 + PR1 新增 34 + PR2 新增 22）",
+        "footprint": "PASS（SKILL.md 未改动）",
+        "new_files": ["scripts/native_state_parser.py", "tests/test_native_state_parser.py", "tests/test_native_entrypoint_equivalence.py"],
+        "integrations": [
+          "sm.sync_native：单次读取 → 投影 → 解析摘要比对 → 与请求预期值比对；任何不符（NATIVE_PROJECTION_MISMATCH / NATIVE_STATE_REVISION_MISMATCH / NATIVE_SOURCE_CHANGED）直接失败",
+          "两条写入路径：authority.native_observation 无条件记录原生事实；治理 phase/status/completion_record 必须经 action_guard.authorize(native_projection=...)",
+          "action_guard：新增 projection_is_verified()，只接受 NativeProjection 实例并在授权前重读源做漂移检测；--native-confirmed 退化为兼容开关",
+          "resume_summary：native_or_canonical_closed 现由原生观察或治理判定，done/historical 仍只认治理 close",
+          "sm.transition / sm.set_progress：native authority 下必须由投影佐证"
+        ],
+        "behavior_changes_in_existing_tests": [
+          "tests/test_execution_state_manager.py::test_native_authority_rejects_direct_transition：原生文件改为真实内容，并在同步前刷新分析快照（原生推进本身是仓库变更，必须重新分析后治理才能跟随）",
+          "tests/test_resume_guard.py::test_native_transition_returns_recovery_and_native_sync_is_the_legal_path：断言改为「原生事实必留痕 + 治理仅在获授权后跟随」，不再要求 native-sync 无条件改写 phase"
+        ]
+      }
     },
     {
       "id": "PR3",

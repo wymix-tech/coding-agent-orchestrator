@@ -575,6 +575,22 @@ def transition(
     state = _load(state_path) if state_path.exists() else None
     if state is not None:
         _require_revision(state, expected_revision)
+    # When native is authoritative the target must be projected by the native source itself.
+    # `--native-confirmed` stays for compatibility but is no longer a source of trust: it is
+    # only ever a claim, and it is checked against the parsed projection below.
+    if (state is not None and (state.get("authority") or {}).get("mode") == "native"
+            and native_confirmed):
+        parser = _native_module()
+        projection, diag = parser.resolve_projection(repository_snapshot.repo_from_state(state_path), state)
+        if projection is None:
+            raise NativeAuthorityRequired(f"{diag['error']}: {diag['message']}")
+        drift = parser.detect_source_change(repository_snapshot.repo_from_state(state_path), projection)
+        if drift.get("changed"):
+            raise NativeAuthorityRequired(f"{drift['error']}: {drift['message']}")
+        if (to_phase, to_status) != (projection.phase, projection.status_detail):
+            raise NativeAuthorityRequired(
+                "native authority owns phase/status; the native source projects "
+                f"{projection.phase}/{projection.status_detail}, not {to_phase}/{to_status}")
     authorization = action_guard.authorize(
         repository_snapshot.repo_from_state(state_path), state,
         "close" if to_phase == "closed" else "advance", target_phase=to_phase,
@@ -591,24 +607,7 @@ def transition(
     new_state["phase"] = to_phase
     new_state["status"] = to_status
     if to_phase == "closed" and to_status == "completed":
-        wi = new_state.get("work_item") or {}
-        analysis = new_state.get("analysis") or {}
-        new_state["completion_record"] = {
-            "status": "completed",
-            "closed_at": utc_now(),
-            "closed_by": actor,
-            "work_item_id": wi.get("id"),
-            "requirement_id": wi.get("requirement_id"),
-            "requirement_revision": wi.get("requirement_revision"),
-            "execution_snapshot_id": new_state.get("execution_snapshot_id"),
-            "analysis_snapshot_id": analysis.get("analysis_snapshot_id"),
-            "repository_snapshot_id": analysis.get("repository_snapshot_id"),
-            "authorization": {
-                "decision": authorization.get("decision"),
-                "reason_codes": authorization.get("reason_codes") or [],
-                "state_revision": authorization.get("state_revision"),
-            },
-        }
+        new_state["completion_record"] = _build_completion_record(new_state, actor, authorization)
     new_state["cursor"]["next_action"] = compute_next_action(new_state, repository_snapshot.repo_from_state(state_path))
     event = _new_event(
         state,
@@ -701,6 +700,41 @@ def _evidence_module():
         module = _ilu.module_from_spec(_spec)
         _spec.loader.exec_module(module)
         return module
+
+
+def _native_module():
+    """Load the native state parser; the sibling module may not be on sys.path."""
+    try:
+        import native_state_parser
+        return native_state_parser
+    except ImportError:  # pragma: no cover - import shim only
+        import importlib.util as _ilu
+        _spec = _ilu.spec_from_file_location(
+            "native_state_parser", pathlib.Path(__file__).resolve().parent / "native_state_parser.py")
+        module = _ilu.module_from_spec(_spec)
+        _spec.loader.exec_module(module)
+        return module
+
+
+def _build_completion_record(state: Dict[str, Any], actor: str, authorization: Dict[str, Any]) -> Dict[str, Any]:
+    wi = state.get("work_item") or {}
+    analysis = state.get("analysis") or {}
+    return {
+        "status": "completed",
+        "closed_at": utc_now(),
+        "closed_by": actor,
+        "work_item_id": wi.get("id"),
+        "requirement_id": wi.get("requirement_id"),
+        "requirement_revision": wi.get("requirement_revision"),
+        "execution_snapshot_id": state.get("execution_snapshot_id"),
+        "analysis_snapshot_id": analysis.get("analysis_snapshot_id"),
+        "repository_snapshot_id": analysis.get("repository_snapshot_id"),
+        "authorization": {
+            "decision": authorization.get("decision"),
+            "reason_codes": authorization.get("reason_codes") or [],
+            "state_revision": authorization.get("state_revision"),
+        },
+    }
 
 
 def _verify_evidence_record(state_path: pathlib.Path, record: dict, *,
@@ -818,8 +852,18 @@ def set_progress(
         raise StateError("progress must satisfy 0 <= completed <= total")
     state = _load(state_path)
     _require_revision(state, expected_revision)
-    if state["authority"]["mode"] == "native" and not native_confirmed:
-        raise NativeAuthorityRequired("native authority owns work_item.progress")
+    if state["authority"]["mode"] == "native":
+        # Progress is owned by the native source; `--native-confirmed` no longer substitutes for it.
+        parser = _native_module()
+        repo = repository_snapshot.repo_from_state(state_path)
+        projection, diag = parser.resolve_projection(repo, state)
+        if projection is None:
+            raise NativeAuthorityRequired(f"{diag['error']}: {diag['message']}")
+        derived = projection.progress or {}
+        if derived.get("completed") != completed or derived.get("total") != total:
+            raise NativeAuthorityRequired(
+                "native authority owns work_item.progress; it must match the parsed native tasks "
+                f"(native={derived}, requested={{'completed': {completed}, 'total': {total}}})")
     new_state = copy.deepcopy(state)
     new_state["work_item"]["progress"] = {"completed": completed, "total": total}
     event = _new_event(
@@ -1388,37 +1432,93 @@ def sync_native(
     total: Optional[int] = None,
     expected_revision: Optional[int] = None,
 ) -> Dict[str, Any]:
+    """Record what the native source says, then let governance catch up only if authorized.
+
+    The requested phase/status are expectations. They must match the projection parsed from
+    the native source in this call; a declared revision must match its digest.
+    """
     state = _load(state_path)
     _require_revision(state, expected_revision)
     if state["authority"]["mode"] not in {"native", "hybrid"}:
         raise StateError("sync_native is only valid for native/hybrid authority")
     if phase not in PHASES or status not in STATUSES:
         raise StateError("invalid native phase/status projection")
+    repo = repository_snapshot.repo_from_state(state_path)
+    parser = _native_module()
+    projection, diag = parser.resolve_projection(repo, state, native_state_ref=native_state_ref)
+    if projection is None:
+        raise StateError(f"{diag['error']}: {diag['message']}")
+    drift = parser.detect_source_change(repo, projection)
+    if drift.get("changed"):
+        raise StateError(f"{drift['error']}: {drift['message']}")
+    if native_revision and native_revision != projection.content_digest:
+        raise StateError(
+            f"NATIVE_STATE_REVISION_MISMATCH: declared {native_revision} != parsed {projection.content_digest}")
+    if (phase, status) != (projection.phase, projection.status_detail):
+        raise StateError(
+            f"NATIVE_PROJECTION_MISMATCH: requested {phase}/{status} but the native source projects "
+            f"{projection.phase}/{projection.status_detail}")
+    derived_progress = projection.progress
+    if derived_progress and completed is not None and total is not None:
+        if derived_progress.get("completed") != completed or derived_progress.get("total") != total:
+            raise StateError(
+                f"NATIVE_PROJECTION_MISMATCH: requested progress {completed}/{total} does not match "
+                f"native tasks {derived_progress.get('completed')}/{derived_progress.get('total')}")
+
     new_state = copy.deepcopy(state)
-    new_state["phase"] = phase
-    new_state["status"] = status
-    if completed is not None or total is not None:
-        if completed is None or total is None or completed < 0 or total < 0 or completed > total:
-            raise StateError("native progress requires valid completed and total")
-        new_state["work_item"]["progress"] = {"completed": completed, "total": total}
-    new_state["authority"]["native_state_ref"] = native_state_ref
+    # Path 1: the observation is recorded unconditionally. It is a native fact, not a permission.
+    observation = projection.as_record()
+    observation["observed_at"] = utc_now()
+    new_state["authority"]["native_observation"] = observation
+    new_state["authority"]["native_state_ref"] = projection.source_ref
     new_state["authority"]["last_native_sync"] = {
         "at": utc_now(),
-        "native_revision": native_revision,
-        "native_state_ref": native_state_ref,
+        "native_revision": projection.content_digest,
+        "native_state_ref": projection.source_ref,
     }
-    new_state["cursor"]["next_action"] = compute_next_action(new_state, repository_snapshot.repo_from_state(state_path))
+    new_state["authority"].pop("native_divergence", None)
+
+    # Path 2: governance phase/status still has to earn its authorization.
+    divergence = None
+    # The projection parsed in this call is what proves native ownership now.
+    authorization = action_guard.authorize(
+        repo, new_state, "close" if projection.phase == "closed" else "advance",
+        target_phase=projection.phase, target_status=projection.status_detail,
+        native_projection=projection)
+    if authorization.get("allowed"):
+        new_state["phase"] = projection.phase
+        new_state["status"] = projection.status_detail
+        if derived_progress:
+            new_state["work_item"]["progress"] = dict(derived_progress)
+        if projection.phase == "closed" and projection.status_detail == "completed":
+            new_state["completion_record"] = _build_completion_record(new_state, actor, authorization)
+    else:
+        # Native has advanced but governance has not: keep both facts visible, drop neither.
+        divergence = {
+            "native": f"{projection.phase}/{projection.status_detail}",
+            "governance": f"{new_state['phase']}/{new_state['status']}",
+            "reason_codes": authorization.get("reason_codes") or [],
+        }
+        new_state["authority"]["native_divergence"] = divergence
+
+    new_state["cursor"]["next_action"] = compute_next_action(new_state, repo)
     event = _new_event(
         state,
         "NATIVE_STATE_SYNCED",
         actor,
-        phase=phase,
-        status=status,
-        native_state_ref=native_state_ref,
-        native_revision=native_revision,
+        phase=projection.phase,
+        status=projection.status_detail,
+        native_state_ref=projection.source_ref,
+        native_revision=projection.content_digest,
+        governance_applied=divergence is None,
         progress=new_state["work_item"]["progress"],
     )
-    return _commit(state_path, new_state, event, expected_revision)
+    result = _commit(state_path, new_state, event, expected_revision)
+    result["native_observation"] = observation
+    result["governance_applied"] = divergence is None
+    if divergence:
+        result["native_divergence"] = divergence
+    return result
 
 
 def compute_next_action(state: Dict[str, Any], repo: Optional[pathlib.Path] = None) -> str:
@@ -1438,6 +1538,9 @@ def completion_status(state: Optional[Dict[str, Any]], repo: Optional[pathlib.Pa
     facts = evidence if evidence is not None else action_guard.collect_evidence(repo, state)
     decision = action_guard.evaluate(state, "close", evidence=facts)
     canonical_closed = (state or {}).get("phase") == "closed" and (state or {}).get("status") == "completed"
+    observation = ((state or {}).get("authority") or {}).get("native_observation") or {}
+    native_closed = (observation.get("phase") == "closed"
+                     and observation.get("status_detail") == "completed")
     record = (state or {}).get("completion_record") or {}
     record_matches = bool(
         canonical_closed
@@ -1450,7 +1553,7 @@ def completion_status(state: Optional[Dict[str, Any]], repo: Optional[pathlib.Pa
     authority_mode = (((state or {}).get("authority") or {}).get("mode"))
     historical_complete = bool(record_matches or (canonical_closed and authority_mode != "native" and not record))
     return {
-        "native_or_canonical_closed": canonical_closed,
+        "native_or_canonical_closed": canonical_closed or native_closed,
         "historically_completed": historical_complete,
         "completion_recorded": record_matches,
         "completion_record": record or None,

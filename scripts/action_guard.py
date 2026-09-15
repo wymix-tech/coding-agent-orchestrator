@@ -270,6 +270,36 @@ def collect_evidence(repo: Path | None, state: dict | None) -> dict:
     return evidence
 
 
+def _native_module():
+    """Load the native parser; the sibling module may not be on sys.path."""
+    try:
+        import native_state_parser
+        return native_state_parser
+    except ImportError:  # pragma: no cover - import shim only
+        import importlib.util as _ilu
+        import pathlib as _pl
+        _spec = _ilu.spec_from_file_location(
+            "native_state_parser", _pl.Path(__file__).resolve().parent / "native_state_parser.py")
+        module = _ilu.module_from_spec(_spec)
+        _spec.loader.exec_module(module)
+        return module
+
+
+def projection_is_verified(repo: Path | None, projection: Any) -> bool:
+    """True only for a projection produced by this call whose source has not moved since.
+
+    A dict is deliberately not accepted: the caller must own the parse that produced it. This
+    is how native authority is proven now, instead of a caller-supplied `--native-confirmed`.
+    """
+    if repo is None or projection is None:
+        return False
+    module = _native_module()
+    if not isinstance(projection, module.NativeProjection):
+        return False
+    drift = module.detect_source_change(repo, projection)
+    return bool(not drift.get("changed"))
+
+
 def _revalidate_bound_evidence(repo: Path, state: dict, evidence: dict) -> None:
     """Re-check evidence at the moment it is used, and map failures to the record that failed.
 
@@ -407,7 +437,8 @@ def evaluate(state: dict | None, action: str, *, evidence: dict | None = None,
                     enf = state.get("enforcement") or {}
                     if dirty or enf.get("semantic_fresh") is False or enf.get("policy_fresh") is False:
                         deny("ANALYSIS_DIRTY", "Runtime enforcement evidence is dirty or stale after material mutation.", "run_semantic_intake")
-        if action in {"advance", "close"} and (state.get("authority") or {}).get("mode") == "native" and not native_confirmed:
+        native_proven = bool(facts.get("native_projection_verified")) or native_confirmed
+        if action in {"advance", "close"} and (state.get("authority") or {}).get("mode") == "native" and not native_proven:
             status = "completed" if action == "close" else target_status
             if state.get("phase") != phase or state.get("status") != status:
                 deny("NATIVE_AUTHORITY_REQUIRED", "Native authority owns phase/status; advance through the native adapter.", "advance_native_state")
@@ -453,10 +484,13 @@ def evaluate(state: dict | None, action: str, *, evidence: dict | None = None,
 
 
 def authorize(repo: Path | None, state: dict | None, action: str, **kwargs: Any) -> dict:
+    projection = kwargs.pop("native_projection", None)
     if action in {"read", "prepare"}:
         result = evaluate(state, action, **kwargs)
     else:
-        result = evaluate(state, action, evidence=collect_evidence(repo, state), **kwargs)
+        evidence = collect_evidence(repo, state)
+        evidence["native_projection_verified"] = projection_is_verified(repo, projection)
+        result = evaluate(state, action, evidence=evidence, **kwargs)
     result["recovery"] = render_recovery(repo, result)
     return result
 

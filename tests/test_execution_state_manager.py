@@ -18,6 +18,23 @@ assert DSPEC.loader
 DSPEC.loader.exec_module(detector)
 
 
+def _write_native(root: pathlib.Path, work_item_id: str, status: str, *,
+                  completed: int | None = None, total: int | None = None,
+                  rel: str = "sprint-status.yaml") -> pathlib.Path:
+    """Write a real native status source; native authority is parsed, never restated."""
+    path = root / rel
+    lines = ["development_status:", f"  {work_item_id}:"]
+    if completed is None:
+        path.write_text(
+            "development_status:\n" + f"  {work_item_id}: {status}\n", encoding="utf-8")
+        return path
+    tasks = [f"      task-{i}: {'true' if i <= completed else 'false'}" for i in range(1, total + 1)]
+    path.write_text(
+        "development_status:\n" + f"  {work_item_id}:\n    status: {status}\n    tasks:\n"
+        + "\n".join(tasks) + "\n", encoding="utf-8")
+    return path
+
+
 class StateFixture:
     def __init__(self, flow="STANDARD", provider="generic", mode="orchestrator"):
         self.tmp = tempfile.TemporaryDirectory()
@@ -183,7 +200,12 @@ class ExecutionStateTests(unittest.TestCase):
             with self.assertRaises(sm.NativeAuthorityRequired):
                 sm.transition(fx.state_path, "implementation", "in_progress", "agent", "direct", s["revision"])
             s = fx.state()
-            sm.sync_native(fx.state_path, "implementation", "in_progress", "bmad-adapter", "sprint-status.yaml", "r2", 1, 3, s["revision"])
+            # The native advance is itself a repository change, so the analysis is refreshed
+            # before governance is allowed to follow it.
+            _write_native(fx.root, s["work_item"]["id"], "in-progress", completed=1, total=3)
+            attach_fixture_analysis(sm, fx.state_path)
+            s = fx.state()
+            sm.sync_native(fx.state_path, "implementation", "in_progress", "bmad-adapter", "sprint-status.yaml", None, 1, 3, s["revision"])
             self.assertEqual("implementation", fx.state()["phase"])
             self.assertEqual({"completed": 1, "total": 3}, fx.state()["work_item"]["progress"])
         finally:
@@ -193,7 +215,8 @@ class ExecutionStateTests(unittest.TestCase):
         fx = StateFixture(provider="bmad", mode="native")
         try:
             s = fx.state()
-            sm.sync_native(fx.state_path, "closed", "completed", "bmad-adapter", "sprint-status.yaml", "done-rev", 1, 1, s["revision"])
+            _write_native(fx.root, s["work_item"]["id"], "done", completed=1, total=1)
+            sm.sync_native(fx.state_path, "closed", "completed", "bmad-adapter", "sprint-status.yaml", None, 1, 1, s["revision"])
             summary = sm.resume_summary(fx.state(), fx.root)
             self.assertTrue(summary["completion"]["native_or_canonical_closed"])
             self.assertFalse(summary["completion"]["done"])

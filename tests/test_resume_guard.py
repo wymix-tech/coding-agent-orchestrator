@@ -16,6 +16,9 @@ from unittest import mock
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 SCRIPTS = ROOT / "scripts"
 sys.path.insert(0, str(SCRIPTS))
+sys.path.insert(0, str(ROOT / "tests"))
+
+from governance_fixture import attach_fixture_analysis
 
 import yaml
 
@@ -302,7 +305,14 @@ class CliRecoveryPath(unittest.TestCase):
             state_path.write_text(yaml.safe_dump(state, sort_keys=False), encoding="utf-8")
             native_state = repo / "_bmad" / "sprint-status.yaml"
             native_state.parent.mkdir()
-            native_state.write_text("implementation: in_progress\n", encoding="utf-8")
+            # A realistic native status source: native authority is parsed from this content,
+            # not restated by whoever calls native-sync.
+            native_state.write_text(
+                "development_status:\n"
+                f"  {state['work_item']['id']}: in-progress\n", encoding="utf-8")
+            # The native advance is a repository change: refresh the analysis before asking
+            # governance to follow it.
+            attach_fixture_analysis(sm, state_path)
 
             code, result, text = self._run(repo, ["transition", "--phase", "implementation", "--status", "in_progress",
                                                   "--reason", "native workflow completed", "--evidence-ref", SPEC])
@@ -317,8 +327,18 @@ class CliRecoveryPath(unittest.TestCase):
             self.assertEqual(0, code, text)
             self.assertEqual("NATIVE_STATE_SYNCED", result["status"])
             synced = sm._load(state_path)
-            self.assertEqual("implementation", synced["phase"])
             self.assertEqual(digest, synced["authority"]["last_native_sync"]["native_revision"])
+            # Native observation and governance are two records: the native fact is always kept,
+            # and it only moves governance once governance is actually authorized.
+            observation = synced["authority"]["native_observation"]
+            self.assertEqual("implementation", observation["phase"])
+            self.assertEqual("in_progress", observation["status_detail"])
+            divergence = synced["authority"].get("native_divergence")
+            if divergence:
+                self.assertEqual("implementation/in_progress", divergence["native"])
+                self.assertTrue(divergence["reason_codes"])
+            else:
+                self.assertEqual("implementation", synced["phase"])
 
 
 class DenialsNameTheWayForward(unittest.TestCase):
