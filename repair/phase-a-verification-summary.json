@@ -1,0 +1,112 @@
+{
+  "schema_version": "phase-a-verification-summary/1",
+  "generated_at": "2026-09-15",
+  "plan_document": "repair/phase-a-plan-v3.md",
+  "repo": "https://cnb.cool/wymix.top/coding-agent-orchestrator",
+  "base_commit": "e813d55ace35ad777ed8063fa1a5f960bd01ff26",
+  "scope": "阶段 A（T1–T3）。不含 T4/T5 自动恢复与 T6/T7 基准测量。",
+
+  "environment": {
+    "python": "3.12.14",
+    "pyyaml": "6.0.3",
+    "test_command": "python3 -m unittest discover -s tests -p 'test_*.py'",
+    "notes": [
+      "系统 Python 由 uv 管理（PEP 668），安装命令：uv pip install --system --break-system-packages PyYAML",
+      "/etc/gitconfig 设置 commit.gpgsign=true 且 gpg.program=/usr/local/bin/cnb-gpgsign，本环境签名返回 403 | Author is invalid，任何创建 commit 的测试都会失败",
+      "因此运行测试必须屏蔽系统级 git 配置：GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null（仅环境变量，未修改任何 git 配置）"
+    ]
+  },
+
+  "baseline": {
+    "preinstall": {
+      "command": "python3 -m unittest discover -s tests -p 'test_*.py'",
+      "result": "Ran 56 tests / FAILED (errors=36)",
+      "status": "BASELINE_NOT_LOADABLE",
+      "cause": "ModuleNotFoundError: No module named 'yaml' —— 依赖缺失导致 discovery 不完整，不得作为有效基线，也不得沿用历史 211/293"
+    },
+    "effective": {
+      "command": "GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null python3 -m unittest discover -s tests -p 'test_*.py'",
+      "result": "Ran 293 tests / OK",
+      "tests_ran": 293,
+      "status": "PASS",
+      "recorded_at": "2026-09-15"
+    },
+    "footprint": {
+      "command": "python3 scripts/context_footprint_check.py --repo . --json",
+      "skill": {"lines": 103, "bytes": 7400, "words": 918, "direct_reference_mentions": 16},
+      "references": {"markdown_files": 27, "lines": 3206, "bytes": 135268, "cross_reference_edges": 11},
+      "status": "PASS",
+      "limit": {"lines": 110, "bytes": 7500, "words": 1000},
+      "headroom": {"lines": 7, "bytes": 100, "words": 82}
+    },
+    "git": {
+      "branch_at_start": "main",
+      "worktree_at_start": "clean（仅新增未跟踪的 repair/phase-a-plan-v3.md）"
+    }
+  },
+
+  "verified_assumptions": [
+    {"item": "coding_orchestrator.py:853 cmd_native_sync", "status": "NOT_VERIFIED", "note": "来自 plan-1 记录，PR2 开工前须重新核验"},
+    {"item": "execution_state_manager.py:1529-1537 sync-native 子命令 / :1603-1604 直调 sync_native", "status": "NOT_VERIFIED", "note": "来自 plan-1 记录，PR2 开工前须重新核验"},
+    {"item": "start_router.py:128 candidate_identity", "status": "NOT_VERIFIED", "note": "来自 plan-1 记录，PR3 开工前须重新核验"},
+    {"item": "hosts/* hooks 是否仅走 check（无 native-sync 写入路径）", "status": "PARTIALLY_VERIFIED", "note": "本轮 grep 未见 native-sync 写入路径，PR2 须二次确认"},
+    {"item": "CNB skill（cnb-code-commit / cnb-code-review / cnb-pr-summary）可用性", "status": "NOT_VERIFIED", "note": "提交 PR 前核验；不可用则退回手工 git + PR 描述"}
+  ],
+
+  "prs": [
+    {
+      "id": "PR0",
+      "title": "四份契约（仅文档，不改行为）",
+      "base": "main",
+      "status": "NOT_STARTED",
+      "deliverables": [
+        "references/contract-evidence-trust.md",
+        "references/contract-native-projection.md",
+        "references/contract-requirement-version.md",
+        "references/contract-migration-transactions.md"
+      ],
+      "acceptance": [
+        "证据三维模型 kind × validation_status × outcome 写死；verified+failed 为有效失败证据，invalid 仅用于格式/来源/绑定/工作项不符",
+        "记录字段（strength/actor/source_type/producer/verifier/evidence_ref）不得建立权限",
+        "强制依赖由验证器按结论类型 + Policy 推导，调用方可增不可减，依赖须绑定对象与版本/摘要",
+        "readiness per-key 来源规则；门禁报告须绑定命令+退出码+报告+快照",
+        "禁止证据记录进入自身绑定的摘要（自失效循环）",
+        "无跨进程令牌；NativeProjection 为内部类型、无外部导入入口、不声称不可伪造、禁止 isinstance 代替来源验证",
+        "投影绑定工作项/需求版本/配置来源/预期状态版本；写入前重读冲突检测为 best-effort，非安全边界",
+        "原生观察与治理更新为两条写入路径",
+        "四元组语义与优先级；无源 intake 的 source_revision=None 规则",
+        "目录/多文件集合规则与同文件混合内容规则（AC 复选框 ≠ 任务进度；未知格式须显式配置或诊断）",
+        "显式 revision 为外部标签，不得掩盖内容变化",
+        "破坏性修订确认绑定待重置的需求版本与状态，状态变化后重新确认",
+        "受保护阶段以 implementation/review/closed 为重点用例，verification/release 等既有边界仍走原规则（非新白名单）",
+        "逐 PR 回答：哪个记录是权威、哪些中间状态合法、重启后如何收敛",
+        "契约定位为「现有项目指令与不变量约束下的实现、评审依据」，不覆盖已有更严格规则"
+      ]
+    },
+    {
+      "id": "PR1",
+      "title": "T1 证据可核验（随 PR 交付事务保障）",
+      "base": "PR0",
+      "status": "NOT_STARTED",
+      "guarantee": "不可变证据写入、原子状态绑定；孤立证据允许存在，索引可重建；相关故障注入"
+    },
+    {
+      "id": "PR2",
+      "title": "T2 原生投影与授权（随 PR 交付提交语义）",
+      "base": "PR1",
+      "status": "NOT_STARTED",
+      "guarantee": "原生观察与治理更新的提交语义、版本冲突检查"
+    },
+    {
+      "id": "PR3",
+      "title": "T3 需求版本与迁移",
+      "base": "PR2",
+      "status": "NOT_STARTED",
+      "guarantee": "身份/registry 迁移的 preview、备份、幂等重入与中断恢复；四条最小重建路径端到端"
+    }
+  ],
+
+  "not_run": [
+    "真实宿主集成（Pi / Codex / Claude Code / Windows）：阶段 A 不涉及，标记 NOT_RUN"
+  ]
+}
