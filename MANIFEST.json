@@ -6,7 +6,7 @@
   "provider_count": 1,
   "policy_layer": "project-owned engineering policy with optional ECC external guidance",
   "governance_authority": "orchestrator",
-  "test_count": 293,
+  "test_count": 382,
   "key_entrypoints": [
     "scripts/project_discovery.py",
     "scripts/project_bootstrap.py",
@@ -38,7 +38,9 @@
     "references/requirement-registry.schema.json",
     "REPAIR_REPORT.md",
     "scripts/provider_incident.py",
-    "references/provider-incident.schema.json"
+    "references/provider-incident.schema.json",
+    "scripts/evidence_provenance.py",
+    "scripts/native_state_parser.py"
   ],
   "context_plane": "source-hashed Context Manifest + role/stage Context Packs",
   "host_enforcement": [

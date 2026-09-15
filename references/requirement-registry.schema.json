@@ -2,9 +2,15 @@
   "$id": "https://example.local/orchestrator/requirement-registry.schema.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "properties": {
-    "migration_warning": {
-      "type": "string"
-    },
+  "identity_version": {
+    "const": 2
+  },
+  "migrated_at": {
+    "type": "string"
+  },
+  "migration_warning": {
+    "type": "string"
+  },
     "requirements": {
       "additionalProperties": {
         "properties": {
@@ -44,6 +50,49 @@
               "type": "object"
             },
             "type": "object"
+          },
+          "identity_version": {
+            "type": "integer"
+          },
+          "legacy": {
+            "type": "boolean"
+          },
+          "legacy_reason": {
+            "type": "string"
+          },
+          "members": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "uniqueItems": true
+          },
+          "migration_command": {
+            "type": "string"
+          },
+          "native_state_revision": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "explicit_revision": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "request_revision": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "source_revision": {
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "source_path": {
             "type": [
