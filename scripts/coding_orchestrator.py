@@ -381,8 +381,8 @@ def cmd_status(args: argparse.Namespace) -> tuple[int, dict[str, Any], str]:
     ])
     # A blocked state must name the CLI that clears it; otherwise the only remaining
     # option looks like editing execution state, which is denied.
-    for command in (resume.get("authorization") or {}).get("recovery") or []:
-        text += f"\nRecovery: {command}"
+    for line in _recovery_text((resume.get("authorization") or {}).get("recovery") or []):
+        text += f"\n{line}"
     return 0, result, text
 
 
@@ -408,22 +408,48 @@ def _reset_warning(state: dict[str, Any]) -> str:
             + "; ".join(RESET_DISCARDS) + ".")
 
 
-def _revision_changed_message(state: dict[str, Any], requirement_id: str) -> str:
+def _revision_changed_message(repo: Path, state: dict[str, Any], requirement_id: str) -> str:
     lines = [f"Requirement content changed for {requirement_id}."]
     if _resets_in_flight_work(state):
         lines.append(_reset_warning(state))
         lines.append("If the requirement did not really change (a resume/continue prompt rephrased it), "
-                     "resume the existing work with `coding-orchestrator start` instead of re-running intake.")
+                     f"resume with `{skill_runtime.recovery_command(repo, 'start')}` instead of re-running intake.")
         lines.append("Otherwise confirm the reset explicitly: `intake --revise-current --confirm-reset`.")
     else:
         lines.append("Re-run intake with --revise-current to invalidate derived evidence explicitly.")
     return " ".join(lines)
 
 
-def _reset_confirmation_message(state: dict[str, Any]) -> str:
+def _reset_confirmation_message(repo: Path, state: dict[str, Any]) -> str:
     return (_reset_warning(state)
-            + " Confirm with `intake --revise-current --confirm-reset`, or resume the existing work with "
-              "`coding-orchestrator start` when the requirement did not change.")
+            + f" Confirm with --revise-current --confirm-reset, or resume with {skill_runtime.recovery_command(repo, 'start')} "
+              "when the requirement did not change.")
+
+
+def _analysis_is_current(repo: Path, state: dict[str, Any]) -> bool:
+    """True only when resume can reuse all material analysis inputs without mutation."""
+    facts = action_guard.collect_evidence(repo, state)
+    enforcement = state.get("enforcement") or {}
+    return bool(
+        facts.get("decision_status") == "CLASSIFIED"
+        and action_guard.semantic_complete(facts.get("impact"))
+        and facts.get("authority_fresh")
+        and facts.get("context_fresh")
+        and facts.get("repository_fresh")
+        and facts.get("comparison_fresh", True)
+        and not enforcement.get("dirty")
+        and enforcement.get("semantic_fresh") is not False
+        and enforcement.get("policy_fresh") is not False
+    )
+
+
+def _recovery_text(recovery: list[dict]) -> list[str]:
+    lines = []
+    for item in recovery or []:
+        command = item.get("command") if isinstance(item, dict) else str(item)
+        requires = item.get("requires") if isinstance(item, dict) else None
+        lines.append(f"Recovery: {command}" + (f" (requires {requires})" if requires else ""))
+    return lines
 
 
 def _artifact_segment(value: str) -> str:
@@ -452,9 +478,12 @@ def cmd_intake(args: argparse.Namespace) -> tuple[int, dict[str, Any], str]:
         provider=provider, source_path=source_ref, native_id=getattr(args, "native_id", None),
         explicit_work_id=args.work_id, request_text=request,
     )
-    req_rev = getattr(args, "requirement_revision", None) or requirement_identity.revision_id(request)
+    explicit_revision = getattr(args, "requirement_revision", None)
+    request_rev = requirement_identity.revision_id(request)
     source_rev = requirement_identity.source_revision_id(repo, source_ref)
+    req_rev = str(explicit_revision or source_rev or request_rev)
     rephrased_request = False
+    resume_without_intake = False
     state_path = repo / ".orchestrator" / "execution-state.yaml"
     if state_path.exists():
         existing = sm._load(state_path)
@@ -466,40 +495,49 @@ def cmd_intake(args: argparse.Namespace) -> tuple[int, dict[str, Any], str]:
             existing_id = wi.get("requirement_id")
             existing_rev = wi.get("requirement_revision")
             if not existing_id:
-                return 2, {
-                    "status": "ACTION_REQUIRED", "error": "WORK_ITEM_IDENTITY_MIGRATION_REQUIRED",
-                    "work_item": wi, "incoming_requirement_id": req_id,
-                }, "Existing active work item predates stable requirement identity. Migrate/close it before intake."
+                return 2, {"status": "ACTION_REQUIRED", "error": "WORK_ITEM_IDENTITY_MIGRATION_REQUIRED",
+                           "work_item": wi, "incoming_requirement_id": req_id}, "Active work requires identity migration."
             if str(existing_id) != str(req_id):
-                return 2, {
-                    "status": "ACTION_REQUIRED", "error": "ACTIVE_WORK_ITEM_CONFLICT",
-                    "active_requirement_id": existing_id, "incoming_requirement_id": req_id,
-                    "active_work_item": wi.get("id"),
-                }, "A different work item is active. Close/cancel/switch it explicitly before intake."
-            if str(existing_rev) != str(req_rev):
-                if source_rev and requirement_identity.last_source_revision(repo, str(req_id)) == source_rev:
-                    # Only the request wording changed; the authoritative source did not. A resume
-                    # prompt must never masquerade as a requirement change and discard progress.
-                    req_rev = str(existing_rev)
-                    rephrased_request = True
-                elif not getattr(args, "revise_current", False):
-                    return 2, {
-                        "status": "ACTION_REQUIRED", "error": "REQUIREMENT_REVISION_CHANGED",
-                        "requirement_id": req_id, "active_revision": existing_rev, "incoming_revision": req_rev,
-                        "resets_in_flight_work": _resets_in_flight_work(existing),
-                        "next_action": "resume_current_work" if _resets_in_flight_work(existing) else "confirm_requirement_revision",
-                    }, _revision_changed_message(existing, req_id)
-                elif _resets_in_flight_work(existing) and not getattr(args, "confirm_reset", False):
-                    return 2, {
-                        "status": "ACTION_REQUIRED", "error": "REVISION_RESET_REQUIRES_CONFIRMATION",
-                        "requirement_id": req_id, "active_revision": existing_rev, "incoming_revision": req_rev,
-                        "next_action": "confirm_requirement_revision",
-                    }, _reset_confirmation_message(existing)
-                existing = sm.revise_work_item(
-                    state_path, req_id, req_rev, args.actor, source_ref or "direct-request",
-                    existing["revision"], requirement_source_ref=source_ref,
-                    native_work_item_id=getattr(args, "native_id", None),
-                )
+                return 2, {"status": "ACTION_REQUIRED", "error": "ACTIVE_WORK_ITEM_CONFLICT",
+                           "active_requirement_id": existing_id, "incoming_requirement_id": req_id,
+                           "active_work_item": wi.get("id")}, "A different work item is active."
+            recorded_source_rev = requirement_identity.last_source_revision(repo, str(req_id))
+            source_backed = bool(source_ref)
+            source_unknown = source_backed and (source_rev is None or recorded_source_rev is None)
+            source_changed = source_backed and not source_unknown and source_rev != recorded_source_rev
+            if source_unknown and not explicit_revision:
+                return 2, {"status": "ACTION_REQUIRED", "error": "SOURCE_REVISION_BASELINE_REQUIRED",
+                           "requirement_id": req_id, "next_action": "confirm_requirement_revision"}, (
+                    "The requirement source cannot be compared with its recorded baseline. Do not assume it is unchanged.")
+            if source_backed and not source_changed and not explicit_revision:
+                rephrased_request = request_rev != str(existing_rev)
+                req_rev = str(existing_rev)
+                resume_without_intake = rephrased_request and _analysis_is_current(repo, existing)
+            revision_changed = source_changed or str(existing_rev) != str(req_rev)
+            if revision_changed:
+                if not getattr(args, "revise_current", False):
+                    return 2, {"status": "ACTION_REQUIRED", "error": "REQUIREMENT_REVISION_CHANGED",
+                               "requirement_id": req_id, "active_revision": existing_rev, "incoming_revision": req_rev,
+                               "source_changed": source_changed, "resets_in_flight_work": _resets_in_flight_work(existing),
+                               "next_action": "resume_current_work" if _resets_in_flight_work(existing) else "confirm_requirement_revision"}, _revision_changed_message(repo, existing, req_id)
+                if _resets_in_flight_work(existing) and not getattr(args, "confirm_reset", False):
+                    return 2, {"status": "ACTION_REQUIRED", "error": "REVISION_RESET_REQUIRES_CONFIRMATION",
+                               "requirement_id": req_id, "active_revision": existing_rev, "incoming_revision": req_rev,
+                               "source_changed": source_changed, "next_action": "confirm_requirement_revision"}, _reset_confirmation_message(repo, existing)
+                existing = sm.revise_work_item(state_path, req_id, req_rev, args.actor, source_ref or "direct-request",
+                                                existing["revision"], requirement_source_ref=source_ref,
+                                                native_work_item_id=getattr(args, "native_id", None))
+            if resume_without_intake:
+                bootstrap = session_context.build_bootstrap(repo, role=args.role, session_type="auto")
+                bp_json, bp_md = session_context.persist_bootstrap(repo, bootstrap)
+                result = {"status": "RESUMED", "state_created": False,
+                          "requirement": {"id": req_id, "revision": req_rev, "source_ref": source_ref},
+                          "work_item": existing.get("work_item"), "request_rephrased_source_unchanged": True,
+                          "analysis_reused": True,
+                          "bootstrap": {"json": str(bp_json), "markdown": str(bp_md), "session_type": bootstrap.get("session_type")}}
+                return 0, result, ("RESUMED REQUEST_REPHRASED_SOURCE_UNCHANGED: the requirement source and "
+                                   "all analyzed inputs are current; existing state and evidence were reused. "
+                                   f"Next: {bootstrap.get('next_action')}")
     state_path, state, created = _ensure_state(
         repo, request, args.work_id, args.title, sdd,
         requirement_id=req_id, requirement_revision=req_rev,
@@ -567,7 +605,8 @@ def cmd_intake(args: argparse.Namespace) -> tuple[int, dict[str, Any], str]:
     text = f"Intake: {pipeline.get('status')}\nFlow: {flow or 'not classified'}\nWork item: {(result.get('work_item') or {}).get('id')}\nNext: {bootstrap.get('next_action')}"
     if rephrased_request:
         text += ("\nNOTE REQUEST_REPHRASED_SOURCE_UNCHANGED: the request wording changed but the requirement "
-                 "source did not; the existing requirement revision was kept and no derived evidence was invalidated.")
+                 "source did not; the existing requirement revision was kept. Analysis was refreshed because "
+                 "one or more analyzed inputs were stale, so resulting evidence is bound to the new analysis run.")
     for warning in pipeline.get("warnings") or []:
         text += f"\nWARNING {warning.get('code')}: {warning.get('message')}\n-> {warning.get('next_action')}"
     if pipeline.get("status") == "NEEDS_EVIDENCE":
@@ -593,7 +632,7 @@ def cmd_start(args: argparse.Namespace) -> tuple[int, dict[str, Any], str]:
             f"Phase: {execution.get('phase')} / {execution.get('status')}",
             f"Task: {cursor.get('current_task_id') or '-'} {cursor.get('current_task_title') or ''}".rstrip(),
             f"Next: {routed.get('next_action')}",
-            "Resume: continue with the reported task; a rephrased request is not a requirement change, so do not re-run intake unless the requirement source changed.",
+            "Resume: continue with the reported task; a rephrased request is not a requirement change. Re-run intake only when analysis is stale or the requirement source changed.",
         ])
         return 0, routed, text
 
@@ -704,8 +743,8 @@ def cmd_check(args: argparse.Namespace) -> tuple[int, dict[str, Any], str]:
         text += "\n" + reason["code"] + ": " + reason["message"]
     if result["next_action"]:
         text += "\nNext: " + result["next_action"]
-    for command in result.get("recovery") or []:
-        text += "\nRecovery: " + command
+    for line in _recovery_text(result.get("recovery") or []):
+        text += "\n" + line
     return (0 if result["allowed"] else 1), result, text
 
 
@@ -769,8 +808,18 @@ def cmd_progress(args: argparse.Namespace) -> tuple[int, dict[str, Any], str]:
     path = _state_path(args.repo)
     if not path.exists():
         return _missing_state()
-    state = sm.set_progress(path, args.completed, args.total, args.actor, args.evidence_ref,
-                            args.expected_revision, args.native_confirmed)
+    try:
+        state = sm.set_progress(path, args.completed, args.total, args.actor, args.evidence_ref,
+                                args.expected_revision, args.native_confirmed)
+    except sm.NativeAuthorityRequired as exc:
+        recovery = action_guard.render_recovery(args.repo, {
+            "recovery": action_guard.recovery_actions([
+                {"next_action": "advance_native_state"},
+            ]),
+        })
+        result = {"status": "DENIED", "error": "NATIVE_AUTHORITY_REQUIRED", "message": str(exc),
+                  "next_action": "advance_native_state", "recovery": recovery}
+        return 1, result, "\n".join(["Progress denied: native authority owns task progress."] + _recovery_text(recovery))
     next_action = (state.get("cursor") or {}).get("next_action")
     result = {"status": "PROGRESS_UPDATED", "progress": ((state.get("work_item") or {}).get("progress") or {}),
               "revision": state.get("revision"), "next_action": next_action}
@@ -785,21 +834,46 @@ def cmd_transition(args: argparse.Namespace) -> tuple[int, dict[str, Any], str]:
     try:
         state = sm.transition(path, args.phase, args.status, args.actor, args.reason,
                               args.expected_revision, args.native_confirmed, args.evidence_ref)
-    except sm.TransitionDenied as exc:
+    except (sm.TransitionDenied, sm.NativeAuthorityRequired) as exc:
         auth = getattr(exc, "authorization", {}) or {}
         reasons = "; ".join(r["message"] for r in auth.get("reasons") or [])
-        result = {"status": "DENIED", "error": "TRANSITION_DENIED", "authorization": auth,
+        error = "NATIVE_AUTHORITY_REQUIRED" if isinstance(exc, sm.NativeAuthorityRequired) else "TRANSITION_DENIED"
+        result = {"status": "DENIED", "error": error, "authorization": auth,
                   "next_action": auth.get("next_action"), "recovery": auth.get("recovery") or []}
         text = "\n".join([f"Transition denied: {args.phase}/{args.status}", reasons,
-                          f"Next: {auth.get('next_action')}"])
-        for command in result["recovery"]:
-            text += f"\nRecovery: {command}"
+                          f"Next: {auth.get('next_action')}"] + _recovery_text(result["recovery"]))
         return 1, result, text
     next_action = (state.get("cursor") or {}).get("next_action")
     result = {"status": "TRANSITIONED", "phase": state.get("phase"), "status_detail": state.get("status"),
               "revision": state.get("revision"), "next_action": next_action}
     return 0, result, (f"Phase: {state.get('phase')} / {state.get('status')}\n"
                        f"Revision: {state.get('revision')}\nNext: {next_action}")
+
+
+def cmd_native_sync(args: argparse.Namespace) -> tuple[int, dict[str, Any], str]:
+    """Record a native lifecycle result after verifying the current native state file."""
+    path = _state_path(args.repo)
+    if not path.exists():
+        return _missing_state()
+    ref = Path(args.native_state_ref)
+    native_path = ref if ref.is_absolute() else args.repo / ref
+    try:
+        native_path.resolve().relative_to(args.repo.resolve())
+        import repository_snapshot
+        digest = repository_snapshot.digest_path(native_path)
+    except (OSError, ValueError):
+        return 2, {"status": "ACTION_REQUIRED", "error": "NATIVE_STATE_EVIDENCE_UNAVAILABLE",
+                   "next_action": "advance_native_state"}, "Native state evidence is unavailable inside the project."
+    if digest != args.native_revision:
+        return 2, {"status": "ACTION_REQUIRED", "error": "NATIVE_STATE_REVISION_MISMATCH",
+                   "actual_revision": digest, "next_action": "advance_native_state"}, "Native state digest does not match."
+    try:
+        state = sm.sync_native(path, args.phase, args.status, args.actor, str(ref),
+                               args.native_revision, args.completed, args.total, args.expected_revision)
+    except Exception as exc:
+        return 1, {"status": "DENIED", "error": type(exc).__name__, "message": str(exc)}, f"Native sync denied: {exc}"
+    return 0, {"status": "NATIVE_STATE_SYNCED", "phase": state["phase"], "status_detail": state["status"],
+               "revision": state["revision"]}, f"Native state synchronized: {state['phase']} / {state['status']}"
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -901,6 +975,17 @@ def build_parser() -> argparse.ArgumentParser:
     x.add_argument("--expected-revision",type=int)
     x.add_argument("--native-confirmed",action="store_true",help="native adapter has confirmed the target phase/status")
     x.set_defaults(func=cmd_transition)
+
+    x=sub.add_parser("native-sync",help="synchronize a verified native SDD state after its native workflow completed")
+    x.add_argument("--phase",required=True,choices=action_guard.PHASES)
+    x.add_argument("--status",default="in_progress",choices=sorted(action_guard.STATUSES))
+    x.add_argument("--native-state-ref",required=True)
+    x.add_argument("--native-revision",required=True,help="SHA-256 digest of the current native state file or directory")
+    x.add_argument("--completed",type=int)
+    x.add_argument("--total",type=int)
+    x.add_argument("--actor",default="coding-orchestrator")
+    x.add_argument("--expected-revision",type=int)
+    x.set_defaults(func=cmd_native_sync)
 
     pr=sub.add_parser("provider",help="inspect/reset semantic provider operational state"); prs=pr.add_subparsers(dest="provider_command",required=True)
     x=prs.add_parser("status"); x.add_argument("provider",choices=["codebase-memory-mcp"]); x.set_defaults(func=cmd_provider_status)

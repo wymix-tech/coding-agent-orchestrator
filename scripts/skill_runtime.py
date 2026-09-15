@@ -21,7 +21,10 @@ POSIX_CLI = "coding-orchestrator"
 WINDOWS_CLI = "coding-orchestrator.cmd"
 PYTHON_ENTRY = Path("scripts") / "coding_orchestrator.py"
 
-SUBCOMMANDS = ("init", "discover", "doctor", "status", "start", "intake", "resume", "verify", "where")
+SUBCOMMANDS = (
+    "init", "discover", "doctor", "status", "start", "intake", "resume", "check", "verify", "where",
+    "readiness", "progress", "transition", "native-sync",
+)
 
 
 def skill_root() -> Path:
@@ -110,6 +113,23 @@ def launcher(repo: Path) -> tuple[str, Path]:
 def command(repo: Path, subcommand: str) -> str:
     prefix, _ = launcher(repo)
     return f"{prefix} --repo . {subcommand}".strip()
+
+
+def recovery_command(repo: Path, subcommand: str) -> str:
+    """Render a pasteable command for a concrete project from any caller cwd.
+
+    Recovery output is runtime text, not shared project configuration, so an
+    absolute packaged entrypoint is intentional. It avoids assuming PATH or a
+    repository-root working directory while retaining platform-specific launchers.
+    """
+    repo = Path(repo).resolve()
+    if os.name == "nt" and windows_cli_path().is_file():
+        prefix = quote(str(windows_cli_path()))
+    elif _is_executable(cli_path()):
+        prefix = quote(str(cli_path()))
+    else:
+        prefix = f"python3 {quote(str(python_entry()))}"
+    return f"{prefix} --repo {quote(str(repo))} {subcommand}".strip()
 
 
 def describe(repo: Path | None = None) -> dict[str, Any]:

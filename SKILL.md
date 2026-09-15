@@ -15,18 +15,17 @@ Act as the control plane for coding work without replacing project-owned enginee
 - **Decision Engine** owns required process rigor.
 - **Execution State** owns where work is and what comes next.
 - **Context Plane** owns which current sources a role should read.
-- **Session Context** projects compact cold-start, resume, and handoff state.
 - **Action Guard** decides execution, advance, and closure; host/state adapters consume it.
-- **Superpowers** governs implementation discipline.
-- **Activation stubs** load this Skill; they never own project truth.
 
 ## Runtime Entry Point
 
-The Skill directory name is a deployment choice; never hardcode it. The front controller sits next to this `SKILL.md`: `<skill-root>/coding-orchestrator --repo . where` prints the resolved paths and commands; without an executable launcher use `python3 <skill-root>/scripts/coding_orchestrator.py`.
+Resolve the runtime from this file's location; never hardcode its directory name. Run `<skill-root>/coding-orchestrator --repo . where`; fallback: `python3 <skill-root>/scripts/coding_orchestrator.py`.
 
 ## Bootstrap & Start Intent Guard
 
-Ensure `.orchestrator/config.yaml` exists; if missing, Safe Auto initialize once and continue the same request. For `开始`, `继续`, `start`, `continue`, or `resume`, run `start`. Follow its route: resume active work, surface blockers, auto-intake one high-confidence requirement, ask when none exists, or require selection when several exist. Never invent scope, fake a work item, or code from a bare start intent. On `ACTION_REQUIRED`, stop mutation and surface the decision.
+Ensure `.orchestrator/config.yaml` exists; if missing, Safe Auto initialize once. For `开始`, `继续`, `start`, `continue`, or `resume`, run `start`; follow its route to resume, surface blockers, intake one requirement, request scope, or select. Never invent scope/work. On `ACTION_REQUIRED`, stop mutation.
+
+For active work, continuation wording means resume, never automatic intake. Unchanged source keeps its revision: reuse evidence only when inputs are fresh; otherwise reanalyze without resetting phase or progress. Changed source requires `--revise-current --confirm-reset`. Recover through `readiness`, `progress`, `transition`, or `native-sync`; never edit state files.
 
 ## Lazy Reference Loading Contract
 

@@ -358,7 +358,12 @@ def handle(repo: Path, host: str, event: str, raw: dict[str, Any]) -> dict[str, 
         # agent to guess, which previously produced repeated blocked retries.
         recovery = authorization.get("recovery") or []
         if reason and recovery:
-            reason += " Recovery: " + " | ".join(recovery)
+            rendered = []
+            for item in recovery:
+                command = item.get("command") if isinstance(item, dict) else str(item)
+                requires = item.get("requires") if isinstance(item, dict) else None
+                rendered.append(f"{command} (requires {requires})" if requires else command)
+            reason += " Recovery: " + " | ".join(rendered)
         return canonical(event, decision=authorization["decision"], reason=reason,
                          actions=[authorization["next_action"]] if authorization["next_action"] else [],
                          metadata={"authorization": authorization, "recovery": recovery})

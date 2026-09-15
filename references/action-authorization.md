@@ -28,6 +28,10 @@ classification. This classification does not replace a shell/filesystem sandbox.
 Preserve native SDD ownership: native phase/status changes must be made by its adapter
 and then projected. A native completion token alone does not establish governance
 completion. `native_confirmed` is an adapter assertion, not permission to skip gates.
+After a native workflow has completed, use `native-sync` with a native state reference
+inside the repository and the current SHA-256 digest of that state. The command verifies
+the evidence reference and digest before recording the projection; it does not synthesize
+native authority or accept `--native-confirmed` as a substitute.
 
 ## Inspect a decision
 
@@ -47,14 +51,18 @@ machine codes, a message, and a recovery action. Multiple failures remain visibl
 deterministic order. The actual mutation/transition must recheck; a prior check is only
 a diagnostic.
 
-`recovery` lists the orchestrator CLI commands that clear the denial, derived from
-`RECOVERY_COMMANDS` in `action_guard.py`. Host `pre_tool` denials append them to the
-reason, so an agent never has to guess how to unblock itself:
+`evaluate()` returns pure recovery action descriptors. `authorize()` renders them at the
+runtime boundary using the installed front controller and an absolute `--repo` path, so a
+host denial does not depend on PATH or its current working directory. Each rendered command
+also names the evidence it requires; replace the all-caps evidence placeholder with the
+real approved path/value before running it. Host `pre_tool` denials append these commands to
+the reason, so an agent never has to guess how to unblock itself:
 
 ```bash
-coding-orchestrator readiness --key sdd_ready --value true --evidence-ref <approved spec or plan>
-coding-orchestrator progress --completed 0 --total 5 --evidence-ref <plan>
-coding-orchestrator transition --phase implementation --status in_progress --reason "plan is approved" --evidence-ref <plan>
+<resolved-front-controller> --repo /absolute/project readiness --key sdd_ready --value true --evidence-ref <approved spec or plan>
+<resolved-front-controller> --repo /absolute/project progress --completed 0 --total 5 --evidence-ref <plan>
+<resolved-front-controller> --repo /absolute/project transition --phase implementation --status in_progress --reason "plan is approved" --evidence-ref <plan>
+<resolved-front-controller> --repo /absolute/project native-sync --phase implementation --status in_progress --native-state-ref <native state file> --native-revision <sha256>
 ```
 
 Every one of them is classified as `prepare`, which is why executable state changes go
