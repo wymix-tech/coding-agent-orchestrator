@@ -480,8 +480,14 @@ def cmd_intake(args: argparse.Namespace) -> tuple[int, dict[str, Any], str]:
     )
     explicit_revision = getattr(args, "requirement_revision", None)
     request_rev = requirement_identity.revision_id(request)
-    source_rev = requirement_identity.source_revision_id(repo, source_ref)
+    resolved_source = requirement_identity.requirement_content_revision(repo, source_ref) if source_ref else None
+    source_rev = (resolved_source or {}).get("source_revision")
+    source_diagnostic = (resolved_source or {}).get("error")
     req_rev = str(explicit_revision or source_rev or request_rev)
+    explicit_inputs_present = bool(
+        getattr(args, "resolutions", None) or getattr(args, "base_ref", None)
+        or getattr(args, "evidence_refs", None) or getattr(args, "reanalyze", False)
+    )
     rephrased_request = False
     resume_without_intake = False
     state_path = repo / ".orchestrator" / "execution-state.yaml"
@@ -510,10 +516,22 @@ def cmd_intake(args: argparse.Namespace) -> tuple[int, dict[str, Any], str]:
                            "requirement_id": req_id, "next_action": "confirm_requirement_revision"}, (
                     "The requirement source cannot be compared with its recorded baseline. Do not assume it is unchanged.")
             if source_backed and not source_changed and not explicit_revision:
-                rephrased_request = request_rev != str(existing_rev)
-                req_rev = str(existing_rev)
-                resume_without_intake = rephrased_request and _analysis_is_current(repo, existing)
-            revision_changed = source_changed or str(existing_rev) != str(req_rev)
+                # The recorded content baseline is identical, so nothing changed: adopt the
+                # content revision for a work item that only carried an older label, without
+                # discarding in-flight work.
+                if str(existing_rev) != str(source_rev):
+                    req_rev = str(source_rev)
+                if not explicit_inputs_present:
+                    # Only a pure resume may reuse the state as-is. New resolutions, a new
+                    # base-ref, new evidence refs or an explicit re-analysis intent are new
+                    # inputs and must reach re-analysis instead of being swallowed here.
+                    rephrased_request = request_rev != str(existing_rev)
+                    req_rev = str(existing_rev)
+                    resume_without_intake = rephrased_request and _analysis_is_current(repo, existing)
+            # Only content can move a requirement revision. A work item whose recorded label was
+            # older than the verified source content does not count as a revision change.
+            content_unchanged = bool(source_backed and not source_unknown and not source_changed)
+            revision_changed = source_changed or (str(existing_rev) != str(req_rev) and not content_unchanged)
             if revision_changed:
                 if not getattr(args, "revise_current", False):
                     return 2, {"status": "ACTION_REQUIRED", "error": "REQUIREMENT_REVISION_CHANGED",
@@ -524,6 +542,27 @@ def cmd_intake(args: argparse.Namespace) -> tuple[int, dict[str, Any], str]:
                     return 2, {"status": "ACTION_REQUIRED", "error": "REVISION_RESET_REQUIRES_CONFIRMATION",
                                "requirement_id": req_id, "active_revision": existing_rev, "incoming_revision": req_rev,
                                "source_changed": source_changed, "next_action": "confirm_requirement_revision"}, _reset_confirmation_message(repo, existing)
+                if _resets_in_flight_work(existing):
+                    confirmation = requirement_identity.check_revision_confirmation(
+                        repo, requirement_id=str(req_id), source_revision=source_rev,
+                        phase=existing.get("phase"), status=existing.get("status"),
+                        active_revision=str(existing_rev) if existing_rev else None,
+                        confirmation={
+                            "requirement_id": str(req_id),
+                            "source_revision": getattr(args, "confirm_revision", None),
+                            "phase": getattr(args, "confirm_phase", None),
+                            "status": getattr(args, "confirm_status", None),
+                        } if (getattr(args, "confirm_reset", False) and getattr(args, "confirm_revision", None)) else None,
+                    )
+                    if not confirmation["allowed"]:
+                        return 2, {"status": "ACTION_REQUIRED", **confirmation,
+                                   "requirement_id": req_id, "active_revision": existing_rev,
+                                   "incoming_revision": req_rev, "source_changed": source_changed,
+                                   "resets_in_flight_work": True}, (
+                            confirmation["message"] + " Confirm against the current state: "
+                            "intake --revise-current --confirm-reset --confirm-revision <rev> "
+                            f"--confirm-phase {existing.get('phase')} --confirm-status {existing.get('status')}"
+                        )
                 existing = sm.revise_work_item(state_path, req_id, req_rev, args.actor, source_ref or "direct-request",
                                                 existing["revision"], requirement_source_ref=source_ref,
                                                 native_work_item_id=getattr(args, "native_id", None))
@@ -907,6 +946,11 @@ def build_parser() -> argparse.ArgumentParser:
     x.add_argument("--work-id"); x.add_argument("--title")
     x.add_argument("--revise-current", action="store_true", help="explicitly accept a new revision of the active requirement and invalidate derived evidence")
     x.add_argument("--confirm-reset", action="store_true", help="with --revise-current: accept that in-flight implementation state (phase, readiness, gates, progress) is discarded")
+    x.add_argument("--confirm-revision", help="with --confirm-reset: requirement revision the confirmation is bound to")
+    x.add_argument("--confirm-phase", help="with --confirm-reset: work item phase observed when the confirmation was issued")
+    x.add_argument("--confirm-status", help="with --confirm-reset: work item status observed when the confirmation was issued")
+    x.add_argument("--reanalyze", action="store_true", help="explicit re-analysis intent; defeats the source-unchanged resume shortcut")
+    x.add_argument("--evidence-ref", action="append", default=[], dest="evidence_refs", help="explicit evidence reference that must reach re-analysis")
     x.add_argument("--requirement-id", help=argparse.SUPPRESS)
     x.add_argument("--requirement-revision", help=argparse.SUPPRESS)
     x.add_argument("--native-id", help=argparse.SUPPRESS)

@@ -1,5 +1,12 @@
 # Changelog
 
+## Phase A — Evidence Is Verifiable, Native Projection Is Real, Identity Migrates
+
+- **T1 可核验证据**：新增 `scripts/evidence_provenance.py`。`kind` × `validation_status` × `outcome` 三维分离，可信来源的真实失败报告记为 `verified + failed`，仅来源/格式/工作项/绑定不符才为 `invalid`；强制依赖由验证器按结论类型 + Policy 推导（`required_dependencies()`），调用方只能追加且每项绑定对象与版本；`collect_verification_inputs`（IO）/`verify`（纯函数，时间显式传入）/`persist_verification` 三层分离；证据记录不可变、按内容寻址，索引可重建，孤立证据允许存在。`set_readiness` 按 key 独立来源规则，`record_gate`/`record_verification` 绑定命令、退出码、报告与快照；`action_guard.collect_evidence` 增加使用时复核并映射到实际依赖它的那条判断。
+- **T2 原生状态真实性**：新增 `scripts/native_state_parser.py`。单次读取 → 同字节摘要与解析 → `NativeProjection` 或结构化诊断（`NATIVE_SOURCE_UNCONFIGURED` / `NATIVE_TASK_MISSING` / `NATIVE_WORK_ITEM_AMBIGUOUS` / `NATIVE_FORMAT_UNKNOWN` / `NATIVE_STATUS_UNSUPPORTED` / `NATIVE_SOURCE_CHANGED`）。前端 `native-sync`、底层 `sync-native`、`transition`、`progress` 共用同一校验；`--native-confirmed` 退化为兼容开关，不再是信任来源。`sync_native` 先把原生事实写入 `authority.native_observation`，治理 `phase/status/completion_record` 必须经 `action_guard.authorize(native_projection=...)` 才推进；不一致时输出 `native_divergence` 诊断，不丢弃原生事实。该一致性为 best-effort，不声明为安全边界。
+- **T3 需求版本与迁移**：`requirement_identity` 升级 `identity_version=2` 四元组（`requirement_id` / `source_revision` / `request_revision` / `native_state_revision`）。`candidate_identity()` 不再把请求措辞摘要当作来源 revision；目录/多文件按成员清单、排序、路径规范化的确定性摘要；同文件混合内容按结构化边界拆分（任务勾选、开发记录、变更日志不属于需求内容），未知格式返回 `MIXED_CONTENT_*` 诊断而不静默删除内容，完整原文摘要与需求内容版本分开保留。`intake` 的新 resolutions / base-ref / 证据引用 / `--reanalyze` 不再被"源未变"快捷恢复吞掉；破坏性修订确认必须绑定 `--confirm-revision` / `--confirm-phase` / `--confirm-status`，状态或版本移动后重新确认。迁移支持 preview → backup → 原子替换 → 幂等重入 → 中断恢复，缺 `source_revision` 的旧记录标记 `legacy` 并给出迁移命令。
+- 测试聚焦新增：`tests/test_evidence_provenance.py`、`tests/test_native_state_parser.py`、`tests/test_native_entrypoint_equivalence.py`、`tests/test_requirement_identity_v2.py`、`tests/test_requirement_revision_confirm.py`、`tests/test_migration_transactions.py`、`tests/test_explicit_input_not_swallowed.py`；`discover` 实跑 **382 tests / OK**，`context_footprint_check` **PASS**。
+
 ## 6.5 follow-up — Resume Recovery Paths Are Freshness-Aware
 
 - A rephrased intake now bypasses semantic analysis only when repository, authority, comparison, context, semantic, policy, and enforcement inputs are current. If any input is stale, it refreshes analysis under the same requirement revision and preserves in-flight phase and progress instead of falsely reporting that evidence was reused; a new binding correctly makes prior verification stale.

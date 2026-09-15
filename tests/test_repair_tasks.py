@@ -224,9 +224,12 @@ class RequirementHistoryAndBmadTests(unittest.TestCase):
             found=requirement_discovery.discover(repo,"generic")
             self.assertEqual(2, found["count"])
             for i,c in enumerate(found["candidates"]):
-                ident=requirement_identity.candidate_identity(c,"generic")
+                # History is recorded with the same identity the router resolves: source content
+                # decides the revision, the request wording only tracks it.
+                ident=requirement_identity.candidate_identity(c,"generic",repo=repo)
                 requirement_identity.record(repo, requirement_id=ident["requirement_id"], revision_id=ident["revision_id"],
-                                            work_item_id=f"W{i}", provider="generic", source_path=c["path"], status="completed")
+                                            work_item_id=f"W{i}", provider="generic", source_path=c["path"], status="completed",
+                                            source_revision=ident["source_revision"], request_revision=ident["request_revision"])
             routed=start_router.resolve(repo,ensure_bootstrap=False)
             self.assertEqual("REQUEST_REQUIREMENT", routed["route"])
 

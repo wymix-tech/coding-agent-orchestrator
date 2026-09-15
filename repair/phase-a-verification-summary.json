@@ -46,9 +46,9 @@
   },
 
   "verified_assumptions": [
-    {"item": "coding_orchestrator.py:853 cmd_native_sync", "status": "NOT_VERIFIED", "note": "来自 plan-1 记录，PR2 开工前须重新核验"},
-    {"item": "execution_state_manager.py:1529-1537 sync-native 子命令 / :1603-1604 直调 sync_native", "status": "NOT_VERIFIED", "note": "来自 plan-1 记录，PR2 开工前须重新核验"},
-    {"item": "start_router.py:128 candidate_identity", "status": "NOT_VERIFIED", "note": "来自 plan-1 记录，PR3 开工前须重新核验"},
+    {"item": "coding_orchestrator.py cmd_native_sync 前端 native-sync", "status": "VERIFIED", "note": "PR2 实测并统一：所有受支持写入入口共用 native_state_parser.resolve_projection，不再由调用方重述已验证投影（原 :853 行号已随代码演进失效）"},
+    {"item": "execution_state_manager sync-native 子命令 / main() 直调 sync_native", "status": "VERIFIED", "note": "PR2 实测：底层子命令与 sm.sync_native 共用同一校验，均先算投影再写入（原 :1529-1537 / :1603-1604 行号已随代码演进失效）"},
+    {"item": "start_router.py:128 candidate_identity", "status": "VERIFIED", "note": "PR3 实测：candidate_identity 确实存在且原先把请求措辞摘要当作 revision；真正的显式输入吞没在 cmd_intake 的「源未变」分支，已加 explicit_inputs_present 门禁"},
     {"item": "hosts/* hooks 是否仅走 check（无 native-sync 写入路径）", "status": "PARTIALLY_VERIFIED", "note": "本轮 grep 未见 native-sync 写入路径，PR2 须二次确认"},
     {"item": "CNB skill（cnb-code-commit / cnb-code-review / cnb-pr-summary）可用性", "status": "NOT_VERIFIED", "note": "提交 PR 前核验；不可用则退回手工 git + PR 描述"}
   ],
@@ -138,8 +138,75 @@
       "id": "PR3",
       "title": "T3 需求版本与迁移",
       "base": "PR2",
-      "status": "NOT_STARTED",
-      "guarantee": "身份/registry 迁移的 preview、备份、幂等重入与中断恢复；四条最小重建路径端到端"
+      "status": "DONE",
+      "guarantee": "身份/registry 迁移的 preview、备份、幂等重入与中断恢复",
+      "verification": {
+        "tests": "Ran 382 tests / OK（基线 293 + PR1 新增 34 + PR2 新增 22 + PR3 新增 33）",
+        "footprint": "PASS（SKILL.md 103 行 / 7400 bytes / 918 words，未触碰）",
+        "new_files": [
+          "tests/test_requirement_identity_v2.py",
+          "tests/test_requirement_revision_confirm.py",
+          "tests/test_migration_transactions.py",
+          "tests/test_explicit_input_not_swallowed.py"
+        ],
+        "integrations": [
+          "requirement_identity identity_version=2：candidate_identity 返回四元组（requirement_id / source_revision / request_revision / native_state_revision），不再把请求措辞当来源 revision",
+          "requirement_content_revision：文件集合确定性摘要（成员清单、排序、路径规范化、排除 .git/node_modules/__pycache__ 与符号链接）+ 同文件混合内容结构化边界（任务勾选/开发记录/变更日志不计入需求内容版本）",
+          "未知格式返回 MIXED_CONTENT_NO_REQUIREMENT_REGION / MIXED_CONTENT_UNMAPPED 诊断并可显式配置边界；原文 raw_digest 与内容 source_revision 分开保留",
+          "check_revision_confirmation：破坏性修订确认绑定 requirement_id + source_revision + phase + status；状态或版本移动后返回 REVISION_CONFIRMATION_SUPERSEDED，未绑定返回 REVISION_CONFIRMATION_REQUIRED",
+          "migrate：preview → backup（仅一次）→ 逐条 journal → 原子替换 registry；registry 为权威记录，journal 只记意图，幂等重入与中断恢复均可重跑",
+          "mark_legacy：缺 source_revision 的旧条目标记 legacy + migration_command，绝不默认「未变更」",
+          "intake：新 resolutions / base-ref / --evidence-ref / --reanalyze 不再被「源未变」快捷恢复吞掉；指纹纳入显式 revision、证据引用、policy manifest 与重分析意图",
+          "只有内容能移动需求版本：已核验源未变时，旧标签漂移不触发修订重置"
+        ],
+        "authoritative_record_and_convergence": {
+          "authoritative": "registry.json 中的 source_revision（含 atomic replace + .bak 备份）",
+          "legal_intermediate_states": [
+            "journal status=in_progress 且 registry 未替换（崩溃点，重跑会重做该步）",
+            "部分条目解析失败：标记 legacy + migration_command，status=MIGRATED_PARTIAL"
+          ],
+          "recovery_after_restart": "重跑 requirement_identity.migrate：已带 source_revision 的条目跳过，其余重算；journal 收敛到 done/partial"
+        },
+        "behavior_changes_in_existing_tests": [
+          "tests/test_repair_tasks.py::test_completed_a_and_b_are_not_reopened_after_restart：历史记录改用与路由一致的 v2 身份（含 repo），否则完成的需求会被重新当成候选",
+          "tests/test_resume_guard.py::test_changed_source_requires_explicit_confirmation：--confirm-reset 必须绑定 --confirm-revision/--confirm-phase/--confirm-status；未绑定确认现在返回 REVISION_CONFIRMATION_REQUIRED 且不写状态"
+        ],
+        "not_run": [
+          "真实多文件 CBM / 宿主环境目录迁移：本环境无真实宿主，标记 NOT_RUN"
+        ]
+      },
+      "minimal_rebuild_paths": [
+        {
+          "path": "重新采集机械证据",
+          "commands": [
+            "python3 scripts/coding_orchestrator.py --repo . readiness --key quality_gate_pending --evidence-ref <report>",
+            "python3 scripts/coding_orchestrator.py --repo . gate --gate <name> --status passed --evidence-ref <report>"
+          ],
+          "evidence": "tests/test_evidence_provenance.py + tests/test_evidence_enforcement.py"
+        },
+        {
+          "path": "导入并验证真实报告",
+          "commands": ["重跑真实测试命令后执行 python3 scripts/coding_orchestrator.py --repo . verify --evidence-ref <report>"],
+          "note": "failed/missing/unparsable/旧快照报告不会变成 passed：tests/test_evidence_enforcement.py"
+        },
+        {
+          "path": "迁移旧身份",
+          "commands": [
+            "python3 scripts/requirement_identity.py --repo .            # preview，不写盘",
+            "python3 scripts/requirement_identity.py --repo . --migrate --dry-run",
+            "python3 scripts/requirement_identity.py --repo . --migrate"
+          ],
+          "evidence": "tests/test_migration_transactions.py（含中断恢复与幂等重入）"
+        },
+        {
+          "path": "重新验证后继续实现",
+          "commands": [
+            "python3 scripts/coding_orchestrator.py --repo . native-sync --phase implementation --status in_progress --native-state-ref <ref> --native-revision <digest>",
+            "python3 scripts/coding_orchestrator.py --repo . start"
+          ],
+          "evidence": "tests/test_explicit_input_not_swallowed.py::test_migrated_project_resumes_instead_of_reopening_the_requirement"
+        }
+      ]
     }
   ],
 

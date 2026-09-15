@@ -125,7 +125,9 @@ def resolve(repo: Path, *, ensure_bootstrap: bool = True, host: str = "auto") ->
     if reqs.get("candidates"):
         remaining = []
         for c in reqs["candidates"]:
-            identity = requirement_identity.candidate_identity(c, provider)
+            # The source content revision, when one exists, decides identity; the wording of a
+            # resume request that merely pointed at it must never look like a new revision.
+            identity = requirement_identity.candidate_identity(c, provider, repo=repo)
             already_done = requirement_identity.processed(repo, identity["requirement_id"], identity["revision_id"])
             if completed_identity == (identity["requirement_id"], identity["revision_id"]):
                 already_done = True

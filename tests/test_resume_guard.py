@@ -227,8 +227,21 @@ class ResumeMustNotReviseRequirement(unittest.TestCase):
             unchanged = sm._load(repo / ".orchestrator" / "execution-state.yaml")
             self.assertEqual("implementation", unchanged["phase"])
 
+            # An unbound confirmation is not a confirmation: it must name the revision and the
+            # state it discards, otherwise it silently authorizes a future state too.
             code, result, text = run_intake(repo, "Implement the revised login spec.",
                                             "--revise-current", "--confirm-reset")
+            self.assertEqual(2, code)
+            self.assertEqual("REVISION_CONFIRMATION_REQUIRED", result["error"])
+            self.assertEqual("implementation", sm._load(repo / ".orchestrator" / "execution-state.yaml")["phase"])
+
+            state_before_confirmation = sm._load(repo / ".orchestrator" / "execution-state.yaml")
+            code, result, text = run_intake(
+                repo, "Implement the revised login spec.",
+                "--revise-current", "--confirm-reset",
+                "--confirm-revision", str(state_before_confirmation["work_item"]["requirement_revision"]),
+                "--confirm-phase", state_before_confirmation["phase"],
+                "--confirm-status", state_before_confirmation["status"])
             self.assertNotEqual(2, code, text)
             reset = sm._load(repo / ".orchestrator" / "execution-state.yaml")
             self.assertEqual("discovery", reset["phase"])

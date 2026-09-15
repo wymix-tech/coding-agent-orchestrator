@@ -52,12 +52,23 @@ def _file_sha256(path: Path | None) -> str | None:
         return None
 
 
-def intake_fingerprint(request: str, base_ref: str | None, resolutions: Path | None) -> str:
-    """Identity of the *inputs* an agent controls, independent of repository state."""
+def intake_fingerprint(request: str, base_ref: str | None, resolutions: Path | None,
+                       *, explicit_revision: str | None = None, evidence_refs: Iterable[str] | None = None,
+                       policy_manifest: Path | None = None, reanalyze: bool = False) -> str:
+    """Identity of the *inputs* an agent controls, independent of repository state.
+
+    Explicit inputs re-analysis depends on are part of the fingerprint: a new resolutions file,
+    a new base-ref or a new explicit revision is new evidence and must not be swallowed by a
+    "source unchanged" shortcut.
+    """
     material = {
         "request": request,
         "base_ref": base_ref or "",
         "resolutions": _file_sha256(resolutions),
+        "explicit_revision": explicit_revision or "",
+        "policy_manifest": _file_sha256(policy_manifest),
+        "reanalyze": bool(reanalyze),
+        "evidence_refs": sorted({str(ref) for ref in (evidence_refs or []) if ref}),
     }
     return hashlib.sha256(json.dumps(material, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()[:16]
 
@@ -162,6 +173,10 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
     p.add_argument("--context-max-chars", type=int, default=16000)
     p.add_argument("--sdd-provider", choices=["openspec", "bmad", "generic", "other"])
     p.add_argument("--sdd-ref", type=Path, help="authoritative SDD artifact/change/story reference for Context Manifest")
+    p.add_argument("--requirement-revision", help="explicit external revision label; tracks alongside content, never replaces it")
+    p.add_argument("--evidence-ref", action="append", default=[], dest="evidence_refs",
+                   help="explicit evidence reference that must reach re-analysis")
+    p.add_argument("--reanalyze", action="store_true", help="explicit re-analysis intent; defeats the source-unchanged shortcut")
     args = p.parse_args(argv)
 
     request = args.request_file.read_text(encoding="utf-8") if args.request_file else args.request
@@ -312,7 +327,13 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
         loop_warning = record_intake(
             repo,
             requirement_key(state_path_resolved),
-            intake_fingerprint(request, args.base_ref, args.resolutions),
+            intake_fingerprint(
+                request, args.base_ref, args.resolutions,
+                explicit_revision=getattr(args, "requirement_revision", None),
+                evidence_refs=getattr(args, "evidence_refs", None) or [],
+                policy_manifest=args.policy_manifest,
+                reanalyze=getattr(args, "reanalyze", False),
+            ),
             str(decision.get("status")),
             args.resolutions is not None,
             outdir,
