@@ -1,5 +1,16 @@
 # Changelog
 
+## Phase A follow-up — Shared Receipt Checks and Authenticated Sources
+
+- Receipt paths and evidence IDs now share target, claim type, work item, requirement revision, and before/after code checks. Refreshing claim dependencies cannot refresh an old execution or reuse a unit run for another gate, review, or final verification.
+- Approval imports verify externally issued Ed25519 events against project-configured public keys and exact scope/value. The runtime holds no signing key; unsigned local channel files no longer establish authority. Added the `cryptography` dependency.
+- Semantic observations require a policy-selected command with bound program digests and inputs, including the active requirement source. Arbitrary constant-output commands cannot establish facts by supplying `--fact-path`.
+- Progress counts come from captured execution output. Editing wrapper fields cannot change the observed count. Authentic failures remain verified failures; an agent claim cannot gain trust by attaching a failed report. A signed general approval cannot authenticate a separately attached stale observation.
+- Evidence execution resolves the current requirement before running, and preserves command-internal `--` arguments. Source-backed reset confirmations retain the source reference and provider when replayed.
+- Code receipts exclude host integration files and the selected native runtime state source; native observations retain their separate validation and governance checks.
+- Added real consumer/CLI counterexamples and positive signed-approval, observer, progress, and reset-replay tests. See [evidence source setup and upgrade steps](references/evidence-sources.md).
+- Validation: **470 tests / OK** (16 new boundary regressions); `context_footprint_check` **PASS** (103 lines / 7400 bytes / 918 words). Local verification; live host approval issuer integrations remain project-specific.
+
 ## Phase A follow-up — Evidence Is Bound to Real Objects, and Nothing Is Pre-Verified
 
 - **依赖指向真实存在的对象**：`evidence_provenance` 的每条强制依赖（`path_revision` / `tree_revision` / `object_revision` / 报告 / 审批 / 原生状态）都在校验时读回仓库里的真实对象并比对摘要，调用方只能追加依赖、不能替换或留空；记录与校验结果分离存放（`checks/` 下的最新校验可重放），`resolve_dependency` 对无法定位的对象返回结构化诊断而不是"跳过即通过"。

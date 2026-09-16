@@ -884,7 +884,7 @@ def _bind_alternative_result(state_path: pathlib.Path, *, state: Optional[Dict[s
     binding = ep.result_document_binding(repo, evidence_ref, target=target, **scope)
     if binding.get("available"):
         purpose = ep.purpose_decision(use, {
-            "claim_type": binding["binding"].get("claim_type"),
+            "claim_type": binding["binding"].get("claim_type"), "target": binding["binding"].get("target"),
             "validation_status": "verified", "outcome": "passed"}, target=target)
         if not purpose["ok"]:
             raise StateError(f"EVIDENCE_REPORT_REQUIRED: {purpose['error']}: {purpose['message']}")
@@ -982,7 +982,7 @@ def _bind_report(state_path: pathlib.Path, status: str, report_path: Optional[st
                              f"{binding.get('message')}; run the command through "
                              "`coding-orchestrator evidence run` and pass the receipt it writes")
         purpose = ep.purpose_decision(ep.use_for_target(target), {
-            "claim_type": binding["binding"].get("claim_type"),
+            "claim_type": binding["binding"].get("claim_type"), "target": binding["binding"].get("target"),
             "validation_status": "verified", "outcome": "passed"}, target=target)
         if not purpose["ok"]:
             raise StateError(f"EVIDENCE_REPORT_REQUIRED: {purpose['error']}: {purpose['message']}")
@@ -1092,21 +1092,16 @@ def _counts(value: Any) -> Optional[Dict[str, int]]:
     return {"completed": completed, "total": total}
 
 
-def evidence_progress(repo: pathlib.Path, record: Dict[str, Any]) -> Optional[Dict[str, int]]:
+def evidence_progress(repo: pathlib.Path, record: Dict[str, Any], result: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, int]]:
     """Task counts *observed by the source* this progress claim cites.
 
     Progress is a count of finished tasks, so the count has to come from the source that
     observed them. Metadata next to the claim is an expectation, never an observation.
     """
-    report_path = (record.get("report") or {}).get("path")
-    if not report_path:
+    result = result or _evidence_module().revalidate(repo, record)
+    if result.get("validation_status") != "verified":
         return None
-    path = pathlib.Path(report_path)
-    path = path if path.is_absolute() else repo / path
-    try:
-        doc = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        doc = None
+    doc = result.get("observed_output")
     if isinstance(doc, dict):
         for key in ("progress", "tasks", "tests"):
             found = _counts(doc.get(key))
@@ -1182,7 +1177,7 @@ def set_progress(
             raise StateError(
                 f"work_item.progress is not satisfied by {result.get('evidence_id')}: outcome "
                 f"{result.get('outcome')!r} is not a success; only completed work counts as progress")
-        observed = evidence_progress(repo, record)
+        observed = evidence_progress(repo, record, result)
         if observed is None:
             raise StateError(
                 f"work_item.progress is not satisfied by {result.get('evidence_id')}: the "

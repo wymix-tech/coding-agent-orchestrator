@@ -63,6 +63,8 @@ def _report(repo: Path, *, status: str = "passed", exit_code: int = 0,
     The argv and the exit code are whatever the process actually did, so a report here is a
     receipt of an execution rather than a document that claims one happened.
     """
+    deps = _deps(repo)
+    requirement_revision = requirement_revision or next(d['revision'] for d in deps if d['object_kind'] == 'requirement_revision')
     body: dict = {"status": status, "exit_code": exit_code}
     if fact_path is not None:
         body["fact_path"] = fact_path
@@ -95,23 +97,9 @@ def _approval(repo: Path, *, approval_id: str = "appr-1", subject: str = "W1",
     of the entry before it, and it names the host-side record of the decision: both are re-read
     when the approval is checked.
     """
-    event_ref = ".orchestrator/evidence/approval-events.json"
-    events = {"events": []}
-    if (repo / event_ref).exists():
-        try:
-            events = json.loads((repo / event_ref).read_text(encoding="utf-8"))
-        except ValueError:
-            events = {"events": []}
-    events["events"].append({"event": "approval", "approver": approver, "subject": subject,
-                             "decision": decision, "requirement_revision": requirement_revision,
-                             "fact_path": fact_path, "channel": "host_approval_event"})
-    _write(repo / event_ref, json.dumps(events, indent=2))
-    recorded = ep.record_approval(
-        repo, approver=approver, subject=subject, work_item_id=subject, decision=decision,
-        requirement_revision=requirement_revision, fact_path=fact_path, value=value,
-        channel={"type": "host_approval_event", "ref": event_ref}, approval_id=approval_id)
-    assert recorded.get("available"), recorded
-    return ep.APPROVALS_REL
+    import evidence_factory as ef
+    return ef.write_approval(repo, approval_id=approval_id, subject=subject, approver=approver,
+        decision=decision, requirement_revision=requirement_revision, fact_path=fact_path, value=value)
 
 
 def _passed_record(repo: Path, *, report: dict | None = None, **overrides) -> dict:
@@ -551,10 +539,16 @@ class ApprovalAuthorityTests(unittest.TestCase):
 
     def test_an_approval_must_bind_the_revision_it_approves(self):
         self._publish("reviewer-1")
-        result = ep.revalidate(self.repo, self._record(requirement_revision="rev-1"),
-                               work_item_id="W1", requirement_revision="rev-1")
-        self.assertEqual("unverified", result["validation_status"])
-        self.assertEqual("EVIDENCE_APPROVAL_REVISION_UNBOUND", result["reason_code"])
+        from trusted_evidence_fixture import sign_event
+        event = sign_event(self.repo, {"id":"missing-version", "event":"approval",
+            "approver":"reviewer-1", "subject":"W1", "work_item_id":"W1",
+            "decision":"approved", "channel":"host_approval_event"})
+        ref = "unsigned-scope.json"
+        _write(self.repo / ref, json.dumps(event))
+        result = ep.record_approval(self.repo, approver="reviewer-1", subject="W1",
+            requirement_revision="rev-1", channel={"type":"host_approval_event", "ref":ref})
+        self.assertFalse(result["available"])
+        self.assertEqual("EVIDENCE_APPROVAL_CHANNEL_UNVERIFIED", result["error"])
 
     def test_an_approval_for_another_revision_does_not_cover_this_one(self):
         self._publish("reviewer-1")
@@ -567,12 +561,12 @@ class ApprovalAuthorityTests(unittest.TestCase):
     def test_an_approval_through_an_unknown_channel_is_not_a_source(self):
         """R3: the decision has to be re-readable in the channel it says it came through."""
         self._publish("reviewer-1")
-        self.assertEqual("verified",
-                         ep.revalidate(self.repo, self._record())["validation_status"])
+        record = self._record()
+        self.assertEqual("verified", ep.revalidate(self.repo, record)["validation_status"])
         _write(self.repo / ".orchestrator/config.yaml",
                "orchestrator:\n  evidence:\n    approval_authorities:\n      - reviewer-1\n"
                "    approval_channels:\n      - external_adapter\n")
-        result = ep.revalidate(self.repo, self._record())
+        result = ep.revalidate(self.repo, record)
         self.assertEqual("unverified", result["validation_status"])
         self.assertEqual("EVIDENCE_APPROVAL_CHANNEL_UNVERIFIED", result["reason_code"])
 

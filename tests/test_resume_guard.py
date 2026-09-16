@@ -57,7 +57,7 @@ def start_implementation(repo: pathlib.Path, request: str, title: str = "Spring 
     """Create an ACTIVE work item that is already past planning."""
     state_path = repo / ".orchestrator" / "execution-state.yaml"
     req_id = requirement_identity.stable_requirement_id(provider="generic", source_path=SPEC)
-    req_rev = requirement_identity.revision_id(request)
+    req_rev = requirement_identity.requirement_content_revision(repo, SPEC)["source_revision"]
     state = sm.create_state(
         "change-test", title, "DEEP", provider="generic", authority_mode="orchestrator",
         requirement_id=req_id, requirement_revision=req_rev, requirement_source_ref=SPEC,

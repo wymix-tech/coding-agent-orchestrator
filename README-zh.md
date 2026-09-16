@@ -415,7 +415,9 @@ coding-agent-orchestrator/
 - Git repository
 - 一个明确的项目工作目录
 
-项目 Python 实现主要使用标准库；由于状态、Policy 和项目配置使用 YAML，需安装 `PyYAML`。
+使用 `python3 -m pip install -r requirements.txt` 安装 Python 依赖。
+`PyYAML` 用于状态、Policy 和配置；`cryptography` 用于验证外部签发的审批。
+审批公钥、语义观察器配置和旧证据重建步骤见[证据来源说明](references/evidence-sources.md)。
 
 ### V6 Semantic Impact 推荐
 

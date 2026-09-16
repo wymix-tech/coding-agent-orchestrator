@@ -178,3 +178,8 @@ SDD / Work Facts / Decision / State / Semantic Impact / Policy / Verification Ev
 ```
 
 A pack is valid only for its `context_snapshot_id` and `valid_for` metadata. If a backing source hash or execution revision changes, regenerate the pack before relying on it. Conversation memory cannot make a stale pack current.
+
+## Verified source entry points
+
+See [evidence-sources.md](evidence-sources.md) for execution receipts, signed approval
+imports, policy-selected semantic observers, progress output, and legacy rebuilding.

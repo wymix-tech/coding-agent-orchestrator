@@ -66,7 +66,8 @@ def _state_scope(repo: pathlib.Path) -> dict:
         return {}
     work_item = state.get("work_item") or {}
     return {"work_item_id": work_item.get("id") or state.get("work_item_id"),
-            "requirement_revision": work_item.get("requirement_revision")}
+            "requirement_revision": work_item.get("requirement_revision"),
+            "source_ref":work_item.get("requirement_source_ref"), "members":work_item.get("members")}
 
 
 def work_item_id_for(repo: pathlib.Path, default: str = "W-1") -> str:
@@ -234,6 +235,9 @@ def publish_evidence_policy(repo: pathlib.Path, *, approval_authorities: tuple[s
     orch["evidence"] = evidence
     config.parent.mkdir(parents=True, exist_ok=True)
     config.write_text(yaml.safe_dump(doc, sort_keys=True, allow_unicode=True), encoding="utf-8")
+    from trusted_evidence_fixture import publish_key
+    for authority in approval_authorities:
+        publish_key(repo, authority)
     return ".orchestrator/config.yaml"
 
 
@@ -254,10 +258,20 @@ def run_command(repo: pathlib.Path, *, name: str = "unit-tests.json", status: st
     is a receipt for something else.
     """
     scope = _state_scope(repo)
+    pick_source(repo)  # All material must exist before the execution is observed.
     body = dict(payload) if payload is not None else {"status": status, "exit_code": exit_code}
     if fact_path is not None:
         body["fact_path"] = fact_path
         body["value"] = value
+    if tests is not None:
+        body['tests'] = tests
+    if fact_path is not None and argv is None:
+        from trusted_evidence_fixture import observer
+        refs = [pick_requirement(repo)]
+        if scope.get("source_ref"):
+            refs.append(scope["source_ref"])
+        refs.extend(scope.get("members") or [])
+        argv = observer(repo, fact_path, value, sorted(set(refs)))
     if argv is None:
         argv = [sys.executable, "-c",
                 "import json,sys;print(json.dumps(%r));sys.exit(%d)" % (body, int(exit_code))]
@@ -333,7 +347,7 @@ def write_approval_event(repo: pathlib.Path, *, approver: str = "reviewer-1", su
                 doc = loaded
         except (OSError, ValueError):
             doc = {"events": []}
-    event: dict = {"event": "approval", "id": event_id or f"evt-{len(doc['events']) + 1}",
+    event: dict = {"work_item_id": subject, "event": "approval", "id": event_id or f"evt-{len(doc['events']) + 1}",
                    "approver": approver, "subject": subject, "decision": decision,
                    "channel": "host_approval_event"}
     if requirement_revision is not None:
@@ -341,6 +355,8 @@ def write_approval_event(repo: pathlib.Path, *, approver: str = "reviewer-1", su
     if fact_path is not None:
         event["fact_path"] = fact_path
         event["value"] = value
+    from trusted_evidence_fixture import sign_event
+    event = sign_event(repo, event)
     doc["events"].append(event)
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(json.dumps(doc, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
@@ -360,6 +376,7 @@ def write_approval(repo: pathlib.Path, *, approval_id: str = "appr-1", subject: 
     approval that does not say which revision it was issued for cannot be trusted for the
     revision active now, and the outer record must not supply that binding on its behalf.
     """
+    requirement_revision = requirement_revision or requirement_dependency(repo)["revision"]
     event = write_approval_event(repo, approver=approver, subject=subject, decision=decision,
                                  requirement_revision=requirement_revision,
                                  fact_path=fact_path, value=value)
@@ -412,6 +429,7 @@ def fact_evidence(repo: pathlib.Path, fact_path: str, *, work_item_id: str | Non
     predicate and reported its value: the fact is what the observer said, not a field the
     caller attached to the claim.
     """
+    publish_evidence_policy(repo)  # Provision trust before the analysis snapshot is bound.
     work_item_id = work_item_id or work_item_id_for(repo)
     report = write_report(repo, f"fact-{fact_path.replace('.', '-')}.json", status=status,
                           exit_code=exit_code, target=f"fact:{fact_path}",
