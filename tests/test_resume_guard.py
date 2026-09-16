@@ -90,8 +90,12 @@ def run_intake(repo: pathlib.Path, request: str, *extra: str) -> tuple[int, dict
     return code, result, text
 
 
-def resolution_document(facts: dict, repo: pathlib.Path | None = None) -> dict:
+def resolution_document(facts: dict, repo: pathlib.Path | None = None,
+                        work_item: dict | None = None) -> dict:
     """Produce bounded, authoritative fixture answers only for unresolved facts."""
+    work_item = work_item or {}
+    work_item_id = str(work_item.get("id") or "") or None
+    revision = work_item.get("requirement_revision")
     values = {
         "ambiguity.goal_explicit": True,
         "ambiguity.acceptance_criteria_explicit": True,
@@ -107,9 +111,21 @@ def resolution_document(facts: dict, repo: pathlib.Path | None = None) -> dict:
             "path": path, "value": value, "source_type": "fixture", "source": "resume guard test",
             "evidence": "controlled acceptance fixture", "strength": "authoritative",
         }
+        # The evidence is checked against the work item it is submitted for, so the fixture
+        # says which one that is instead of letting a default name decide it.
+        if work_item_id:
+            entry["work_item_id"] = work_item_id
+        if revision:
+            entry["requirement_revision"] = revision
         # A negative fact is only worth the search that found nothing, never its own title.
         if value is False and repo is not None:
             entry["negative_proof"] = evidence_factory.negative_proof_entry(repo, path)
+            # "No conflicting requirement" is not the absence of a word. A semantic section
+            # needs a source produced for this exact predicate, so the fixture carries one
+            # instead of asking a search to decide it.
+            if path.split(".")[0] in {"risk", "ambiguity", "novelty"}:
+                entry["evidence_record"] = evidence_factory.fact_evidence(
+                    repo, path, work_item_id=work_item_id or "W-1", requirement_revision=revision)
         resolutions.append(entry)
     return {"source": "resume guard test", "resolutions": resolutions}
 
@@ -125,6 +141,9 @@ class ResumeMustNotReviseRequirement(unittest.TestCase):
             spec = repo / "requirements.md"
             spec.write_text("# Login\n\nImplement login.\n\n## Acceptance Criteria\nUsers can log in.\n", encoding="utf-8")
             project_bootstrap.initialize(repo, host="none", activation=False)
+            # Who may approve is project configuration, published before the analysis that has
+            # to stay valid: writing it later would legitimately invalidate that analysis.
+            evidence_factory.publish_evidence_policy(repo)
             fixture = repo / "cbm-fixture.json"
             fixture.write_text(json.dumps({
                 "project": repo.name, "changed_files": [{"path": "app.py"}],
@@ -144,7 +163,9 @@ class ResumeMustNotReviseRequirement(unittest.TestCase):
             facts = json.loads((repo / first_state["analysis"]["work_facts_ref"]).read_text(encoding="utf-8"))
             # Kept outside the analyzed content: a resolution set is an input, not project source.
             resolutions = pathlib.Path(tempfile.mkdtemp()) / "resolutions.json"
-            resolutions.write_text(json.dumps(resolution_document(facts, repo)), encoding="utf-8")
+            resolutions.write_text(json.dumps(
+                resolution_document(facts, repo, work_item=first_state.get("work_item") or {})),
+                encoding="utf-8")
             args = cli.build_parser().parse_args(["--repo", str(repo), "intake", "--request-file", str(spec),
                                                    "--sdd", "generic", "--sdd-ref", str(spec),
                                                    "--resolutions", str(resolutions), "--cbm-fixture", str(fixture)])

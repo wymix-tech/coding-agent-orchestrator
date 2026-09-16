@@ -389,7 +389,10 @@ class EndToEndRepairAcceptanceTests(unittest.TestCase):
                                       "command": "python -m unittest discover -s tests -v"}), encoding="utf-8")
         return report
 
-    def _resolution_doc(self, facts: dict, repo: pathlib.Path) -> dict:
+    def _resolution_doc(self, facts: dict, repo: pathlib.Path, work_item: dict | None = None) -> dict:
+        work_item = work_item or {}
+        work_item_id = str(work_item.get("id") or "") or None
+        revision = work_item.get("requirement_revision")
         resolutions=[]
         for path in (facts.get("extraction") or {}).get("resolution_queue") or []:
             if path in fact_resolver.INT_PATHS:
@@ -401,9 +404,18 @@ class EndToEndRepairAcceptanceTests(unittest.TestCase):
             else:
                 value=False
             entry={"path":path,"value":value,"source_type":"acceptance_test","source":"T8","evidence":"explicit controlled acceptance fixture","strength":"authoritative"}
+            if work_item_id:
+                entry["work_item_id"]=work_item_id
+            if revision:
+                entry["requirement_revision"]=revision
             # A negative fact is only worth the search that found nothing.
             if value is False:
                 entry["negative_proof"]=evidence_factory.negative_proof_entry(repo, path)
+                # "No conflicting requirement" is not the absence of a word: a semantic section
+                # needs a source produced for this exact predicate, not only a search.
+                if path.split(".")[0] in {"risk","ambiguity","novelty"}:
+                    entry["evidence_record"]=evidence_factory.fact_evidence(
+                        repo, path, work_item_id=work_item_id or "W-1", requirement_revision=revision)
             resolutions.append(entry)
         return {"source":"T8 acceptance","resolutions":resolutions}
 
@@ -416,6 +428,9 @@ class EndToEndRepairAcceptanceTests(unittest.TestCase):
             subprocess.run(["git","add","."],cwd=repo,check=True); subprocess.run(["git","commit","-qm","initial"],cwd=repo,check=True)
             req=repo/"requirements.md"; req.write_text("# Requirements\n\nThe system must expose a user lookup API.\n\n## Acceptance Criteria\nUnknown users return 404.\n",encoding="utf-8")
             project_bootstrap.initialize(repo,host="none",activation=False)
+            # Who may approve is project configuration, published before the analysis that has
+            # to stay valid: writing it later would legitimately invalidate that analysis.
+            evidence_factory.publish_evidence_policy(repo)
             fixture=repo/"cbm-fixture.json"
             fixture.write_text(json.dumps({
                 "project":repo.name,
@@ -432,7 +447,7 @@ class EndToEndRepairAcceptanceTests(unittest.TestCase):
 
             facts=json.loads(pathlib.Path(state["analysis"]["work_facts_ref"]).read_text())
             # The resolution set is an input, so it is kept outside the analyzed repository content.
-            res_path=pathlib.Path(tempfile.mkdtemp())/"resolutions.json"; res_path.write_text(json.dumps(self._resolution_doc(facts, repo)),encoding="utf-8")
+            res_path=pathlib.Path(tempfile.mkdtemp())/"resolutions.json"; res_path.write_text(json.dumps(self._resolution_doc(facts, repo, work_item=state.get("work_item") or {})),encoding="utf-8")
             intake_args=cli.build_parser().parse_args(["--repo",str(repo),"intake","--request-file",str(req),"--sdd-ref",str(req),"--resolutions",str(res_path),"--cbm-fixture",str(fixture)]); intake_args.repo=repo
             code,result,_=cli.cmd_intake(intake_args)
             self.assertEqual(0,code); self.assertEqual("CLASSIFIED",result["status"])
@@ -446,6 +461,9 @@ class EndToEndRepairAcceptanceTests(unittest.TestCase):
             tests=repo/"tests"; tests.mkdir(); (tests/"test_app.py").write_text("import unittest\nfrom app import lookup_user\nclass AppTests(unittest.TestCase):\n    def test_missing_is_404(self): self.assertEqual(404, lookup_user('missing')[0])\n    def test_known_is_200(self): self.assertEqual(200, lookup_user('u1')[0])\n",encoding="utf-8")
             snap=repository_snapshot.fingerprint(repo)
             state=sm.mark_enforcement_dirty(sp,"mutation",["app.py","tests/test_app.py"],"T8",snap,"implementation",state["revision"])
+            # The implementation changed the code the resolution evidence was produced against,
+            # so the same answers are re-evidenced here: an old observation is history, not proof.
+            res_path.write_text(json.dumps(self._resolution_doc(facts, repo, work_item=state.get("work_item") or {})),encoding="utf-8")
             code,result,_=cli.cmd_intake(intake_args)
             self.assertEqual(0,code); self.assertEqual("CLASSIFIED",result["status"])
             state=sm._load(sp)
