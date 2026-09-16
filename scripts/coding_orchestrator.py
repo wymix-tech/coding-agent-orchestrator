@@ -452,7 +452,8 @@ def _reset_confirmation_message(repo: Path, state: dict[str, Any], *, requiremen
                 requirement_id or str((state.get("work_item") or {}).get("requirement_id") or ""),
                 active_revision=active_revision, incoming_source_revision=incoming_revision,
                 state_revision=str(state.get("revision")), phase=state.get("phase"),
-                status=state.get("status")))
+                status=state.get("status"), repo=str(repo),
+                request_ref=source_ref or str((state.get("work_item") or {}).get("requirement_source_ref") or "")))
 
 
 def _analysis_is_current(repo: Path, state: dict[str, Any]) -> bool:

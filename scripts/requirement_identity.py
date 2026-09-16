@@ -492,13 +492,24 @@ def confirmation_command(requirement_id: str, *, active_revision: str | None,
     def quote(value: Any) -> str:
         return shlex.quote(str(value))
 
-    parts = ["python3 scripts/coding_orchestrator.py intake"]
+    # `--repo` belongs to the front controller, not to `intake`: argparse rejects it after the
+    # subcommand. The entry point is resolved where the Skill actually is, so the command runs
+    # from any working directory instead of assuming `scripts/` is below the current one.
+    # Even the fallback names this file's own directory: a command that assumes `scripts/` is
+    # below the current working directory does not run from anywhere else.
+    prefix = f"python3 {quote(Path(__file__).resolve().parent / 'coding_orchestrator.py')}"
     if repo:
-        parts.append(f"--repo {quote(repo)}")
+        try:
+            runtime = __import__("skill_runtime")
+            prefix = runtime.recovery_command(Path(repo).resolve(), "").strip()
+        except Exception:  # pragma: no cover - fallback keeps the hint printable
+            prefix = f"{prefix} --repo {quote(repo)}"
+    parts = [prefix, "intake"]
     if request_ref:
         parts.append(f"--request-file {quote(request_ref)}")
     elif request:
-        parts.append(f"--request {quote(request)}")
+        # `intake` takes the request as a positional argument; there is no `--request` option.
+        parts.append(quote(request))
     parts += [
         f"--requirement-id {quote(requirement_id or '<requirement-id>')}",
         "--revise-current --confirm-reset",
@@ -534,7 +545,7 @@ def check_revision_confirmation(repo: Path, *, requirement_id: str, source_revis
                 'confirm_command': confirmation_command(
                     requirement_id, active_revision=active_revision or last_source_revision(repo, requirement_id),
                     incoming_source_revision=source_revision, state_revision=state_revision,
-                    phase=phase, status=status, repo=repo_ref, request_ref=request_ref,
+                    phase=phase, status=status, repo=repo_ref or str(repo), request_ref=request_ref,
                     request=request),
                 'next_action': 'confirm_requirement_revision', **extra}
 

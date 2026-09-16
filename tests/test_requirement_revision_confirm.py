@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import importlib.util
 import pathlib
+import shlex
+import subprocess
 import tempfile
 import unittest
 
@@ -114,6 +116,60 @@ class RevisionConfirmationTests(unittest.TestCase):
     def test_a_properly_bound_confirmation_is_accepted(self):
         result = self._check(self._full())
         self.assertTrue(result["allowed"])
+
+
+class PrintedConfirmationCommandTests(unittest.TestCase):
+    """R7: the command a refusal prints has to be a command that runs.
+
+    A recovery command that cannot be executed -- a wrong `--request` option, `--repo` after
+    the subcommand, a relative entry point -- leaves no legal way forward. So the printed
+    command is executed here, from a working directory that is not the project.
+    """
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.repo = pathlib.Path(self._tmp.name)
+        self.addCleanup(self._tmp.cleanup)
+        docs = self.repo / "docs"
+        docs.mkdir()
+        (docs / "spec.md").write_text("# Spec\n\nlogin with jwt\n", encoding="utf-8")
+        self.source_revision = ri.requirement_content_revision(self.repo, "docs/spec.md")["source_revision"]
+        ri.record(self.repo, requirement_id=REQ, revision_id="rev-active", work_item_id="W-1",
+                  provider="generic", source_path="docs/spec.md", status="active",
+                  source_revision=self.source_revision)
+
+    def _refusal_command(self) -> str:
+        result = ri.check_revision_confirmation(
+            self.repo, requirement_id=REQ, source_revision=self.source_revision,
+            phase="implementation", status="in_progress", confirmation=None,
+            active_revision="rev-active", state_revision="st-1",
+            request="Continue the login implementation.")
+        self.assertFalse(result["allowed"])
+        return str(result["confirm_command"])
+
+    def test_the_printed_command_runs_from_another_directory(self):
+        command = self._refusal_command()
+        with tempfile.TemporaryDirectory() as elsewhere:
+            run = subprocess.run(shlex.split(command), cwd=elsewhere, capture_output=True, text=True)
+        # A usage error is not a recovery: argparse would have rejected the printed flags.
+        self.assertNotIn("unrecognized arguments", run.stderr)
+        self.assertNotIn("invalid choice", run.stderr)
+        self.assertNotIn("the following arguments are required", run.stderr)
+        self.assertNotIn("Traceback", run.stderr)
+        # It reached the intake that owns the confirmation instead of stopping at the parser.
+        self.assertIn("Intake:", run.stdout)
+        self.assertIn("Work item:", run.stdout)
+
+    def test_the_printed_command_is_well_formed_before_it_is_run(self):
+        """The entry point, the repo option and the request are placed where the parser wants them."""
+        command = self._refusal_command()
+        parts = shlex.split(command)
+        self.assertTrue(pathlib.Path(parts[1]).is_absolute(), parts[1])
+        self.assertEqual("--repo", parts[2])
+        self.assertEqual(str(self.repo.resolve()), parts[3])
+        self.assertEqual("intake", parts[4])
+        self.assertNotIn("--request", parts)  # not an option of this CLI
+        self.assertIn("Continue the login implementation.", parts)
 
 
 if __name__ == "__main__":
