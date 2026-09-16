@@ -291,6 +291,50 @@ class ActionGuardTests(unittest.TestCase):
         self.assertNotIn(".orchestrator/session/projection.json", changed)
 
 
+class RequirementContentFreshnessTests(unittest.TestCase):
+    """R8: in an ordinary project, progress written into the requirement is not a new requirement.
+
+    The requirement lives in the project, not in the generated `.orchestrator` tree, so ticking
+    a task really writes bytes into an analyzed file. Only the requirement content of that file
+    can invalidate the analysis; everything else still counts byte for byte.
+    """
+
+    SPEC = "# Login\n\n## Requirement\n\nUsers can log in.\n\n## Tasks\n\n- [ ] implement login\n"
+
+    def setUp(self):
+        self.fx = EnforcementFixture()
+        self.addCleanup(self.fx.close)
+        self.source = self.fx.repo / "docs" / "spec.md"
+        self.source.parent.mkdir(parents=True, exist_ok=True)
+        self.source.write_text(self.SPEC, encoding="utf-8")
+        state = sm._load(self.fx.state_path)
+        state.setdefault("work_item", {})["requirement_source_ref"] = "docs/spec.md"
+        sm._dump(state, self.fx.state_path)
+        d = self.fx.intake
+        sm.attach_analysis(self.fx.state_path, "test", "A2", str(d / "semantic-impact.json"),
+                           str(d / "work-facts.semantic-draft.json"), str(d / "decision.json"),
+                           str(d / "verification-plan.json"),
+                           context_manifest_ref=str(d / "context-manifest.json"))
+        refresh_context(self.fx.repo, self.fx.state_path)
+
+    def fresh(self) -> bool:
+        return bool(guard.collect_evidence(self.fx.repo, sm._load(self.fx.state_path))["repository_fresh"])
+
+    def test_ticking_a_task_keeps_the_analyzed_project_identity(self):
+        self.source.write_text(self.SPEC.replace("- [ ]", "- [x]"), encoding="utf-8")
+        self.assertTrue(self.fresh())
+
+    def test_a_requirement_change_moves_the_analyzed_project_identity(self):
+        self.source.write_text(self.SPEC.replace("Users can log in.", "Users can log in and log out."),
+                               encoding="utf-8")
+        self.assertFalse(self.fresh())
+
+    def test_a_code_change_still_invalidates_the_analysis(self):
+        (self.fx.repo / "src/main/java/com/acme/App.java").write_text("class App { int changed; }\n",
+                                                                      encoding="utf-8")
+        self.assertFalse(self.fresh())
+
+
 class ToolActionTests(unittest.TestCase):
     def test_completion_claim_without_state_does_not_bypass_close_policy(self):
         with tempfile.TemporaryDirectory() as td:

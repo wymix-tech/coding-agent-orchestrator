@@ -82,12 +82,58 @@ def _material_file_digest(rel: str, path: Path) -> str | None:
         return hashlib.sha256(stripped.encode("utf-8")).hexdigest()
     return digest_path(path)
 
-def fingerprint(repo: Path) -> str:
-    """Hash material on-disk content, independent of commits and index placement.
+def _requirement_content_revision(repo: Path, rel: str) -> str | None:
+    """Requirement-content identity of one file, when it is a requirement source."""
+    try:
+        identity = __import__("requirement_identity")
+    except ImportError:  # pragma: no cover - import shim only
+        try:
+            import importlib.util as _ilu
+            spec = _ilu.spec_from_file_location(
+                "requirement_identity", Path(__file__).resolve().parent / "requirement_identity.py")
+            if spec is None or spec.loader is None:
+                return None
+            module = _ilu.module_from_spec(spec)
+            spec.loader.exec_module(module)
+            identity = module
+        except Exception:
+            return None
+    try:
+        result = identity.requirement_content_revision(repo, rel)
+    except Exception:
+        return None
+    if isinstance(result, dict) and result.get("source_revision"):
+        return str(result["source_revision"])
+    return None
 
-    HEAD is trace metadata. Removing an already absent path from the index must
-    not change content identity either; deletion still removes its previous row.
-    """
+
+def _material_rows(repo: Path, requirement_refs=frozenset()) -> list:
+    """One row per material file, requirement sources counted by their requirement content."""
+    repo = repo.resolve()
+    rows = []
+    for rel in sorted(_tracked_names(repo)):
+        if is_generated(rel) or rel.startswith(IGNORED_PREFIXES) or any(p in IGNORED_DIRS for p in Path(rel).parts):
+            continue
+        path = repo / rel
+        if path.is_symlink():
+            rows.append((rel, "symlink", os.readlink(path)))
+            continue
+        if not path.is_file():
+            # A deleted path is absent both before and after its deletion is committed.
+            continue
+        if rel in requirement_refs:
+            revision = _requirement_content_revision(repo, rel)
+            if revision:
+                rows.append((rel, f"requirement:{revision}", bool(path.stat().st_mode & 0o111)))
+                continue
+        digest = _material_file_digest(rel, path)
+        if digest is None:
+            continue
+        rows.append((rel, digest, bool(path.stat().st_mode & 0o111)))
+    return rows
+
+
+def _tracked_names(repo: Path) -> set:
     repo = repo.resolve()
     try:
         raw = subprocess.check_output(
@@ -101,21 +147,32 @@ def fingerprint(repo: Path) -> str:
             dirs[:] = [d for d in dirs if d not in IGNORED_DIRS
                        and not is_generated((Path(directory) / d).relative_to(repo).as_posix() + "/")]
             names.update((Path(directory) / name).relative_to(repo).as_posix() for name in files)
-    rows = []
-    for rel in sorted(names):
-        if is_generated(rel) or rel.startswith(IGNORED_PREFIXES) or any(p in IGNORED_DIRS for p in Path(rel).parts):
-            continue
-        path = repo / rel
-        if path.is_symlink():
-            rows.append((rel, "symlink", os.readlink(path)))
-        elif path.is_file():
-            digest = _material_file_digest(rel, path)
-            if digest is None:
-                continue
-            rows.append((rel, digest, bool(path.stat().st_mode & 0o111)))
-        # A deleted path is absent both before and after its deletion is committed.
+    return names
+
+
+def fingerprint(repo: Path) -> str:
+    """Hash material on-disk content, independent of commits and index placement.
+
+    HEAD is trace metadata. Removing an already absent path from the index must
+    not change content identity either; deletion still removes its previous row.
+    """
+    rows = _material_rows(repo.resolve())
     payload = json.dumps({"version": 2, "files": rows}, sort_keys=True, separators=(",", ":")).encode()
     return "worktree:" + hashlib.sha256(payload).hexdigest()
+
+
+def content_fingerprint(repo: Path, requirement_refs=()) -> str:
+    """Material identity in which requirement sources count by their requirement content.
+
+    Runtime progress written into a requirement source -- ticking a task, moving a checkbox --
+    is not a change to the requirement, and it must not invalidate the analysis of the code
+    that requirement describes. Everything else still counts byte for byte, so a real code
+    change and a real change to acceptance criteria keep invalidating their consumers.
+    """
+    refs = {str(ref).replace("\\", "/").lstrip("./") for ref in (requirement_refs or ()) if ref}
+    rows = _material_rows(repo.resolve(), refs)
+    payload = json.dumps({"version": 2, "files": rows}, sort_keys=True, separators=(",", ":")).encode()
+    return "worktree-content:" + hashlib.sha256(payload).hexdigest()
 
 def _git_output(repo: Path, *args: str) -> str | None:
     try:

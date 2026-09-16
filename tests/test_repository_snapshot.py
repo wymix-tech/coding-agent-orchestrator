@@ -369,5 +369,52 @@ class CommitAuthorizationTests(unittest.TestCase):
         self.assertIn("ANALYSIS_DIRTY", result["reason_codes"])
 
 
+class RequirementContentIdentityTests(unittest.TestCase):
+    """R8: a requirement source counts by its requirement content, not by its bytes.
+
+    Runtime progress written into the requirement -- ticking a task, moving a checkbox -- is
+    not a change to the requirement, so it must not invalidate the analysis of the code that
+    requirement describes. Everything else still counts byte for byte.
+    """
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.repo = Path(self.temp.name)
+        (self.repo / "requirements").mkdir()
+        self.source = self.repo / "requirements" / "story.md"
+        self.source.write_text("# Story\n\nReturn 42.\n\n## Tasks\n- [ ] implement\n", encoding="utf-8")
+        self.refs = ("requirements/story.md",)
+
+    def content(self):
+        return snapshots.content_fingerprint(self.repo, self.refs)
+
+    def test_ticking_a_task_does_not_move_requirement_content_identity(self):
+        before = self.content()
+        raw_before = snapshots.fingerprint(self.repo)
+        self.source.write_text("# Story\n\nReturn 42.\n\n## Tasks\n- [x] implement\n", encoding="utf-8")
+        # The bytes really moved; only the requirement-content view may ignore that.
+        self.assertNotEqual(raw_before, snapshots.fingerprint(self.repo))
+        self.assertEqual(before, self.content())
+
+    def test_a_real_requirement_change_moves_both_identities(self):
+        before = self.content()
+        raw_before = snapshots.fingerprint(self.repo)
+        self.source.write_text("# Story\n\nReturn 43.\n\n## Tasks\n- [x] implement\n", encoding="utf-8")
+        self.assertNotEqual(raw_before, snapshots.fingerprint(self.repo))
+        self.assertNotEqual(before, self.content())
+
+    def test_a_code_change_still_invalidates_the_content_identity(self):
+        before = self.content()
+        (self.repo / "app.py").write_text("value = 1\n", encoding="utf-8")
+        self.assertNotEqual(before, self.content())
+
+    def test_a_file_that_is_not_a_requirement_source_still_counts_by_bytes(self):
+        """The requirement-content view is a narrowing, never a general amnesty on writes."""
+        before = self.content()
+        (self.repo / "requirements" / "notes.md").write_text("# Notes\n\nscratch\n", encoding="utf-8")
+        self.assertNotEqual(before, self.content())
+
+
 if __name__ == "__main__":
     unittest.main()
