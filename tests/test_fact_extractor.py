@@ -152,6 +152,66 @@ class FactExtractorTests(unittest.TestCase):
             resolver.apply_resolutions(draft, doc)
 
 
+class NegativeProofTests(unittest.TestCase):
+    """R5: a negative proof is bound to the fact it is about and to the content it searched."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.repo = pathlib.Path(self.tmp.name)
+        (self.repo / "README.md").write_text("fixture project\n", encoding="utf-8")
+        (self.repo / "docs").mkdir()
+        (self.repo / "docs/spec.md").write_text("# Spec\n\nReturn 42.\n", encoding="utf-8")
+
+    def _resolution(self, path: str, **overrides) -> dict:
+        entry = {
+            "path": path, "value": False, "source_type": "human_decision",
+            "source": "bounded test fixture", "evidence": "explicit test declaration",
+            "strength": "authoritative",
+        }
+        entry.update(overrides)
+        return {"resolutions": [entry]}
+
+    def test_a_proof_of_another_fact_proves_nothing_about_this_one(self):
+        draft = extractor.extract(self.repo)
+        proof = evidence_factory.negative_proof_entry(self.repo, "scope.external_consumers")
+        proof["fact"] = "scope.database_migrations"  # a search about one thing, submitted for another
+        doc = self._resolution("scope.external_consumers", negative_proof=proof)
+        with self.assertRaises(ValueError) as caught:
+            resolver.apply_resolutions(draft, doc, repo=self.repo)
+        self.assertIn("NEGATIVE_PROOF_FACT_MISMATCH", str(caught.exception))
+
+    def test_a_proof_that_never_searched_the_requirement_source_proves_nothing(self):
+        """The search has to cover the content that could have established the fact."""
+        draft = extractor.extract(self.repo)
+        doc = self._resolution(
+            "scope.external_consumers", source="docs/spec.md",
+            negative_proof=evidence_factory.negative_proof_entry(self.repo, "scope.external_consumers"))
+        with self.assertRaises(ValueError) as caught:
+            resolver.apply_resolutions(draft, doc, repo=self.repo)
+        self.assertIn("NEGATIVE_PROOF_SCOPE_TOO_NARROW", str(caught.exception))
+
+    def test_a_semantic_false_is_not_carried_by_a_search_that_found_nothing(self):
+        draft = extractor.extract(self.repo)
+        doc = self._resolution(
+            "ambiguity.conflicting_requirements",
+            negative_proof=evidence_factory.negative_proof_entry(
+                self.repo, "ambiguity.conflicting_requirements"))
+        with self.assertRaises(ValueError) as caught:
+            resolver.apply_resolutions(draft, doc, repo=self.repo)
+        self.assertIn("cannot be established by searching for a term", str(caught.exception))
+
+    def test_a_semantic_false_carried_by_evidence_for_this_predicate_is_accepted(self):
+        draft = extractor.extract(self.repo)
+        doc = self._resolution(
+            "ambiguity.conflicting_requirements",
+            evidence_record=evidence_factory.fact_evidence(self.repo, "ambiguity.conflicting_requirements"))
+        resolved = resolver.apply_resolutions(draft, doc, repo=self.repo)
+        entry = (resolved.get("provenance") or {})["ambiguity.conflicting_requirements"][0]
+        self.assertTrue(entry["verified_authority"])
+        self.assertEqual("ambiguity.conflicting_requirements", entry["evidence_fact"])
+
+
 class StrictEvidenceTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -180,9 +240,14 @@ class StrictEvidenceTests(unittest.TestCase):
                 "strength": "authoritative",
             }
             if value is False:
-                # A false is only carried by the search that found nothing, and that search has
-                # to be re-runnable against content that really exists, never by a declared ref.
-                entry["negative_proof"] = evidence_factory.negative_proof_entry(self.repo, path)
+                if path.split(".")[0] in resolver.SEMANTIC_SECTIONS:
+                    # A semantic false is not the absence of a string: it needs evidence that
+                    # was produced for this predicate and says so.
+                    entry["evidence_record"] = evidence_factory.fact_evidence(self.repo, path)
+                else:
+                    # A false is only carried by the search that found nothing, and that search
+                    # has to be re-runnable against content that really exists.
+                    entry["negative_proof"] = evidence_factory.negative_proof_entry(self.repo, path)
             resolutions.append(entry)
         return resolver.apply_resolutions(facts, {"resolutions": resolutions}, repo=self.repo)
 
@@ -224,7 +289,10 @@ class StrictEvidenceTests(unittest.TestCase):
                     "strength": "authoritative"
                 }
                 if value is False:
-                    entry["negative_proof"] = evidence_factory.negative_proof_entry(repo, path)
+                    if path.split(".")[0] in resolver.SEMANTIC_SECTIONS:
+                        entry["evidence_record"] = evidence_factory.fact_evidence(repo, path)
+                    else:
+                        entry["negative_proof"] = evidence_factory.negative_proof_entry(repo, path)
                 resolutions.append(entry)
             resolved = resolver.apply_resolutions(draft, {"resolutions": resolutions}, repo=repo)
             result = decision.classify(resolved, strict_evidence=True)

@@ -115,9 +115,16 @@ NEGATIVE_PROOF_ERRORS = {
     "NEGATIVE_PROOF_SHAPE_INVALID",
     "NEGATIVE_PROOF_SOURCE_UNRESOLVED",
     "NEGATIVE_PROOF_SCOPE_MISSING",
+    "NEGATIVE_PROOF_SCOPE_TOO_NARROW",
+    "NEGATIVE_PROOF_FACT_MISMATCH",
+    "NEGATIVE_PROOF_NOT_DECIDABLE",
     "NEGATIVE_PROOF_CONTRADICTED",
     "NEGATIVE_PROOF_COUNT_MISMATCH",
 }
+
+# A search can only observe absence of a string. It cannot decide that something is safe,
+# unambiguous or familiar: those are semantic conclusions about the requirement as a whole.
+SEMANTIC_SECTIONS = {"risk", "ambiguity", "novelty"}
 
 
 def _proof_scopes(repo: Path, proof: Dict[str, Any]) -> tuple[list[Path] | None, str | None]:
@@ -146,17 +153,31 @@ def _proof_scopes(repo: Path, proof: Dict[str, Any]) -> tuple[list[Path] | None,
     return resolved, None
 
 
-def check_negative_proof(proof: Any, repo: Path | None = None) -> Dict[str, Any]:
+def check_negative_proof(proof: Any, repo: Path | None = None, *, fact_path: str | None = None,
+                         scope: list[str] | None = None) -> Dict[str, Any]:
     """A negative fact is an observation, not a label: the search has to be re-runnable.
 
     `{"ref": "does-not-exist", "matches": 0}` claims a search that never happened. The
     scope is resolved and the search is redone here; only a search that really finds
     nothing can carry a false fact.
+
+    A search alone still proves only that one string is absent from some files. It carries a
+    fact only when the caller says which fact it is about (`fact_path`) and which sources
+    could have established it (`scope`): a term that appears nowhere in a file that never
+    described the requirement proves nothing about the requirement.
     """
     if not isinstance(proof, dict):
         return {"valid": False, "error": "NEGATIVE_PROOF_SHAPE_INVALID",
                 "message": ("a bounded description is not a search: negative_proof must name the "
                             "scope that was searched (paths/ref) and how many matches it found")}
+    if fact_path is not None:
+        declared = proof.get("fact") or proof.get("fact_path")
+        # A proof that names its fact is held to it. An unnamed proof is bound to the fact it
+        # was submitted for by `apply_resolutions`, and recorded as such for the Decision Engine.
+        if declared is not None and str(declared).strip() != str(fact_path):
+            return {"valid": False, "error": "NEGATIVE_PROOF_FACT_MISMATCH",
+                    "message": (f"the negative proof is about {declared!r}, not about {fact_path!r}: "
+                                "a search for one thing cannot carry a conclusion about another")}
     query = proof.get("search") or proof.get("query")
     if not isinstance(query, str) or not query.strip():
         return {"valid": False, "error": "NEGATIVE_PROOF_SHAPE_INVALID",
@@ -172,6 +193,17 @@ def check_negative_proof(proof: Any, repo: Path | None = None) -> Dict[str, Any]
     if error or scopes is None:
         return {"valid": False, "error": error or "NEGATIVE_PROOF_SOURCE_UNRESOLVED",
                 "message": "the negative proof names no file inside the project that was searched"}
+    if scope and repo is not None:
+        root = Path(repo).resolve()
+        searched = {p.name for p in scopes} | {p.resolve().as_posix() for p in scopes}
+        missing = [ref for ref in scope if Path(ref).name not in searched
+                   and (root / ref).resolve().as_posix() not in searched]
+        if missing:
+            return {"valid": False, "error": "NEGATIVE_PROOF_SCOPE_TOO_NARROW",
+                    "message": ("the negative proof did not search the sources that could have "
+                                f"established the fact: {', '.join(sorted(missing))}; a narrower "
+                                "search proves only that the term is absent from what it looked at"),
+                    "unsearched": sorted(missing)}
     found = 0
     for path in scopes:
         try:
@@ -190,6 +222,41 @@ def check_negative_proof(proof: Any, repo: Path | None = None) -> Dict[str, Any]
     return {"valid": True, "searched": [str(p) for p in scopes], "matches": found}
 
 
+def negative_proof_scope(repo: Path | None, draft: Dict[str, Any], resolution_doc: Dict[str, Any],
+                         resolution: Dict[str, Any]) -> list[str]:
+    """The sources that could have established the fact, as far as this work says.
+
+    A negative proof has to search these. Which files they are is not up to whoever writes
+    the proof: the requirement sources of this work decide what a fact about it can mean.
+    """
+    if repo is None:
+        return []
+    refs: list[str] = []
+    for candidate in (resolution.get("source"), resolution_doc.get("source_ref"),
+                      ((draft.get("extraction") or {}).get("source_ref"))):
+        if not isinstance(candidate, str) or not candidate.strip():
+            continue
+        if candidate.startswith(("http://", "https://")):
+            continue
+        try:
+            if (Path(repo) / candidate).is_file():
+                refs.append(candidate)
+        except OSError:  # pragma: no cover - defensive
+            continue
+    return sorted(set(refs))
+
+
+def evidence_observes_fact(record: Any, path: str) -> bool:
+    """Whether the evidence itself says which fact it observed.
+
+    `verified` with a `failed` outcome proves a failure happened. It only proves *this* fact
+    is false when the evidence names the predicate it was produced for.
+    """
+    extra = ((record or {}).get("extra") if isinstance(record, dict) else None) or {}
+    observed = extra.get("fact_path") or extra.get("fact")
+    return bool(observed) and str(observed) == str(path)
+
+
 def apply_resolutions(draft: Dict[str, Any], resolution_doc: Dict[str, Any],
                       *, repo: Path | None = None) -> Dict[str, Any]:
     out = copy.deepcopy(draft)
@@ -206,7 +273,9 @@ def apply_resolutions(draft: Dict[str, Any], resolution_doc: Dict[str, Any],
                 f"authoritative resolution requires verified evidence, got {validation}: {r['path']}")
         proof_check = None
         if r.get("negative_proof") is not None:
-            proof_check = check_negative_proof(r["negative_proof"], repo)
+            proof_check = check_negative_proof(
+                r["negative_proof"], repo, fact_path=r["path"],
+                scope=negative_proof_scope(repo, draft, resolution_doc, r))
             if r.get("value") is False and not proof_check["valid"]:
                 raise ValueError(
                     f"false resolution requires a negative proof that can be re-run: "
@@ -214,6 +283,15 @@ def apply_resolutions(draft: Dict[str, Any], resolution_doc: Dict[str, Any],
         if r.get("value") is False and r.get("negative_proof") is None and validation != "verified":
             raise ValueError(
                 f"false resolution requires negative_proof or verified evidence, got {validation}: {r['path']}")
+        if r.get("value") is False and str(r["path"]).split(".")[0] in SEMANTIC_SECTIONS:
+            # "no security risk" is not the absence of a string. A semantic conclusion needs a
+            # source that states the predicate it was produced for; otherwise it stays unresolved
+            # and belongs on the human approval path instead of being proven by a search.
+            if validation != "verified" or not evidence_observes_fact(r.get("evidence_record"), r["path"]):
+                raise ValueError(
+                    f"false resolution on {r['path']} cannot be established by searching for a term: "
+                    "semantic facts need verified evidence that names this exact predicate, or an "
+                    "authoritative decision (see evidence approvals)")
         path = r["path"]
         old = get_path(out, path)
         if old is not None and old != r["value"]:
@@ -235,8 +313,16 @@ def apply_resolutions(draft: Dict[str, Any], resolution_doc: Dict[str, Any],
         }
         if isinstance(r.get("evidence_record"), dict):
             entry["evidence_id"] = r["evidence_record"].get("evidence_id")
+            # Which fact this evidence actually observed. A verified failure of something else
+            # does not make this fact false.
+            extra = r["evidence_record"].get("extra") or {}
+            entry["evidence_fact"] = str(extra.get("fact_path") or extra.get("fact") or "") or None
         if r.get("negative_proof") is not None:
             entry["negative_proof"] = r["negative_proof"]
+            # The proof is bound to the fact it was submitted for; a proof that names a
+            # different one was already rejected above.
+            entry["negative_proof_fact"] = str(r["negative_proof"].get("fact")
+                                               or r["negative_proof"].get("fact_path") or r["path"])
             entry["negative_proof_verified"] = bool(proof_check and proof_check.get("valid"))
             entry["negative_proof_check"] = {
                 "error": (proof_check or {}).get("error"),

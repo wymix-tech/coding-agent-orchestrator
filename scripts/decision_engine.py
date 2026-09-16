@@ -226,9 +226,10 @@ def validate_provenance(facts: Dict[str, Any]) -> Dict[str, List[str]]:
             # either a negative proof whose search was actually redone, or verified evidence
             # that observed a failure. `verified` on its own says nothing about the direction.
             ok = any(
-                bool(e.get("negative_proof_verified"))
+                (bool(e.get("negative_proof_verified")) and str(e.get("negative_proof_fact")) == path)
                 or (bool(e.get("verified_authority"))
-                    and str(e.get("evidence_outcome")) == "failed")
+                    and str(e.get("evidence_outcome")) == "failed"
+                    and str(e.get("evidence_fact")) == path)
                 for e in accepted
             )
             if not ok:
