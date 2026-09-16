@@ -253,12 +253,12 @@ class CommitAuthorizationTests(unittest.TestCase):
         for key in ("implementation_tasks_complete", "acceptance_satisfied"):
             evidence_factory.establish_readiness(self.path, key, repo=self.repo)
         state_manager.record_gate(self.path, "unit", True, "passed", "test",
-                                  evidence_ref=evidence_factory.result_document(self.repo, "unit-results.json"))
+                                  evidence_ref=evidence_factory.result_document(self.repo, "unit-results.json", target="gate:unit"))
         state_manager.record_review(self.path, "passed", "reviewer",
-                                    evidence_ref=evidence_factory.result_document(self.repo, "review-result.json"))
+                                    evidence_ref=evidence_factory.result_document(self.repo, "review-result.json", target="review"))
         state_manager.record_verification(
             self.path, "passed", "verifier", self.state()["execution_snapshot_id"],
-            evidence_factory.result_document(self.repo, "final-verification.json"),
+            evidence_factory.result_document(self.repo, "final-verification.json", target="verification"),
         )
         self.assert_can_close()
 

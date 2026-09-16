@@ -114,7 +114,7 @@ class ExecutionStateTests(unittest.TestCase):
             # A passed review is a conclusion about the code, so it binds the result document
             # that conclusion came from. `review:1` was a label and bound nothing.
             sm.record_review(fx.state_path, "passed", "reviewer", 0,
-                             evidence_factory.result_document(fx.root, "review-result.json"),
+                             evidence_factory.result_document(fx.root, "review-result.json", target="review"),
                              s["revision"])
             s = fx.state()
             sm.transition(fx.state_path, "verification", "in_progress", "agent", "review passed", s["revision"])
@@ -140,7 +140,7 @@ class ExecutionStateTests(unittest.TestCase):
             sm.set_execution_snapshot(fx.state_path, "snap-1", "agent", "final code", s["revision"])
             s = fx.state()
             sm.record_verification(fx.state_path, "passed", "verifier", "snap-1",
-                                   evidence_factory.result_document(fx.root, "verify-1.json"), s["revision"])
+                                   evidence_factory.result_document(fx.root, "verify-1.json", target="verification"), s["revision"])
             s = fx.state()
             with self.assertRaises(sm.TransitionDenied) as ctx:
                 sm.transition(fx.state_path, "closed", "completed", "agent", "done", s["revision"])
@@ -164,7 +164,7 @@ class ExecutionStateTests(unittest.TestCase):
             sm.set_execution_snapshot(fx.state_path, "snap-1", "agent", "code", s["revision"])
             s = fx.state()
             sm.record_verification(fx.state_path, "passed", "verifier", "snap-1",
-                                   evidence_factory.result_document(fx.root, "v1.json"), s["revision"])
+                                   evidence_factory.result_document(fx.root, "v1.json", target="verification"), s["revision"])
             self.assertTrue(fx.state()["verification"]["fresh"])
             s = fx.state()
             sm.set_execution_snapshot(fx.state_path, "snap-2", "agent", "code changed", s["revision"])

@@ -155,7 +155,8 @@ class GovernedBoundaryTests(unittest.TestCase):
         self.assertFalse(denied["allowed"])
         self.assertIn("VERIFICATION_NOT_PASSED", denied["reason_codes"])
 
-        report = evidence_factory.write_report(fx.repo, "final-verification.json")
+        report = evidence_factory.write_report(fx.repo, "final-verification.json",
+                                               target="verification")
         state = fx.state()
         sm.set_execution_snapshot(fx.state_path, "snap-1", "agent", "final code", state["revision"])
         state = fx.state()

@@ -50,22 +50,37 @@ class EvidenceEnforcementTests(unittest.TestCase):
                                   else work_item.get("requirement_revision")),
             depends_on=_deps(self.fx.repo) if depends_on is None else depends_on, **kwargs)
 
-    def _report(self, name="report.json", status="failed", exit_code=1,
-                command="python3 -m pytest -q"):
-        # A result is what a command produced: the report names the command, so the binding
-        # stays re-readable instead of being a status someone wrote down.
-        path = self.fx.repo / name
-        path.write_text(json.dumps({"status": status, "exit_code": exit_code,
-                                    "command": command}), encoding="utf-8")
-        return name
+    def _work_item_id(self):
+        work_item = self._state().get("work_item") or {}
+        return str(work_item.get("id") or "W-1")
+
+    def _report(self, name="report.json", status="failed", exit_code=1, target="gate:tests"):
+        # A result is what a command produced. The command really runs and really exits with
+        # `exit_code`, so the report is the receipt of that run: an argv that was executed and
+        # a return code the verifier did not invent, together with the revisions in force. A
+        # file that only says `status: passed` is not produced here.
+        return evidence_factory.run_command(
+            self.fx.repo, name=name, status=status, exit_code=exit_code, target=target,
+            work_item_id=self._work_item_id())["path"]
+
+    def _replace_report(self, rel, *, status="failed", exit_code=1, target="gate:tests"):
+        """The source is no longer the one that was recorded: another run's receipt stands there.
+
+        Both are real receipts -- that is the point. The result was bound to a specific run, and
+        a different run behind the same path is a different result.
+        """
+        return evidence_factory.run_command(
+            self.fx.repo, name=Path(rel).name, status=status, exit_code=exit_code,
+            target=target, work_item_id=self._work_item_id())["path"]
 
     # --- consumption-time revalidation -----------------------------------------------
 
     def test_invalid_bound_evidence_denies_a_guarded_action(self):
         state = self._state()
         bad = self._record(kind="mechanical_observation", claim_type="test_result", outcome="passed",
-                           depends_on=_deps(self.fx.repo, [evidence_factory.code_dependency(
-                               self.fx.repo)]), report={"path": "missing-report.json"})
+                           depends_on=evidence_factory.required_dependencies(
+                               self.fx.repo, kind="mechanical_observation",
+                               claim_type="test_result"), report={"path": "missing-report.json"})
         state.setdefault("evidence", {})["records"] = [bad]
         evidence = guard.collect_evidence(self.fx.repo, state)
         self.assertEqual(1, len(evidence["evidence_invalid"]))
@@ -94,13 +109,13 @@ class EvidenceEnforcementTests(unittest.TestCase):
     # --- gate and verification results must bind the report that ran ------------------
 
     def test_gate_cannot_record_passed_against_a_failed_report(self):
-        report = self._report(status="failed", exit_code=1)
+        report = self._report(status="failed", exit_code=1, target="gate:tests")
         with self.assertRaises(sm.StateError) as caught:
             sm.record_gate(self.fx.state_path, "tests", True, "passed", "tester", report_path=report)
         self.assertIn("EVIDENCE_REPORT_CONTRADICTION", str(caught.exception))
 
     def test_gate_records_the_real_failure_as_verified_failure(self):
-        report = self._report(status="failed", exit_code=1)
+        report = self._report(status="failed", exit_code=1, target="gate:tests")
         sm.record_gate(self.fx.state_path, "tests", True, "failed", "tester", report_path=report)
         gate = self._state()["quality_gates"]["tests"]
         self.assertEqual("failed", gate["status"])
@@ -109,7 +124,7 @@ class EvidenceEnforcementTests(unittest.TestCase):
         self.assertTrue(gate["report"]["digest"])
 
     def test_verification_cannot_record_passed_against_a_failed_report(self):
-        report = self._report(status="failed", exit_code=2)
+        report = self._report(status="failed", exit_code=2, target="verification")
         state = self._state()
         with self.assertRaises(sm.StateError) as caught:
             sm.record_verification(self.fx.state_path, "passed", "verifier",
@@ -118,7 +133,8 @@ class EvidenceEnforcementTests(unittest.TestCase):
         self.assertIn("EVIDENCE_REPORT_CONTRADICTION", str(caught.exception))
 
     def test_verification_binds_a_passed_report(self):
-        report = self._report(name="passed.json", status="passed", exit_code=0)
+        report = self._report(name="passed.json", status="passed", exit_code=0,
+                              target="verification")
         state = self._state()
         sm.record_verification(self.fx.state_path, "passed", "verifier",
                                state.get("execution_snapshot_id") or "snap", report,
@@ -135,38 +151,35 @@ class EvidenceEnforcementTests(unittest.TestCase):
 
     def test_a_gate_passed_against_a_report_that_later_moved_binds_nothing(self):
         """R2: the passing status is stored history; the source is re-read when the gate is used."""
-        report = self._report(status="passed", exit_code=0)
+        report = self._report(status="passed", exit_code=0, target="gate:tests")
         sm.record_gate(self.fx.state_path, "tests", True, "passed", "tester", report_path=report)
-        (self.fx.repo / report).write_text(
-            json.dumps({"status": "failed", "exit_code": 1, "command": "pytest -q"}), encoding="utf-8")
+        self._replace_report(report, target="gate:tests")
         evidence = guard.collect_evidence(self.fx.repo, self._state())
         broken = {item["name"]: item["error"] for item in evidence["result_bindings_unverified"]["gates"]}
         self.assertEqual({"tests": "EVIDENCE_RESULT_DRIFT"}, broken)
 
     def test_a_gate_without_a_passing_source_closes_nothing(self):
         """R2: a gate whose result cannot be reproduced is not a gate that passed."""
-        report = self._report(status="passed", exit_code=0)
+        report = self._report(status="passed", exit_code=0, target="gate:tests")
         sm.record_gate(self.fx.state_path, "tests", True, "passed", "tester", report_path=report)
         state = self._state()
         state["phase"] = "release"
         state.setdefault("readiness", {})["implementation_tasks_complete"] = True
         state.setdefault("readiness", {})["acceptance_satisfied"] = True
-        (self.fx.repo / report).write_text(
-            json.dumps({"status": "failed", "exit_code": 1, "command": "pytest -q"}), encoding="utf-8")
+        self._replace_report(report, target="gate:tests")
         evidence = guard.collect_evidence(self.fx.repo, state)
         result = guard.evaluate(state, "close", evidence=evidence)
         self.assertIn("GATE_RESULT_UNVERIFIABLE", result["reason_codes"])
 
     def test_a_review_whose_result_source_moved_supports_nothing(self):
         """R2: a review is a result too, so it is re-read like any other."""
-        report = self._report(name="review.json", status="passed", exit_code=0)
+        report = self._report(name="review.json", status="passed", exit_code=0, target="review")
         sm.record_review(self.fx.state_path, "passed", "reviewer", report_path=report, exit_code=0)
         state = self._state()
         state["phase"] = "review"
         state.setdefault("readiness", {})["implementation_tasks_complete"] = True
         state["review"]["required"] = True
-        (self.fx.repo / report).write_text(
-            json.dumps({"status": "failed", "exit_code": 1, "command": "pytest -q"}), encoding="utf-8")
+        self._replace_report(report, target="review")
         evidence = guard.collect_evidence(self.fx.repo, state)
         self.assertEqual("EVIDENCE_RESULT_DRIFT", evidence["result_bindings_unverified"]["review"]["error"])
         result = guard.evaluate(state, "advance", target_phase="verification", evidence=evidence)

@@ -1,10 +1,18 @@
 """Build the real thing a test needs before it asserts anything about trust.
 
-Every readiness fact, gate or verification in these helpers comes from material that actually
-exists in the temp repository: a source file that really has that digest, a report that really
-was written, an approval file that really contains the approver's decision. Nothing here hands
-`sm.set_readiness` a pre-verified object, because that would test the fixture instead of the
-entry point the acceptance criteria talk about.
+Material here is produced the way the project produces it, not declared the way a caller would
+like it to look:
+
+  * a report is the receipt of a command that really ran -- an argv and a return code the
+    verifier did not invent, plus the code and requirement revisions in force while it ran;
+  * an approval is recorded through the approval entry point, into the one store the project
+    declares, and it names the artifact of the channel the human decision came through;
+  * a dependency always names an object that exists in the temp repository.
+
+A caller-shaped forgery is still possible, and other helpers here build one on purpose: those
+are what the "same shape, not a source" tests reject. Nothing hands `sm.set_readiness` a
+pre-verified object, because that would test the fixture instead of the entry point the
+acceptance criteria talk about.
 """
 from __future__ import annotations
 
@@ -12,6 +20,7 @@ import hashlib
 import json
 import os
 import pathlib
+import shlex
 import subprocess
 import sys
 
@@ -27,6 +36,10 @@ import execution_state_manager as sm  # noqa: E402
 # as generated: recording proof must never look like the code under test moved.
 REPORTS_DIR = ".orchestrator/evidence/reports"
 APPROVALS_REL = ".orchestrator/evidence/approvals.json"
+# Where the host records a human decision. The verifier re-reads it, so it stands for the
+# channel the approval came through; in a real deployment the host writes it where the agent
+# cannot.
+APPROVAL_EVENTS_REL = ".orchestrator/evidence/approval-events.json"
 DEFAULT_SOURCE = "src/app.py"
 DEFAULT_REQUIREMENT = "requirements/story.md"
 
@@ -38,6 +51,26 @@ READINESS_KINDS = {
     "acceptance_satisfied": "mechanical_observation",
     "sdd_ready": "human_approval",
 }
+
+
+def _state_scope(repo: pathlib.Path) -> dict:
+    """The work item and requirement revision this project is on, read from its own state.
+
+    A result is produced for the work item it will be spent on, against the requirement
+    revision in force. Where the project has a state file, that is where the answer is; a
+    receipt naming some other work item binds nothing here.
+    """
+    try:
+        state = sm._load(repo / ".orchestrator" / "execution-state.yaml")
+    except Exception:
+        return {}
+    work_item = state.get("work_item") or {}
+    return {"work_item_id": work_item.get("id") or state.get("work_item_id"),
+            "requirement_revision": work_item.get("requirement_revision")}
+
+
+def work_item_id_for(repo: pathlib.Path, default: str = "W-1") -> str:
+    return str(_state_scope(repo).get("work_item_id") or default)
 
 
 def write_source(repo: pathlib.Path, rel: str = DEFAULT_SOURCE,
@@ -204,10 +237,77 @@ def publish_evidence_policy(repo: pathlib.Path, *, approval_authorities: tuple[s
     return ".orchestrator/config.yaml"
 
 
+def run_command(repo: pathlib.Path, *, name: str = "unit-tests.json", status: str = "passed",
+                exit_code: int = 0, target: str = "gate:unit", work_item_id: str | None = None,
+                requirement_revision: str | None = None, fact_path: str | None = None,
+                value: bool | str | int | None = None, tests: dict | None = None,
+                argv: list[str] | None = None, payload: dict | None = None) -> dict:
+    """Run a command for real and write the receipt it produced where a report would go.
+
+    The process really starts, really prints its payload and really exits with `exit_code`, so
+    the receipt records an argv that was executed and a return code the verifier did not
+    invent, together with the code and requirement revisions in force while it ran. A file that
+    only says `status: passed` is not produced here.
+
+    What the run is *for* is read from the project, not assumed: a receipt for a work item
+    that is not this one -- or against a requirement revision that is not the one in force --
+    is a receipt for something else.
+    """
+    scope = _state_scope(repo)
+    body = dict(payload) if payload is not None else {"status": status, "exit_code": exit_code}
+    if fact_path is not None:
+        body["fact_path"] = fact_path
+        body["value"] = value
+    if argv is None:
+        argv = [sys.executable, "-c",
+                "import json,sys;print(json.dumps(%r));sys.exit(%d)" % (body, int(exit_code))]
+    if work_item_id is None:
+        work_item_id = str(scope.get("work_item_id") or "W-1")
+    if requirement_revision is None:
+        # The revision in force while the command runs: the one the project is on, or the one
+        # read from the requirement object itself. A receipt that does not say which
+        # requirement it ran against is not a result about that requirement, and the consumer
+        # may not fill it in afterwards.
+        requirement_revision = (scope.get("requirement_revision")
+                                or requirement_dependency(repo)["revision"])
+    stored = ep.run_execution(repo, argv, target=target, work_item_id=work_item_id,
+                             requirement_revision=requirement_revision, fact_path=fact_path)
+    if not stored.get("available"):
+        raise AssertionError(f"the command could not be run: {stored}")
+    doc = dict(stored["receipt"])
+    if tests is not None:
+        doc["tests"] = tests
+    rel = f"{REPORTS_DIR}/{name}"
+    (repo / rel).parent.mkdir(parents=True, exist_ok=True)
+    (repo / rel).write_text(json.dumps(doc, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    return {"path": rel, "exit_code": int(stored.get("exit_code", exit_code)),
+            "status": str(stored.get("status") or status), "execution_id": str(stored["id"]),
+            "receipt": stored["receipt"],
+            "digest": hashlib.sha256((repo / rel).read_bytes()).hexdigest()}
+
+
 def write_report(repo: pathlib.Path, name: str = "unit-tests.json", *, status: str = "passed",
+                 exit_code: int = 0, tests: dict | None = None, target: str | None = None,
+                 work_item_id: str | None = None, requirement_revision: str | None = None,
+                 fact_path: str | None = None, value: bool | str | int | None = None,
+                 argv: list[str] | None = None, payload: dict | None = None) -> dict:
+    """Write a report the way the verification entry point would produce one.
+
+    What lands on disk is the receipt of a command that ran; `name` is only where it is kept.
+    """
+    return run_command(repo, name=name, status=status, exit_code=exit_code,
+                       target=target or f"gate:{pathlib.Path(name).stem}",
+                       work_item_id=work_item_id, requirement_revision=requirement_revision,
+                       fact_path=fact_path, value=value, tests=tests, argv=argv, payload=payload)
+
+
+def forge_report(repo: pathlib.Path, name: str = "unit-tests.json", *, status: str = "passed",
                  exit_code: int = 0, command: str = "python3 -m unittest discover -s tests",
                  tests: dict | None = None) -> dict:
-    """Write a report the way the verification entry point would produce one."""
+    """A caller-shaped report: the same fields as a receipt, produced by nobody running anything.
+
+    Tests use this to prove that a document which *looks* like a result does not bind one.
+    """
     payload = {"status": status, "exit_code": exit_code, "command": command}
     if tests is not None:
         payload["tests"] = tests
@@ -218,15 +318,68 @@ def write_report(repo: pathlib.Path, name: str = "unit-tests.json", *, status: s
             "digest": hashlib.sha256((repo / rel).read_bytes()).hexdigest()}
 
 
+def write_approval_event(repo: pathlib.Path, *, approver: str = "reviewer-1", subject: str = "W-1",
+                         decision: str = "approved", requirement_revision: str | None = None,
+                         fact_path: str | None = None, value: bool | str | int | None = None,
+                         event_id: str | None = None,
+                         path: str = APPROVAL_EVENTS_REL) -> str:
+    """Record the host-side event of a human decision: the channel artifact that is re-read."""
+    target = repo / path
+    doc: dict = {"events": []}
+    if target.exists():
+        try:
+            loaded = json.loads(target.read_text(encoding="utf-8"))
+            if isinstance(loaded, dict) and isinstance(loaded.get("events"), list):
+                doc = loaded
+        except (OSError, ValueError):
+            doc = {"events": []}
+    event: dict = {"event": "approval", "id": event_id or f"evt-{len(doc['events']) + 1}",
+                   "approver": approver, "subject": subject, "decision": decision,
+                   "channel": "host_approval_event"}
+    if requirement_revision is not None:
+        event["requirement_revision"] = requirement_revision
+    if fact_path is not None:
+        event["fact_path"] = fact_path
+        event["value"] = value
+    doc["events"].append(event)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(json.dumps(doc, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    return path
+
+
 def write_approval(repo: pathlib.Path, *, approval_id: str = "appr-1", subject: str = "W-1",
                    decision: str = "approved", approver: str = "reviewer-1",
-                   path: str = APPROVALS_REL, requirement_revision: str | None = None,
-                   authority: str | None = None) -> str:
-    """Write an approval file: the human decision lives outside the claim that cites it.
+                   requirement_revision: str | None = None, fact_path: str | None = None,
+                   value: bool | str | int | None = None, channel: str = "host_approval_event",
+                   channel_ref: str | None = None) -> str:
+    """Record an approval through the entry point that is the approval's source.
 
-    The approval binds its own requirement revision. An approval that does not say which
-    revision it was issued for cannot be trusted for the revision that is active now, and
-    the outer record must not supply that binding on its behalf.
+    The decision is appended to the one store the project declares, where it carries the
+    receipt of the entry before it, and it names the artifact of the channel it came through.
+    Both are re-read when the approval is checked. It binds its own requirement revision: an
+    approval that does not say which revision it was issued for cannot be trusted for the
+    revision active now, and the outer record must not supply that binding on its behalf.
+    """
+    event = write_approval_event(repo, approver=approver, subject=subject, decision=decision,
+                                 requirement_revision=requirement_revision,
+                                 fact_path=fact_path, value=value)
+    recorded = ep.record_approval(
+        repo, approver=approver, subject=subject, work_item_id=subject, decision=decision,
+        requirement_revision=requirement_revision, fact_path=fact_path, value=value,
+        channel={"type": channel, "ref": channel_ref or event}, approval_id=approval_id)
+    if not recorded.get("available"):
+        raise AssertionError(f"the approval could not be recorded: {recorded}")
+    return ep.APPROVALS_REL
+
+
+def write_approval_file(repo: pathlib.Path, *, approval_id: str = "appr-1", subject: str = "W-1",
+                        decision: str = "approved", approver: str = "reviewer-1",
+                        path: str = APPROVALS_REL, requirement_revision: str | None = None,
+                        authority: str | None = None) -> str:
+    """A caller-shaped approval: a file with an approver's name in it, recorded by nobody.
+
+    Tests use this to prove that copying a valid approval text -- or a valid name -- into some
+    other place does not produce a new trusted approval.
     """
     target = repo / path
     doc: dict = {"approvals": []}
@@ -248,36 +401,48 @@ def write_approval(repo: pathlib.Path, *, approval_id: str = "appr-1", subject: 
     return path
 
 
-def fact_evidence(repo: pathlib.Path, fact_path: str, *, work_item_id: str = "W-1",
-                  requirement_revision: str | None = None,
-                  producer: str = "test-runner") -> dict:
-    """Evidence that names the fact it observed, for facts a search cannot decide.
+def fact_evidence(repo: pathlib.Path, fact_path: str, *, work_item_id: str | None = None,
+                  requirement_revision: str | None = None, producer: str = "observer",
+                  value: bool | str | int | None = False, status: str = "passed",
+                  exit_code: int = 0) -> dict:
+    """Evidence that observed one predicate for real, for facts a search cannot decide.
 
-    "There is no authentication risk" is not the absence of a word. It is carried by a source
-    produced for that exact predicate, which says so in `extra.fact_path` and can be re-read.
+    "There is no authentication risk" is not the absence of a word, and it is not what some
+    other command failing says either. It is carried by an observer that ran for exactly this
+    predicate and reported its value: the fact is what the observer said, not a field the
+    caller attached to the claim.
     """
-    report = write_report(repo, f"fact-{fact_path.replace('.', '-')}.json", status="failed",
-                          exit_code=1, command=f"python3 -m pytest -k {fact_path.replace('.', '_')}")
+    work_item_id = work_item_id or work_item_id_for(repo)
+    report = write_report(repo, f"fact-{fact_path.replace('.', '-')}.json", status=status,
+                          exit_code=exit_code, target=f"fact:{fact_path}",
+                          work_item_id=work_item_id, requirement_revision=requirement_revision,
+                          fact_path=fact_path, value=value)
     return ep.build_record(
         kind="mechanical_observation", claim_type="fact_observation", work_item_id=work_item_id,
-        requirement_revision=requirement_revision, outcome="failed", producer=producer,
+        requirement_revision=requirement_revision, outcome=status, producer=producer,
         source={"type": "path"},
-        depends_on=[requirement_dependency(repo), code_dependency(repo)],
-        report=report, extra={"fact_path": fact_path},
+        depends_on=required_dependencies(repo, kind="mechanical_observation",
+                                         claim_type="fact_observation"),
+        report=report,
     )
 
 
 def result_document(repo: pathlib.Path, name: str = "gate-result.json", *,
-                    status: str = "passed", exit_code: int = 0) -> str:
+                    status: str = "passed", exit_code: int = 0, target: str | None = None,
+                    work_item_id: str | None = None,
+                    requirement_revision: str | None = None) -> str:
     """A result document inside the project that a gate, review or verification can bind.
 
-    A gate that claims "passed" has to name the artifact the claim came from, and that
-    artifact has to be re-readable: a bare label binds nothing.
+    It is the receipt of a command that ran for the target it is spent on: a gate named `unit`
+    is bound to a run produced for `gate:unit`, and nothing else.
     """
-    return write_report(repo, name, status=status, exit_code=exit_code)["path"]
+    return write_report(repo, name, status=status, exit_code=exit_code,
+                        target=target or f"gate:{pathlib.Path(name).stem}",
+                        work_item_id=work_item_id,
+                        requirement_revision=requirement_revision)["path"]
 
 
-def build_readiness_record(repo: pathlib.Path, key: str, *, work_item_id: str = "W-1",
+def build_readiness_record(repo: pathlib.Path, key: str, *, work_item_id: str | None = None,
                            requirement_revision: str | None = None,
                            kind: str | None = None, outcome: str | None = None,
                            producer: str = "test-runner",
@@ -285,13 +450,13 @@ def build_readiness_record(repo: pathlib.Path, key: str, *, work_item_id: str = 
                            report_name: str | None = None, report_status: str = "passed",
                            exit_code: int = 0, subject: str | None = None) -> dict:
     """Build a claim that is verifiable because everything it cites exists right now."""
+    work_item_id = work_item_id or work_item_id_for(repo)
     kind = kind or READINESS_KINDS.get(key, "mechanical_observation")
     rule = ep.READINESS_SOURCE_RULES.get(key) or {}
     claim_type = str(rule.get("claim_type") or "readiness")
     requirement = requirement_dependency(repo)
-    depends_on: list[dict] = [requirement]
-    if kind == "mechanical_observation":
-        depends_on.append(code_dependency(repo, exclude=requirement["object_id"]))
+    depends_on: list[dict] = required_dependencies(repo, kind=kind, claim_type=claim_type,
+                                                   exclude=requirement["object_id"])
     depends_on.extend(extra_dependencies or [])
     record = ep.build_record(
         kind=kind, claim_type=claim_type, work_item_id=work_item_id,
@@ -303,15 +468,19 @@ def build_readiness_record(repo: pathlib.Path, key: str, *, work_item_id: str = 
     if kind == "mechanical_observation":
         if report_name is None:
             report_name = f"{key}-report.json"
-        report = write_report(repo, report_name, status=report_status, exit_code=exit_code)
+        # The run is produced for this work item, against this requirement: the receipt carries
+        # both, and the claim never fills them in on its behalf.
+        report = write_report(repo, report_name, status=report_status, exit_code=exit_code,
+                              target=f"readiness:{key}", work_item_id=work_item_id,
+                              requirement_revision=requirement_revision)
         record["report"] = report
     if kind == "human_approval":
         approval_id = f"appr-{key}"
         # Who may approve is a project decision, published before the approval is checked.
         publish_evidence_policy(repo)
-        write_approval(repo, approval_id=approval_id, subject=subject or work_item_id,
-                       requirement_revision=requirement_revision)
-        record["approval"] = {"source": APPROVALS_REL, "subject": subject or work_item_id,
+        source = write_approval(repo, approval_id=approval_id, subject=subject or work_item_id,
+                                requirement_revision=requirement_revision)
+        record["approval"] = {"source": source, "subject": subject or work_item_id,
                               "revision": approval_id}
     return record
 
@@ -334,20 +503,23 @@ def establish_readiness(state_path: pathlib.Path, key: str, *, actor: str = "tes
 
 
 def progress_record(repo: pathlib.Path, *, completed: int = 1, total: int = 1,
-                    work_item_id: str = "W-1", requirement_revision: str | None = None) -> dict:
+                    work_item_id: str | None = None, requirement_revision: str | None = None) -> dict:
     """A real observation that tasks were finished: a report that says so, plus its dependencies.
 
     The count lives in the report, because the report is the source that observed the tasks.
     Metadata beside the claim only declares what the caller expects, and it is checked against
     the report rather than being allowed to replace it.
     """
-    report = write_report(repo, f"tasks-{completed}.json", command=f"python3 -m pytest tasks -k {completed}",
+    work_item_id = work_item_id or work_item_id_for(repo)
+    report = write_report(repo, f"tasks-{completed}.json", target="task_progress",
+                          work_item_id=work_item_id, requirement_revision=requirement_revision,
                           tests={"completed": completed, "total": total})
     return ep.build_record(
         kind="mechanical_observation", claim_type="task_progress", work_item_id=work_item_id,
         outcome="passed", producer="pytest", requirement_revision=requirement_revision,
-        depends_on=[code_dependency(repo), requirement_dependency(repo)], report=report,
-        source={"type": "test_report", "ref": report["path"]},
+        depends_on=required_dependencies(repo, kind="mechanical_observation",
+                                         claim_type="task_progress"),
+        report=report, source={"type": "test_report", "ref": report["path"]},
         extra={"completed": completed, "total": total},
     )
 
@@ -378,17 +550,50 @@ def establish(state_path: pathlib.Path, *keys: str, actor: str = "test",
 
 
 def passed_gate_record(repo: pathlib.Path, name: str = "unit-tests", *,
-                       work_item_id: str = "W-1", requirement_revision: str | None = None,
+                       work_item_id: str | None = None, requirement_revision: str | None = None,
                        exit_code: int = 0, status: str = "passed") -> tuple[dict, dict]:
-    """A gate may only record passed together with a report that really says passed."""
+    """A gate may only record passed together with a run that really produced it.
+
+    The gate is bound to the code that was in force while it ran: the conservative snapshot of
+    the project tree, which the verifier derives, is part of what the gate result is about.
+    """
+    work_item_id = work_item_id or work_item_id_for(repo)
     report = write_report(repo, f"{name}.json", status=status, exit_code=exit_code,
-                          command=f"python3 -m pytest {name}")
+                          target=f"gate:{name}", work_item_id=work_item_id,
+                          requirement_revision=requirement_revision)
     record = ep.build_record(
         kind="mechanical_observation", claim_type="gate_result", work_item_id=work_item_id,
         requirement_revision=requirement_revision,
         outcome="passed" if status == "passed" else "failed",
         producer="test-runner", source={"type": "path"},
-        depends_on=[requirement_dependency(repo), code_dependency(repo)],
+        depends_on=required_dependencies(repo, kind="mechanical_observation",
+                                         claim_type="gate_result"),
         report=report,
     )
     return record, report
+
+
+def code_snapshot_dependency(repo: pathlib.Path) -> dict:
+    """The object a result about code is bound to when the project publishes no finer mapping.
+
+    The verifier derives it: the project tree, as it was when the command ran.
+    """
+    return dependency(repo, ep.DERIVED_CODE_DEPENDENCY, ".")
+
+
+def required_dependencies(repo: pathlib.Path, *, kind: str = "mechanical_observation",
+                          claim_type: str = "readiness", exclude: str | None = None,
+                          extra: list | None = None) -> list:
+    """The dependencies the verifier requires for this claim, resolved against real objects.
+
+    A claim about code is bound to the code that was in force: where the project publishes no
+    finer mapping, that is the conservative snapshot the verifier derives. The caller may add
+    objects on top; it may not leave one of these out and still expect to verify.
+    """
+    required = ep.required_dependencies(kind=kind, claim_type=claim_type)
+    deps = [requirement_dependency(repo)]
+    if "code_under_test" in required:
+        deps.append(code_dependency(repo, exclude=exclude))
+    if ep.DERIVED_CODE_DEPENDENCY in required:
+        deps.append(code_snapshot_dependency(repo))
+    return deps + list(extra or [])

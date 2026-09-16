@@ -377,17 +377,18 @@ class VerificationObligationTests(unittest.TestCase):
 
 
 class EndToEndRepairAcceptanceTests(unittest.TestCase):
-    def _run_project_tests(self, repo: pathlib.Path, label: str) -> pathlib.Path:
-        proc = subprocess.run([sys.executable, "-m", "unittest", "discover", "-s", "tests", "-v"], cwd=repo, text=True, capture_output=True)
-        self.assertEqual(0, proc.returncode, proc.stdout + proc.stderr)
-        ev = repo / ".orchestrator/evidence" / f"{label}.log"
-        ev.parent.mkdir(parents=True, exist_ok=True)
-        ev.write_text("$ python -m unittest discover -s tests -v\n" + proc.stdout + proc.stderr, encoding="utf-8")
-        # The gate binds a result document, not a label: what a check can re-read is the proof.
-        report = repo / ".orchestrator/evidence" / f"{label}.json"
-        report.write_text(json.dumps({"status": "passed", "exit_code": 0,
-                                      "command": "python -m unittest discover -s tests -v"}), encoding="utf-8")
-        return report
+    def _run_project_tests(self, repo: pathlib.Path, label: str, target: str) -> pathlib.Path:
+        """Run the project's tests through the execution entry point and return the receipt.
+
+        The command really runs and the receipt is what the gate, review or verification
+        binds: a file that only says `status: passed` records nothing about a command that
+        ran, so it is not produced here.
+        """
+        run = evidence_factory.run_command(
+            repo, name=f"{label}.json", target=target,
+            argv=[sys.executable, "-m", "unittest", "discover", "-s", "tests", "-v"])
+        self.assertEqual("passed", run["status"], f"{label} did not pass: {run['exit_code']}")
+        return repo / run["path"]
 
     def _resolution_doc(self, facts: dict, repo: pathlib.Path, work_item: dict | None = None) -> dict:
         work_item = work_item or {}
@@ -474,17 +475,17 @@ class EndToEndRepairAcceptanceTests(unittest.TestCase):
             state=sm._load(sp)
             state=evidence_factory.establish_progress(sp,1,1,repo=repo,actor="T8")["state"]
             state=sm.transition(sp,"review","in_progress","T8","implementation complete",state["revision"])
-            review_evidence=self._run_project_tests(repo,"review-tests")
+            review_evidence=self._run_project_tests(repo,"review-tests",target="review")
             state=sm.record_review(sp,"passed","T8",0,str(review_evidence.relative_to(repo)),state["revision"])
             state=sm.transition(sp,"verification","in_progress","T8","review passed",state["revision"])
 
             for name,gate in list(state["quality_gates"].items()):
                 if gate.get("required"):
-                    evidence=self._run_project_tests(repo,"gate-"+re.sub(r"[^A-Za-z0-9._-]+","-",name))
+                    evidence=self._run_project_tests(repo,"gate-"+re.sub(r"[^A-Za-z0-9._-]+","-",name),target="gate:"+name)
                     state=sm.record_gate(sp,name,True,"passed","T8",evidence_ref=str(evidence.relative_to(repo)),command=gate.get("command"),expected_revision=state["revision"])
             evidence_factory.establish_readiness(sp, "acceptance_satisfied")
             state=sm._load(sp)
-            final_evidence=self._run_project_tests(repo,"final-verification")
+            final_evidence=self._run_project_tests(repo,"final-verification",target="verification")
             state=sm.record_verification(sp,"passed","T8",state["execution_snapshot_id"],str(final_evidence.relative_to(repo)),state["revision"])
             self.assertEqual([],sm.transition_guard(state,"closed","completed",repo))
             state=sm.transition(sp,"closed","completed","T8","all current evidence passed",state["revision"])

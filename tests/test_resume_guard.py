@@ -180,10 +180,10 @@ class ResumeMustNotReviseRequirement(unittest.TestCase):
             state = sm._load(state_path)
             state = sm.transition(state_path, "implementation", "in_progress", "test", "start", state["revision"])
             state = sm.record_gate(state_path, "unit", True, "passed", "test",
-                                   evidence_ref=evidence_factory.result_document(repo, "unit-results.json"),
+                                   evidence_ref=evidence_factory.result_document(repo, "unit-results.json", target="gate:unit"),
                                    expected_revision=state["revision"])
             state = sm.record_verification(state_path, "passed", "test", state["execution_snapshot_id"],
-                                           evidence_factory.result_document(repo, "final-verification.json"),
+                                           evidence_factory.result_document(repo, "final-verification.json", target="verification"),
                                            state["revision"])
             before = sm._load(state_path)
 
