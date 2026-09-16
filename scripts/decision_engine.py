@@ -198,6 +198,20 @@ def max_flow(current: str, minimum: str) -> str:
 ACCEPTED_EVIDENCE_STRENGTH = {"authoritative", "observed", "derived"}
 
 
+def evidence_observed_false(entry: Dict[str, Any], path: str) -> bool:
+    """Does a trusted source say *path* is false, and not merely that something failed?
+
+    An observer that ran for this predicate and reported `False` carries the fact. A run that
+    failed carries a failure: without a value the source reported for this predicate it says
+    nothing about the direction of the fact, so it is not accepted as a false.
+    """
+    if not entry.get("verified_authority"):
+        return False
+    if str(entry.get("evidence_fact") or "") != path:
+        return False
+    return entry.get("evidence_observed_value") is False
+
+
 def validate_provenance(facts: Dict[str, Any]) -> Dict[str, List[str]]:
     provenance = facts.get("provenance") or {}
     missing: List[str] = []
@@ -223,13 +237,12 @@ def validate_provenance(facts: Dict[str, Any]) -> Dict[str, List[str]]:
             continue
         if value is False:
             # `strength=authoritative` is how the source describes itself. A false fact needs
-            # either a negative proof whose search was actually redone, or verified evidence
-            # that observed a failure. `verified` on its own says nothing about the direction.
+            # either a negative proof whose search was actually redone, or a trusted source
+            # that observed this predicate and reported it false. `verified` on its own, or a
+            # run that failed, says nothing about the direction of the fact.
             ok = any(
                 (bool(e.get("negative_proof_verified")) and str(e.get("negative_proof_fact")) == path)
-                or (bool(e.get("verified_authority"))
-                    and str(e.get("evidence_outcome")) == "failed"
-                    and str(e.get("evidence_fact")) == path)
+                or evidence_observed_false(e, path)
                 for e in accepted
             )
             if not ok:

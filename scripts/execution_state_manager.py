@@ -862,6 +862,7 @@ def _bind_alternative_result(state_path: pathlib.Path, *, state: Optional[Dict[s
     repo = repository_snapshot.repo_from_state(state_path)
     ep = _evidence_module()
     scope = _result_binding_context(state)
+    use = ep.use_for_target(target)
     record = load_evidence_reference(repo, evidence_ref)
     if record is not None:
         result = _verify_evidence_record(state_path, record, state=state)
@@ -871,17 +872,30 @@ def _bind_alternative_result(state_path: pathlib.Path, *, state: Optional[Dict[s
                 f"EVIDENCE_REPORT_REQUIRED: evidence {result.get('evidence_id')} is "
                 f"{result.get('validation_status')}/{result.get('outcome')} "
                 f"({result.get('reason_code')}); a passed gate needs a result that verifies now")
+        # The conclusion has to be about *this* step. Evidence that verifies is not evidence
+        # for whatever the caller wants it for: an approval that a requirement may be
+        # implemented is not a unit gate, a code review, or a final verification.
+        purpose = ep.purpose_decision(use, result, target=target)
+        if not purpose["ok"]:
+            raise StateError(f"EVIDENCE_REPORT_REQUIRED: {purpose['error']}: {purpose['message']}")
         return {"evidence_id": result.get("evidence_id"), "status": result.get("outcome"),
                 "exit_code": 0, "binding": "evidence_record", "target": target,
                 "validation_status": result.get("validation_status"), **scope}
     binding = ep.result_document_binding(repo, evidence_ref, target=target, **scope)
     if binding.get("available"):
+        purpose = ep.purpose_decision(use, {
+            "claim_type": binding["binding"].get("claim_type"),
+            "validation_status": "verified", "outcome": "passed"}, target=target)
+        if not purpose["ok"]:
+            raise StateError(f"EVIDENCE_REPORT_REQUIRED: {purpose['error']}: {purpose['message']}")
         return {"status": "passed", "binding": "result_document", **binding["binding"]}
     raise StateError(
         f"EVIDENCE_REPORT_REQUIRED: {evidence_ref or '<no evidence ref>'} is neither a report "
         "of a command that ran, a verifiable evidence id, nor a result document that names its "
-        f"own execution: {binding.get('message')}; record the real result with --report or "
-        "import it as verifiable evidence (see `coding-orchestrator evidence index`)")
+        f"own execution: {binding.get('error')}: {binding.get('message')}; run the command "
+        "through the execution entry point (`coding-orchestrator evidence run`) and record the "
+        "receipt it writes, or import it as verifiable evidence "
+        "(see `coding-orchestrator evidence index`)")
 
 
 def _result_document(repo: pathlib.Path, ref: Optional[str]) -> Optional[Dict[str, Any]]:
@@ -957,12 +971,23 @@ def _bind_report(state_path: pathlib.Path, status: str, report_path: Optional[st
         if exit_code is None:
             raise StateError("EVIDENCE_REPORT_REQUIRED: a passed result needs the exit code of "
                              "the command that produced it")
-        # And it has to name the command: a status plus an exit code with nothing behind them
-        # is still an assertion. This is what makes the binding re-checkable later.
-        if not list(argv or []) and not (isinstance(doc, dict) and (
-                doc.get("command") or doc.get("argv") or doc.get("execution"))):
-            raise StateError("EVIDENCE_EXECUTION_UNBOUND: a passed result must record the command "
-                             "that produced it (--command, or command/argv inside the report)")
+        # And it has to be the receipt of a command that really ran. A file that says
+        # `status: passed, exit_code: 0, command: ...` is a file anyone can write: only the
+        # execution store says what ran, against which code, and how it ended.
+        ep = _evidence_module()
+        scope = _result_binding_context(state)
+        binding = ep.result_document_binding(repo, report_path, target=target, **scope)
+        if not binding.get("available"):
+            raise StateError(f"EVIDENCE_REPORT_REQUIRED: {binding.get('error')}: "
+                             f"{binding.get('message')}; run the command through "
+                             "`coding-orchestrator evidence run` and pass the receipt it writes")
+        purpose = ep.purpose_decision(ep.use_for_target(target), {
+            "claim_type": binding["binding"].get("claim_type"),
+            "validation_status": "verified", "outcome": "passed"}, target=target)
+        if not purpose["ok"]:
+            raise StateError(f"EVIDENCE_REPORT_REQUIRED: {purpose['error']}: {purpose['message']}")
+        return {**binding["binding"], "binding": "report", "argv": list(argv or []),
+                "target": target, "snapshot_code_revision": scope.get("code_revision")}
     return {
         "path": report_path,
         "status": reported_status,

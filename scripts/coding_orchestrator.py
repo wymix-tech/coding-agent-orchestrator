@@ -443,7 +443,21 @@ def _source_revision_now(repo: Path, source_ref: str | None) -> str | None:
 
 def _reset_confirmation_message(repo: Path, state: dict[str, Any], *, requirement_id: str = "",
                                 active_revision: str | None = None, incoming_revision: str | None = None,
-                                source_ref: str | None = None) -> str:
+                                source_ref: str | None = None, request: str | None = None,
+                                request_file: str | None = None) -> str:
+    """The refusal message, with a command that restates the move it is refusing.
+
+    A confirmation is only valid for the request it was issued for, so the recovery command has
+    to carry that request: a binding-complete command with no request in it does not run, and
+    the human is left with an error they did not cause.
+    """
+    resolved_file = _replayable_request_file(repo, request_file)
+    if resolved_file:
+        request = None  # the file restates the request; passing both would pick one silently
+    elif source_ref:
+        resolved_file = _replayable_request_file(repo, source_ref)
+        if resolved_file:
+            request = None
     return (_reset_warning(state)
             + " Confirm with the complete binding set (requirement, old source revision, incoming "
               "source revision, observed state revision), or resume with "
@@ -453,7 +467,20 @@ def _reset_confirmation_message(repo: Path, state: dict[str, Any], *, requiremen
                 active_revision=active_revision, incoming_source_revision=incoming_revision,
                 state_revision=str(state.get("revision")), phase=state.get("phase"),
                 status=state.get("status"), repo=str(repo),
-                request_ref=source_ref or str((state.get("work_item") or {}).get("requirement_source_ref") or "")))
+                request_ref=resolved_file,
+                request=request))
+
+
+def _replayable_request_file(repo: Path, request_file: str | None) -> str | None:
+    """A request file path that still resolves from any working directory."""
+    if not request_file:
+        return None
+    candidate = Path(str(request_file)).expanduser()
+    if not candidate.is_absolute():
+        candidate = Path(repo) / candidate
+    if not candidate.is_file():
+        return str(request_file)
+    return str(candidate.resolve())
 
 
 def _analysis_is_current(repo: Path, state: dict[str, Any]) -> bool:
@@ -576,7 +603,8 @@ def cmd_intake(args: argparse.Namespace) -> tuple[int, dict[str, Any], str]:
                             repo, existing, requirement_id=str(req_id),
                             active_revision=str(existing_rev) if existing_rev else None,
                             incoming_revision=str(req_rev) if req_rev else None,
-                            source_ref=source_ref))
+                            source_ref=source_ref, request_file=getattr(args, "request_file", None),
+                            request=request))
                 if _resets_in_flight_work(existing):
                     # The incoming revision is what the request actually carries: the source
                     # revision when there is a source, the request revision when there is not.
@@ -952,6 +980,68 @@ def cmd_evidence(args: argparse.Namespace) -> tuple[int, dict[str, Any], str]:
         + ("" if verified else f"\nRecover: {recovery}"))
 
 
+def cmd_evidence_run(args: argparse.Namespace) -> tuple[int, dict[str, Any], str]:
+    """Run a command and record what it actually did.
+
+    This is where a result comes from. The receipt it writes carries the argv, the return code,
+    the target and work item it was produced for, and the requirement and code revisions in
+    force while it ran -- so a later consumer re-reads the run instead of believing a document
+    that claims `status: passed`.
+    """
+    repo = args.repo.resolve()
+    argv = [item for item in (getattr(args, "argv", None) or []) if item != "--"]
+    if not argv:
+        return 2, {"status": "ACTION_REQUIRED", "error": "EVIDENCE_EXECUTION_ARGV_REQUIRED",
+                   "next_action": "name_the_command"}, (
+            "name the command to run: evidence run --target gate:unit --work-item <id> -- <command>")
+    recorded = evidence_provenance.run_execution(
+        repo, argv, target=str(args.target), work_item_id=str(args.work_item),
+        requirement_revision=getattr(args, "requirement_revision", None),
+        fact_path=getattr(args, "fact_path", None))
+    if not recorded.get("available"):
+        return 2, {"status": "ACTION_REQUIRED", "error": recorded.get("error"),
+                   "next_action": "re_run_the_command"}, str(recorded.get("message"))
+    if recorded.get("status") != "passed":
+        return 1, {"status": "EVIDENCE_EXECUTION_FAILED", "execution_id": recorded.get("id"),
+                   "path": recorded.get("path"), "exit_code": recorded.get("exit_code"),
+                   "target": args.target, "work_item_id": args.work_item}, (
+            f"{' '.join(argv)} exited {recorded.get('exit_code')}; the failure is recorded at "
+            f"{recorded.get('path')} as a real failure")
+    return 0, {"status": "EVIDENCE_EXECUTION_RECORDED", "execution_id": recorded.get("id"),
+               "path": recorded.get("path"), "exit_code": recorded.get("exit_code"),
+               "target": args.target, "work_item_id": args.work_item,
+               "requirement_revision": getattr(args, "requirement_revision", None)}, (
+        f"Recorded {recorded.get('id')} at {recorded.get('path')}: pass it to "
+        f"`gate --evidence-ref`/`--report` for {args.target}")
+
+
+def cmd_evidence_approve(args: argparse.Namespace) -> tuple[int, dict[str, Any], str]:
+    """Record a human approval, with the channel the decision came through.
+
+    Recording an approval is not the same as being the person. The entry point writes the
+    approval into the one store the project declares and re-reads the artifact of the channel,
+    so a name copied into a file somewhere else does not become somebody's decision.
+    """
+    repo = args.repo.resolve()
+    recorded = evidence_provenance.record_approval(
+        repo, approver=str(args.approver), subject=str(args.subject),
+        work_item_id=getattr(args, "work_item", None), decision=str(args.decision),
+        requirement_revision=getattr(args, "requirement_revision", None),
+        fact_path=getattr(args, "fact_path", None), value=getattr(args, "value", None),
+        channel={"type": str(args.channel), "ref": str(args.channel_ref)})
+    if not recorded.get("available"):
+        return 2, {"status": "ACTION_REQUIRED", "error": recorded.get("error"),
+                   "next_action": "name_the_approval_channel"}, str(recorded.get("message"))
+    entry = recorded.get("entry") or {}
+    return 0, {"status": "EVIDENCE_APPROVAL_RECORDED", "approval_id": recorded.get("id"),
+               "path": recorded.get("path"), "approver": entry.get("approver"),
+               "subject": entry.get("subject"), "decision": entry.get("decision"),
+               "channel": entry.get("channel")}, (
+        f"Recorded approval {recorded.get('id')} for {entry.get('subject')} by "
+        f"{entry.get('approver')} through {entry.get('channel', {}).get('type')}; it verifies "
+        "only while that channel artifact still records the same decision")
+
+
 def cmd_native_bind(args: argparse.Namespace) -> tuple[int, dict[str, Any], str]:
     """Bind the id the native source uses to the local work item. The legal path for F5."""
     path = _state_path(args.repo)
@@ -1077,6 +1167,25 @@ def build_parser() -> argparse.ArgumentParser:
     y.set_defaults(func=cmd_evidence)
     y=xsub.add_parser("index",help="rebuild the evidence index from the stored records")
     y.set_defaults(func=cmd_evidence)
+    y=xsub.add_parser("run",help="run a command and record the receipt that makes its result re-checkable")
+    y.add_argument("argv",nargs=argparse.REMAINDER,help="the command to run")
+    y.add_argument("--target",required=True,help="what it is a result for: gate:<name>, review or verification")
+    y.add_argument("--work-item",required=True,dest="work_item",help="work item the command was run for")
+    y.add_argument("--requirement-revision",dest="requirement_revision")
+    y.add_argument("--fact-path",dest="fact_path",help="predicate this observer reports the value of")
+    y.set_defaults(func=cmd_evidence_run)
+    y=xsub.add_parser("approve",help="record a human approval through the approval entry point")
+    y.add_argument("--approver",required=True)
+    y.add_argument("--subject",required=True)
+    y.add_argument("--work-item",dest="work_item")
+    y.add_argument("--decision",default="approved")
+    y.add_argument("--requirement-revision",dest="requirement_revision")
+    y.add_argument("--fact-path",dest="fact_path")
+    y.add_argument("--value")
+    y.add_argument("--channel",default="host_approval_event",help="channel the decision came through")
+    y.add_argument("--channel-ref",dest="channel_ref",required=True,
+                   help="artifact of that channel that can be re-read")
+    y.set_defaults(func=cmd_evidence_approve)
 
     x=sub.add_parser("native",help="native source ownership and binding")
     xsub=x.add_subparsers(dest="native_command",required=True)

@@ -246,15 +246,17 @@ def negative_proof_scope(repo: Path | None, draft: Dict[str, Any], resolution_do
     return sorted(set(refs))
 
 
-def evidence_observes_fact(record: Any, path: str) -> bool:
-    """Whether the evidence itself says which fact it observed.
+def evidence_observes_fact(result: Any, path: str, value: Any = None) -> Dict[str, Any]:
+    """Whether a trusted source observed *value* for *path*, and not merely that it ran.
 
-    `verified` with a `failed` outcome proves a failure happened. It only proves *this* fact
-    is false when the evidence names the predicate it was produced for.
+    A field the caller attached to its own claim says what the caller wants the fact to be.
+    An observation has to come from the source that produced it: an observer that reported the
+    value of this predicate, or an approval that was issued for it. `verified` with a `failed`
+    outcome proves a failure happened; it does not prove that some semantic fact is false.
     """
-    extra = ((record or {}).get("extra") if isinstance(record, dict) else None) or {}
-    observed = extra.get("fact_path") or extra.get("fact")
-    return bool(observed) and str(observed) == str(path)
+    ep = _evidence_module()
+    decision = ep.fact_observation(result if isinstance(result, dict) else {}, path, value)
+    return decision if isinstance(decision, dict) else {"observed": False}
 
 
 def apply_resolutions(draft: Dict[str, Any], resolution_doc: Dict[str, Any],
@@ -284,14 +286,28 @@ def apply_resolutions(draft: Dict[str, Any], resolution_doc: Dict[str, Any],
             raise ValueError(
                 f"false resolution requires negative_proof or verified evidence, got {validation}: {r['path']}")
         if r.get("value") is False and str(r["path"]).split(".")[0] in SEMANTIC_SECTIONS:
-            # "no security risk" is not the absence of a string. A semantic conclusion needs a
-            # source that states the predicate it was produced for; otherwise it stays unresolved
-            # and belongs on the human approval path instead of being proven by a search.
-            if validation != "verified" or not evidence_observes_fact(r.get("evidence_record"), r["path"]):
+            # "no security risk" is not the absence of a string, and it is not what a failed
+            # run of something else says either. A semantic conclusion needs a trusted source
+            # that observed *this* predicate and reported *this* value: an observer run for it,
+            # or an approval issued for it.
+            observation = evidence_observes_fact(result, r["path"], r["value"])
+            if not observation.get("observed"):
+                if r.get("negative_proof") is not None:
+                    # What was handed in is a search. A search observes that a string is
+                    # absent from what it looked at; it does not observe that a requirement
+                    # is unambiguous, safe or familiar.
+                    raise ValueError(
+                        f"false resolution on {r['path']} cannot be established by searching "
+                        "for a term: a search finds that a string is absent, not that this "
+                        f"predicate is false ({observation.get('error')}: "
+                        f"{observation.get('message')}); semantic facts need an observer that "
+                        "reported this predicate, or an authoritative decision (see evidence "
+                        "approvals)")
                 raise ValueError(
-                    f"false resolution on {r['path']} cannot be established by searching for a term: "
-                    "semantic facts need verified evidence that names this exact predicate, or an "
-                    "authoritative decision (see evidence approvals)")
+                    f"false resolution on {r['path']} is not observed by the evidence: "
+                    f"{observation.get('error')}: {observation.get('message')}. Semantic facts "
+                    "need an observer that reported this predicate, or an authoritative "
+                    "decision (see evidence approvals)")
         path = r["path"]
         old = get_path(out, path)
         if old is not None and old != r["value"]:
@@ -313,10 +329,12 @@ def apply_resolutions(draft: Dict[str, Any], resolution_doc: Dict[str, Any],
         }
         if isinstance(r.get("evidence_record"), dict):
             entry["evidence_id"] = r["evidence_record"].get("evidence_id")
-            # Which fact this evidence actually observed. A verified failure of something else
-            # does not make this fact false.
-            extra = r["evidence_record"].get("extra") or {}
-            entry["evidence_fact"] = str(extra.get("fact_path") or extra.get("fact") or "") or None
+            # Which fact the trusted source actually observed, and which value it reported,
+            # as the source itself said it. A verified failure of something else does not
+            # make this fact false.
+            observed_fact = result.get("observed_fact") if isinstance(result, dict) else None
+            entry["evidence_fact"] = str((observed_fact or {}).get("path") or "") or None
+            entry["evidence_observed_value"] = (observed_fact or {}).get("value")
         if r.get("negative_proof") is not None:
             entry["negative_proof"] = r["negative_proof"]
             # The proof is bound to the fact it was submitted for; a proof that names a
