@@ -47,6 +47,12 @@ FIXTURE_PRODUCERS = {"fixture", "test-fixture", "synthetic"}
 
 OBJECT_SCHEMES = {"path", "requirement", "native", "policy", "evidence", "state"}
 
+# Documentation is a legal requirement source and a legal authority document, but it is never
+# the object a mechanical claim runs against. Allowing it as `code_under_test` would let a
+# claim keep its verdict while the real code moves.
+DOCUMENT_SUFFIXES = (".md", ".markdown", ".txt", ".rst", ".adoc", ".org", ".pdf",
+                     ".png", ".jpg", ".jpeg", ".svg", ".gif")
+
 # Minimum dependencies derived by the verifier. Callers may add, never remove.
 REQUIRED_DEPENDENCIES: Dict[str, frozenset] = {
     "fact_resolution": frozenset({"requirement_revision"}),
@@ -103,9 +109,17 @@ _REASONS = {
     "EVIDENCE_APPROVAL_NOT_FOUND",
     "EVIDENCE_APPROVAL_SUBJECT_MISMATCH",
     "EVIDENCE_APPROVAL_REVISION_MISMATCH",
+    "EVIDENCE_APPROVAL_REVISION_UNBOUND",
+    "EVIDENCE_APPROVAL_AUTHORITY_UNCONFIGURED",
     "EVIDENCE_APPROVER_NOT_AUTHORIZED",
     "EVIDENCE_OBJECT_MISSING",
+    "EVIDENCE_OBJECT_NOT_CODE",
     "EVIDENCE_DEPENDENCY_OBJECT_CONFLICT",
+    "EVIDENCE_RESULT_SOURCE_UNBOUND",
+    "EVIDENCE_RESULT_DRIFT",
+    "EVIDENCE_RESULT_TARGET_MISMATCH",
+    "EVIDENCE_RESULT_SCOPE_MISMATCH",
+    "EVIDENCE_RESULT_STALE",
     "EVIDENCE_NATIVE_UNRESOLVED",
     "EVIDENCE_NATIVE_REVISION_MISMATCH",
     "EVIDENCE_SNAPSHOT_STALE",
@@ -303,10 +317,16 @@ def _resolve_requirement(repo: Path, value: str, state: dict | None) -> Dict[str
     """Requirement content revision, resolved from the real source instead of the claim."""
     identity = _loaded("requirement_identity")
     root = Path(repo).resolve()
+    state_ref, state_members = _requirement_source_from_state(state)
+    if _is_path_like(value) and not (Path(value).is_absolute() or root / value).exists():
+        # A requirement source the claim itself names has to be readable. Falling back to
+        # whatever the state declares would let any unresolvable path stand in for it.
+        return {"resolved": False, "revision": None,
+                "error": "EVIDENCE_DEPENDENCY_UNRESOLVED",
+                "message": f"the declared requirement source {value!r} is not readable inside the project"}
     candidates: List[Tuple[Optional[str], Optional[list]]] = []
     if _is_path_like(value):
         candidates.append((value, None))
-    state_ref, state_members = _requirement_source_from_state(state)
     candidates.append((state_ref, state_members))
     for ref, members in candidates:
         if not ref:
@@ -562,6 +582,185 @@ def _collect_native(repo: Path, record: Dict[str, Any], *, state: dict | None = 
     return observed
 
 
+# --- result bindings for gates, review and verification ------------------------------------
+
+def _document_execution(doc: Dict[str, Any]) -> List[str]:
+    """The command a result document says produced it, if it says so at all."""
+    for key in ("command", "argv", "execution"):
+        value = doc.get(key)
+        if isinstance(value, str) and value.strip():
+            return [value.strip()]
+        if isinstance(value, list):
+            parts = [str(x).strip() for x in value if str(x).strip()]
+            if parts:
+                return parts
+    return []
+
+
+def result_document_binding(repo: Path, ref: Optional[str], *, target: str,
+                            work_item_id: Optional[str] = None,
+                            requirement_revision: Optional[str] = None,
+                            code_revision: Optional[str] = None) -> Dict[str, Any]:
+    """Bind a result document inside the project to the conclusion it is meant to carry.
+
+    A document that only says `{"status": "passed"}` is a label: it names no command that ran,
+    no policy evaluation that can be re-read, and no object it was produced for. Three sources
+    are legal, and each of them stays re-checkable after the result is recorded:
+
+      * `command`/`argv` plus `exit_code` -- a command that really ran;
+      * `policy_plan_ref` + `policy_evaluation_ref` -- a policy evaluation still in the project;
+      * a verified evidence record, which the caller resolves before calling this.
+
+    The binding also records which gate/action, work item and revisions it was issued for, so
+    authorization can re-read the source instead of trusting the snapshot tag stored with it.
+    """
+    def fail(code: str, message: str) -> Dict[str, Any]:
+        return {"available": False, "error": code, "message": message}
+
+    if not ref:
+        return fail("EVIDENCE_RESULT_SOURCE_UNBOUND",
+                    "no result document was named; a passed result needs a source that can be re-read")
+    root = Path(repo).resolve()
+    candidate = Path(str(ref))
+    candidate = candidate if candidate.is_absolute() else root / candidate
+    try:
+        if not candidate.is_file():
+            return fail("EVIDENCE_RESULT_SOURCE_UNBOUND",
+                        f"result document {ref!r} is not a file inside the project")
+        doc = json.loads(candidate.read_text(encoding="utf-8"))
+        digest = hashlib.sha256(candidate.read_bytes()).hexdigest()
+    except (OSError, ValueError):
+        return fail("EVIDENCE_REPORT_UNPARSABLE", f"result document {ref!r} could not be read as JSON")
+    if not isinstance(doc, dict):
+        return fail("EVIDENCE_REPORT_UNPARSABLE", "a result document must be a JSON object")
+    if str(doc.get("status") or "").lower() != "passed":
+        return fail("EVIDENCE_RESULT_STALE", f"result document {ref!r} does not record a passed result")
+    exit_code = doc.get("exit_code")
+    if isinstance(exit_code, bool) or not isinstance(exit_code, int) or exit_code != 0:
+        return fail("EVIDENCE_RESULT_SOURCE_UNBOUND",
+                    "a result document must record exit_code 0; a status without the exit code of "
+                    "the command that produced it is an assertion, not a result")
+    execution = _document_execution(doc)
+    producer: Dict[str, Any]
+    if execution:
+        producer = {"kind": "command", "command": execution}
+    elif doc.get("policy_evaluation_ref") or doc.get("policy_plan_ref"):
+        refs = {key: str(doc[key]) for key in ("policy_plan_ref", "policy_evaluation_ref") if doc.get(key)}
+        digests: Dict[str, Optional[str]] = {}
+        for key, value in refs.items():
+            source = Path(value)
+            source = source if source.is_absolute() else root / value
+            if not source.is_file():
+                return fail("EVIDENCE_RESULT_SOURCE_UNBOUND",
+                            f"{key} {value!r} is not readable inside the project")
+            digests[key] = path_revision(root, value)
+        producer = {"kind": "policy_evaluation", **refs, "digests": digests}
+    else:
+        return fail("EVIDENCE_RESULT_SOURCE_UNBOUND",
+                    "the result document names neither a command that ran nor a policy evaluation "
+                    "that can be re-read; a passed status on its own binds nothing")
+    declared_target = doc.get("target") or doc.get("gate")
+    if declared_target and str(declared_target) != str(target):
+        return fail("EVIDENCE_RESULT_TARGET_MISMATCH",
+                    f"result document {ref!r} was produced for {declared_target!r}, not for {target!r}")
+    declared_work_item = doc.get("work_item_id")
+    if declared_work_item and work_item_id and str(declared_work_item) != str(work_item_id):
+        return fail("EVIDENCE_RESULT_SCOPE_MISMATCH",
+                    f"result document {ref!r} was produced for work item {declared_work_item!r}, "
+                    f"not for {work_item_id!r}")
+    try:
+        relative = candidate.resolve().relative_to(root).as_posix()
+    except (OSError, ValueError):  # pragma: no cover - defensive
+        relative = str(ref)
+    return {"available": True, "binding": {
+        "kind": "result_document", "path": relative, "digest": digest, "status": "passed",
+        "exit_code": 0, "target": str(target), "work_item_id": work_item_id,
+        "requirement_revision": requirement_revision, "code_revision": code_revision,
+        "producer": producer}}
+
+
+def recheck_result_binding(repo: Path | None, binding: Any, *, target: Optional[str] = None,
+                           work_item_id: Optional[str] = None,
+                           requirement_revision: Optional[str] = None,
+                           code_revision: Optional[str] = None,
+                           state: dict | None = None,
+                           policy: dict | None = None) -> Dict[str, Any]:
+    """Re-read the source a passed result was bound to, at the moment the result is used.
+
+    A stored status is history. The document, the command behind it and the object versions it
+    was produced for are all re-read here, so a result whose source was deleted, edited, or
+    issued for something else stops supporting the gate, review or verification that cites it.
+    """
+    def bad(code: str, message: str) -> Dict[str, Any]:
+        return {"ok": False, "error": code, "message": message}
+
+    if not isinstance(binding, dict) or not binding:
+        return bad("EVIDENCE_RESULT_SOURCE_UNBOUND",
+                   "this passed result has no source that can be re-read")
+    if binding.get("evidence_id"):
+        record = load_record(Path(repo).resolve(), str(binding["evidence_id"]))
+        if record is None:
+            return bad("EVIDENCE_RESULT_SOURCE_UNBOUND",
+                       f"evidence record {binding['evidence_id']} is no longer in the record store")
+        result = revalidate(repo, record, state=state, policy=policy, work_item_id=work_item_id,
+                            requirement_revision=requirement_revision)
+        if result.get("validation_status") != "verified" or str(result.get("outcome")) not in SUCCESS_OUTCOMES:
+            return bad(str(result.get("reason_code") or "EVIDENCE_UNVERIFIED"),
+                       f"the evidence behind this result is {result.get('validation_status')}"
+                       f"/{result.get('outcome')} now")
+        return {"ok": True, "error": None}
+    path = binding.get("path")
+    if not path:
+        return bad("EVIDENCE_RESULT_SOURCE_UNBOUND", "this passed result names no result document")
+    root = Path(repo).resolve()
+    candidate = Path(str(path))
+    candidate = candidate if candidate.is_absolute() else root / candidate
+    try:
+        if not candidate.is_file():
+            return bad("EVIDENCE_RESULT_SOURCE_UNBOUND",
+                       f"the result document {path!r} this result was bound to is gone")
+        doc = json.loads(candidate.read_text(encoding="utf-8"))
+        digest = hashlib.sha256(candidate.read_bytes()).hexdigest()
+    except (OSError, ValueError):
+        return bad("EVIDENCE_RESULT_SOURCE_UNBOUND", f"the result document {path!r} can no longer be read")
+    if not isinstance(doc, dict):
+        return bad("EVIDENCE_REPORT_UNPARSABLE", f"the result document {path!r} is not a JSON object")
+    if binding.get("digest") and binding["digest"] != digest:
+        return bad("EVIDENCE_RESULT_DRIFT",
+                   f"the result document {path!r} changed after the result was recorded")
+    if str(doc.get("status") or "").lower() != "passed":
+        return bad("EVIDENCE_RESULT_STALE",
+                   f"the result document {path!r} no longer records a passed result")
+    exit_code = doc.get("exit_code")
+    if isinstance(exit_code, bool) or (exit_code is not None and exit_code != 0):
+        return bad("EVIDENCE_RESULT_STALE",
+                   f"the result document {path!r} no longer records exit_code 0")
+    producer = binding.get("producer") or {}
+    if producer.get("kind") == "command" and not _document_execution(doc):
+        return bad("EVIDENCE_RESULT_SOURCE_UNBOUND",
+                   f"the result document {path!r} no longer names the command that produced it")
+    if producer.get("kind") == "policy_evaluation":
+        for key in ("policy_plan_ref", "policy_evaluation_ref"):
+            value = producer.get(key)
+            if value and path_revision(root, str(value)) != (producer.get("digests") or {}).get(key):
+                return bad("EVIDENCE_RESULT_DRIFT",
+                           f"{key} changed after the result was recorded")
+    if binding.get("target") and target and str(binding["target"]) != str(target):
+        return bad("EVIDENCE_RESULT_TARGET_MISMATCH",
+                   f"this result was recorded for {binding['target']!r}, not for {target!r}")
+    if binding.get("work_item_id") and work_item_id and str(binding["work_item_id"]) != str(work_item_id):
+        return bad("EVIDENCE_RESULT_SCOPE_MISMATCH",
+                   f"this result was recorded for work item {binding['work_item_id']!r}")
+    if binding.get("requirement_revision") and requirement_revision \
+            and str(binding["requirement_revision"]) != str(requirement_revision):
+        return bad("EVIDENCE_RESULT_SCOPE_MISMATCH",
+                   "this result was recorded against a different requirement revision")
+    # `code_revision` is recorded for audit but is not compared here: whether the result covers
+    # the code in force is the snapshot comparison, and mixing the two would relabel a stale
+    # result as an unverifiable one.
+    return {"ok": True, "error": None}
+
+
 # --- identity, persistence ---------------------------------------------------------------
 
 def _canonical(record: Dict[str, Any]) -> str:
@@ -703,9 +902,8 @@ def verify(record: Dict[str, Any], *, inputs: Dict[str, Any], policy: dict | Non
                 return invalid("EVIDENCE_DEPENDENCY_UNRESOLVED")
             continue
         if not observed.get("resolved"):
-            if str(dep.get("object_kind")) in {"requirement_revision"} and requirement_revision:
-                # The consumer's own requirement revision already binds this dependency.
-                continue
+            # An unresolved dependency fails closed. The consumer's own revision says what the
+            # requirement *should* be; it never makes an unreadable source readable.
             if observed.get("error") == "EVIDENCE_DEPENDENCY_UNPROVEN":
                 unproven.append(f"{dep.get('object_kind')}::{dep.get('object_id')}")
                 continue
@@ -734,6 +932,12 @@ def verify(record: Dict[str, Any], *, inputs: Dict[str, Any], policy: dict | Non
     if code_ref and requirement_ref and code_ref == requirement_ref:
         result["conflicting_object"] = code_ref
         return invalid("EVIDENCE_DEPENDENCY_OBJECT_CONFLICT")
+    # The object under test has to be code. A document can be a requirement source, but it can
+    # never be the thing a gate, test or progress claim ran against: swapping the real source
+    # for any readable prose file would otherwise keep an old verdict alive forever.
+    if code_ref and code_ref.lower().endswith(DOCUMENT_SUFFIXES):
+        result["non_code_object"] = code_ref
+        return invalid("EVIDENCE_OBJECT_NOT_CODE")
 
     # Report binding: claimed outcome must match the report that was actually produced.
     report = record.get("report")
@@ -786,25 +990,35 @@ def verify(record: Dict[str, Any], *, inputs: Dict[str, Any], policy: dict | Non
         # and a missing name must never default to valid.
         if not str(observed.get("approver") or "").strip():
             return unverified("EVIDENCE_APPROVER_NOT_AUTHORIZED")
+        if str(observed.get("approver") or "") == str(record.get("producer") or ""):
+            # Self-approval declares itself; it cannot be the authority it claims.
+            return unverified("EVIDENCE_APPROVER_NOT_AUTHORIZED")
         authorities = ((policy or {}).get("evidence") or {}).get("approval_authorities")
         if isinstance(authorities, list) and authorities:
             approver = str(observed.get("approver") or "")
             if approver not in {str(a) for a in authorities}:
                 return unverified("EVIDENCE_APPROVER_NOT_AUTHORIZED")
-        elif str(observed.get("approver") or "") == str(record.get("producer") or ""):
-            # Self-approval declares itself; it cannot be the authority it claims.
-            return unverified("EVIDENCE_APPROVER_NOT_AUTHORIZED")
+        else:
+            # A name that is merely different from the producer is not an authority. Without a
+            # published trust configuration the approval stays unverified rather than being
+            # promoted to trust by the absence of a policy.
+            return unverified("EVIDENCE_APPROVAL_AUTHORITY_UNCONFIGURED")
         # The approval must be about *this* work item, not merely about whatever subject the
         # claim named. A file that exists is not yet an approval for the object being judged.
         if work_item_id and str(observed.get("subject") or "") \
                 and str(observed.get("subject")) != str(work_item_id):
             return unverified("EVIDENCE_APPROVAL_SUBJECT_MISMATCH")
-        # And it must have been issued for the revision that is active now.
+        # And it must have been issued for the revision that is active now. The approval has to
+        # bind that revision itself: a revision copied in by the outer record says what the
+        # claim wants, not what the approver actually approved.
         approval_revision = observed.get("requirement_revision")
-        if requirement_revision and approval_revision \
-                and str(approval_revision) != str(requirement_revision):
-            result["approval_revision"] = approval_revision
-            return unverified("EVIDENCE_APPROVAL_REVISION_MISMATCH")
+        if requirement_revision:
+            if not str(approval_revision or "").strip():
+                result["approval_revision"] = approval_revision
+                return unverified("EVIDENCE_APPROVAL_REVISION_UNBOUND")
+            if str(approval_revision) != str(requirement_revision):
+                result["approval_revision"] = approval_revision
+                return unverified("EVIDENCE_APPROVAL_REVISION_MISMATCH")
         if str(observed.get("decision") or "").lower() not in {"approved", "accepted", "passed"} \
                 and result["outcome"] in SUCCESS_OUTCOMES:
             return unverified("EVIDENCE_APPROVAL_SUBJECT_MISMATCH")
@@ -836,7 +1050,14 @@ def verify(record: Dict[str, Any], *, inputs: Dict[str, Any], policy: dict | Non
 def revalidate(repo: Path | None, record: Dict[str, Any], *, policy: dict | None = None,
                work_item_id: str | None = None, state: dict | None = None,
                requirement_revision: str | None = None) -> Dict[str, Any]:
-    """Convenience: collect inputs (IO) then verify (pure)."""
+    """Convenience: collect inputs (IO) then verify (pure).
+
+    The project's published policy is read when the caller does not pass one: who may approve
+    is a project decision, and a caller that forgets it must not silently turn a configured
+    approval into an unconfigured one.
+    """
+    if policy is None:
+        policy = load_policy(repo)
     return verify(record,
                   inputs=collect_verification_inputs(repo, record, state=state),
                   policy=policy, work_item_id=work_item_id,

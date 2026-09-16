@@ -50,9 +50,13 @@ class EvidenceEnforcementTests(unittest.TestCase):
                                   else work_item.get("requirement_revision")),
             depends_on=_deps(self.fx.repo) if depends_on is None else depends_on, **kwargs)
 
-    def _report(self, name="report.json", status="failed", exit_code=1):
+    def _report(self, name="report.json", status="failed", exit_code=1,
+                command="python3 -m pytest -q"):
+        # A result is what a command produced: the report names the command, so the binding
+        # stays re-readable instead of being a status someone wrote down.
         path = self.fx.repo / name
-        path.write_text(json.dumps({"status": status, "exit_code": exit_code}), encoding="utf-8")
+        path.write_text(json.dumps({"status": status, "exit_code": exit_code,
+                                    "command": command}), encoding="utf-8")
         return name
 
     # --- consumption-time revalidation -----------------------------------------------
@@ -129,7 +133,62 @@ class EvidenceEnforcementTests(unittest.TestCase):
                            report_path="does-not-exist.json")
         self.assertIn("EVIDENCE_REPORT_UNPARSABLE", str(caught.exception))
 
+    def test_a_gate_passed_against_a_report_that_later_moved_binds_nothing(self):
+        """R2: the passing status is stored history; the source is re-read when the gate is used."""
+        report = self._report(status="passed", exit_code=0)
+        sm.record_gate(self.fx.state_path, "tests", True, "passed", "tester", report_path=report)
+        (self.fx.repo / report).write_text(
+            json.dumps({"status": "failed", "exit_code": 1, "command": "pytest -q"}), encoding="utf-8")
+        evidence = guard.collect_evidence(self.fx.repo, self._state())
+        broken = {item["name"]: item["error"] for item in evidence["result_bindings_unverified"]["gates"]}
+        self.assertEqual({"tests": "EVIDENCE_RESULT_DRIFT"}, broken)
+
+    def test_a_gate_without_a_passing_source_closes_nothing(self):
+        """R2: a gate whose result cannot be reproduced is not a gate that passed."""
+        report = self._report(status="passed", exit_code=0)
+        sm.record_gate(self.fx.state_path, "tests", True, "passed", "tester", report_path=report)
+        state = self._state()
+        state["phase"] = "release"
+        state.setdefault("readiness", {})["implementation_tasks_complete"] = True
+        state.setdefault("readiness", {})["acceptance_satisfied"] = True
+        (self.fx.repo / report).write_text(
+            json.dumps({"status": "failed", "exit_code": 1, "command": "pytest -q"}), encoding="utf-8")
+        evidence = guard.collect_evidence(self.fx.repo, state)
+        result = guard.evaluate(state, "close", evidence=evidence)
+        self.assertIn("GATE_RESULT_UNVERIFIABLE", result["reason_codes"])
+
+    def test_a_review_whose_result_source_moved_supports_nothing(self):
+        """R2: a review is a result too, so it is re-read like any other."""
+        report = self._report(name="review.json", status="passed", exit_code=0)
+        sm.record_review(self.fx.state_path, "passed", "reviewer", report_path=report, exit_code=0)
+        state = self._state()
+        state["phase"] = "review"
+        state.setdefault("readiness", {})["implementation_tasks_complete"] = True
+        state["review"]["required"] = True
+        (self.fx.repo / report).write_text(
+            json.dumps({"status": "failed", "exit_code": 1, "command": "pytest -q"}), encoding="utf-8")
+        evidence = guard.collect_evidence(self.fx.repo, state)
+        self.assertEqual("EVIDENCE_RESULT_DRIFT", evidence["result_bindings_unverified"]["review"]["error"])
+        result = guard.evaluate(state, "advance", target_phase="verification", evidence=evidence)
+        self.assertIn("REVIEW_RESULT_UNVERIFIABLE", result["reason_codes"])
+
     # --- readiness has per-key source rules -------------------------------------------
+
+    def test_readiness_is_only_worth_its_last_verification(self):
+        """R1: a verdict stored when the evidence was written is history, not a current result."""
+        evidence_factory.establish_readiness(self.fx.state_path, "behavior_change", repo=self.fx.repo)
+        state = self._state()
+        self.assertTrue(state["readiness"]["behavior_change"])
+        evidence_id = state["readiness_evidence"]["behavior_change"]["evidence_id"]
+        # This run revalidated nothing, so no stored verdict can support any key now.
+        unsupported = guard.unsupported_readiness(state, {})
+        true_keys = sorted(key for key, value in (state.get("readiness") or {}).items() if value is True)
+        self.assertEqual(true_keys, sorted(item["key"] for item in unsupported))
+        self.assertEqual({"EVIDENCE_UNVERIFIED"}, {item["error"] for item in unsupported})
+        # Re-read in this run it is what it says: the same evidence, verified now.
+        evidence = guard.collect_evidence(self.fx.repo, state)
+        self.assertIn(evidence_id, evidence["evidence_results"])
+        self.assertEqual([], [item["key"] for item in evidence["readiness_unsupported"]])
 
     def test_readiness_rejects_a_kind_that_cannot_satisfy_the_key(self):
         record = self._record(kind="agent_claim", outcome="passed")

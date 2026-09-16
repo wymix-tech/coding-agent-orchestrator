@@ -267,6 +267,10 @@ class EvidenceProvenanceTests(unittest.TestCase):
         self.assertEqual("EVIDENCE_APPROVAL_UNRESOLVED", result["reason_code"])
 
     def test_an_approval_is_read_from_its_source_file(self):
+        # Who may approve is published by the project. Without that configuration a name is
+        # just a name, and a name that differs from the producer proves no authority.
+        _write(self.repo / ".orchestrator/config.yaml",
+               "orchestrator:\n  evidence:\n    approval_authorities:\n      - reviewer-1\n")
         _write(self.repo / ".orchestrator/approvals.json", json.dumps({"approvals": [
             {"id": "appr-1", "subject": "W1", "decision": "approved", "approver": "reviewer-1"}]}))
         record = ep.build_record(
@@ -399,6 +403,183 @@ class EvidenceProvenanceTests(unittest.TestCase):
         self.assertEqual({}, ep.load_index(self.repo)["records"])
         rebuilt = ep.rebuild_index(self.repo)
         self.assertEqual(1, len(rebuilt["records"]))
+
+
+class ApprovalAuthorityTests(unittest.TestCase):
+    """R3: an approval is trust only against the project's published authorities."""
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.repo = Path(self._tmp.name)
+        self.addCleanup(self._tmp.cleanup)
+
+    def _approvals(self, *entries: dict) -> None:
+        _write(self.repo / ".orchestrator/approvals.json",
+               json.dumps({"approvals": list(entries) or [
+                   {"id": "appr-1", "subject": "W1", "decision": "approved", "approver": "reviewer-1"}]}))
+
+    def _record(self, **overrides) -> dict:
+        record = ep.build_record(
+            kind="human_approval", claim_type="approval", work_item_id="W1", outcome="approved",
+            producer="agent", depends_on=_deps(self.repo),
+            approval={"source": ".orchestrator/approvals.json", "subject": "W1", "revision": "appr-1"},
+        )
+        record.update(overrides)
+        return record
+
+    def test_a_name_that_is_not_a_published_authority_is_not_trust(self):
+        self._approvals()
+        result = ep.revalidate(self.repo, self._record())
+        self.assertEqual("unverified", result["validation_status"])
+        self.assertEqual("EVIDENCE_APPROVAL_AUTHORITY_UNCONFIGURED", result["reason_code"])
+
+    def test_the_project_names_who_may_approve(self):
+        _write(self.repo / ".orchestrator/config.yaml",
+               "orchestrator:\n  evidence:\n    approval_authorities:\n      - reviewer-1\n")
+        self._approvals()
+        self.assertEqual("verified", ep.revalidate(self.repo, self._record())["validation_status"])
+
+    def test_an_approval_must_bind_the_revision_it_approves(self):
+        _write(self.repo / ".orchestrator/config.yaml",
+               "orchestrator:\n  evidence:\n    approval_authorities:\n      - reviewer-1\n")
+        self._approvals()
+        result = ep.revalidate(self.repo, self._record(requirement_revision="rev-1"),
+                               work_item_id="W1", requirement_revision="rev-1")
+        self.assertEqual("unverified", result["validation_status"])
+        self.assertEqual("EVIDENCE_APPROVAL_REVISION_UNBOUND", result["reason_code"])
+
+    def test_an_approval_for_another_revision_does_not_cover_this_one(self):
+        _write(self.repo / ".orchestrator/config.yaml",
+               "orchestrator:\n  evidence:\n    approval_authorities:\n      - reviewer-1\n")
+        self._approvals({"id": "appr-1", "subject": "W1", "decision": "approved",
+                         "approver": "reviewer-1", "requirement_revision": "rev-old"})
+        result = ep.revalidate(self.repo, self._record(requirement_revision="rev-1"),
+                               work_item_id="W1", requirement_revision="rev-1")
+        self.assertEqual("unverified", result["validation_status"])
+        self.assertEqual("EVIDENCE_APPROVAL_REVISION_MISMATCH", result["reason_code"])
+
+
+class ObjectUnderTestTests(unittest.TestCase):
+    """R4: the object a mechanical claim ran against is code, and its sources must be readable."""
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.repo = Path(self._tmp.name)
+        self.addCleanup(self._tmp.cleanup)
+        _write(self.repo / "src/app.py", "def handle():\n    return 200\n")
+
+    def test_a_document_is_not_the_code_under_test(self):
+        """Prose is a legal requirement source; it is never the thing a gate ran against."""
+        _write(self.repo / "docs/story.md", "# Story\n\nReturn 200 for a valid token.\n")
+        _write(self.repo / "docs/spec.md", "# Spec\n\nReturn 200 for a valid token.\n")
+        deps = [{"object_kind": "code_under_test", "object_id": "docs/story.md",
+                 "revision": ep.path_revision(self.repo, "docs/story.md")},
+                dict(ep.resolve_dependency(self.repo, {"object_kind": "requirement_revision",
+                                                       "object_id": "docs/spec.md"})
+                     | {"object_kind": "requirement_revision", "object_id": "docs/spec.md"})]
+        record = ep.build_record(kind="mechanical_observation", claim_type="test_result",
+                                 work_item_id="W1", outcome="passed", producer="pytest",
+                                 depends_on=deps, report=_report(self.repo, status="passed"))
+        result = ep.revalidate(self.repo, record)
+        self.assertEqual("invalid", result["validation_status"])
+        self.assertEqual("EVIDENCE_OBJECT_NOT_CODE", result["reason_code"])
+        self.assertEqual("docs/story.md", result["non_code_object"])
+
+    def test_a_requirement_source_that_cannot_be_read_is_unresolved(self):
+        """A missing requirement is never substituted by whatever the state declares."""
+        record = _passed_record(self.repo)
+        # The requirement the claim names is gone now: nothing may stand in for it.
+        (self.repo / "docs/story.md").unlink()
+        result = ep.revalidate(self.repo, record)
+        self.assertEqual("invalid", result["validation_status"])
+        self.assertEqual("EVIDENCE_DEPENDENCY_UNRESOLVED", result["reason_code"])
+
+
+class ResultBindingTests(unittest.TestCase):
+    """R2: a passed result is bound to what produced it, and re-read when it is used."""
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.repo = Path(self._tmp.name)
+        self.addCleanup(self._tmp.cleanup)
+        self.ref = "results/unit.json"
+
+    def _write_result(self, **overrides) -> None:
+        payload = {"status": "passed", "exit_code": 0, "command": "python3 -m pytest tests"}
+        payload.update(overrides)
+        _write(self.repo / self.ref, json.dumps(payload))
+
+    def _binding(self, **scope) -> dict:
+        return ep.result_document_binding(self.repo, self.ref, target="gate:unit", **scope)
+
+    def _recheck(self, binding, **scope) -> dict:
+        return ep.recheck_result_binding(self.repo, binding, target="gate:unit", **scope)
+
+    def test_a_passed_status_without_a_command_binds_nothing(self):
+        self._write_result(command=None)
+        result = self._binding()
+        self.assertFalse(result["available"])
+        self.assertEqual("EVIDENCE_RESULT_SOURCE_UNBOUND", result["error"])
+
+    def test_a_result_that_does_not_record_exit_code_binds_nothing(self):
+        self._write_result(exit_code=None)
+        result = self._binding()
+        self.assertFalse(result["available"])
+        self.assertEqual("EVIDENCE_RESULT_SOURCE_UNBOUND", result["error"])
+
+    def test_a_result_produced_for_another_gate_does_not_bind_this_one(self):
+        self._write_result(target="gate:integration")
+        result = self._binding()
+        self.assertFalse(result["available"])
+        self.assertEqual("EVIDENCE_RESULT_TARGET_MISMATCH", result["error"])
+
+    def test_a_binding_from_a_command_that_ran_is_accepted(self):
+        self._write_result()
+        result = self._binding(work_item_id="W1", requirement_revision="rev-1", code_revision="snap-1")
+        self.assertTrue(result["available"])
+        self.assertEqual("command", result["binding"]["producer"]["kind"])
+        self.assertTrue(self._recheck(result["binding"], work_item_id="W1",
+                                      requirement_revision="rev-1")["ok"])
+
+    def test_editing_the_result_document_invalidates_the_binding(self):
+        self._write_result()
+        binding = self._binding()["binding"]
+        self._write_result(command="python3 -m pytest tests -k unit")
+        result = self._recheck(binding)
+        self.assertFalse(result["ok"])
+        self.assertEqual("EVIDENCE_RESULT_DRIFT", result["error"])
+
+    def test_a_result_document_that_stops_recording_passed_is_stale(self):
+        """A binding stored without a digest still re-reads the verdict it recorded."""
+        self._write_result()
+        binding = dict(self._binding()["binding"])
+        binding.pop("digest", None)
+        self._write_result(status="failed", exit_code=1)
+        result = self._recheck(binding)
+        self.assertFalse(result["ok"])
+        self.assertEqual("EVIDENCE_RESULT_STALE", result["error"])
+
+    def test_deleting_the_result_document_unbinds_the_result(self):
+        self._write_result()
+        binding = self._binding()["binding"]
+        (self.repo / self.ref).unlink()
+        result = self._recheck(binding)
+        self.assertFalse(result["ok"])
+        self.assertEqual("EVIDENCE_RESULT_SOURCE_UNBOUND", result["error"])
+
+    def test_a_result_of_another_work_item_does_not_carry_this_one(self):
+        self._write_result()
+        binding = self._binding(work_item_id="W1")["binding"]
+        result = self._recheck(binding, work_item_id="W2")
+        self.assertFalse(result["ok"])
+        self.assertEqual("EVIDENCE_RESULT_SCOPE_MISMATCH", result["error"])
+
+    def test_a_result_against_another_requirement_revision_is_out_of_scope(self):
+        self._write_result()
+        binding = self._binding(requirement_revision="rev-1")["binding"]
+        result = self._recheck(binding, requirement_revision="rev-2")
+        self.assertFalse(result["ok"])
+        self.assertEqual("EVIDENCE_RESULT_SCOPE_MISMATCH", result["error"])
 
 
 if __name__ == "__main__":

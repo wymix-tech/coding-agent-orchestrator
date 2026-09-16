@@ -177,7 +177,8 @@ class SemanticImpactTests(unittest.TestCase):
             sm.set_execution_snapshot(path, "A1", "agent", "initial analysis", s["revision"])
             s = sm._load(path)
             report = pathlib.Path(td) / "verify-a1.json"
-            report.write_text(json.dumps({"status": "passed", "exit_code": 0}), encoding="utf-8")
+            report.write_text(json.dumps({"status": "passed", "exit_code": 0,
+                                          "command": "python3 -m pytest -q"}), encoding="utf-8")
             sm.record_verification(path, "passed", "verifier", "A1", "verify-a1.json", s["revision"])
             self.assertTrue(sm._load(path)["verification"]["fresh"])
             s = sm._load(path)

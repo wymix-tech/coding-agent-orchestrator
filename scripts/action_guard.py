@@ -140,7 +140,36 @@ def semantic_complete(impact: dict | None) -> bool:
                 and isinstance(provider, dict) and provider.get("available") is not False)
 
 
-def bind_analysis(repo: Path, analysis: dict) -> dict:
+def requirement_content_refs(repo: Path, state: dict | None) -> set[str]:
+    """The files whose requirement content, not their raw bytes, the analysis is about.
+
+    Progress written into these files is runtime state; only their requirement content can
+    invalidate the analysis. Anything outside this set is counted byte for byte, so real code
+    changes keep invalidating the consumers that depend on them.
+    """
+    work_item = (state or {}).get("work_item") or {}
+    candidates = [
+        work_item.get("requirement_source_ref"),
+        ((state or {}).get("analysis") or {}).get("requirement_ref"),
+    ]
+    for member in work_item.get("members") or []:
+        if isinstance(member, dict):
+            candidates.append(member.get("ref"))
+        elif isinstance(member, str):
+            candidates.append(member)
+    refs = set()
+    for candidate in candidates:
+        if not candidate or not isinstance(candidate, str):
+            continue
+        ref = str(candidate).replace("\\", "/")
+        if ref.startswith("./"):
+            ref = ref[2:]
+        if (repo / ref).is_file():
+            refs.add(ref)
+    return refs
+
+
+def bind_analysis(repo: Path, analysis: dict, state: dict | None = None) -> dict:
     """Bind analysis to inputs, excluding mutable state and generated projections."""
     refs = [str(analysis[k]) for k in ANALYSIS_REFS if analysis.get(k)]
     refs += [str(p) for p in (repo / ".orchestrator/config.yaml", repo / ".orchestrator/policies") if p.exists()]
@@ -189,6 +218,11 @@ def bind_analysis(repo: Path, analysis: dict) -> dict:
             revisions[ref] = revision
     if revisions:
         binding["content_revisions"] = revisions
+    # The same repository identity counted through requirement content instead of raw bytes.
+    # Requirement sources are the only files whose runtime progress is not a content change,
+    # so only they are counted differently, and only when the work item actually names them.
+    binding["content_snapshot_id"] = snapshots.content_fingerprint(
+        repo, requirement_content_refs(repo, state))
     # Caller-supplied analysis IDs can be reused even when requirements or policy
     # content changes. Gate/review/verification evidence must bind to actual inputs.
     binding["evidence_snapshot_id"] = hashlib.sha256(json.dumps({
@@ -267,7 +301,15 @@ def collect_evidence(repo: Path | None, state: dict | None) -> dict:
     except OSError:
         current = None
     evidence["repository_snapshot_id"] = current
-    evidence["repository_fresh"] = bool(current and current == analysis.get("repository_snapshot_id"))
+    fresh = bool(current and current == analysis.get("repository_snapshot_id"))
+    if current and not fresh and analysis.get("content_snapshot_id"):
+        # The raw bytes moved: either the code moved, or the requirement source was written to
+        # without its requirement content changing. Only the second one keeps the analysis valid,
+        # and only for the files the work item actually points at as its requirement.
+        evidence["content_snapshot_id"] = snapshots.content_fingerprint(
+            repo, requirement_content_refs(repo, state))
+        fresh = evidence["content_snapshot_id"] == analysis.get("content_snapshot_id")
+    evidence["repository_fresh"] = fresh
     comparison = analysis.get("comparison_basis")
     evidence["comparison_fresh"] = comparison is None or (
         comparison.get("status") == "resolved"
@@ -311,7 +353,11 @@ def collect_evidence(repo: Path | None, state: dict | None) -> dict:
     evidence["context_fresh"] = bool(manifest and {"requirement", "decision", "semantic_impact"} <= source_ids and not stale_sources)
     evidence["stale_context_sources"] = stale_sources
     _revalidate_bound_evidence(repo, state, evidence)
-    evidence["readiness_unsupported"] = unsupported_readiness(state)
+    # Readiness is consumed with *this* run's revalidations. A verdict stored when the evidence
+    # was written is history; only a result produced now can support a judgement now.
+    evidence["readiness_unsupported"] = unsupported_readiness(
+        state, evidence.get("evidence_results"))
+    _revalidate_result_bindings(repo, state, evidence)
     return evidence
 
 
@@ -421,6 +467,45 @@ def _revalidate_bound_evidence(repo: Path, state: dict, evidence: dict) -> None:
             evidence["evidence_unverified"].append(entry)
     evidence["evidence_results"] = results
     evidence["evidence_policy"] = policy
+
+
+def _revalidate_result_bindings(repo: Path, state: dict, evidence: dict) -> None:
+    """Re-read the source behind every passed gate, review and verification.
+
+    `evidence_matches` only compares the snapshot tags that were written when the result was
+    recorded. The document, the command behind it and the object versions it was issued for
+    are all re-read here, so a result whose source was deleted, edited, or produced for
+    something else stops supporting the gate, review or verification that cites it.
+    """
+    ep = evidence_provenance
+    work_item = state.get("work_item") or {}
+    scope = {
+        "work_item_id": work_item.get("id") or state.get("work_item_id"),
+        "requirement_revision": work_item.get("requirement_revision"),
+        "code_revision": state.get("execution_snapshot_id"),
+    }
+    policy = evidence.get("evidence_policy")
+    broken: dict[str, Any] = {"gates": [], "review": None, "verification": None}
+
+    def recheck(binding: Any, target: str) -> dict[str, Any] | None:
+        outcome = ep.recheck_result_binding(repo, binding, target=target, state=state,
+                                           policy=policy, **scope)
+        return None if outcome["ok"] else outcome
+
+    for name, gate in (state.get("quality_gates") or {}).items():
+        if not isinstance(gate, dict) or gate.get("status") != "passed":
+            continue
+        outcome = recheck(gate.get("report"), f"gate:{name}")
+        if outcome is not None:
+            broken["gates"].append({"name": name, "error": outcome["error"],
+                                    "message": outcome["message"]})
+    review = state.get("review") or {}
+    if review.get("status") == "passed":
+        broken["review"] = recheck(review.get("report"), "review")
+    verification = state.get("verification") or {}
+    if verification.get("status") == "passed":
+        broken["verification"] = recheck(verification.get("report"), "verification")
+    evidence["result_bindings_unverified"] = broken
 
 
 def unsupported_readiness(state: dict | None, results: dict | None = None) -> list[dict[str, Any]]:
@@ -547,7 +632,7 @@ def evaluate(state: dict | None, action: str, *, evidence: dict | None = None,
             # exactly this key, for this purpose, and with a success outcome.
             unsupported = facts.get("readiness_unsupported")
             if unsupported is None:
-                unsupported = unsupported_readiness(state)
+                unsupported = unsupported_readiness(state, facts.get("evidence_results"))
             if inner_loop:
                 unsupported = [e for e in unsupported if not drift_caused(e)]
             for item in unsupported:
@@ -610,24 +695,41 @@ def evaluate(state: dict | None, action: str, *, evidence: dict | None = None,
                 deny("REVIEW_BLOCKING_FINDINGS", "Blocking review findings remain.", "resolve_review_findings")
             if review.get("required") and review.get("status") != "passed":
                 deny("REVIEW_NOT_PASSED", "Required review has not passed.", "complete_required_review")
-            if review.get("required") and review.get("status") == "passed" and not evidence_matches(state, review):
-                deny("REVIEW_STALE", "Required review does not cover the current execution snapshot.", "complete_required_review")
+            if review.get("required") and review.get("status") == "passed":
+                if not evidence_matches(state, review):
+                    deny("REVIEW_STALE", "Required review does not cover the current execution snapshot.", "complete_required_review")
+                elif (facts.get("result_bindings_unverified") or {}).get("review") is not None:
+                    deny("REVIEW_RESULT_UNVERIFIABLE",
+                         "Required review no longer has a result source that can be re-read: "
+                         f"{(facts['result_bindings_unverified']['review'])['message']}.",
+                         "complete_required_review")
         if phase in {"release", "closed"}:
             if not (state.get("readiness") or {}).get("acceptance_satisfied"):
                 deny("ACCEPTANCE_UNSATISFIED", "Acceptance criteria are not recorded as satisfied.", "verify_acceptance_criteria")
             gates = state.get("quality_gates") or {}
+            broken_gates = {str(item["name"]): item for item in
+                            ((facts.get("result_bindings_unverified") or {}).get("gates") or [])}
             for name in required_gates(state, facts):
                 gate = gates.get(name) or {}
                 if gate.get("status") != "passed":
                     deny("REQUIRED_GATE_NOT_PASSED", f"Required gate {name} is {gate.get('status', 'missing')}.", f"run_required_gate:{name}")
                 elif not evidence_matches(state, gate):
                     deny("GATE_EVIDENCE_STALE", f"Required gate {name} does not cover the current execution snapshot.", f"run_required_gate:{name}")
+                elif name in broken_gates:
+                    deny("GATE_RESULT_UNVERIFIABLE",
+                         f"Required gate {name} no longer has a result source that can be re-read: {broken_gates[name]['message']}.",
+                         f"run_required_gate:{name}")
             ver = state.get("verification") or {}
             current = state.get("execution_snapshot_id")
             if ver.get("status") != "passed":
                 deny("VERIFICATION_NOT_PASSED", "Final verification has not passed.", "run_fresh_final_verification")
-            if not current or not ver.get("fresh") or not evidence_matches(state, ver):
+            elif not current or not ver.get("fresh") or not evidence_matches(state, ver):
                 deny("VERIFICATION_STALE", "Final verification is not fresh for the current execution snapshot.", "run_fresh_final_verification")
+            elif (facts.get("result_bindings_unverified") or {}).get("verification") is not None:
+                deny("VERIFICATION_RESULT_UNVERIFIABLE",
+                     "Final verification no longer has a result source that can be re-read: "
+                     f"{(facts['result_bindings_unverified']['verification'])['message']}.",
+                     "run_fresh_final_verification")
     recovery = recovery_actions(reasons)
     return {"schema_version": 1, "action": action, "target_phase": "closed" if action == "close" else target_phase,
             "allowed": not reasons, "decision": "deny" if reasons else "allow", "reasons": reasons,

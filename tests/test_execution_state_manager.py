@@ -111,7 +111,11 @@ class ExecutionStateTests(unittest.TestCase):
             s = fx.state()
             sm.transition(fx.state_path, "review", "in_progress", "agent", "review", s["revision"])
             s = fx.state()
-            sm.record_review(fx.state_path, "passed", "reviewer", 0, "review:1", s["revision"])
+            # A passed review is a conclusion about the code, so it binds the result document
+            # that conclusion came from. `review:1` was a label and bound nothing.
+            sm.record_review(fx.state_path, "passed", "reviewer", 0,
+                             evidence_factory.result_document(fx.root, "review-result.json"),
+                             s["revision"])
             s = fx.state()
             sm.transition(fx.state_path, "verification", "in_progress", "agent", "review passed", s["revision"])
             self.assertEqual("verification", fx.state()["phase"])
@@ -294,6 +298,46 @@ class ProviderDetectorTests(unittest.TestCase):
             result = detector.detect(root)
             self.assertEqual("MULTIPLE_CANDIDATES", result["status"])
             self.assertTrue(result["requires_authority_resolution"])
+
+
+class ProgressSourceTests(unittest.TestCase):
+    """R12: progress is what the source observed, never what the caller declares next to it.
+
+    A count written beside a claim is an expectation. Only the report that ran the tasks
+    observes anything, so the report is the number, and a mismatch is a refusal.
+    """
+
+    def setUp(self):
+        self.fx = StateFixture()
+        self.addCleanup(self.fx.close)
+
+    def _record(self, completed: int, total: int) -> dict:
+        work_item_id = (self.fx.state().get("work_item") or {}).get("id") or "W-1"
+        return evidence_factory.progress_record(self.fx.root, completed=completed, total=total,
+                                                work_item_id=work_item_id)
+
+    def _set(self, completed: int, total: int, record: dict):
+        state = self.fx.state()
+        return sm.set_progress(self.fx.state_path, completed, total, "test", "ignored",
+                               state["revision"], evidence_record=record)
+
+    def test_the_count_a_report_observed_is_the_progress(self):
+        self._set(2, 5, self._record(2, 5))
+        self.assertEqual({"completed": 2, "total": 5}, self.fx.state()["work_item"]["progress"])
+
+    def test_a_declared_count_cannot_override_the_observed_one(self):
+        record = self._record(1, 1)
+        record["extra"]["completed"] = 4
+        record["extra"]["total"] = 4
+        with self.assertRaises(sm.StateError) as caught:
+            self._set(4, 4, record)
+        self.assertIn("metadata cannot override the source", str(caught.exception))
+        self.assertEqual({"completed": 0, "total": 0}, self.fx.state()["work_item"]["progress"])
+
+    def test_the_requested_count_must_be_the_count_that_was_observed(self):
+        with self.assertRaises(sm.StateError) as caught:
+            self._set(5, 5, self._record(2, 5))
+        self.assertIn("observed 2/5", str(caught.exception))
 
 
 if __name__ == "__main__":

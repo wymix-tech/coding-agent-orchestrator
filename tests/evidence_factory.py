@@ -156,12 +156,11 @@ def search_scope(repo: pathlib.Path) -> str:
     """The content a negative proof really searched: the analyzed content, not the proof file.
 
     Searching the proof document itself would find the query inside its own description and
-    "prove" nothing was found while the record is literally full of it.
+    "prove" nothing was found while the record is literally full of it. The scope is the
+    requirement this project actually has: inventing a second document beside the real one
+    would search a file that never described the requirement.
     """
-    for name in ("requirements/story.md", "README.md", "docs/spec.md"):
-        if (repo / name).is_file():
-            return name
-    return write_requirement(repo)
+    return pick_requirement(repo)
 
 
 def negative_proof_entry(repo: pathlib.Path, fact_path: str, **kwargs) -> dict:
@@ -173,6 +172,36 @@ def negative_proof_entry(repo: pathlib.Path, fact_path: str, **kwargs) -> dict:
             "paths": scope,
             "search": query,
             "matches": kwargs.get("matches", 0)}
+
+
+def publish_evidence_policy(repo: pathlib.Path, *, approval_authorities: tuple[str, ...] = ("reviewer-1",),
+                            required_objects: list[str] | None = None) -> str:
+    """Publish the trust configuration the project actually needs for human approvals.
+
+    A name that is merely different from the producer is not an authority. Approvals only
+    count as trust against a published list of who may approve what, so a test that needs a
+    verified approval publishes that list instead of expecting the verifier to guess.
+    """
+    import yaml
+    config = repo / ".orchestrator/config.yaml"
+    doc: dict = {}
+    if config.exists():
+        try:
+            loaded = yaml.safe_load(config.read_text(encoding="utf-8"))
+            if isinstance(loaded, dict):
+                doc = loaded
+        except (OSError, yaml.YAMLError):
+            doc = {}
+    orch = doc.setdefault("orchestrator", {}) if isinstance(doc.get("orchestrator"), dict) else {}
+    doc["orchestrator"] = orch
+    evidence = orch.get("evidence") if isinstance(orch.get("evidence"), dict) else {}
+    evidence["approval_authorities"] = list(approval_authorities)
+    if required_objects is not None:
+        evidence["required_objects"] = required_objects
+    orch["evidence"] = evidence
+    config.parent.mkdir(parents=True, exist_ok=True)
+    config.write_text(yaml.safe_dump(doc, sort_keys=True, allow_unicode=True), encoding="utf-8")
+    return ".orchestrator/config.yaml"
 
 
 def write_report(repo: pathlib.Path, name: str = "unit-tests.json", *, status: str = "passed",
@@ -191,8 +220,14 @@ def write_report(repo: pathlib.Path, name: str = "unit-tests.json", *, status: s
 
 def write_approval(repo: pathlib.Path, *, approval_id: str = "appr-1", subject: str = "W-1",
                    decision: str = "approved", approver: str = "reviewer-1",
-                   path: str = APPROVALS_REL) -> str:
-    """Write an approval file: the human decision lives outside the claim that cites it."""
+                   path: str = APPROVALS_REL, requirement_revision: str | None = None,
+                   authority: str | None = None) -> str:
+    """Write an approval file: the human decision lives outside the claim that cites it.
+
+    The approval binds its own requirement revision. An approval that does not say which
+    revision it was issued for cannot be trusted for the revision that is active now, and
+    the outer record must not supply that binding on its behalf.
+    """
     target = repo / path
     doc: dict = {"approvals": []}
     if target.exists():
@@ -202,11 +237,34 @@ def write_approval(repo: pathlib.Path, *, approval_id: str = "appr-1", subject: 
                 doc = loaded
         except (OSError, ValueError):
             doc = {"approvals": []}
-    doc["approvals"].append({"id": approval_id, "subject": subject, "decision": decision,
-                             "approver": approver})
+    entry = {"id": approval_id, "subject": subject, "decision": decision, "approver": approver}
+    if requirement_revision is not None:
+        entry["requirement_revision"] = requirement_revision
+    if authority is not None:
+        entry["authority"] = authority
+    doc["approvals"].append(entry)
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(json.dumps(doc, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     return path
+
+
+def fact_evidence(repo: pathlib.Path, fact_path: str, *, work_item_id: str = "W-1",
+                  requirement_revision: str | None = None,
+                  producer: str = "test-runner") -> dict:
+    """Evidence that names the fact it observed, for facts a search cannot decide.
+
+    "There is no authentication risk" is not the absence of a word. It is carried by a source
+    produced for that exact predicate, which says so in `extra.fact_path` and can be re-read.
+    """
+    report = write_report(repo, f"fact-{fact_path.replace('.', '-')}.json", status="failed",
+                          exit_code=1, command=f"python3 -m pytest -k {fact_path.replace('.', '_')}")
+    return ep.build_record(
+        kind="mechanical_observation", claim_type="fact_observation", work_item_id=work_item_id,
+        requirement_revision=requirement_revision, outcome="failed", producer=producer,
+        source={"type": "path"},
+        depends_on=[requirement_dependency(repo), code_dependency(repo)],
+        report=report, extra={"fact_path": fact_path},
+    )
 
 
 def result_document(repo: pathlib.Path, name: str = "gate-result.json", *,
@@ -249,7 +307,10 @@ def build_readiness_record(repo: pathlib.Path, key: str, *, work_item_id: str = 
         record["report"] = report
     if kind == "human_approval":
         approval_id = f"appr-{key}"
-        write_approval(repo, approval_id=approval_id, subject=subject or work_item_id)
+        # Who may approve is a project decision, published before the approval is checked.
+        publish_evidence_policy(repo)
+        write_approval(repo, approval_id=approval_id, subject=subject or work_item_id,
+                       requirement_revision=requirement_revision)
         record["approval"] = {"source": APPROVALS_REL, "subject": subject or work_item_id,
                               "revision": approval_id}
     return record
@@ -274,8 +335,14 @@ def establish_readiness(state_path: pathlib.Path, key: str, *, actor: str = "tes
 
 def progress_record(repo: pathlib.Path, *, completed: int = 1, total: int = 1,
                     work_item_id: str = "W-1", requirement_revision: str | None = None) -> dict:
-    """A real observation that tasks were finished: a report that says so, plus its dependencies."""
-    report = write_report(repo, f"tasks-{completed}.json", command=f"python3 -m pytest tasks -k {completed}")
+    """A real observation that tasks were finished: a report that says so, plus its dependencies.
+
+    The count lives in the report, because the report is the source that observed the tasks.
+    Metadata beside the claim only declares what the caller expects, and it is checked against
+    the report rather than being allowed to replace it.
+    """
+    report = write_report(repo, f"tasks-{completed}.json", command=f"python3 -m pytest tasks -k {completed}",
+                          tests={"completed": completed, "total": total})
     return ep.build_record(
         kind="mechanical_observation", claim_type="task_progress", work_item_id=work_item_id,
         outcome="passed", producer="pytest", requirement_revision=requirement_revision,

@@ -839,16 +839,29 @@ def load_evidence_reference(repo: pathlib.Path, reference: str | None) -> Option
     return doc if isinstance(doc, dict) and doc.get("evidence_id") else None
 
 
+def _result_binding_context(state: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    """What a result has to be bound to: the work item, its requirement and the code in force."""
+    work_item = (state or {}).get("work_item") or {}
+    return {
+        "work_item_id": work_item.get("id") or (state or {}).get("work_item_id"),
+        "requirement_revision": work_item.get("requirement_revision"),
+        "code_revision": (state or {}).get("execution_snapshot_id"),
+    }
+
+
 def _bind_alternative_result(state_path: pathlib.Path, *, state: Optional[Dict[str, Any]] = None,
-                             evidence_ref: Optional[str] = None) -> Dict[str, Any]:
+                             evidence_ref: Optional[str] = None, target: str) -> Dict[str, Any]:
     """Bind a passed result that did not come from a report the caller ran.
 
     Two legal collection paths exist: a stored evidence record that verifies now, and a
-    result document inside the project (a policy evaluation, an imported result). Anything
-    else is a label, and a label cannot make a gate pass.
+    result document inside the project that names a command which really ran or a policy
+    evaluation that can still be re-read. Anything else is a label, and a label cannot make
+    a gate pass. Every accepted binding is re-read at authorization time, so binding also
+    records the gate/action, work item and revisions it was issued for.
     """
     repo = repository_snapshot.repo_from_state(state_path)
     ep = _evidence_module()
+    scope = _result_binding_context(state)
     record = load_evidence_reference(repo, evidence_ref)
     if record is not None:
         result = _verify_evidence_record(state_path, record, state=state)
@@ -859,19 +872,16 @@ def _bind_alternative_result(state_path: pathlib.Path, *, state: Optional[Dict[s
                 f"{result.get('validation_status')}/{result.get('outcome')} "
                 f"({result.get('reason_code')}); a passed gate needs a result that verifies now")
         return {"evidence_id": result.get("evidence_id"), "status": result.get("outcome"),
-                "exit_code": 0, "binding": "evidence_record",
-                "validation_status": result.get("validation_status")}
-    document = _result_document(repo, evidence_ref)
-    if document is not None and str(document.get("status")) == "passed" \
-            and document.get("exit_code") in (None, 0):
-        return {"path": document.get("path"), "status": "passed",
-                "exit_code": document.get("exit_code"), "digest": document.get("digest"),
-                "binding": "result_document"}
+                "exit_code": 0, "binding": "evidence_record", "target": target,
+                "validation_status": result.get("validation_status"), **scope}
+    binding = ep.result_document_binding(repo, evidence_ref, target=target, **scope)
+    if binding.get("available"):
+        return {"status": "passed", "binding": "result_document", **binding["binding"]}
     raise StateError(
         f"EVIDENCE_REPORT_REQUIRED: {evidence_ref or '<no evidence ref>'} is neither a report "
-        "of a command that ran, a verifiable evidence id, nor a result document inside the "
-        "project; record the real result with --report or import it as verifiable evidence "
-        "(see `coding-orchestrator evidence index`)")
+        "of a command that ran, a verifiable evidence id, nor a result document that names its "
+        f"own execution: {binding.get('message')}; record the real result with --report or "
+        "import it as verifiable evidence (see `coding-orchestrator evidence index`)")
 
 
 def _result_document(repo: pathlib.Path, ref: Optional[str]) -> Optional[Dict[str, Any]]:
@@ -900,23 +910,25 @@ def _result_document(repo: pathlib.Path, ref: Optional[str]) -> Optional[Dict[st
 def _bind_report(state_path: pathlib.Path, status: str, report_path: Optional[str],
                  exit_code: Optional[int], argv: Optional[list],
                  *, state: Optional[Dict[str, Any]] = None,
-                 evidence_ref: Optional[str] = None) -> Optional[Dict[str, Any]]:
+                 evidence_ref: Optional[str] = None, target: str) -> Optional[Dict[str, Any]]:
     """Bind the result that was actually produced. A real failure is recorded as a failure.
 
     `passed` is never accepted without a result binding. Legal bindings are the mechanical
     report of a command that ran, a verified evidence record, or a result document that
-    lives inside the project (policy evaluation, imported results). Every one of them is
-    read here; none of them is a token the caller asserts.
+    lives inside the project and names its own execution. Every one of them is read here;
+    none of them is a token the caller asserts.
     """
     if status not in RESULT_BINDING_STATUSES:
         return None
     if not report_path and exit_code is None:
         if status != "passed":
             return None
-        return _bind_alternative_result(state_path, state=state, evidence_ref=evidence_ref)
+        return _bind_alternative_result(state_path, state=state, evidence_ref=evidence_ref,
+                                        target=target)
     repo = repository_snapshot.repo_from_state(state_path)
     reported_status = None
     digest = None
+    doc: Optional[Dict[str, Any]] = None
     if report_path:
         path = pathlib.Path(report_path)
         path = path if path.is_absolute() else repo / path
@@ -945,12 +957,21 @@ def _bind_report(state_path: pathlib.Path, status: str, report_path: Optional[st
         if exit_code is None:
             raise StateError("EVIDENCE_REPORT_REQUIRED: a passed result needs the exit code of "
                              "the command that produced it")
+        # And it has to name the command: a status plus an exit code with nothing behind them
+        # is still an assertion. This is what makes the binding re-checkable later.
+        if not list(argv or []) and not (isinstance(doc, dict) and (
+                doc.get("command") or doc.get("argv") or doc.get("execution"))):
+            raise StateError("EVIDENCE_EXECUTION_UNBOUND: a passed result must record the command "
+                             "that produced it (--command, or command/argv inside the report)")
     return {
         "path": report_path,
         "status": reported_status,
         "exit_code": exit_code,
         "digest": digest,
         "argv": list(argv or []),
+        "binding": "report",
+        "target": target,
+        **_result_binding_context(state),
     }
 
 
@@ -1047,29 +1068,36 @@ def _counts(value: Any) -> Optional[Dict[str, int]]:
 
 
 def evidence_progress(repo: pathlib.Path, record: Dict[str, Any]) -> Optional[Dict[str, int]]:
-    """How many tasks the evidence itself says were finished, if it says so at all."""
+    """Task counts *observed by the source* this progress claim cites.
+
+    Progress is a count of finished tasks, so the count has to come from the source that
+    observed them. Metadata next to the claim is an expectation, never an observation.
+    """
+    report_path = (record.get("report") or {}).get("path")
+    if not report_path:
+        return None
+    path = pathlib.Path(report_path)
+    path = path if path.is_absolute() else repo / path
+    try:
+        doc = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        doc = None
+    if isinstance(doc, dict):
+        for key in ("progress", "tasks", "tests"):
+            found = _counts(doc.get(key))
+            if found:
+                return found
+    return None
+
+
+def declared_progress(record: Dict[str, Any]) -> Optional[Dict[str, int]]:
+    """The count a claim asserts. It may only ever be checked against the observed one."""
     for holder in (record.get("extra") or {}, record.get("source") or {}):
         for key in ("progress", "tasks"):
             found = _counts(holder.get(key))
             if found:
                 return found
-    found = _counts(record.get("extra"))
-    if found:
-        return found
-    report_path = (record.get("report") or {}).get("path")
-    if report_path:
-        path = pathlib.Path(report_path)
-        path = path if path.is_absolute() else repo / path
-        try:
-            doc = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            doc = None
-        if isinstance(doc, dict):
-            for key in ("progress", "tasks", "tests"):
-                found = _counts(doc.get(key))
-                if found:
-                    return found
-    return None
+    return _counts(record.get("extra"))
 
 
 def set_progress(
@@ -1133,7 +1161,14 @@ def set_progress(
         if observed is None:
             raise StateError(
                 f"work_item.progress is not satisfied by {result.get('evidence_id')}: the "
-                "evidence records no task count, so no progress number can be derived from it")
+                "source it cites records no task count, so no progress number can be derived "
+                "from it; a count declared next to the claim is an expectation, not an observation")
+        declared = declared_progress(record)
+        if declared is not None and declared != observed:
+            raise StateError(
+                f"work_item.progress is not satisfied by {result.get('evidence_id')}: the claim "
+                f"declares {declared['completed']}/{declared['total']} but its source observed "
+                f"{observed['completed']}/{observed['total']}; metadata cannot override the source")
         if observed != {"completed": completed, "total": total}:
             raise StateError(
                 f"work_item.progress is not satisfied by {result.get('evidence_id')}: it "
@@ -1352,7 +1387,7 @@ def record_gate(
     state = _load(state_path)
     _require_revision(state, expected_revision)
     report = _bind_report(state_path, status, report_path, exit_code, argv,
-                          state=state, evidence_ref=evidence_ref)
+                          state=state, evidence_ref=evidence_ref, target=f"gate:{name}")
     new_state = copy.deepcopy(state)
     if (state.get("quality_gates", {}).get(name) or {}).get("required") and not required:
         raise StateError("an established required gate cannot be downgraded by recording a result")
@@ -1390,6 +1425,9 @@ def record_review(
     blocking_findings: int = 0,
     evidence_ref: Optional[str] = None,
     expected_revision: Optional[int] = None,
+    report_path: Optional[str] = None,
+    exit_code: Optional[int] = None,
+    argv: Optional[list] = None,
 ) -> Dict[str, Any]:
     if status not in ACCEPTED_REVIEW_STATUS:
         raise StateError(f"invalid review status: {status}")
@@ -1397,6 +1435,10 @@ def record_review(
         raise StateError("blocking_findings cannot be negative")
     state = _load(state_path)
     _require_revision(state, expected_revision)
+    # A passed review is a conclusion about the code, so it binds a result that can be re-read
+    # exactly like a gate does. Naming a review outcome without that source is a label.
+    report = _bind_report(state_path, status, report_path, exit_code, argv,
+                          state=state, evidence_ref=evidence_ref, target="review")
     new_state = copy.deepcopy(state)
     if new_state["review"]["required"] and status == "not_required":
         raise StateError("review is required for this flow")
@@ -1404,6 +1446,8 @@ def record_review(
     new_state["review"]["evidence_snapshot_id"] = (state.get("analysis") or {}).get("evidence_snapshot_id")
     new_state["review"]["status"] = status
     new_state["review"]["blocking_findings"] = blocking_findings
+    if report is not None:
+        new_state["review"]["report"] = report
     if evidence_ref:
         new_state["review"]["evidence"].append(evidence_ref)
     new_state["cursor"]["next_action"] = compute_next_action(new_state, repository_snapshot.repo_from_state(state_path))
@@ -1528,7 +1572,8 @@ def attach_analysis(
         new_state["execution_snapshot_id"] = analysis_snapshot_id
         if new_state["verification"].get("snapshot_id") != analysis_snapshot_id:
             new_state["verification"]["fresh"] = False
-    binding = action_guard.bind_analysis(repository_snapshot.repo_from_state(state_path), new_state["analysis"])
+    binding = action_guard.bind_analysis(repository_snapshot.repo_from_state(state_path),
+                                         new_state["analysis"], state=new_state)
     new_state["analysis"].update(binding)
     if old.get("evidence_snapshot_id") != binding["evidence_snapshot_id"]:
         new_state["verification"]["fresh"] = False
@@ -1632,7 +1677,7 @@ def record_verification(
     state = _load(state_path)
     _require_revision(state, expected_revision)
     report = _bind_report(state_path, status, report_path, exit_code, argv,
-                          state=state, evidence_ref=evidence_ref)
+                          state=state, evidence_ref=evidence_ref, target="verification")
     new_state = copy.deepcopy(state)
     current = new_state.get("execution_snapshot_id")
     fresh = status == "passed" and current is not None and current == snapshot_id
