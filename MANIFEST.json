@@ -6,7 +6,7 @@
   "provider_count": 1,
   "policy_layer": "project-owned engineering policy with optional ECC external guidance",
   "governance_authority": "orchestrator",
-  "test_count": 411,
+  "test_count": 454,
   "key_entrypoints": [
     "scripts/project_discovery.py",
     "scripts/project_bootstrap.py",
@@ -51,7 +51,7 @@
   "enforcement_kernel": "scripts/enforcement_kernel.py",
   "session_context": "JSON canonical bootstrap/handoff + YAML config + Markdown prompt projection",
   "project_bootstrap": "self-bootstrap guard + current-Agent host selection/reconciliation + safe-auto discovery + idempotent initialization + no fake active work item",
-  "unified_cli": "coding-orchestrator: init/discover/doctor/where/status/start/intake/resume/check/verify/readiness/progress/transition/native-sync/native bind/evidence show|verify|index/provider status|reset/host install",
+  "unified_cli": "coding-orchestrator: init/discover/doctor/where/status/start/intake/resume/check/verify/readiness/progress/transition/native-sync/native bind/evidence run|approve|show|verify|index/provider status|reset/host install",
   "context_loading": "small SKILL runtime router + lazy 1–2 reference retrieval; heavy corpus remains non-resident",
   "project_activation": "managed AGENTS.md / CLAUDE.md activation stubs + current-Agent adapter selection (Pi/Codex runtime signals, Claude Code fallback) + host switching reconciliation; project truth remains in .orchestrator/ and authoritative sources",
   "readme_layout": {

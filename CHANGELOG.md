@@ -7,12 +7,16 @@
 - **readiness 使用时复核**：`action_guard.unsupported_readiness()` 报告"为真但此刻没有已核验证据支撑"的 key（`READINESS_WITHOUT_EVIDENCE`，或 per-key 来源规则不允许该证据时的具体错误码），`evaluate()` 在受保护操作上以 `READINESS_UNSUPPORTED` 拒绝；未核验不等于无效——未核验记录进入 `evidence_unverified`，由消费方判断该条判断是否必需。
 - **身份作用域缺失即失败**：复核时身份只从 `work_item` 读取；缺少 `work_item.id` / `requirement_revision` 不再被当作"未绑定即跳过"。
 - **证据 CLI**：新增 `coding-orchestrator evidence show|verify|index`（查看单条记录、按当前仓库重新校验、从存储记录重建索引），补齐此前只有库内 API 的可操作重建路径。
+- **报告必须是跑出来的**：新增 `coding-orchestrator evidence run --target … --work-item … -- <command>` 与 `ep.run_execution()`。它真跑命令并把 argv、退出码、target、工作项、需求版本与前后代码版本写进按内容寻址的执行收据（`executions/`）；`result_document_binding()` 只认这份收据：手写/改字段的"形似报告"、指不到存储的收据、target 或工作项不符、未记录需求或代码版本、代码已漂移，分别以 `EVIDENCE_EXECUTION_NOT_RECORDED` / `EVIDENCE_EXECUTION_IDENTITY_MISMATCH` / `EVIDENCE_RESULT_TARGET_MISMATCH` / `EVIDENCE_RESULT_SCOPE_MISMATCH` / `EVIDENCE_EXECUTION_REVISION_MISSING` / `EVIDENCE_EXECUTION_CODE_MISMATCH` 拒绝。
+- **审批必须走受保护入口**：新增 `coding-orchestrator evidence approve --channel … --channel-ref …` 与 `ep.record_approval()`。审批写进项目声明的唯一存储（哈希链）并引用宿主侧通道产物，复核时重读该产物：复制到别处的副本、断链的哈希、缺失的通道产物分别为 `EVIDENCE_APPROVAL_SOURCE_UNTRUSTED` / `EVIDENCE_APPROVAL_CHANNEL_UNVERIFIED`。
+- **代码快照是推导出的依赖**：`required_dependencies()` 新增 `code_snapshot`（对象 `.`，由目录树摘要得出，`.git` / `.orchestrator` / `node_modules` / `__pycache__` 与文档后缀不算代码），编辑需求文档不再把代码结果判为漂移；漂移不再只报第一个对象，`drifted_dependencies` 记录全部。
+- **语义 false 由观测承载**：`fact_resolver` 不再接受"某次失败"或"搜索没找到"当作语义结论，只接受为该谓词跑过并报告该值的观察者或针对它的审批；`decision_engine.validate_provenance()` 判据同步为"可信来源观测到该谓词为 false"，失败的运行不再被当作方向性证明。
 - **原生 id 绑定**：新增 `coding-orchestrator native bind --native-id [--work-item]` 与 `sm.bind_native_work_item()`：原生侧用自己的 id 寻址时，只把原生键记到当前工作项上，治理身份与审计轨迹不变，无需编辑 `execution-state.yaml` 或重跑 intake。
 - **混合内容边界按标题树判定**：`requirement_identity` 把 Markdown 解析为带层级与父链的标题树，标题按全名精确匹配（"Status"不再吞掉"Status API"），小节继承父级归属（`## Tasks` 下的 `### Implementation` 勾选不会算作需求变更），首个标题前的正文视为需求内容，未知标题一律保留为需求内容而不静默删除。
 - **破坏性修订确认绑定完整集合**：`--confirm-reset` 现需 `--confirm-revision` / `--confirm-incoming-revision` / `--confirm-state-revision`（含观察到的执行状态版本），确认提示由 `requirement_identity.confirmation_command()` 渲染出可直接执行的完整命令。
 - **需求内容版本独立可取**：`context_plane.requirement_content_revision()` 对单文件或目录返回"仅需求内容"的版本，供上下文/证据绑定复用同一口径。
 - **治理边界独立成测**：新增 `tests/test_governed_transition_boundaries.py`——原生推进到 review 但 `implementation_tasks_complete` 未成立时不推进治理（记 `native_divergence` 且保留原生事实），原生 done 但终验未通过时不生成 `completion_record`，verification 的 `finish_role` 仍要求已记录结论、release 仍需新鲜通过的终验（既有边界不是新的白名单）。
-- 回归：`discover` 实跑 **411 tests / OK**，`context_footprint_check` **PASS**（SKILL.md 103 行 / 7400 bytes / 918 words）。
+- 回归：`discover` 实跑 **454 tests / OK**，`context_footprint_check` **PASS**（SKILL.md 103 行 / 7400 bytes / 918 words）。
 
 ## Phase A — Evidence Is Verifiable, Native Projection Is Real, Identity Migrates
 
