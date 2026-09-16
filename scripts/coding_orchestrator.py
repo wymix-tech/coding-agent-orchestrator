@@ -444,7 +444,7 @@ def _source_revision_now(repo: Path, source_ref: str | None) -> str | None:
 def _reset_confirmation_message(repo: Path, state: dict[str, Any], *, requirement_id: str = "",
                                 active_revision: str | None = None, incoming_revision: str | None = None,
                                 source_ref: str | None = None, request: str | None = None,
-                                request_file: str | None = None) -> str:
+                                request_file: str | None = None, provider: str | None = None) -> str:
     """The refusal message, with a command that restates the move it is refusing.
 
     A confirmation is only valid for the request it was issued for, so the recovery command has
@@ -468,7 +468,7 @@ def _reset_confirmation_message(repo: Path, state: dict[str, Any], *, requiremen
                 state_revision=str(state.get("revision")), phase=state.get("phase"),
                 status=state.get("status"), repo=str(repo),
                 request_ref=resolved_file,
-                request=request))
+                request=request, source_ref=_replayable_request_file(repo, source_ref), provider=provider))
 
 
 def _replayable_request_file(repo: Path, request_file: str | None) -> str | None:
@@ -604,7 +604,7 @@ def cmd_intake(args: argparse.Namespace) -> tuple[int, dict[str, Any], str]:
                             active_revision=str(existing_rev) if existing_rev else None,
                             incoming_revision=str(req_rev) if req_rev else None,
                             source_ref=source_ref, request_file=getattr(args, "request_file", None),
-                            request=request))
+                            request=request, provider=provider))
                 if _resets_in_flight_work(existing):
                     # The incoming revision is what the request actually carries: the source
                     # revision when there is a source, the request revision when there is not.
@@ -616,6 +616,7 @@ def cmd_intake(args: argparse.Namespace) -> tuple[int, dict[str, Any], str]:
                         active_revision=str(existing_rev) if existing_rev else None,
                         repo_ref=str(repo), request_ref=str(args.request_file) if args.request_file else None,
                         request=None if args.request_file else request,
+                        source_ref=_replayable_request_file(repo, source_ref), provider=provider,
                         # The observed state revision is what makes the confirmation expire when
                         # anything else moved: progress, gates and evidence included.
                         state_revision=str(existing.get("revision")),
@@ -989,7 +990,9 @@ def cmd_evidence_run(args: argparse.Namespace) -> tuple[int, dict[str, Any], str
     that claims `status: passed`.
     """
     repo = args.repo.resolve()
-    argv = [item for item in (getattr(args, "argv", None) or []) if item != "--"]
+    argv = list(getattr(args, "argv", None) or [])
+    if argv and argv[0] == "--":
+        argv = argv[1:]
     if not argv:
         return 2, {"status": "ACTION_REQUIRED", "error": "EVIDENCE_EXECUTION_ARGV_REQUIRED",
                    "next_action": "name_the_command"}, (
@@ -1010,7 +1013,7 @@ def cmd_evidence_run(args: argparse.Namespace) -> tuple[int, dict[str, Any], str
     return 0, {"status": "EVIDENCE_EXECUTION_RECORDED", "execution_id": recorded.get("id"),
                "path": recorded.get("path"), "exit_code": recorded.get("exit_code"),
                "target": args.target, "work_item_id": args.work_item,
-               "requirement_revision": getattr(args, "requirement_revision", None)}, (
+               "requirement_revision": (recorded.get("receipt") or {}).get("requirement_revision")}, (
         f"Recorded {recorded.get('id')} at {recorded.get('path')}: pass it to "
         f"`gate --evidence-ref`/`--report` for {args.target}")
 
@@ -1027,7 +1030,7 @@ def cmd_evidence_approve(args: argparse.Namespace) -> tuple[int, dict[str, Any],
         repo, approver=str(args.approver), subject=str(args.subject),
         work_item_id=getattr(args, "work_item", None), decision=str(args.decision),
         requirement_revision=getattr(args, "requirement_revision", None),
-        fact_path=getattr(args, "fact_path", None), value=getattr(args, "value", None),
+        fact_path=getattr(args, "fact_path", None), value=json.loads(args.value) if getattr(args, "value", None) is not None else None,
         channel={"type": str(args.channel), "ref": str(args.channel_ref)})
     if not recorded.get("available"):
         return 2, {"status": "ACTION_REQUIRED", "error": recorded.get("error"),

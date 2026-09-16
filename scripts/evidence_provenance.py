@@ -155,6 +155,7 @@ _REASONS = {
     "EVIDENCE_PURPOSE_OUTCOME_UNSUCCESSFUL",
     "EVIDENCE_APPROVAL_SOURCE_UNTRUSTED",
     "EVIDENCE_APPROVAL_CHANNEL_UNVERIFIED",
+    "EVIDENCE_OBSERVER_UNTRUSTED",
     "EVIDENCE_OBJECT_EMPTY",
 }
 
@@ -296,12 +297,23 @@ def material_files(repo: Path, rel: str) -> List[str]:
     except OSError:
         return []
     members: List[str] = []
+    snapshots = _loaded("repository_snapshot")
+    state = _read_doc(root, ".orchestrator/execution-state.yaml")
+    native_ref = _native_ref_from_state(state)
+    if not native_ref and ((state or {}).get("authority") or {}).get("mode") == "native":
+        native_ref = "sprint-status.yaml"
+    native_path = (root / native_ref).resolve() if native_ref else None
     for member in sorted(p for p in base.rglob("*") if p.is_file()):
         try:
             relative = member.resolve().relative_to(root).as_posix()
         except (OSError, ValueError):
             continue
+        if native_path is not None and member.resolve() == native_path:
+            continue
         if any(relative == skip or relative.startswith(f"{skip}/") for skip in SKIP_TREE_PARTS):
+            continue
+        if snapshots and (any(part in snapshots.IGNORED_DIRS for part in Path(relative).parts)
+                          or relative.startswith(snapshots.IGNORED_PREFIXES)):
             continue
         if relative.lower().endswith(MATERIAL_DOC_SUFFIXES):
             continue
@@ -514,7 +526,76 @@ def claim_type_for_target(target: str) -> Optional[str]:
     though all three are "verified evidence" once they have been checked.
     """
     prefix = str(target or "").split(":", 1)[0].strip().lower()
-    return TARGET_CLAIM_TYPES.get(prefix)
+    if prefix == "readiness":
+        return (READINESS_SOURCE_RULES.get(str(target).partition(":")[2]) or {}).get("claim_type", "readiness")
+    return {**TARGET_CLAIM_TYPES, "fact": "fact_observation", "task_progress": "task_progress"}.get(prefix)
+
+
+def execution_scope(receipt, *, current_code, work_item_id=None, requirement_revision=None,
+                    target=None, claim_type=None):
+    def bad(code):
+        return {"ok": False, "error": code, "message": code}
+    if not isinstance(receipt, dict):
+        return bad("EVIDENCE_EXECUTION_NOT_RECORDED")
+    if not receipt.get("target") or not receipt.get("work_item_id"):
+        return bad("EVIDENCE_EXECUTION_SCOPE_MISSING")
+    if not receipt.get("requirement_revision"):
+        return bad("EVIDENCE_EXECUTION_REVISION_MISSING")
+    if work_item_id and receipt["work_item_id"] != work_item_id:
+        return bad("EVIDENCE_RESULT_SCOPE_MISMATCH")
+    if requirement_revision and receipt["requirement_revision"] != requirement_revision:
+        return bad("EVIDENCE_RESULT_SCOPE_MISMATCH")
+    if target and receipt["target"] != target:
+        return bad("EVIDENCE_RESULT_TARGET_MISMATCH")
+    actual_type = claim_type_for_target(receipt["target"])
+    aliases = {"test_result": "gate_result", "code_review": "review_result",
+               "verification_result": "verification"}
+    if actual_type is None or (claim_type and aliases.get(claim_type, claim_type) != actual_type):
+        return bad("EVIDENCE_PURPOSE_MISMATCH")
+    before, after = receipt.get("code_revision"), receipt.get("code_revision_after")
+    if not before or not after or not current_code:
+        return bad("EVIDENCE_EXECUTION_REVISION_MISSING")
+    if before != after or after != current_code:
+        return bad("EVIDENCE_EXECUTION_CODE_MISMATCH")
+    return {"ok": True, "error": None}
+
+
+def observer_binding(repo, fact_path, argv, *, state=None):
+    """Policy selects the observer and its complete inputs, never --fact-path alone."""
+    rule = (((load_policy(repo) or {}).get("evidence") or {}).get("observers") or {}).get(fact_path)
+    if not isinstance(rule, dict) or list(argv) != rule.get("argv"):
+        return None
+    files, refs = rule.get("files"), rule.get("inputs")
+    if not isinstance(files, dict) or not files or not isinstance(refs, list) or not refs:
+        return None
+    if any(path_revision(repo, ref) != digest for ref, digest in files.items()):
+        return None
+    required_ref, members = _requirement_source_from_state(state)
+    required_refs = members or ([required_ref] if required_ref else [])
+    normalized = {str((Path(repo) / ref).resolve()) for ref in refs}
+    if any(str((Path(repo) / ref).resolve()) not in normalized for ref in required_refs):
+        return None
+    inputs = {ref: path_revision(repo, ref) for ref in refs}
+    if any(value is None for value in inputs.values()):
+        return None
+    return {"rule": rule, "inputs": inputs}
+
+
+def execution_context(repo, work_item_id, requirement_revision):
+    state = _read_doc(repo, ".orchestrator/execution-state.yaml")
+    wi = (state or {}).get("work_item") or {}
+    if wi and wi.get("id") != work_item_id:
+        return None, state
+    ref, members = _requirement_source_from_state(state)
+    revision = wi.get("requirement_revision")
+    if ref:
+        current = _loaded("requirement_identity").requirement_content_revision(repo, ref, members=members)
+        if not current.get("source_revision") or (revision and revision != current["source_revision"]):
+            return None, state
+        revision = current["source_revision"]
+    if revision and requirement_revision and revision != requirement_revision:
+        return None, state
+    return revision or requirement_revision, state
 
 
 def build_execution_receipt(*, argv: Iterable[Any], exit_code: int, target: str,
@@ -524,7 +605,8 @@ def build_execution_receipt(*, argv: Iterable[Any], exit_code: int, target: str,
                             fact_path: Optional[str] = None, observed_value: Any = None,
                             status: Optional[str] = None, cwd: Optional[str] = None,
                             started_at: Optional[str] = None, ended_at: Optional[str] = None,
-                            producer: str = "orchestrator.execution") -> Dict[str, Any]:
+                            producer: str = "orchestrator.execution", output: dict | None = None,
+                            observer: dict | None = None) -> Dict[str, Any]:
     """The facts a command that ran leaves behind, in the shape the verifier re-reads."""
     parts = [str(part) for part in argv]
     receipt: Dict[str, Any] = {
@@ -545,6 +627,8 @@ def build_execution_receipt(*, argv: Iterable[Any], exit_code: int, target: str,
         "cwd": cwd,
         "started_at": started_at,
         "ended_at": ended_at,
+        "output": output,
+        "observer": observer,
     }
     return receipt
 
@@ -616,8 +700,12 @@ def resolve_execution_document(root: Path, doc: Dict[str, Any]) -> Optional[Dict
     if stored is None:
         return None
     for key in ("status", "exit_code", "target", "work_item_id", "requirement_revision",
-                "command", "code_revision", "code_revision_after", "fact_path", "observed_value"):
+                "command", "code_revision", "code_revision_after", "fact_path", "observed_value", "output", "observer"):
         if key in doc and doc[key] != stored.get(key):
+            return None
+    output = stored.get("output") or {}
+    for key in ("tests", "tasks", "progress"):
+        if key in doc and doc[key] != output.get(key):
             return None
     return stored
 
@@ -638,6 +726,14 @@ def run_execution(repo: Path, argv: Iterable[Any], *, target: str, work_item_id:
     if not parts:
         return {"available": False, "error": "EVIDENCE_EXECUTION_NOT_RECORDED",
                 "message": "no command was given"}
+    requirement_revision, state = execution_context(root, work_item_id, requirement_revision)
+    if not requirement_revision:
+        return {"available": False, "error": "EVIDENCE_EXECUTION_REVISION_MISSING",
+                "message": "Resolve the selected work item and current requirement revision before running evidence."}
+    observer = observer_binding(root, fact_path, parts, state=state) if fact_path else None
+    if fact_path and (target != f"fact:{fact_path}" or observer is None or (cwd and Path(cwd).resolve() != root)):
+        return {"available": False, "error": "EVIDENCE_OBSERVER_UNTRUSTED",
+                "message": "Configure this predicate's observer argv, program digests and inputs in orchestrator.evidence.observers."}
     started = datetime.now(timezone.utc).isoformat()
     before = code_revision_now(root)
     try:
@@ -657,6 +753,12 @@ def run_execution(repo: Path, argv: Iterable[Any], *, target: str, work_item_id:
                 "message": f"the command could not be run: {exc}"}
     ended = datetime.now(timezone.utc).isoformat()
     after = code_revision_now(root)
+    try:
+        output = json.loads(stdout)
+    except ValueError:
+        output = None
+    if not isinstance(output, dict):
+        output = None
     observed_value: Any = None
     if fact_path:
         # An observer reports the value of one predicate. It does so by printing it, so the
@@ -666,7 +768,8 @@ def run_execution(repo: Path, argv: Iterable[Any], *, target: str, work_item_id:
         argv=parts, exit_code=exit_code, target=target, work_item_id=work_item_id,
         requirement_revision=requirement_revision, code_revision=before,
         code_revision_after=after, fact_path=fact_path, observed_value=observed_value,
-        cwd=str(cwd or root), started_at=started, ended_at=ended, producer=producer)
+        cwd=str(cwd or root), started_at=started, ended_at=ended, producer=producer,
+        output=output, observer=observer)
     stored = persist_execution(root, receipt)
     return {**stored, "exit_code": exit_code, "status": receipt["status"], "stdout": stdout}
 
@@ -682,7 +785,7 @@ def _observed_fact_value(stdout: str, fact_path: str) -> Any:
         return None
     if not isinstance(doc, dict):
         return None
-    if doc.get("fact_path") not in (None, fact_path):
+    if doc.get("fact_path") != fact_path:
         return None
     return doc.get("value")
 
@@ -700,6 +803,7 @@ def collect_verification_inputs(repo: Path | None, record: Dict[str, Any], *,
     if repo is None:
         return inputs
     root = Path(repo).resolve()
+    inputs["code_revision"] = code_revision_now(root)
     for dep in record.get("depends_on") or []:
         if not isinstance(dep, dict) or not dep.get("object_id"):
             continue
@@ -713,6 +817,10 @@ def collect_verification_inputs(repo: Path | None, record: Dict[str, Any], *,
     report_path = report.get("path")
     if report_path:
         inputs["report"] = _collect_report(root, report)
+        receipt = (inputs["report"] or {}).get("execution_receipt") or {}
+        if receipt.get("fact_path"):
+            binding = observer_binding(root, receipt["fact_path"], receipt.get("argv") or [], state=state)
+            inputs["observer_valid"] = binding is not None and binding == receipt.get("observer")
     if record.get("approval"):
         inputs["approval"] = _collect_approval(root, record, state=state)
     if str(record.get("kind")) == "native_result":
@@ -764,13 +872,15 @@ def _observed_fact(record: Dict[str, Any], inputs: Dict[str, Any]) -> Optional[D
     is false. Only an observer that reports the value of that predicate, or an approval that
     was issued for it, says something about the predicate itself.
     """
-    report = (inputs or {}).get("report")
+    # A checked approval authenticates its signed value, not an attached execution report.
+    # Likewise a mechanical observation cannot borrow a separate approval's meaning.
+    report = (inputs or {}).get("report") if record.get("kind") == "mechanical_observation" else None
     if isinstance(report, dict) and report.get("fact_path") and "observed_value" in report:
         return {"path": str(report["fact_path"]), "value": report.get("observed_value"),
                 "source": "execution", "kind": record.get("kind"),
                 "outcome": str(report.get("status") or ""),
                 "exit_code": report.get("exit_code")}
-    approval = (inputs or {}).get("approval")
+    approval = (inputs or {}).get("approval") if record.get("kind") == "human_approval" else None
     if isinstance(approval, dict) and approval.get("fact_path") and "value" in approval:
         return {"path": str(approval["fact_path"]), "value": approval.get("value"),
                 "source": "approval", "kind": record.get("kind"),
@@ -793,7 +903,7 @@ def fact_observation(result: Dict[str, Any], path: str, value: Any) -> Dict[str,
     if str(observed.get("path")) != str(path):
         return {"observed": False, "error": "EVIDENCE_FACT_SCOPE_MISMATCH",
                 "message": f"the observation is about {observed.get('path')!r}, not {path!r}"}
-    if observed.get("value") != value:
+    if type(observed.get("value")) is not type(value) or observed.get("value") != value:
         return {"observed": False, "error": "EVIDENCE_FACT_VALUE_MISMATCH",
                 "message": f"the observation reports {observed.get('value')!r} for {path!r}"}
     if str(result.get("validation_status")) != "verified":
@@ -871,10 +981,9 @@ def record_approval(repo: Path, *, approver: str, subject: str | None = None,
                     note: str | None = None) -> Dict[str, Any]:
     """Record a human approval through the entry point that is the approval's source.
 
-    The store is append-only and each entry carries the receipt of the entry before it, so an
-    entry that was not written here breaks the chain and stays unverified. The decision still
-    has to name the channel it came from: this function records who approved and what was
-    approved, it does not create the identity of the approver.
+    The hash chain records local ordering and detects accidental edits. Authority comes from
+    the external event's signature and scope, checked before append and again on consumption;
+    this function never creates the identity or decision of the approver.
     """
     root = Path(repo).resolve()
     channel_doc = _approval_channel(channel, channel_ref)
@@ -896,6 +1005,11 @@ def record_approval(repo: Path, *, approver: str, subject: str | None = None,
         "decided_at": decided_at or datetime.now(timezone.utc).isoformat(),
         "note": note,
     }
+    verified = verify_approval_channel(root, entry, policy=load_policy(root))
+    if not verified.get("verified"):
+        return {"available": False, "error": verified.get("error"),
+                "message": "Import a signed, scope-bound event from a configured approval issuer; unsigned local event files are not approvals."}
+    entry["channel"]["event_id"] = verified["event_id"]
     path = root / APPROVALS_REL
     existing = _read_json(path)
     entries: List[dict] = []
@@ -914,8 +1028,8 @@ def record_approval(repo: Path, *, approver: str, subject: str | None = None,
 def _approval_chain_ok(entries: List[dict], ident: str) -> bool:
     """Is this entry part of the chain the approval store actually is?
 
-    An approval copied into the store, or edited inside it, does not carry the receipt of the
-    entry before it. It is not part of the chain, and it is not a source.
+    This is an audit integrity check, not authentication: a writer could recompute hashes.
+    The signed channel event is checked independently before any approval is trusted.
     """
     prev = "genesis"
     for entry in entries:
@@ -954,25 +1068,18 @@ def verify_approval_channel(root: Path, entry: Dict[str, Any], *,
     if doc is None:
         return {"verified": False, "error": "EVIDENCE_APPROVAL_CHANNEL_UNVERIFIED",
                 "message": f"the artifact of approval channel {ctype!r} ({cref}) cannot be read"}
+    from approval_auth import authenticate
+    config = ((policy or load_policy(root) or {}).get("evidence") or {})
     for event in _approval_channel_events(doc):
-        if str(event.get("event") or event.get("kind") or "").lower() not in \
-                {"approval", "approval_decision", "approved"}:
+        if not authenticate(event, keys=config.get("approval_keys"),
+                            audience=config.get("approval_audience", str(root.resolve())), channel=ctype):
             continue
-        if str(event.get("approver") or event.get("actor") or "") != str(entry.get("approver") or ""):
+        if channel.get("event_id") and event["id"] != channel["event_id"]:
             continue
-        if str(event.get("decision") or event.get("status") or "") != str(entry.get("decision") or ""):
+        if any(event.get(key) != entry.get(key) for key in
+               ("approver", "subject", "work_item_id", "requirement_revision", "decision", "fact_path", "value")):
             continue
-        subject = str(event.get("subject") or event.get("work_item_id") or "")
-        if subject and str(entry.get("subject") or "") and subject != str(entry["subject"]):
-            continue
-        revision = event.get("requirement_revision")
-        if revision and entry.get("requirement_revision") \
-                and str(revision) != str(entry["requirement_revision"]):
-            continue
-        if entry.get("fact_path") and event.get("fact_path") \
-                and str(event["fact_path"]) != str(entry["fact_path"]):
-            continue
-        return {"verified": True, "error": None, "channel": ctype, "ref": str(cref)}
+        return {"verified": True, "error": None, "channel": ctype, "ref": str(cref), "event_id": event["id"]}
     return {"verified": False, "error": "EVIDENCE_APPROVAL_CHANNEL_UNVERIFIED",
             "message": f"no {ctype} records that {entry.get('approver')!r} decided "
                        f"{entry.get('decision')!r} for {entry.get('subject')!r}"}
@@ -1147,8 +1254,8 @@ def purpose_decision(use: Optional[str], result: Dict[str, Any], *,
         return {"ok": False, "error": "EVIDENCE_PURPOSE_OUTCOME_UNSUCCESSFUL",
                 "message": f"the {claim_type} claim says {result.get('outcome')!r}, "
                            f"which is not a successful {use} result"}
-    claimed_target = (result.get("extra") or {}).get("target") if isinstance(result.get("extra"), dict) else None
-    if claimed_target and target and str(claimed_target) != str(target):
+    claimed_target = result.get("target")
+    if target and str(claimed_target or "") != str(target):
         return {"ok": False, "error": "EVIDENCE_PURPOSE_MISMATCH",
                 "message": f"the {claim_type} claim was produced for {claimed_target!r}, "
                            f"not for {target!r}"}
@@ -1227,41 +1334,15 @@ def result_document_binding(repo: Path, ref: Optional[str], *, target: str,
                     f"the result document contradicts the recorded execution {ident} on "
                     f"{', '.join(sorted(conflicting))}; the receipt is what ran, the document "
                     f"is only what the caller wrote")
-    receipt_target = stored.get("target")
-    if not str(receipt_target or "").strip():
-        return fail("EVIDENCE_EXECUTION_SCOPE_MISSING",
-                    f"execution receipt {ident} does not record which gate, review or "
-                    f"verification it was produced for")
-    if str(receipt_target) != str(target):
-        return fail("EVIDENCE_RESULT_TARGET_MISMATCH",
-                    f"execution {ident} was produced for {receipt_target!r}, not for {target!r}")
-    receipt_work_item = stored.get("work_item_id")
-    if not str(receipt_work_item or "").strip():
-        return fail("EVIDENCE_EXECUTION_SCOPE_MISSING",
-                    f"execution receipt {ident} does not record the work item it was produced for")
-    if work_item_id and str(receipt_work_item) != str(work_item_id):
-        return fail("EVIDENCE_RESULT_SCOPE_MISMATCH",
-                    f"execution {ident} was produced for work item {receipt_work_item!r}, "
-                    f"not for {work_item_id!r}")
-    receipt_requirement = stored.get("requirement_revision")
-    if not str(receipt_requirement or "").strip():
-        return fail("EVIDENCE_EXECUTION_REVISION_MISSING",
-                    f"execution receipt {ident} does not record the requirement revision it was "
-                    f"produced against; the revision in force when it is used is not the "
-                    f"revision it ran against")
-    if requirement_revision and str(receipt_requirement) != str(requirement_revision):
-        return fail("EVIDENCE_RESULT_SCOPE_MISMATCH",
-                    f"execution {ident} ran against requirement revision {receipt_requirement!r}, "
-                    f"not {requirement_revision!r}")
-    receipt_code = stored.get("code_revision_after") or stored.get("code_revision")
-    if not str(receipt_code or "").strip():
-        return fail("EVIDENCE_EXECUTION_REVISION_MISSING",
-                    f"execution receipt {ident} does not record the code revision it ran against")
-    current_code = code_revision_now(root)
-    if current_code and str(receipt_code) != str(current_code):
-        return fail("EVIDENCE_EXECUTION_CODE_MISMATCH",
-                    f"execution {ident} ran against a different code revision than the one in "
-                    f"force now; the result is about the code it ran on, not about this code")
+    if resolve_execution_document(root, doc) is None:
+        return fail("EVIDENCE_EXECUTION_IDENTITY_MISMATCH", "Report fields differ from the recorded execution.")
+    scope = execution_scope(stored, current_code=code_revision_now(root), work_item_id=work_item_id,
+                            requirement_revision=requirement_revision, target=target)
+    if not scope["ok"]:
+        return fail(scope["error"], scope["message"])
+    receipt_work_item = stored["work_item_id"]
+    receipt_requirement = stored["requirement_revision"]
+    receipt_code = stored["code_revision_after"]
     try:
         relative = candidate.resolve().relative_to(root).as_posix()
     except (OSError, ValueError):  # pragma: no cover - defensive
@@ -1351,12 +1432,10 @@ def recheck_result_binding(repo: Path | None, binding: Any, *, target: Optional[
     if not str(stored.get("command") or "").strip():
         return bad("EVIDENCE_RESULT_SOURCE_UNBOUND",
                    f"execution {stored.get('execution_id')} no longer records the command that ran")
-    receipt_code = stored.get("code_revision_after") or stored.get("code_revision")
-    current_code = code_revision_now(root)
-    if current_code and receipt_code and str(receipt_code) != str(current_code):
-        return bad("EVIDENCE_EXECUTION_CODE_MISMATCH",
-                   f"execution {stored.get('execution_id')} ran against a different code "
-                   f"revision than the one in force now; the result is about the code it ran on")
+    scope = execution_scope(stored, current_code=code_revision_now(root), work_item_id=work_item_id,
+                            requirement_revision=requirement_revision, target=target)
+    if not scope["ok"]:
+        return bad(scope["error"], scope["message"])
     if binding.get("target") and target and str(binding["target"]) != str(target):
         return bad("EVIDENCE_RESULT_TARGET_MISMATCH",
                    f"this result was recorded for {binding['target']!r}, not for {target!r}")
@@ -1567,9 +1646,30 @@ def verify(record: Dict[str, Any], *, inputs: Dict[str, Any], policy: dict | Non
         result["non_code_object"] = code_ref
         return invalid("EVIDENCE_OBJECT_NOT_CODE")
 
+    if kind == "mechanical_observation":
+        observed_report = (inputs or {}).get("report") or {}
+        if record.get("report") and not observed_report.get("available"):
+            return invalid("EVIDENCE_REPORT_UNPARSABLE")
+        if observed_report.get("digest_mismatch"):
+            return invalid("EVIDENCE_REPORT_DRIFT")
+        if (observed_report.get("empty_report") or observed_report.get("exit_code") is None
+                or not observed_report.get("execution")):
+            return unverified("EVIDENCE_EXECUTION_UNBOUND")
+        receipt = observed_report.get("execution_receipt")
+        scope = execution_scope(receipt, current_code=(inputs or {}).get("code_revision"),
+                                work_item_id=work_item_id or record.get("work_item_id"),
+                                requirement_revision=requirement_revision or record.get("requirement_revision"),
+                                claim_type=claim_type)
+        if not scope["ok"]:
+            return unverified(scope["error"])
+        result["target"] = receipt["target"]
+        result["observed_output"] = receipt.get("output")
+        if receipt.get("fact_path") and not (inputs or {}).get("observer_valid"):
+            return unverified("EVIDENCE_OBSERVER_UNTRUSTED")
+
     # Report binding: claimed outcome must match the report that was actually produced.
     report = record.get("report")
-    if report:
+    if report and kind == "mechanical_observation":
         observed_report = (inputs or {}).get("report")
         if not observed_report or not observed_report.get("available"):
             return invalid("EVIDENCE_REPORT_UNPARSABLE")
@@ -1600,28 +1700,9 @@ def verify(record: Dict[str, Any], *, inputs: Dict[str, Any], policy: dict | Non
     if kind == "agent_claim":
         return result  # stays unverified; needs support material or a real approval
     if kind == "mechanical_observation":
-        if not report:
-            return result
         observed_report = (inputs or {}).get("report") or {}
-        if observed_report.get("empty_report"):
-            return unverified("EVIDENCE_EXECUTION_UNBOUND")
         if observed_report.get("status") not in OUTCOMES:
             return unverified("EVIDENCE_EXECUTION_UNBOUND")
-        if observed_report.get("exit_code") is None:
-            return unverified("EVIDENCE_EXECUTION_UNBOUND")
-        if not observed_report.get("execution"):
-            return unverified("EVIDENCE_EXECUTION_UNBOUND")
-        # The report has to be the receipt of a command that ran, or name one. A file that says
-        # `status: passed, exit_code: 0, command: ...` is a file anyone can write: the argv and
-        # the return code are only facts when the execution store says so.
-        receipt = observed_report.get("execution_receipt")
-        if not receipt:
-            return unverified("EVIDENCE_EXECUTION_NOT_RECORDED")
-        # And it has to have been produced for this work item, against a requirement revision
-        # of its own: the consumer's current state never fills those in on its behalf.
-        if work_item_id and str(receipt.get("work_item_id") or "") \
-                and str(receipt.get("work_item_id")) != str(work_item_id):
-            return unverified("EVIDENCE_RESULT_SCOPE_MISMATCH")
     elif kind == "human_approval":
         approval = record.get("approval") or {}
         if not (approval.get("source") and approval.get("subject") and approval.get("revision")):

@@ -422,7 +422,10 @@ coding-agent-orchestrator/
 - A Git repository
 - A well-defined project working directory
 
-The Python implementation primarily uses the standard library; `PyYAML` is required because execution state, engineering policy, and repository configuration use YAML.
+Install Python dependencies with `python3 -m pip install -r requirements.txt`.
+`PyYAML` handles execution state, policy, and configuration; `cryptography` verifies
+externally signed approvals. See [evidence source setup](references/evidence-sources.md)
+for approval public keys, semantic observers, and rebuilding legacy evidence.
 
 ### Recommended for V6 Semantic Impact
 

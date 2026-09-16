@@ -482,7 +482,8 @@ def confirmation_command(requirement_id: str, *, active_revision: str | None,
                          incoming_source_revision: str | None, state_revision: str | None,
                          phase: str | None = None, status: str | None = None,
                          repo: str | None = None, request_ref: str | None = None,
-                         request: str | None = None) -> str:
+                         request: str | None = None, source_ref: str | None = None,
+                         provider: str | None = None) -> str:
     """The complete, runnable confirmation command for exactly this move.
 
     A printed command has to actually run: it names the entry point, the project, and the
@@ -510,6 +511,10 @@ def confirmation_command(requirement_id: str, *, active_revision: str | None,
     elif request:
         # `intake` takes the request as a positional argument; there is no `--request` option.
         parts.append(quote(request))
+    if source_ref:
+        parts.append(f"--sdd-ref {quote(source_ref)}")
+    if provider:
+        parts.append(f"--sdd {quote(provider)}")
     parts += [
         f"--requirement-id {quote(requirement_id or '<requirement-id>')}",
         "--revise-current --confirm-reset",
@@ -531,7 +536,8 @@ def check_revision_confirmation(repo: Path, *, requirement_id: str, source_revis
                                 state_revision: str | None = None,
                                 repo_ref: str | None = None,
                                 request_ref: str | None = None,
-                                request: str | None = None) -> dict[str, Any]:
+                                request: str | None = None, source_ref: str | None = None,
+                                provider: str | None = None) -> dict[str, Any]:
     """A destructive-revision confirmation is valid only for the exact move it was issued for.
 
     All four bindings are required: which requirement, which *old* source revision it was
@@ -546,7 +552,7 @@ def check_revision_confirmation(repo: Path, *, requirement_id: str, source_revis
                     requirement_id, active_revision=active_revision or last_source_revision(repo, requirement_id),
                     incoming_source_revision=source_revision, state_revision=state_revision,
                     phase=phase, status=status, repo=repo_ref or str(repo), request_ref=request_ref,
-                    request=request),
+                    request=request, source_ref=source_ref, provider=provider),
                 'next_action': 'confirm_requirement_revision', **extra}
 
     if not confirmation:
