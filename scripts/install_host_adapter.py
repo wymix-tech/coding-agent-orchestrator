@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 import project_activation
+import host_runtime
 
 ROOT = Path(__file__).resolve().parents[1]
 KERNEL = (ROOT / "scripts" / "enforcement_kernel.py").resolve()
@@ -160,12 +161,13 @@ def ensure_session_context_config(repo: Path, apply: bool) -> str:
 def main() -> int:
     p=argparse.ArgumentParser()
     p.add_argument("--repo", type=Path, default=Path.cwd())
-    p.add_argument("--host", choices=["claude-code","codex","pi","all"], default="all")
+    p.add_argument("--host", choices=["auto","claude-code","codex","pi","all","none"], default="auto")
     p.add_argument("--apply", action="store_true")
     args=p.parse_args(); repo=args.repo.resolve()
-    selected=["claude-code","codex","pi"] if args.host=="all" else [args.host]
-    out={"apply":args.apply,"kernel":str(KERNEL),"enforcement_config":ensure_enforcement_config(repo,args.apply),"session_context_config":ensure_session_context_config(repo,args.apply),"hosts":{}}
-    out["activation"] = project_activation.install(repo, selected, apply=args.apply)
+    selection = host_runtime.select_hosts(args.host)
+    selected=list(selection.get("hosts") or [])
+    out={"apply":args.apply,"kernel":str(KERNEL),"host_selection":selection,"enforcement_config":ensure_enforcement_config(repo,args.apply),"session_context_config":ensure_session_context_config(repo,args.apply),"hosts":{}}
+    out["activation"] = project_activation.install(repo, selected, apply=args.apply) if args.apply and selected else {"status": "disabled", "hosts": {}}
     if "claude-code" in selected:
         frag=load_template(ROOT/"hosts"/"claude-code"/"hooks.template.json", repo)
         target=repo/".claude"/"settings.json"
