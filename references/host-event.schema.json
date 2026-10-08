@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Coding Agent Orchestrator Canonical Host Event",
+  "type": "object",
+  "required": [
+    "event",
+    "host",
+    "cwd",
+    "payload"
+  ],
+  "properties": {
+    "event": {
+      "type": "string",
+      "enum": [
+        "session_start",
+        "prompt_submit",
+        "pre_tool",
+        "post_tool",
+        "file_changed",
+        "subagent_start",
+        "subagent_stop",
+        "stop"
+      ]
+    },
+    "host": {
+      "type": "string",
+      "minLength": 1
+    },
+    "session_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "cwd": {
+      "type": "string",
+      "minLength": 1
+    },
+    "role": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "tool": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "payload": {
+      "type": "object"
+    }
+  },
+  "additionalProperties": true
+}
