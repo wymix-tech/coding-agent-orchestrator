@@ -25,6 +25,7 @@ Install the CLI from a repository checkout:
 python -m pip install .
 cao --help
 cao bootstrap
+cao dashboard --open
 ```
 
 For development, use an editable install so changes to `scripts/cao.py` are immediately available:
@@ -58,10 +59,34 @@ cao sessions show --id <session-id> --host codex
 cao handoff --reason "transfer to another agent"
 cao handoff list --work <work-id>
 cao handoff show --id <handoff-id>
+cao dashboard --open
 cao next
 cao verify
 cao done
 ```
+
+## Orchestration dashboard
+
+Launch a local visual control panel for Work Items, execution paths, SDD providers, Agent Sessions,
+Verification results, blockers, and Handoff history:
+
+```bash
+cao dashboard --open
+# Or choose repository, port, and refresh interval explicitly:
+cao dashboard --repo . --port 8765 --refresh 10 --open
+```
+
+The dashboard reads the existing `.orchestrator/` JSON files directly; it does not create a second
+state store. It displays native artifacts for BMAD, OpenSpec, and Spec Kit as available: missing expected
+artifacts are marked `未生成`, present files `已生成`, and explicitly reviewed files `已确认`. Markdown
+and text artifacts can be previewed in the browser. Confirmation stores the current file SHA-256 and
+confirmation metadata in the CAO Work Item; it never edits the original SDD file. A later content change
+invalidates that confirmation. Verification snapshot freshness is still authoritatively checked by `cao done`.
+
+For safety, the server binds to `127.0.0.1` by default. Artifact confirmation is enabled only for a local
+loopback-bound server and validates the request origin; non-loopback binding requires explicit
+`--allow-remote` and disables confirmation. Remote access has no built-in authentication, so use it only
+on a trusted network. Press `Ctrl+C` to stop the server.
 
 ## Persistent state
 
@@ -307,6 +332,7 @@ cao artifact add --path specs/auth/spec.md --role requirement --native-type spec
 cao artifact list
 cao artifact refresh
 cao artifact remove --path specs/auth/spec.md
+cao artifact confirm --path specs/auth/spec.md
 ```
 
 `.orchestrator/work/<id>.json` is the Work Item source of truth. `index.json` is a projection and is

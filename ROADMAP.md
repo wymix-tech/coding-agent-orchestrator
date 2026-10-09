@@ -35,3 +35,5 @@
 2. Add fixture-based host-session-id extraction tests using real event payloads for each supported host.
 3. Add human-readable `cao status` table output alongside JSON.
 4. Add optional project-level completion gates without reintroducing an evidence graph.
+
+- [x] Local orchestration dashboard for Work Items, execution path, Sessions, Verification summaries, SDD providers, Handoff history, native SDD artifact inventory/status, safe preview, and hash-bound confirmation.

@@ -38,6 +38,18 @@ class CliEntryTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("Coding Agent Orchestrator", result.stdout)
 
+    def test_dashboard_command_is_registered(self):
+        result = subprocess.run(
+            [str(ROOT / "cao"), "dashboard", "--help"],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("usage: cao dashboard", result.stdout)
+        self.assertIn("--allow-remote", result.stdout)
+
     def test_hooks_use_shared_runner(self):
         claude = (ROOT / "hosts/claude-code/settings.fragment.json").read_text()
         codex = (ROOT / "hosts/codex/hooks.json").read_text()

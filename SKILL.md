@@ -278,5 +278,11 @@ The requirement filename is only a fallback title. Use `--title` when the SDD us
 
 ## SDD artifact references
 
-CAO can persist native SDD artifact references with `cao artifact add/list/refresh/remove`. It stores path, SHA-256,
-semantic role, native type, and optional native reference. It does not copy native SDD content.
+CAO can persist native SDD artifact references with `cao artifact add/list/refresh/remove/confirm`. It stores path,
+SHA-256, semantic role, native type, and optional native reference. Explicit confirmation binds the review to the
+current file hash. It does not copy or edit native SDD content. The Dashboard shows expected/discovered artifacts
+as `未生成`, `已生成`, or `已确认`, and permits previewing supported text files.
+
+## Orchestration visualization
+
+For a visual overview of Work Items, execution paths, Sessions, Verification summaries, Handoff history, and provider-native SDD artifacts, run `cao dashboard --open`. The dashboard can preview bounded text/Markdown artifacts and confirm an artifact by recording its current hash in CAO metadata; it never edits the SDD-owned source file. Artifact confirmation is enabled only on a loopback-bound dashboard. `cao done` remains responsible for authoritative Verification freshness checks.
