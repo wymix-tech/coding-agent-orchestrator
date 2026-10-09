@@ -70,6 +70,7 @@ class BootstrapTests(unittest.TestCase):
             (repo / "openspec/config.yaml").write_text("context: test\n", encoding="utf-8")
             run(repo, "init")
             run(repo, "start", "--requirement", "requirements/login.md")
+            run(repo, "path", "assess", "--profile", "light", "--reason", "Small local change")
             run(repo, "checkpoint", "--step", "implement-login", "--next", "run tests", "--summary", "API implemented")
             rc, out = run(repo, "bootstrap")
             self.assertEqual(rc, 0)

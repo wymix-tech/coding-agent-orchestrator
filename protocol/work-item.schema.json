@@ -11,6 +11,26 @@
     "requirement": {"$ref": "./artifact-reference.schema.json"},
     "sdd": {"type": "object"},
     "execution": {"type": "object"},
+    "path_assessment": {
+      "type": ["object", "null"],
+      "properties": {
+        "policy_version": {"type": "integer"},
+        "requested_profile": {"enum": ["light", "standard", "comprehensive"]},
+        "profile": {"enum": ["light", "standard", "comprehensive"]},
+        "reason": {"type": "string", "minLength": 1},
+        "risk_flags": {"type": "array", "items": {"type": "string"}},
+        "escalation_reasons": {"type": "array", "items": {"type": "string"}},
+        "required_gates": {"type": "array", "items": {"type": "string"}},
+        "provider": {"type": "string"},
+        "provider_guidance": {"type": "string"},
+        "open_questions": {"type": "array", "items": {"type": "string"}},
+        "assessed_by": {"type": "string"},
+        "assessed_at": {"type": "integer"},
+        "requirement_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"}
+      },
+      "required": ["policy_version", "requested_profile", "profile", "reason", "risk_flags", "required_gates", "provider", "assessed_at", "requirement_sha256"],
+      "additionalProperties": true
+    },
     "resume": {"type": "object"},
     "decisions": {"type": "array", "items": {"type": "object"}},
     "blockers": {"type": "array", "items": {"type": "object"}},

@@ -56,6 +56,8 @@ cao sdd install --provider speckit --integration <key> --yes
 cao sdd select --provider <provider>
 cao list
 cao start --requirement <path> [--title <human title>] [--sdd-ref <native-ref>]
+cao path assess --profile <light|standard|comprehensive> --reason "<short reason>" [--risk-flag <flag>]
+cao path show --work <id>
 cao checkpoint --step <step> --next "<next action>" --summary "<progress>"
 cao decision --decision "<decision>" --reason "<why>"
 cao block --reason "<blocker>" [--suspend]
@@ -67,6 +69,41 @@ cao next
 cao verify
 cao done
 ```
+
+## Minimum-safe execution path
+
+After creating a Work Item, assess the minimum safe workflow before making code changes. Keep this
+assessment lightweight: read the requirement and only the relevant project context, then choose one
+profile. Do not create a scorecard, fact inventory, provenance model, or evidence graph.
+
+```text
+light          clear, local, low-risk, reversible; targeted verification
+standard       ordinary feature/fix requiring some analysis/design, tests and review
+comprehensive  major uncertainty, cross-system or high-risk change; explicit planning and stronger gates
+```
+
+Record the assessment in the Work Item:
+
+```bash
+cao path assess --profile light --reason "Clear, local, reversible change"
+```
+
+Supported risk flags (repeat `--risk-flag` as needed): `security`, `data-migration`,
+`irreversible-change`, `cross-system`, `major-ambiguity`, `external-contract`, `multi-module`,
+`compatibility`. CAO deterministically upgrades `security`, `data-migration`, `irreversible-change`,
+`cross-system`, and `major-ambiguity` to at least `comprehensive`; contract, multi-module, and
+compatibility risks require at least `standard`. The saved assessment reports both the requested and
+effective profile and adds the relevant gates.
+
+`major-ambiguity` is a pause, not just a label: ask the user to clarify the material behavior, then
+rerun `cao path assess` without that flag after the answer is incorporated. CAO blocks code-mutating
+Host events until a current assessment exists and material ambiguity is cleared. If the requirement
+file changes, re-anchor it using the normal requirement-change procedure before reassessing.
+
+The selected SDD Provider supplies profile-specific native-workflow guidance. Follow BMAD, OpenSpec,
+Spec Kit, or another provider's own commands, artifacts, and mandatory preconditions; CAO does not
+invent a duplicate SDD lifecycle. Reassess only when scope, requirement, or risk materially changes.
+The profile never bypasses the project's configured Verification scripts or provider-native gates.
 
 ## State ownership
 
