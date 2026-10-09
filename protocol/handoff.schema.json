@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Coding Agent Orchestrator Handoff",
+  "description": "Immutable point-in-time transfer snapshot. Work Item remains the source of current execution state.",
+  "type": "object",
+  "required": [
+    "version",
+    "sequence",
+    "id",
+    "work_item",
+    "reason",
+    "created_at",
+    "step",
+    "next_action",
+    "summary",
+    "completed",
+    "pending",
+    "decisions",
+    "blockers",
+    "verification"
+  ],
+  "properties": {
+    "version": {"type": "integer", "minimum": 1},
+    "sequence": {"type": "integer", "minimum": 1},
+    "id": {"type": "string", "minLength": 1},
+    "work_item": {"type": "string", "minLength": 1},
+    "session_id": {"type": ["string", "null"]},
+    "host_session_id": {"type": ["string", "null"]},
+    "host": {"type": ["string", "null"]},
+    "reason": {"type": "string", "minLength": 1},
+    "created_at": {"type": "integer", "minimum": 0},
+    "step": {"type": ["string", "null"]},
+    "next_action": {"type": ["object", "null"]},
+    "path_assessment": {"type": ["object", "null"]},
+    "summary": {"type": ["string", "null"]},
+    "completed": {"type": "array"},
+    "pending": {"type": "array"},
+    "decisions": {"type": "array", "items": {"type": "object"}},
+    "blockers": {"type": "array", "items": {"type": "object"}},
+    "verification": {"type": ["object", "null"]}
+  },
+  "additionalProperties": true
+}
