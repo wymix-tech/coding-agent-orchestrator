@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Coding Agent Orchestrator SDD Provider Configuration",
+  "type": "object",
+  "required": ["provider"],
+  "properties": {
+    "provider": {"type": "string", "minLength": 1},
+    "requirement_globs": {"type": "array", "items": {"type": "string"}},
+    "exclude_globs": {"type": "array", "items": {"type": "string"}},
+    "command": {
+      "type": "object",
+      "properties": {
+        "inspect": {"type": "string"},
+        "next": {"type": "string"},
+        "transition": {"type": "string"}
+      },
+      "additionalProperties": true
+    },
+    "capabilities": {
+      "type": "object",
+      "properties": {
+        "detect": {"type": "boolean"},
+        "discover": {"type": "boolean"},
+        "artifacts": {"type": "boolean"},
+        "next_action": {"type": "boolean"},
+        "mutation": {"type": "boolean"}
+      },
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": true
+}

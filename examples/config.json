@@ -1,0 +1,38 @@
+{
+  "version": 1,
+  "verification": {
+    "scripts": [
+      {
+        "name": "unit-tests",
+        "command": "./scripts/verify-unit-tests.sh",
+        "required": true
+      },
+      {
+        "name": "coverage",
+        "command": "./scripts/verify-coverage.sh",
+        "required": true
+      }
+    ]
+  },
+  "rules": {
+    "files": [
+      "AGENTS.md",
+      "CLAUDE.md",
+      ".orchestrator/rules/*.md"
+    ]
+  },
+  "sdd": {
+    "provider": "auto",
+    "requirement_globs": [
+      "requirements/**/*.md",
+      "specs/**/*.md",
+      "openspec/**/*.md",
+      "_bmad/**/*.md"
+    ],
+    "exclude_globs": [],
+    "command": {
+      "inspect": "",
+      "transition": ""
+    }
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Coding Agent Orchestrator Artifact Reference",
+  "type": "object",
+  "required": ["path", "sha256"],
+  "properties": {
+    "path": {"type": "string", "minLength": 1},
+    "sha256": {"type": "string", "pattern": "^[A-Fa-f0-9]{64}$"},
+    "role": {"type": ["string", "null"]},
+    "native_type": {"type": ["string", "null"]},
+    "native_ref": {"type": ["string", "null"]}
+  },
+  "additionalProperties": true
+}

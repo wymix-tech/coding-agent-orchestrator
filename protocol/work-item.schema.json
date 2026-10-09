@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Coding Agent Orchestrator Work Item",
+  "type": "object",
+  "required": ["version", "id", "title", "status", "requirement", "sdd", "execution", "resume", "decisions", "blockers"],
+  "properties": {
+    "version": {"type": "integer"},
+    "id": {"type": "string", "minLength": 1},
+    "title": {"type": "string", "minLength": 1},
+    "status": {"enum": ["todo", "active", "suspended", "completed"]},
+    "requirement": {"$ref": "./artifact-reference.schema.json"},
+    "sdd": {"type": "object"},
+    "execution": {"type": "object"},
+    "resume": {"type": "object"},
+    "decisions": {"type": "array", "items": {"type": "object"}},
+    "blockers": {"type": "array", "items": {"type": "object"}},
+    "verification": {"type": ["object", "null"]},
+    "sessions": {"type": "array", "items": {"type": "object"}}
+  },
+  "additionalProperties": true
+}

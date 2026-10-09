@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Coding Agent Orchestrator Host Event",
+  "type": "object",
+  "required": ["event"],
+  "properties": {
+    "event": {"enum": ["session_start", "prompt_submit", "pre_tool", "post_tool", "subagent_start", "subagent_stop", "stop"]},
+    "tool_name": {"type": "string"},
+    "tool_input": {},
+    "last_assistant_message": {"type": "string"}
+  },
+  "additionalProperties": true
+}

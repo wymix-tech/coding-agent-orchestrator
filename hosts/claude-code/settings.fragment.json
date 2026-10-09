@@ -1,0 +1,56 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "CAO_REPO=\"${CLAUDE_PROJECT_DIR}\" sh /PATH/TO/coding-agent-orchestrator/hooks/host-event.sh --host claude-code"
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "CAO_REPO=\"${CLAUDE_PROJECT_DIR}\" sh /PATH/TO/coding-agent-orchestrator/hooks/host-event.sh --host claude-code"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Write|Edit|Bash|mcp__.*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "CAO_REPO=\"${CLAUDE_PROJECT_DIR}\" sh /PATH/TO/coding-agent-orchestrator/hooks/host-event.sh --host claude-code"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit|Bash|mcp__.*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "CAO_REPO=\"${CLAUDE_PROJECT_DIR}\" sh /PATH/TO/coding-agent-orchestrator/hooks/host-event.sh --host claude-code"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "CAO_REPO=\"${CLAUDE_PROJECT_DIR}\" sh /PATH/TO/coding-agent-orchestrator/hooks/host-event.sh --host claude-code"
+          }
+        ]
+      }
+    ]
+  }
+}

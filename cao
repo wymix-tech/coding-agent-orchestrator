@@ -1,0 +1,21 @@
+#!/usr/bin/env sh
+# Source-checkout launcher. For installed environments, prefer the generated
+# console script from pyproject.toml. This fallback supports Python installations
+# that expose only versioned executables such as python3.11.
+set -eu
+ROOT="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+
+if [ -n "${PYTHON:-}" ]; then
+  exec "$PYTHON" "$ROOT/scripts/cao.py" "$@"
+fi
+
+for candidate in python3 python3.13 python3.12 python3.11 python3.10 python; do
+  if command -v "$candidate" >/dev/null 2>&1; then
+    if "$candidate" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 10) else 1)' >/dev/null 2>&1; then
+      exec "$candidate" "$ROOT/scripts/cao.py" "$@"
+    fi
+  fi
+done
+
+printf '%s\n' 'CAO requires Python 3.10 or newer. Install CAO with `python -m pip install .` or set PYTHON to a supported interpreter.' >&2
+exit 127

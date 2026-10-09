@@ -1,0 +1,13 @@
+{
+  "name": "coding-agent-orchestrator",
+  "version": "0.1.0",
+  "description": "Agent-neutral lightweight coding workflow control plane",
+  "keywords": ["pi-package"],
+  "pi": {
+    "extensions": ["./hosts/pi"],
+    "skills": ["./SKILL.md"]
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*"
+  }
+}
