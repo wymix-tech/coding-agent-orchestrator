@@ -14,8 +14,7 @@
     "resume": {"type": "object"},
     "decisions": {"type": "array", "items": {"type": "object"}},
     "blockers": {"type": "array", "items": {"type": "object"}},
-    "verification": {"type": ["object", "null"]},
-    "sessions": {"type": "array", "items": {"type": "object"}}
+    "verification": {"type": ["object", "null"]}
   },
   "additionalProperties": true
 }

@@ -513,16 +513,88 @@ def work_path(repo: Path, work_id: str) -> Path:
 
 
 def session_path(repo: Path, session_id: str) -> Path:
+    """Return the storage path for a CAO-internal Session ID."""
     safe = re.sub(r"[^A-Za-z0-9._-]+", "-", session_id)
     return repo / SESSION_DIR / f"{safe}.json"
 
 
-def handoff_path(repo: Path, work_id: str) -> Path:
-    return repo / HANDOFF_DIR / f"{work_id}.json"
+def stable_session_id(host: str, host_session_id: str) -> str:
+    """Build a stable internal ID that cannot collide across different hosts."""
+    key = f"{host.strip().lower()}\0{host_session_id}"
+    return f"session-{hashlib.sha256(key.encode('utf-8')).hexdigest()[:16]}"
+
+
+def handoff_history_dir(repo: Path, work_id: str) -> Path:
+    """Return the immutable history directory for a Work Item's Handoffs."""
+    safe_work_id = re.sub(r"[^A-Za-z0-9._-]+", "-", work_id).strip(".-") or "work"
+    return repo / HANDOFF_DIR / safe_work_id
+
+
+def handoff_record_path(repo: Path, work_id: str, handoff_id: str) -> Path:
+    safe_handoff_id = re.sub(r"[^A-Za-z0-9._-]+", "-", handoff_id).strip(".-") or "handoff"
+    return handoff_history_dir(repo, work_id) / f"{safe_handoff_id}.json"
+
+
+def _handoff_time_key(handoff: dict[str, Any]) -> tuple[float, int, str]:
+    """Normalize timestamps and per-work sequence numbers for stable sorting."""
+    value = handoff.get("created_at", 0)
+    timestamp = 0.0
+    if isinstance(value, (int, float)):
+        timestamp = float(value)
+    else:
+        try:
+            timestamp = float(str(value))
+        except (TypeError, ValueError):
+            try:
+                from datetime import datetime
+                timestamp = datetime.fromisoformat(str(value).replace("Z", "+00:00")).timestamp()
+            except (TypeError, ValueError, OverflowError):
+                timestamp = 0.0
+    try:
+        sequence = int(handoff.get("sequence", 0))
+    except (TypeError, ValueError):
+        sequence = 0
+    return timestamp, sequence, str(handoff.get("id") or "")
+
+
+def list_handoff_records(repo: Path, work_id: str | None = None) -> list[dict[str, Any]]:
+    """Read immutable Handoff records from the per-Work-Item history layout."""
+    root = repo / HANDOFF_DIR
+    if not root.is_dir():
+        return []
+
+    if work_id:
+        paths = list(handoff_history_dir(repo, work_id).glob("*.json"))
+    else:
+        paths = [path for history_dir in root.iterdir() if history_dir.is_dir()
+                 for path in history_dir.glob("*.json")]
+
+    records: dict[str, dict[str, Any]] = {}
+    for path in paths:
+        record = load_json(path, None)
+        if not isinstance(record, dict):
+            continue
+        record_work_id = record.get("work_item")
+        if not isinstance(record_work_id, str) or (work_id and record_work_id != work_id):
+            continue
+        handoff_id = record.get("id")
+        if not isinstance(handoff_id, str) or not handoff_id:
+            continue
+        records[handoff_id] = record
+    return sorted(records.values(), key=_handoff_time_key, reverse=True)
+
+
+def latest_handoff(repo: Path, work_id: str) -> dict[str, Any] | None:
+    """Return the newest immutable Handoff record for a Work Item."""
+    records = list_handoff_records(repo, work_id)
+    return records[0] if records else None
+
+def find_handoff(repo: Path, handoff_id: str) -> dict[str, Any] | None:
+    return next((item for item in list_handoff_records(repo) if item.get("id") == handoff_id), None)
 
 
 def empty_index() -> dict[str, Any]:
-    return {"version": 1, "active_work": None, "work_items": [], "sessions": []}
+    return {"version": 1, "active_work": None, "work_items": []}
 
 
 def load_index(repo: Path) -> dict[str, Any]:
@@ -558,14 +630,218 @@ def save_work(repo: Path, work: dict[str, Any]) -> None:
     sync_index_for_work(repo, work)
 
 
-def load_session(repo: Path, session_id: str) -> dict[str, Any] | None:
-    p = session_path(repo, session_id)
-    return load_json(p, None) if p.exists() else None
+def is_current_session_record(raw: Any) -> bool:
+    """Return whether a record satisfies the current Session data contract.
+
+    Session persistence intentionally has no legacy-record normalization or
+    migration path. The host-native ID and Host together determine the stable
+    internal ID, and every required field must be present in the current shape.
+    """
+    if not isinstance(raw, dict) or raw.get("schema_version") != 2:
+        return False
+    required = {
+        "id", "host", "host_session_id", "work_item_id", "kind", "parent_session_id",
+        "status", "started_at", "last_event", "last_event_at", "updated_at",
+        "ended_at", "end_reason", "last_handoff_id",
+    }
+    if not required.issubset(raw):
+        return False
+    host = raw.get("host")
+    native_id = raw.get("host_session_id")
+    if not isinstance(host, str) or not host or not isinstance(native_id, str) or not native_id:
+        return False
+    if raw.get("id") != stable_session_id(host, native_id):
+        return False
+    if raw.get("kind") not in {"primary", "subagent"} or raw.get("status") not in {"active", "ended"}:
+        return False
+    if raw.get("work_item_id") is not None and not isinstance(raw.get("work_item_id"), str):
+        return False
+    if raw.get("parent_session_id") is not None and not isinstance(raw.get("parent_session_id"), str):
+        return False
+    for key in ("started_at", "last_event_at", "updated_at"):
+        if not isinstance(raw.get(key), int) or isinstance(raw.get(key), bool) or raw[key] < 0:
+            return False
+    if raw.get("ended_at") is not None and (not isinstance(raw.get("ended_at"), int) or isinstance(raw.get("ended_at"), bool) or raw["ended_at"] < 0):
+        return False
+    if not isinstance(raw.get("last_event"), str) or not raw["last_event"]:
+        return False
+    if raw.get("end_reason") is not None and not isinstance(raw.get("end_reason"), str):
+        return False
+    if raw.get("last_handoff_id") is not None and not isinstance(raw.get("last_handoff_id"), str):
+        return False
+    return True
+
+
+def _session_files(repo: Path) -> list[Path]:
+    return sorted((repo / SESSION_DIR).glob("*.json")) if (repo / SESSION_DIR).exists() else []
+
+
+def _read_current_session(path: Path) -> dict[str, Any] | None:
+    raw = load_json(path, None)
+    if not is_current_session_record(raw):
+        return None
+    if path.name != f"{raw['id']}.json":
+        return None
+    return raw
+
+
+def load_session(repo: Path, session_ref: str | None, host: str | None = None) -> dict[str, Any] | None:
+    """Find a current-schema Session by internal ID or host-native ID.
+
+    Files from older Session layouts are ignored; this model deliberately does
+    not migrate previous paths or fields.
+    """
+    if not session_ref:
+        return None
+    if host == "unknown":
+        host = None
+    direct = _read_current_session(session_path(repo, session_ref))
+    if direct:
+        if host and direct.get("host") not in {host, "unknown"}:
+            return None
+        return direct
+
+    candidates = [
+        session for path in _session_files(repo)
+        if (session := _read_current_session(path)) is not None
+        and (session.get("id") == session_ref or session.get("host_session_id") == session_ref)
+        and (not host or session.get("host") in {host, "unknown"})
+    ]
+    if not candidates:
+        return None
+    if host:
+        exact = [session for session in candidates if session.get("host") == host]
+        if exact:
+            candidates = exact
+    if len(candidates) > 1 and not host:
+        raise RuntimeError(f"Session reference {session_ref!r} is ambiguous across hosts; supply --host.")
+    return candidates[0]
 
 
 def save_session(repo: Path, session: dict[str, Any]) -> None:
+    session["schema_version"] = 2
     session["updated_at"] = now()
     save_json(session_path(repo, session["id"]), session)
+
+
+def session_activity(session: dict[str, Any], stale_after_minutes: int = 30, current_time: int | None = None) -> str:
+    if session.get("status") == "ended":
+        return "ended"
+    current_time = now() if current_time is None else current_time
+    try:
+        last_event_at = int(session.get("last_event_at") or 0)
+    except (TypeError, ValueError):
+        last_event_at = 0
+    if not last_event_at or current_time - last_event_at > max(1, stale_after_minutes) * 60:
+        return "stale"
+    return "recent"
+
+
+def list_sessions(repo: Path) -> list[dict[str, Any]]:
+    """List current-schema Session records without migrating older formats."""
+    found: dict[str, dict[str, Any]] = {}
+    for path in _session_files(repo):
+        session = _read_current_session(path)
+        if session is not None:
+            found[session["id"]] = session
+    return sorted(found.values(), key=lambda s: (s.get("last_event_at") or 0, s.get("id") or ""), reverse=True)
+
+
+def update_session_event(
+    repo: Path,
+    session_ref: str,
+    host: str,
+    event: str,
+    work: dict[str, Any] | None = None,
+    *,
+    kind: str = "primary",
+    parent_session_id: str | None = None,
+) -> dict[str, Any]:
+    session = load_session(repo, session_ref, host=host)
+    if session is None:
+        return register_session(repo, work, session_ref, host, event=event, kind=kind, parent_session_id=parent_session_id)
+    if session.get("host") == "unknown" and host and host != "unknown":
+        # Re-register to re-key the stored file using the now-known Host identity.
+        return register_session(
+            repo,
+            work,
+            session_ref,
+            host,
+            event=event,
+            kind=kind if kind else session.get("kind", "primary"),
+            parent_session_id=parent_session_id if parent_session_id is not None else session.get("parent_session_id"),
+        )
+    if host and host != "unknown":
+        session["host"] = host
+    session["work_item_id"] = work.get("id") if work else session.get("work_item_id")
+    if session.get("status") != "ended" and event not in {"stop", "session_end", "subagent_stop"}:
+        session["status"] = "active"
+    session["last_event"] = event
+    session["last_event_at"] = now()
+    if event in {"session_start", "subagent_start"} and session.get("status") == "ended":
+        session["started_at"] = now()
+        session["ended_at"] = None
+        session["end_reason"] = None
+    save_session(repo, session)
+    if work:
+        work.setdefault("resume", {})["last_agent"] = host
+        save_work(repo, work)
+    return session
+
+
+def touch_session(repo: Path, session_ref: str, event: str, work: dict[str, Any] | None = None, host: str | None = None) -> dict[str, Any] | None:
+    session = load_session(repo, session_ref, host=host)
+    if not session:
+        return None
+    session["last_event"] = event
+    session["last_event_at"] = now()
+    if work:
+        session["work_item_id"] = work.get("id")
+    save_session(repo, session)
+    return session
+
+
+def end_session(repo: Path, session_ref: str, host: str | None, reason: str, event: str = "stop") -> dict[str, Any] | None:
+    session = load_session(repo, session_ref, host=host)
+    if not session:
+        return None
+    session["status"] = "ended"
+    session["last_event"] = event
+    session["last_event_at"] = now()
+    session["ended_at"] = now()
+    session["end_reason"] = reason
+    save_session(repo, session)
+    return session
+
+
+def cmd_sessions_list(args: argparse.Namespace) -> int:
+    repo = repo_root(args.repo)
+    sessions = list_sessions(repo)
+    if args.host:
+        sessions = [s for s in sessions if s.get("host") == args.host]
+    if args.work:
+        sessions = [s for s in sessions if s.get("work_item_id") == args.work]
+    if args.status:
+        sessions = [s for s in sessions if s.get("status") == args.status]
+    out = []
+    for session in sessions:
+        item = dict(session)
+        item["activity"] = session_activity(session, args.stale_after_minutes)
+        out.append(item)
+    print(json.dumps({"ok": True, "sessions": out, "stale_after_minutes": args.stale_after_minutes}, ensure_ascii=False, indent=2))
+    return 0
+
+
+def cmd_sessions_show(args: argparse.Namespace) -> int:
+    repo = repo_root(args.repo)
+    session = load_session(repo, args.id, host=args.host)
+    if not session:
+        print(json.dumps({"ok": False, "error": "SESSION_NOT_FOUND", "id": args.id}, ensure_ascii=False, indent=2))
+        return 2
+    out = dict(session)
+    out["activity"] = session_activity(session, args.stale_after_minutes)
+    print(json.dumps({"ok": True, "session": out}, ensure_ascii=False, indent=2))
+    return 0
 
 
 def current_work_id(repo: Path, index: dict[str, Any] | None = None) -> str | None:
@@ -661,7 +937,7 @@ def completion_status(repo: Path, work: dict[str, Any] | None) -> dict[str, Any]
 
 def resume_payload(repo: Path, work: dict[str, Any], session_id: str | None = None, host: str | None = None) -> dict[str, Any]:
     c = completion_status(repo, work)
-    handoff = load_json(handoff_path(repo, work["id"]), None) or {}
+    handoff = latest_handoff(repo, work["id"]) or {}
     return {
         "work_item": work_summary(work),
         "requirement": work.get("requirement"),
@@ -712,34 +988,75 @@ def render_context(repo: Path, work: dict[str, Any] | None, *, session_id: str |
     return "\n".join(lines)
 
 
-def register_session(repo: Path, work: dict[str, Any] | None, session_id: str, host: str) -> dict[str, Any]:
+def register_session(
+    repo: Path,
+    work: dict[str, Any] | None,
+    session_id: str,
+    host: str,
+    *,
+    event: str = "session_start",
+    kind: str = "primary",
+    parent_session_id: str | None = None,
+) -> dict[str, Any]:
+    """Create or reattach a Session using the host-native ID as its lookup key."""
     ts = now()
-    existing = load_session(repo, session_id)
-    session = existing or {"id": session_id, "created_at": ts, "host": host}
-    session.update({"host": host, "work_item": work.get("id") if work else None, "status": "active", "last_seen": ts, "last_action": (work or {}).get("execution", {}).get("next_action")})
+    existing = load_session(repo, session_id, host=host)
+    previous_internal_id = existing.get("id") if existing else None
+    effective_host = existing.get("host") if host == "unknown" and existing else host
+    effective_host = effective_host or "unknown"
+    # If an earlier adapter registered the Session before it knew the Host,
+    # re-key it once the concrete Host arrives so the ID invariant stays true.
+    if existing and existing.get("host") == "unknown" and effective_host != "unknown":
+        internal_id = stable_session_id(effective_host, session_id)
+    else:
+        internal_id = existing["id"] if existing else stable_session_id(effective_host, session_id)
+    if existing and existing.get("status") == "ended" and event in {"session_start", "subagent_start", "resume"}:
+        started_at = ts
+    else:
+        started_at = (existing or {}).get("started_at", ts)
+    session = {
+        "schema_version": 2,
+        "id": internal_id,
+        "host": effective_host,
+        "host_session_id": session_id,
+        "work_item_id": work.get("id") if work else (existing or {}).get("work_item_id"),
+        "kind": kind if kind in {"primary", "subagent"} else (existing or {}).get("kind", "primary"),
+        "parent_session_id": parent_session_id if parent_session_id is not None else (existing or {}).get("parent_session_id"),
+        "status": "active",
+        "started_at": started_at,
+        "last_event": event,
+        "last_event_at": ts,
+        "updated_at": ts,
+        "ended_at": None,
+        "end_reason": None,
+        "last_handoff_id": (existing or {}).get("last_handoff_id"),
+    }
     save_session(repo, session)
-    index = load_index(repo)
-    if work and work.get("status") == "active":
-        index["active_work"] = work["id"]
-    sessions = [s for s in index.get("sessions", []) if s.get("id") != session_id]
-    sessions.append({"id": session_id, "host": host, "work_item": work.get("id") if work else None, "status": "active", "updated_at": ts})
-    index["sessions"] = sessions[-30:]
-    save_index(repo, index)
+    if previous_internal_id and previous_internal_id != internal_id:
+        previous_path = session_path(repo, previous_internal_id)
+        if previous_path.exists():
+            try:
+                previous_path.unlink()
+            except OSError:
+                pass
     if work:
-        active = [s for s in work.get("sessions", []) if s.get("id") != session_id]
-        active.append({"id": session_id, "host": host, "status": "active", "last_seen": ts})
-        work["sessions"] = active[-20:]
-        work.setdefault("resume", {})["last_agent"] = host
+        work.setdefault("resume", {})["last_agent"] = effective_host
         save_work(repo, work)
     return session
 
 
 def create_handoff(repo: Path, work: dict[str, Any], session_id: str | None, host: str | None, reason: str = "session stop") -> dict[str, Any]:
+    session = load_session(repo, session_id, host=host) if session_id else None
+    existing_records = list_handoff_records(repo, work["id"])
+    sequence = max((int(item.get("sequence", 0) or 0) for item in existing_records), default=0) + 1
     handoff = {
         "version": 1,
+        "sequence": sequence,
+        "id": new_id("handoff"),
         "work_item": work["id"],
-        "session_id": session_id,
-        "host": host,
+        "session_id": session.get("id") if session else None,
+        "host_session_id": session.get("host_session_id") if session else session_id,
+        "host": host if host and host != "unknown" else (session or {}).get("host"),
         "reason": reason,
         "created_at": now(),
         "step": work.get("execution", {}).get("step"),
@@ -751,16 +1068,12 @@ def create_handoff(repo: Path, work: dict[str, Any], session_id: str | None, hos
         "blockers": work.get("blockers", []),
         "verification": work.get("verification"),
     }
-    save_json(handoff_path(repo, work["id"]), handoff)
-    if session_id:
-        s = load_session(repo, session_id) or {"id": session_id, "host": host}
-        s.update({"status": "ended", "ended_at": now(), "last_action": handoff.get("next_action")})
-        save_session(repo, s)
-        index = load_index(repo)
-        for item in index.get("sessions", []):
-            if item.get("id") == session_id:
-                item.update({"status": "ended", "updated_at": now()})
-        save_index(repo, index)
+    # Each Handoff is an independent immutable record. There is no flat latest
+    # projection; readers derive the latest record from this history directory.
+    save_json(handoff_record_path(repo, work["id"], handoff["id"]), handoff)
+    if session:
+        session["last_handoff_id"] = handoff["id"]
+        save_session(repo, session)
     return handoff
 
 
@@ -1221,7 +1534,6 @@ def cmd_start(args: argparse.Namespace) -> int:
         "decisions": [],
         "blockers": [],
         "verification": None,
-        "sessions": [],
         "created_at": now(),
     }
     work["status"] = "active"
@@ -1309,9 +1621,7 @@ def cmd_checkpoint(args: argparse.Namespace) -> int:
     work.setdefault("resume", {})["last_checkpoint_at"] = now()
     save_work(repo, work)
     if args.session:
-        s = load_session(repo, args.session)
-        if s:
-            s["last_seen"] = now(); s["last_action"] = work.get("execution", {}).get("next_action"); save_session(repo, s)
+        touch_session(repo, args.session, "checkpoint", work, host=args.host)
     print(json.dumps({"ok": True, "work_item": work_summary(work), "next": work.get("execution", {}).get("next_action")}, ensure_ascii=False, indent=2)); return 0
 
 
@@ -1354,8 +1664,44 @@ def cmd_unblock(args: argparse.Namespace) -> int:
     print(json.dumps({"ok": True, "removed": before - len(work.get("blockers") or []), "work_item": work_summary(work)}, ensure_ascii=False, indent=2)); return 0
 
 
+def cmd_handoff_list(args: argparse.Namespace, repo: Path) -> int:
+    if args.limit < 1:
+        print(json.dumps({"ok": False, "error": "INVALID_LIMIT", "reason": "--limit must be >= 1"}, ensure_ascii=False, indent=2))
+        return 2
+    records = list_handoff_records(repo, args.work)[:args.limit]
+    summaries = [{
+        "id": record.get("id"),
+        "sequence": record.get("sequence"),
+        "work_item": record.get("work_item"),
+        "host": record.get("host"),
+        "session_id": record.get("session_id"),
+        "reason": record.get("reason"),
+        "created_at": record.get("created_at"),
+        "step": record.get("step"),
+        "summary": record.get("summary"),
+    } for record in records]
+    print(json.dumps({"ok": True, "count": len(summaries), "handoffs": summaries}, ensure_ascii=False, indent=2))
+    return 0
+
+
+def cmd_handoff_show(args: argparse.Namespace, repo: Path) -> int:
+    if not args.handoff_id:
+        print(json.dumps({"ok": False, "error": "HANDOFF_ID_REQUIRED", "next": "cao handoff show --id <handoff-id>"}, ensure_ascii=False, indent=2))
+        return 2
+    record = find_handoff(repo, args.handoff_id)
+    if not record:
+        print(json.dumps({"ok": False, "error": "HANDOFF_NOT_FOUND", "id": args.handoff_id}, ensure_ascii=False, indent=2))
+        return 2
+    print(json.dumps({"ok": True, "handoff": record}, ensure_ascii=False, indent=2))
+    return 0
+
+
 def cmd_handoff(args: argparse.Namespace) -> int:
     repo = repo_root(args.repo); ensure_initialized(repo)
+    if args.handoff_action == "list":
+        return cmd_handoff_list(args, repo)
+    if args.handoff_action == "show":
+        return cmd_handoff_show(args, repo)
     index = load_index(repo); work = load_work(repo, args.work or index.get("active_work")) if (args.work or index.get("active_work")) else None
     if not work:
         print(json.dumps({"ok": False, "error": "NO_WORK_ITEM"}, ensure_ascii=False, indent=2)); return 2
@@ -1363,6 +1709,8 @@ def cmd_handoff(args: argparse.Namespace) -> int:
         work.setdefault("resume", {})["summary"] = args.summary
     save_work(repo, work)
     handoff = create_handoff(repo, work, args.session, args.host, args.reason)
+    if args.end_session and args.session:
+        end_session(repo, args.session, args.host, args.reason, event="stop")
     print(json.dumps({"ok": True, "handoff": handoff}, ensure_ascii=False, indent=2)); return 0
 
 
@@ -1416,7 +1764,7 @@ def cmd_resume(args: argparse.Namespace) -> int:
         # Resume can inspect suspended work without silently changing its status.
         pass
     session_id = args.session or new_id(args.host or "session")
-    session = register_session(repo, work, session_id, args.host or "unknown")
+    session = register_session(repo, work, session_id, args.host or "unknown", event="resume")
     print(render_context(repo, work, session_id=session_id, host=args.host))
     print("\n## Session\n" + json.dumps(session, ensure_ascii=False, indent=2))
     return 0
@@ -1616,57 +1964,90 @@ def readonly_shell(command: str) -> bool:
 
 
 def host_event(args: argparse.Namespace) -> int:
-    repo = repo_root(args.repo or os.getcwd()); raw = json.load(sys.stdin)
+    repo = repo_root(args.repo or os.getcwd())
+    raw = json.load(sys.stdin)
     event = str(raw.get("event") or raw.get("hook_event_name") or raw.get("event_name") or "").lower()
-    mapping = {"sessionstart": "session_start", "session_start": "session_start", "sessionend": "stop", "session_end": "stop", "userpromptsubmit": "prompt_submit", "before_agent_start": "prompt_submit", "pretooluse": "pre_tool", "tool_call": "pre_tool", "posttooluse": "post_tool", "tool_result": "post_tool", "subagentstart": "subagent_start", "subagentstop": "subagent_stop", "agent_end": "stop"}
+    mapping = {
+        "sessionstart": "session_start", "session_start": "session_start",
+        "sessionend": "stop", "session_end": "stop",
+        "userpromptsubmit": "prompt_submit", "before_agent_start": "prompt_submit",
+        "pretooluse": "pre_tool", "tool_call": "pre_tool",
+        "posttooluse": "post_tool", "tool_result": "post_tool",
+        "subagentstart": "subagent_start", "subagentstop": "subagent_stop",
+        "agent_end": "stop",
+    }
     event = mapping.get(event, event)
     index = load_index(repo) if (repo / CONFIG_REL).exists() else empty_index()
-    wid = index.get("active_work"); work = load_work(repo, wid) if wid else None
-    session_id = str(raw.get("session_id") or raw.get("sessionId") or raw.get("thread_id") or f"{args.host}-default")
+    wid = index.get("active_work")
+    work = load_work(repo, wid) if wid else None
+    if event in {"subagent_start", "subagent_stop"}:
+        native_session_value = raw.get("subagent_id") or raw.get("agent_id") or raw.get("session_id") or raw.get("sessionId") or raw.get("thread_id")
+    else:
+        native_session_value = raw.get("session_id") or raw.get("sessionId") or raw.get("thread_id") or raw.get("agent_id") or raw.get("subagent_id")
+    host_session_id = str(native_session_value or f"{args.host}-default")
+    kind = "subagent" if event in {"subagent_start", "subagent_stop"} else "primary"
+    parent_native = raw.get("parent_session_id") or raw.get("parentSessionId") or raw.get("parent_session")
+    parent_id = stable_session_id(args.host, str(parent_native)) if parent_native else None
 
     if event in {"session_start", "subagent_start"}:
-        if work:
-            register_session(repo, work, session_id, args.host)
-            result = {"decision": "allow", "additional_context": render_context(repo, work, session_id=session_id, host=args.host), "session_id": session_id}
-        else:
-            result = {"decision": "allow", "additional_context": "No active CAO work item. Use `cao start --requirement <path>` when a requirement is selected.", "session_id": session_id}
-        print(json.dumps(native_hook_output(args.host, event, result), ensure_ascii=False)); return 0
+        session = register_session(repo, work, host_session_id, args.host, event=event, kind=kind, parent_session_id=parent_id)
+    else:
+        session = update_session_event(repo, host_session_id, args.host, event, work, kind=kind, parent_session_id=parent_id)
+
+    if event in {"session_start", "subagent_start"}:
+        context = render_context(repo, work, session_id=host_session_id, host=args.host) if work else "No active CAO work item. Use `cao start --requirement <path>` when a requirement is selected."
+        result = {"decision": "allow", "additional_context": context, "session_id": host_session_id}
+        print(json.dumps(native_hook_output(args.host, event, result), ensure_ascii=False))
+        return 0
 
     if event == "prompt_submit":
-        result = {"decision": "allow", "additional_context": render_context(repo, work, session_id=session_id, host=args.host)}
-        if work:
-            register_session(repo, work, session_id, args.host)
-        print(json.dumps(native_hook_output(args.host, event, result), ensure_ascii=False)); return 0
+        result = {"decision": "allow", "additional_context": render_context(repo, work, session_id=host_session_id, host=args.host)}
+        print(json.dumps(native_hook_output(args.host, event, result), ensure_ascii=False))
+        return 0
 
     if event == "pre_tool":
         if tool_is_mutating(raw) and (not work or work.get("status") != "active"):
             result = {"decision": "deny", "reason": "No active work item. Start or resume a requirement before changing production code: `cao start --requirement <path>` or `cao resume --work <id>`."}
         elif tool_is_mutating(raw) and work and not work_sdd_ready(repo, work)[0]:
             provider = ((work.get("sdd") or {}).get("provider") or "auto")
-            result = {"decision": "deny", "reason": f"SDD `{provider}` is not installed in the project. Install it before changing production code: `{sdd_install_instruction(provider, args.host) if provider == 'speckit' else sdd_install_instruction(provider)}`."}
+            install = sdd_install_instruction(provider, args.host) if provider == "speckit" else sdd_install_instruction(provider)
+            result = {"decision": "deny", "reason": f"SDD `{provider}` is not installed in the project. Install it before changing production code: `{install}`."}
         else:
             result = {"decision": "allow"}
-        print(json.dumps(native_hook_output(args.host, event, result), ensure_ascii=False)); return 0
+        print(json.dumps(native_hook_output(args.host, event, result), ensure_ascii=False))
+        return 0
 
     if event in {"post_tool", "file_changed"}:
         if work and tool_is_mutating(raw):
             if work.get("verification", {}).get("status") == "passed":
-                work["resume"]["summary"] = "Code changed after the last verification; verification is now stale."
+                work.setdefault("resume", {})["summary"] = "Code changed after the last verification; verification is now stale."
             save_work(repo, work)
-        print(json.dumps(native_hook_output(args.host, event, {"decision": "allow"}), ensure_ascii=False)); return 0
+        print(json.dumps(native_hook_output(args.host, event, {"decision": "allow"}), ensure_ascii=False))
+        return 0
 
-    if event in {"stop", "subagent_stop"}:
-        if work:
-            create_handoff(repo, work, session_id, args.host, reason=event)
-        should_gate = bool(work and ((work.get("status") == "active") and str(raw.get("last_assistant_message") or "").strip()))
+    if event == "subagent_stop":
+        end_session(repo, host_session_id, args.host, reason="subagent stopped", event="subagent_stop")
+        print(json.dumps(native_hook_output(args.host, event, {"decision": "allow"}), ensure_ascii=False))
+        return 0
+
+    if event == "stop":
+        should_gate = bool(work and work.get("status") == "active" and str(raw.get("last_assistant_message") or "").strip())
         if should_gate and re.search(r"(?i)\b(done|finished|completed|ready to merge)\b|已完成|完成|可以合并", str(raw.get("last_assistant_message") or "")):
-            c = completion_status(repo, work)
-            if not c["ready"]:
-                result = {"decision": "deny", "reason": f"Completion is blocked: {c['reason']}. Next: {completion_next_instruction(repo, work, c)}"}
-                print(json.dumps(native_hook_output(args.host, event, result), ensure_ascii=False)); return 0
-        print(json.dumps(native_hook_output(args.host, event, {"decision": "allow"}), ensure_ascii=False)); return 0
+            completion = completion_status(repo, work)
+            if not completion["ready"]:
+                # The host denied the stop, so the Session remains active.
+                touch_session(repo, host_session_id, "stop_blocked", work, host=args.host)
+                result = {"decision": "deny", "reason": f"Completion is blocked: {completion['reason']}. Next: {completion_next_instruction(repo, work, completion)}"}
+                print(json.dumps(native_hook_output(args.host, event, result), ensure_ascii=False))
+                return 0
+        if work and session.get("kind") != "subagent":
+            create_handoff(repo, work, host_session_id, args.host, reason=event)
+        end_session(repo, host_session_id, args.host, reason=event, event="stop")
+        print(json.dumps(native_hook_output(args.host, event, {"decision": "allow"}), ensure_ascii=False))
+        return 0
 
-    print(json.dumps(native_hook_output(args.host, event, {"decision": "allow"}), ensure_ascii=False)); return 0
+    print(json.dumps(native_hook_output(args.host, event, {"decision": "allow"}), ensure_ascii=False))
+    return 0
 
 
 def native_hook_output(host: str, event: str, result: dict[str, Any]) -> dict[str, Any]:
@@ -1706,11 +2087,15 @@ def build_parser() -> argparse.ArgumentParser:
     sp = sub.add_parser("status"); sp.add_argument("--repo", default="."); sp.add_argument("--work"); sp.set_defaults(fn=cmd_status)
     sp = sub.add_parser("next"); sp.add_argument("--repo", default="."); sp.add_argument("--work"); sp.set_defaults(fn=cmd_next)
     sp = sub.add_parser("resume"); sp.add_argument("--repo", default="."); sp.add_argument("--work"); sp.add_argument("--host", default="unknown"); sp.add_argument("--session"); sp.add_argument("--reactivate", action="store_true"); sp.set_defaults(fn=cmd_resume)
-    sp = sub.add_parser("checkpoint"); sp.add_argument("--repo", default="."); sp.add_argument("--work"); sp.add_argument("--session"); sp.add_argument("--step"); sp.add_argument("--next"); sp.add_argument("--next-type", choices=sorted(ACTION_TYPES), default="agent"); sp.add_argument("--command"); sp.add_argument("--summary"); sp.add_argument("--completed"); sp.add_argument("--pending"); sp.set_defaults(fn=cmd_checkpoint)
+    sp = sub.add_parser("checkpoint"); sp.add_argument("--repo", default="."); sp.add_argument("--work"); sp.add_argument("--session"); sp.add_argument("--host", choices=["claude-code", "codex", "pi"]); sp.add_argument("--step"); sp.add_argument("--next"); sp.add_argument("--next-type", choices=sorted(ACTION_TYPES), default="agent"); sp.add_argument("--command"); sp.add_argument("--summary"); sp.add_argument("--completed"); sp.add_argument("--pending"); sp.set_defaults(fn=cmd_checkpoint)
     sp = sub.add_parser("decision"); sp.add_argument("--repo", default="."); sp.add_argument("--work"); sp.add_argument("--decision", required=True); sp.add_argument("--reason"); sp.add_argument("--scope"); sp.add_argument("--supersedes"); sp.set_defaults(fn=cmd_decision)
     sp = sub.add_parser("block"); sp.add_argument("--repo", default="."); sp.add_argument("--work"); sp.add_argument("--reason", required=True); sp.add_argument("--resolution"); sp.add_argument("--suspend", action="store_true"); sp.set_defaults(fn=cmd_block)
     sp = sub.add_parser("unblock"); sp.add_argument("--repo", default="."); sp.add_argument("--work", required=True); sp.add_argument("--blocker"); sp.set_defaults(fn=cmd_unblock)
-    sp = sub.add_parser("handoff"); sp.add_argument("--repo", default="."); sp.add_argument("--work"); sp.add_argument("--session"); sp.add_argument("--host"); sp.add_argument("--reason", default="manual checkpoint"); sp.add_argument("--summary"); sp.set_defaults(fn=cmd_handoff)
+    sp = sub.add_parser("handoff", help="Create or inspect Handoff records"); sp.add_argument("handoff_action", nargs="?", choices=["list", "show"]); sp.add_argument("--repo", default="."); sp.add_argument("--work"); sp.add_argument("--session"); sp.add_argument("--host"); sp.add_argument("--reason", default="manual checkpoint"); sp.add_argument("--summary"); sp.add_argument("--end-session", action="store_true", help="End the referenced Session after creating the handoff"); sp.add_argument("--id", dest="handoff_id"); sp.add_argument("--limit", type=int, default=20); sp.set_defaults(fn=cmd_handoff)
+    sessions = sub.add_parser("sessions", help="Inspect Agent Sessions")
+    sessions_sub = sessions.add_subparsers(dest="sessions_command", required=True)
+    sp = sessions_sub.add_parser("list"); sp.add_argument("--repo", default="."); sp.add_argument("--host", choices=["claude-code", "codex", "pi"]); sp.add_argument("--work"); sp.add_argument("--status", choices=["active", "ended"]); sp.add_argument("--stale-after-minutes", type=int, default=30); sp.set_defaults(fn=cmd_sessions_list)
+    sp = sessions_sub.add_parser("show"); sp.add_argument("--repo", default="."); sp.add_argument("--id", required=True); sp.add_argument("--host", choices=["claude-code", "codex", "pi"]); sp.add_argument("--stale-after-minutes", type=int, default=30); sp.set_defaults(fn=cmd_sessions_show)
     sp = sub.add_parser("verify"); sp.add_argument("--repo", default="."); sp.add_argument("--work"); sp.add_argument("--script", action="append", help="One-off verification script command; repeat to run multiple scripts"); sp.add_argument("--command", action="append", help=argparse.SUPPRESS); sp.set_defaults(fn=cmd_verify)
     sp = sub.add_parser("done"); sp.add_argument("--repo", default="."); sp.add_argument("--work"); sp.set_defaults(fn=cmd_done)
     sp = sub.add_parser("context"); sp.add_argument("--repo", default="."); sp.add_argument("--work"); sp.add_argument("--session"); sp.add_argument("--host", default="unknown"); sp.set_defaults(fn=cmd_context)

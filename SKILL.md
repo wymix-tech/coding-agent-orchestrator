@@ -61,6 +61,8 @@ cao decision --decision "<decision>" --reason "<why>"
 cao block --reason "<blocker>" [--suspend]
 cao unblock --work <id>
 cao handoff --session <id> --host <host>
+cao handoff list --work <id>
+cao handoff show --id <handoff-id>
 cao next
 cao verify
 cao done
@@ -131,6 +133,10 @@ requirement change; when the change is intentional, re-anchor the Work Item with
 `cao start --requirement <path> --replace`. The `--replace` action changes the active
 execution anchor; it does not mean that the original requirement was superseded.
 
+## Session inspection
+
+Use `cao sessions list` and `cao sessions show --id <id> --host <host>` to inspect runtime Session records. Session state is stored only in `.orchestrator/sessions/`; Work Item progress remains in the Work Item file. A stale activity label does not mean the Session has ended.
+
 ## Session handoff
 
 When a session ends, the Host Adapter may call `host-event` and CAO records a Handoff automatically.
@@ -140,8 +146,10 @@ For an intentional transfer, create an explicit handoff first:
 cao handoff --session <id> --host <host> --reason "transfer to another agent"
 ```
 
-The next Agent should consume that handoff through `cao resume` rather than rebuilding context from
-chat history. Switching hosts does not create a new Work Item.
+Every handoff is retained as an immutable history record. Inspect history with `cao handoff list`
+and a specific snapshot with `cao handoff show --id <handoff-id>`. The next Agent should consume the
+latest handoff through `cao resume` rather than rebuilding context from chat history. Switching hosts
+does not create a new Work Item.
 
 ## SDD installation gate
 

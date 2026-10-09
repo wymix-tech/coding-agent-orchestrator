@@ -7,7 +7,10 @@
 - [x] Durable Work Items per requirement
 - [x] Multiple requirements with `cao list` / `cao status --work`
 - [x] Session registry and cross-session attachment
+- [x] Host-aware Session identity, lifecycle events, and activity freshness using the current schema only
+- [x] Primary/subagent lifecycle separation and `cao sessions list/show` inspection commands
 - [x] Automatic Handoff on host stop/session end
+- [x] Immutable Handoff history with `cao handoff list/show`; latest Handoff derived from history records without legacy-file compatibility
 - [x] `cao resume` for same-agent, new-session, and cross-agent recovery
 - [x] Checkpointed step / next action / progress summary
 - [x] Append-only important decisions
@@ -27,6 +30,6 @@
 ## Next
 
 1. Formalize optional SDD Provider discovery hooks and configurable provider installation recipes.
-2. Add host-session-id extraction tests for each supported host.
+2. Add fixture-based host-session-id extraction tests using real event payloads for each supported host.
 3. Add human-readable `cao status` table output alongside JSON.
 4. Add optional project-level completion gates without reintroducing an evidence graph.

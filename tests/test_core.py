@@ -92,8 +92,9 @@ class CoreTests(unittest.TestCase):
             self.assertIn("Login endpoint implemented", out.get("raw", ""))
             work = run(repo, "status")[1]["work"]
             self.assertEqual(work["work_item"]["last_agent"], "codex")
-            session = json.loads((repo / ".orchestrator/sessions/codex-1.json").read_text())
-            self.assertEqual(session["work_item"], work["work_item"]["id"])
+            session_files = list((repo / ".orchestrator/sessions").glob("*.json"))
+            session = next(json.loads(path.read_text(encoding="utf-8")) for path in session_files if json.loads(path.read_text(encoding="utf-8")).get("host_session_id") == "codex-1")
+            self.assertEqual(session["work_item_id"], work["work_item"]["id"])
 
     def test_decision_is_persistent_and_append_only(self):
         td, repo = self.init_repo()

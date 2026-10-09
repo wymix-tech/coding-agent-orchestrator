@@ -51,6 +51,11 @@ cao checkpoint --step implement-login-api --next "run integration tests" --summa
 cao decision --decision "Use Redis for refresh token" --reason "Supports revocation"
 cao block --reason "Need product confirmation" --suspend
 cao resume --host codex --session codex-42
+cao sessions list
+cao sessions show --id <session-id> --host codex
+cao handoff --reason "transfer to another agent"
+cao handoff list --work <work-id>
+cao handoff show --id <handoff-id>
 cao next
 cao verify
 cao done
@@ -63,9 +68,36 @@ cao done
 ├── config.json
 ├── index.json
 ├── work/<work-id>.json
-├── sessions/<session-id>.json
-└── handoffs/<work-id>.json
+├── sessions/<session-internal-id>.json
+└── handoffs/
+    └── <work-id>/<handoff-id>.json    # immutable handoff history
 ```
+
+### Session lifecycle and inspection
+
+Session files are the single source of truth for Agent runtime sessions. They use a stable internal ID derived from the host name and host-native session ID, so identical native IDs from different hosts do not collide. Session records store the host, associated Work Item, primary/subagent relationship, lifecycle status, latest observed event, and handoff reference; they do not duplicate execution progress or next-action state.
+
+```bash
+cao sessions list
+cao sessions list --host codex --status active
+cao sessions list --stale-after-minutes 30
+cao sessions show --id <session-id> --host codex
+```
+
+`recent` and `stale` are calculated from `last_event_at`; stale means “no recent event observed”, not “the Agent has ended”. Only an explicit end event closes a Session. Creating a Handoff alone does not end a Session; main-session stop events create a Handoff and then close that Session, while subagent stop events close only the subagent Session.
+
+### Handoff history and inspection
+
+Every Handoff is stored as an immutable record at `.orchestrator/handoffs/<work-id>/<handoff-id>.json`. The newest record is derived from the history directory. This directory layout is the only supported Handoff storage format; older flat-file Handoff records are not loaded or migrated.
+
+```bash
+cao handoff --reason "transfer to another agent"
+cao handoff list
+cao handoff list --work <work-id> --limit 10
+cao handoff show --id <handoff-id>
+```
+
+`list` returns the newest records first; `show` prints the full snapshot. `cao resume` uses the newest record found in the Work Item's history directory.
 
 ### Ownership boundary
 

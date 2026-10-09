@@ -41,22 +41,29 @@ completed/pending notes
 important decisions
 blockers
 verification snapshot
-session history
+Session runtime association (stored separately)
 ```
 
 ### Session
 
-A temporary Agent runtime attachment:
+A temporary Agent runtime attachment. Session records are defined by `protocol/session.schema.json` and stored only under `.orchestrator/sessions/`.
 
 ```text
-host
-session id
-work item
-started / last seen / ended
-last action
+CAO internal session id (stable hash of host + host-native session id)
+host / host_session_id
+work_item_id
+kind: primary | subagent
+parent_session_id
+status: active | ended
+started_at / last_event / last_event_at / ended_at
+end_reason / last_handoff_id
 ```
 
-A Session is disposable. A Work Item is durable.
+`last_event_at` records the latest Host or CAO Session event observed by CAO; it is not a heartbeat or proof that the Agent process is alive. `recent` / `stale` is calculated at query time, while lifecycle status remains `active` until an explicit end event is observed.
+
+Session files are the source of truth. The `index.json` and Work Item documents do not duplicate Session arrays. Only records matching the current Session schema are loaded; older Session formats are not migrated.
+
+A Session is disposable. A Work Item is durable. Handoff creation does not itself end a Session; the lifecycle owner decides when to call `end_session`.
 
 ### Handoff
 
@@ -74,6 +81,14 @@ verification
 previous session / host
 ```
 
+Each Handoff is an immutable point-in-time snapshot stored under
+`.orchestrator/handoffs/<work-id>/<handoff-id>.json`. The newest snapshot is derived from that
+Work Item's history directory. This history layout is the only supported persistence format;
+flat latest-record files and legacy Handoff data are not loaded or migrated.
+Use `cao handoff list [--work <work-id>] [--limit N]` to inspect history and
+`cao handoff show --id <handoff-id>` to inspect a full record. `cao resume` consumes the latest
+record and current Work Item state rather than treating an old Handoff as the sole source of truth.
+
 CAO does not need to own or persist the host's complete chat transcript.
 
 ## Repository layout
@@ -85,9 +100,10 @@ CAO does not need to own or persist the host's complete chat transcript.
 ├── work/
 │   └── <work-id>.json
 ├── sessions/
-│   └── <session-id>.json
+│   └── <session-internal-id>.json
 └── handoffs/
-    └── <work-id>.json
+    └── <work-id>/
+        └── <handoff-id>.json          # immutable history records
 ```
 
 ## State transitions
@@ -102,6 +118,10 @@ TODO → ACTIVE → SUSPENDED
 
 Verification is not another long-lived business phase. It is a snapshot-bound property of the Work
 Item. This avoids a phase machine becoming a substitute SDD.
+
+## Session inspection
+
+Use `cao sessions list` to inspect recently observed or stale active sessions, and `cao sessions show --id <native-or-internal-id> [--host <host>]` for one session. If a native ID exists under multiple hosts, `--host` disambiguates it. `cao sessions list --stale-after-minutes 30` controls the activity display threshold without changing lifecycle state.
 
 ## Resume semantics
 
