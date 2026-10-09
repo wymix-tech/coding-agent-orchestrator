@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Coding Agent Orchestrator Session",
+  "description": "A host-session lifecycle record. Work Item state and chat transcripts are stored elsewhere.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "id",
+    "host",
+    "host_session_id",
+    "work_item_id",
+    "kind",
+    "parent_session_id",
+    "status",
+    "started_at",
+    "last_event",
+    "last_event_at",
+    "updated_at",
+    "ended_at",
+    "end_reason",
+    "last_handoff_id"
+  ],
+  "properties": {
+    "schema_version": {"const": 2},
+    "id": {"type": "string", "pattern": "^session-[a-f0-9]{16}$"},
+    "host": {"type": "string", "minLength": 1},
+    "host_session_id": {"type": "string", "minLength": 1},
+    "work_item_id": {"type": ["string", "null"]},
+    "kind": {"enum": ["primary", "subagent"]},
+    "parent_session_id": {"type": ["string", "null"]},
+    "status": {"enum": ["active", "ended"]},
+    "started_at": {"type": "integer", "minimum": 0},
+    "last_event": {"type": "string", "minLength": 1},
+    "last_event_at": {"type": "integer", "minimum": 0},
+    "updated_at": {"type": "integer", "minimum": 0},
+    "ended_at": {"type": ["integer", "null"]},
+    "end_reason": {"type": ["string", "null"]},
+    "last_handoff_id": {"type": ["string", "null"]}
+  },
+  "additionalProperties": false
+}
