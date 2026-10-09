@@ -8,7 +8,10 @@
     "sha256": {"type": "string", "pattern": "^[A-Fa-f0-9]{64}$"},
     "role": {"type": ["string", "null"]},
     "native_type": {"type": ["string", "null"]},
-    "native_ref": {"type": ["string", "null"]}
+    "native_ref": {"type": ["string", "null"]},
+    "confirmed_at": {"type": ["integer", "null"]},
+    "confirmed_by": {"type": ["string", "null"]},
+    "status": {"type": ["string", "null"], "enum": ["generated", "confirmed", null]}
   },
   "additionalProperties": true
 }

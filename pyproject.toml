@@ -30,3 +30,6 @@ packages = ["scripts"]
 
 [tool.setuptools.data-files]
 "share/coding-agent-orchestrator/templates" = ["templates/AGENTS.md", "templates/CLAUDE.md"]
+
+[tool.setuptools.package-data]
+scripts = ["dashboard.html"]

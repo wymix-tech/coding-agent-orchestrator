@@ -1597,6 +1597,39 @@ def cmd_artifact_add(args: argparse.Namespace) -> int:
     print(json.dumps({"ok": True, "artifact": ref, "work_item": work_summary(work)}, ensure_ascii=False, indent=2)); return 0
 
 
+def mark_artifact_confirmed(repo: Path, work: dict[str, Any], value: str, confirmed_by: str = "user") -> dict[str, Any]:
+    """Record explicit confirmation for the current content hash of a native artifact."""
+    sdd = work.setdefault("sdd", {})
+    artifacts = sdd.setdefault("artifacts", [])
+    role = None
+    native_type = None
+    native_ref = sdd.get("native_ref")
+    for existing in artifacts:
+        if existing.get("path") == resolve_artifact_path(repo, value)[1]:
+            role = existing.get("role")
+            native_type = existing.get("native_type")
+            native_ref = existing.get("native_ref") or native_ref
+            break
+    ref = artifact_reference(repo, value, role=role, native_type=native_type, native_ref=native_ref)
+    ref.update({"confirmed_at": int(time.time()), "confirmed_by": confirmed_by, "status": "confirmed"})
+    artifacts[:] = [existing for existing in artifacts if existing.get("path") != ref["path"]]
+    artifacts.append(ref)
+    save_work(repo, work)
+    return ref
+
+
+def cmd_artifact_confirm(args: argparse.Namespace) -> int:
+    repo = repo_root(args.repo); ensure_initialized(repo)
+    work = resolve_work(repo, args.work)
+    if not work:
+        print(json.dumps({"ok": False, "error": "NO_WORK_ITEM"}, ensure_ascii=False, indent=2)); return 2
+    try:
+        ref = mark_artifact_confirmed(repo, work, args.path, args.confirmed_by)
+    except ValueError as exc:
+        print(json.dumps({"ok": False, "error": "ARTIFACT_INVALID", "reason": str(exc)}, ensure_ascii=False, indent=2)); return 2
+    print(json.dumps({"ok": True, "artifact": ref, "work_item": work_summary(work)}, ensure_ascii=False, indent=2)); return 0
+
+
 def cmd_artifact_list(args: argparse.Namespace) -> int:
     repo = repo_root(args.repo); ensure_initialized(repo)
     work = resolve_work(repo, args.work)
@@ -1633,7 +1666,13 @@ def cmd_artifact_refresh(args: argparse.Namespace) -> int:
                 continue
         p = repo / item["path"]
         if p.is_file():
-            item["sha256"] = sha256_file(p)
+            previous_sha = item.get("sha256")
+            current_sha = sha256_file(p)
+            item["sha256"] = current_sha
+            if previous_sha and previous_sha != current_sha:
+                item.pop("confirmed_at", None)
+                item.pop("confirmed_by", None)
+                item["status"] = "generated"
             refreshed.append(item)
     if target and not refreshed:
         print(json.dumps({"ok": False, "error": "ARTIFACT_NOT_FOUND", "path": target}, ensure_ascii=False, indent=2)); return 2
@@ -2390,11 +2429,25 @@ def native_hook_output(host: str, event: str, result: dict[str, Any]) -> dict[st
     return out
 
 
+def cmd_dashboard(args: argparse.Namespace) -> int:
+    """Serve the read-only local orchestration dashboard."""
+    from scripts.dashboard import serve_dashboard
+    return int(serve_dashboard(args))
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="cao", description="Coding Agent Orchestrator")
     sub = p.add_subparsers(dest="command", required=True)
     sp = sub.add_parser("init"); sp.add_argument("--repo", default="."); sp.add_argument("--sdd", default=None); sp.add_argument("--verify-script", action="append", default=None, help="Project verification script command; repeat for multiple scripts"); sp.add_argument("--verify-command", action="append", default=None, help=argparse.SUPPRESS); sp.add_argument("--force", action="store_true"); sp.set_defaults(fn=cmd_init)
     sp = sub.add_parser("bootstrap"); sp.add_argument("--repo", default="."); sp.add_argument("--host", default=None, choices=["claude-code", "codex", "pi"]); sp.set_defaults(fn=cmd_bootstrap)
+    sp = sub.add_parser("dashboard", help="Launch the read-only local orchestration dashboard")
+    sp.add_argument("--repo", default=".", help="Project repository root")
+    sp.add_argument("--host", default="127.0.0.1", help="Bind address; non-loopback requires --allow-remote")
+    sp.add_argument("--port", type=int, default=8765, help="HTTP port (0 selects an available port)")
+    sp.add_argument("--refresh", type=int, default=10, help="Browser refresh interval in seconds, minimum 3")
+    sp.add_argument("--open", action="store_true", help="Open the dashboard URL in a browser")
+    sp.add_argument("--allow-remote", action="store_true", help="Allow binding beyond localhost; exposes project metadata without authentication")
+    sp.set_defaults(fn=cmd_dashboard)
     sdd = sub.add_parser("sdd", help="Detect, select, and install a project SDD")
     sdd_sub = sdd.add_subparsers(dest="sdd_command", required=True)
     sp = sdd_sub.add_parser("list"); sp.add_argument("--repo", default="."); sp.set_defaults(fn=cmd_sdd_list)
@@ -2419,6 +2472,7 @@ def build_parser() -> argparse.ArgumentParser:
     artifact_sub = artifact.add_subparsers(dest="artifact_command", required=True)
     sp = artifact_sub.add_parser("add"); sp.add_argument("--repo", default="."); sp.add_argument("--work"); sp.add_argument("--path", required=True); sp.add_argument("--role"); sp.add_argument("--native-type", dest="native_type"); sp.add_argument("--native-ref", dest="native_ref"); sp.set_defaults(fn=cmd_artifact_add)
     sp = artifact_sub.add_parser("list"); sp.add_argument("--repo", default="."); sp.add_argument("--work"); sp.set_defaults(fn=cmd_artifact_list)
+    sp = artifact_sub.add_parser("confirm", help="Mark an SDD artifact as reviewed and confirmed"); sp.add_argument("--repo", default="."); sp.add_argument("--work"); sp.add_argument("--path", required=True); sp.add_argument("--confirmed-by", default="user"); sp.set_defaults(fn=cmd_artifact_confirm)
     sp = artifact_sub.add_parser("remove"); sp.add_argument("--repo", default="."); sp.add_argument("--work"); sp.add_argument("--path", required=True); sp.set_defaults(fn=cmd_artifact_remove)
     sp = artifact_sub.add_parser("refresh"); sp.add_argument("--repo", default="."); sp.add_argument("--work"); sp.add_argument("--path"); sp.set_defaults(fn=cmd_artifact_refresh)
     sp = sub.add_parser("list"); sp.add_argument("--repo", default="."); sp.set_defaults(fn=cmd_list)

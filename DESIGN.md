@@ -340,6 +340,7 @@ cao artifact add
 cao artifact list
 cao artifact refresh
 cao artifact remove
+cao artifact confirm
 ```
 
 CAO stores path, SHA-256, semantic role, native type, and optional native reference. Native file contents
@@ -375,3 +376,16 @@ This prevents the CAO SDD installation gate from falling into provider prompts.
 CAO resolves the BMad Python prerequisite by checking available Python executables for a compatible
 version. Versioned executables such as `python3.11` are valid; the generic `python3` alias is not
 required.
+
+
+## Orchestration dashboard
+
+The `cao dashboard` command serves a local control panel using the Python standard library. It is a
+projection over the existing `.orchestrator/` files, not a second state store. It visualizes Work Items,
+minimum-safe execution profiles, current step and next action, blockers, Verification summaries, Sessions,
+SDD detection, Handoff history, and provider-native artifacts. Artifact status is `not_generated`, `generated`,
+or `confirmed`; confirmation stores the current artifact hash and review metadata in the CAO Work Item without
+editing the SDD-owned file. Markdown and other bounded text files can be previewed directly. Artifact confirmation
+is restricted to a loopback-bound dashboard; remote binding requires `--allow-remote` and disables confirmation.
+Full repository code snapshots are not recalculated on every browser refresh; `cao done` remains authoritative
+for Verification freshness.
