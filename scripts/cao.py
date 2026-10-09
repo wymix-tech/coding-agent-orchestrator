@@ -42,6 +42,37 @@ DEFAULT_CONFIG: dict[str, Any] = {
 WORK_STATUSES = {"todo", "active", "suspended", "completed"}
 ACTION_TYPES = {"agent", "verification", "sdd", "human", "none"}
 
+# Keep path selection intentionally small and deterministic. The Agent performs
+# the lightweight contextual assessment; CAO only validates the result and
+# applies these hard minimums.
+EXECUTION_PROFILES = ("light", "standard", "comprehensive")
+PROFILE_RANK = {name: index for index, name in enumerate(EXECUTION_PROFILES)}
+PATH_RISK_MINIMUM: dict[str, str] = {
+    "security": "comprehensive",
+    "data_migration": "comprehensive",
+    "irreversible_change": "comprehensive",
+    "cross_system": "comprehensive",
+    "major_ambiguity": "comprehensive",
+    "external_contract": "standard",
+    "multi_module": "standard",
+    "compatibility": "standard",
+}
+PATH_RISK_GATES: dict[str, list[str]] = {
+    "security": ["security_review", "security_verification"],
+    "data_migration": ["migration_plan", "rollback_plan", "data_verification"],
+    "irreversible_change": ["recovery_plan", "explicit_human_confirmation"],
+    "cross_system": ["integration_plan", "integration_verification"],
+    "major_ambiguity": ["requirements_clarification"],
+    "external_contract": ["contract_review", "compatibility_verification"],
+    "multi_module": ["integration_verification"],
+    "compatibility": ["compatibility_verification"],
+}
+PROFILE_BASE_GATES: dict[str, list[str]] = {
+    "light": ["targeted_verification"],
+    "standard": ["scope_review", "tests", "implementation_review", "verification"],
+    "comprehensive": ["requirements_review", "design_review", "implementation_review", "verification"],
+}
+
 SDD_CATALOG: dict[str, dict[str, Any]] = {
     "openspec": {
         "name": "OpenSpec",
@@ -57,6 +88,11 @@ SDD_CATALOG: dict[str, dict[str, Any]] = {
                 ["yarn", "global", "add", "@fission-ai/openspec@latest"],
             ],
             "project_command": ["openspec", "init", "--tools", "all"],
+        },
+        "path_guidance": {
+            "light": "Use the smallest native OpenSpec change workflow supported by the installed version. Do not create unrelated planning artifacts; preserve required native preconditions.",
+            "standard": "Create or update the relevant OpenSpec proposal/spec/tasks as needed, apply the change, and verify the affected behavior.",
+            "comprehensive": "Use a complete OpenSpec change with explicit proposal, affected specs, design/tasks where supported, staged implementation, and verification. Split independent changes when that reduces risk.",
         },
     },
     "bmad": {
@@ -82,6 +118,11 @@ SDD_CATALOG: dict[str, dict[str, Any]] = {
                 "--yes",
             ],
         },
+        "path_guidance": {
+            "light": "Use BMAD's smallest safe native build/quick-fix path. Do not generate full PRD, architecture, epics, or stories unless the task's risk or uncertainty requires them.",
+            "standard": "Use relevant BMAD analysis/specification or build workflows and create only the native artifacts needed to clarify scope, implement, review, and verify the change.",
+            "comprehensive": "Use the applicable full BMAD planning path, including requirements, architecture, epics/stories when warranted, then implement in stages with explicit review and verification.",
+        },
     },
     "speckit": {
         "name": "GitHub Spec Kit",
@@ -97,6 +138,11 @@ SDD_CATALOG: dict[str, dict[str, Any]] = {
                 "pi": "pi",
             },
             "project_command": ["specify", "init", "--here", "--force", "--non-interactive", "--integration", "codex", "--ignore-agent-tools"],
+        },
+        "path_guidance": {
+            "light": "Use the minimal Spec Kit-native implementation path while preserving any required Specify/spec artifact. Omit optional clarification, checklist, or analysis steps when they add no safety value.",
+            "standard": "Use the relevant Spec Kit Specify/Plan/Tasks/Implement steps needed for the change; create only the specifications and plans justified by the scope.",
+            "comprehensive": "Use a full Spec Kit specification, planning, task decomposition, and staged implementation flow. Apply clarification and analysis steps where uncertainty or integration risk warrants them.",
         },
     },
 }
@@ -892,12 +938,132 @@ def work_summary(work: dict[str, Any]) -> dict[str, Any]:
         "status": work["status"],
         "step": work.get("execution", {}).get("step"),
         "next_action": work.get("execution", {}).get("next_action"),
+        "execution_profile": (work.get("path_assessment") or {}).get("profile"),
         "sdd": work.get("sdd"),
         "blockers": work.get("blockers") or [],
         "decision_count": len(work.get("decisions") or []),
         "verification": (work.get("verification") or {}).get("status"),
         "last_agent": work.get("resume", {}).get("last_agent"),
     }
+
+
+def normalize_path_risk_flag(value: str) -> str:
+    return str(value or "").strip().lower().replace("-", "_").replace(" ", "_")
+
+
+def path_guidance_for_provider(provider: str, profile: str) -> str:
+    provider_meta = SDD_CATALOG.get(provider) or {}
+    guidance = provider_meta.get("path_guidance") or {}
+    return str(guidance.get(profile) or (
+        "Use the selected SDD's smallest native workflow that satisfies the required gates. "
+        "Do not create duplicate artifacts or bypass provider-native prerequisites."
+    ))
+
+
+def build_path_assessment(
+    *,
+    requested_profile: str,
+    reason: str,
+    risk_flags: list[str],
+    provider: str,
+    requirement_sha256: str,
+    questions: list[str] | None = None,
+    assessed_by: str = "agent",
+) -> dict[str, Any]:
+    """Validate an Agent's lightweight path assessment and enforce hard minimums."""
+    if requested_profile not in PROFILE_RANK:
+        raise ValueError(f"unsupported execution profile: {requested_profile}")
+    if not reason.strip():
+        raise ValueError("path assessment reason must not be empty")
+
+    normalized: list[str] = []
+    for flag in risk_flags:
+        value = normalize_path_risk_flag(flag)
+        if value not in PATH_RISK_MINIMUM:
+            allowed = ", ".join(sorted(PATH_RISK_MINIMUM))
+            raise ValueError(f"unknown path risk flag `{flag}`; expected one of: {allowed}")
+        if value not in normalized:
+            normalized.append(value)
+
+    open_questions = [str(q).strip() for q in (questions or []) if str(q).strip()]
+    # Open questions in this model are material questions that affect the
+    # expected behavior. Never let an assessment record questions while
+    # accidentally leaving the implementation gate open.
+    if open_questions and "major_ambiguity" not in normalized:
+        normalized.append("major_ambiguity")
+
+    effective_profile = requested_profile
+    escalation_reasons: list[str] = []
+    for flag in normalized:
+        minimum = PATH_RISK_MINIMUM[flag]
+        if PROFILE_RANK[minimum] > PROFILE_RANK[effective_profile]:
+            escalation_reasons.append(f"risk flag `{flag}` requires at least `{minimum}`")
+            effective_profile = minimum
+
+    gates = list(PROFILE_BASE_GATES[effective_profile])
+    for flag in normalized:
+        for gate in PATH_RISK_GATES.get(flag, []):
+            if gate not in gates:
+                gates.append(gate)
+
+    return {
+        "policy_version": 1,
+        "requested_profile": requested_profile,
+        "profile": effective_profile,
+        "reason": reason.strip(),
+        "risk_flags": normalized,
+        "escalation_reasons": escalation_reasons,
+        "required_gates": gates,
+        "provider": provider,
+        "provider_guidance": path_guidance_for_provider(provider, effective_profile),
+        "open_questions": open_questions,
+        "assessed_by": assessed_by.strip() or "agent",
+        "assessed_at": now(),
+        "requirement_sha256": requirement_sha256,
+    }
+
+
+def path_assessment_state(repo: Path, work: dict[str, Any]) -> dict[str, Any]:
+    """Return freshness and blocking details for a Work Item's path assessment."""
+    assessment = work.get("path_assessment")
+    if not isinstance(assessment, dict):
+        return {"ready": False, "reason": "execution path has not been assessed", "assessment": None}
+    if assessment.get("policy_version") != 1:
+        return {"ready": False, "reason": "execution path assessment uses an unsupported policy version", "assessment": assessment}
+    profile = assessment.get("profile")
+    if profile not in PROFILE_RANK:
+        return {"ready": False, "reason": "execution path assessment is invalid", "assessment": assessment}
+    work_provider = str((work.get("sdd") or {}).get("provider") or "auto")
+    if assessment.get("provider") != work_provider:
+        return {"ready": False, "reason": "execution path assessment is stale because the SDD provider changed", "assessment": assessment}
+    flags = assessment.get("risk_flags") or []
+    if not isinstance(flags, list) or any(flag not in PATH_RISK_MINIMUM for flag in flags):
+        return {"ready": False, "reason": "execution path assessment is invalid", "assessment": assessment}
+    required_profile = max((PATH_RISK_MINIMUM[flag] for flag in flags), key=lambda item: PROFILE_RANK[item], default="light")
+    if PROFILE_RANK[profile] < PROFILE_RANK[required_profile]:
+        return {"ready": False, "reason": "execution path assessment violates a required risk minimum", "assessment": assessment}
+    requirement = work.get("requirement") or {}
+    req_path = repo / str(requirement.get("path") or "")
+    if not req_path.is_file():
+        return {"ready": False, "reason": "requirement file missing", "assessment": assessment}
+    current_sha = sha256_file(req_path)
+    if current_sha != requirement.get("sha256"):
+        return {"ready": False, "reason": "requirement changed since work started", "assessment": assessment}
+    if current_sha != assessment.get("requirement_sha256"):
+        return {"ready": False, "reason": "execution path assessment is stale", "assessment": assessment}
+    if "major_ambiguity" in flags or assessment.get("open_questions"):
+        return {"ready": False, "reason": "major requirement ambiguity requires clarification", "assessment": assessment}
+    return {"ready": True, "reason": None, "assessment": assessment}
+
+
+def path_assessment_instruction(work: dict[str, Any] | None = None) -> str:
+    wid = (work or {}).get("id")
+    work_arg = f" --work {wid}" if wid else ""
+    return (
+        "Perform a lightweight scope/risk assessment, choose light, standard, or comprehensive, "
+        "then record it with `cao path assess --profile <profile> --reason \"<short reason>\"" +
+        " [--risk-flag <flag>]" + work_arg + "`. Do not build a separate evidence model or scorecard."
+    )
 
 
 def completion_status(repo: Path, work: dict[str, Any] | None) -> dict[str, Any]:
@@ -913,6 +1079,9 @@ def completion_status(repo: Path, work: dict[str, Any] | None) -> dict[str, Any]
     req_sha = sha256_file(req)
     if req_sha != work["requirement"]["sha256"]:
         return {"ready": False, "reason": "requirement changed since work started"}
+    path_state = path_assessment_state(repo, work)
+    if not path_state["ready"]:
+        return {"ready": False, "reason": path_state["reason"]}
     cfg = config(repo)
     code_sha = code_snapshot(repo, {work["requirement"]["path"]})
     rules_sha = rules_snapshot(repo, cfg)
@@ -942,6 +1111,8 @@ def resume_payload(repo: Path, work: dict[str, Any], session_id: str | None = No
         "work_item": work_summary(work),
         "requirement": work.get("requirement"),
         "execution": work.get("execution"),
+        "path_assessment": work.get("path_assessment"),
+        "path_assessment_state": path_assessment_state(repo, work),
         "resume": work.get("resume"),
         "decisions": work.get("decisions") or [],
         "blockers": work.get("blockers") or [],
@@ -964,6 +1135,10 @@ def render_context(repo: Path, work: dict[str, Any] | None, *, session_id: str |
         f"Requirement: {p['requirement']['path']}",
         f"SDD: {(p.get('work_item', {}).get('sdd') or {}).get('provider', 'none')}",
         f"Step: {e.get('step') or 'not recorded'}",
+        "",
+        "## Minimum-Safe Execution Path",
+        json.dumps(p.get("path_assessment") or {"status": "required", "next": path_assessment_instruction(work)}, ensure_ascii=False),
+        f"Path assessment ready: {p['path_assessment_state'].get('ready')}",
         "",
         "## Completed / Current",
         str((p.get("resume") or {}).get("summary") or "No handoff summary recorded."),
@@ -1061,6 +1236,7 @@ def create_handoff(repo: Path, work: dict[str, Any], session_id: str | None, hos
         "created_at": now(),
         "step": work.get("execution", {}).get("step"),
         "next_action": work.get("execution", {}).get("next_action"),
+        "path_assessment": work.get("path_assessment"),
         "summary": work.get("resume", {}).get("summary"),
         "completed": work.get("resume", {}).get("completed", []),
         "pending": work.get("resume", {}).get("pending", []),
@@ -1175,8 +1351,18 @@ def cmd_bootstrap(args: argparse.Namespace) -> int:
         completion = completion_status(repo, work)
         if work.get("status") in {"todo", "suspended"}:
             next_out["next"] = action("agent", f"Resume this work item with `cao resume --work {work['id']}`.")
+        elif work.get("status") == "completed":
+            next_out["next"] = action("none", "Work item is completed.")
         elif work.get("blockers"):
             next_out["next"] = action("human", "Resolve the active blocker before continuing.")
+        elif not path_assessment_state(repo, work)["ready"]:
+            path_state = path_assessment_state(repo, work)
+            if path_state["reason"] == "major requirement ambiguity requires clarification":
+                next_out["next"] = action("human", "Clarify the material requirement ambiguity, then rerun `cao path assess` without `--risk-flag major-ambiguity`.")
+            elif path_state["reason"] == "requirement changed since work started":
+                next_out["next"] = action("human", completion_next_instruction(repo, work, {"ready": False, "reason": path_state["reason"]}))
+            else:
+                next_out["next"] = action("agent", path_assessment_instruction(work))
         elif (work.get("verification") or {}).get("status") == "failed":
             next_out["next"] = action("agent", "Fix the verification failure, then run `cao verify`.")
         elif completion["ready"]:
@@ -1529,7 +1715,8 @@ def cmd_start(args: argparse.Namespace) -> int:
         "status": "todo",
         "requirement": requirement_evidence(repo, p),
         "sdd": {"provider": provider, "native_ref": args.sdd_ref, "artifacts": []},
-        "execution": {"step": "intake", "next_action": action("agent", "Read the requirement and create/locate the SDD-native planning artifacts before implementation.")},
+        "execution": {"step": "path-assessment", "next_action": action("agent", path_assessment_instruction())},
+        "path_assessment": None,
         "resume": {"summary": "Work item created. Requirement is ready for intake.", "completed": [], "pending": []},
         "decisions": [],
         "blockers": [],
@@ -1539,6 +1726,9 @@ def cmd_start(args: argparse.Namespace) -> int:
     work["status"] = "active"
     work["started_at"] = work.get("started_at") or now()
     work["requirement"] = requirement_evidence(repo, p)
+    if not isinstance(work.get("path_assessment"), dict):
+        work.setdefault("execution", {})["step"] = "path-assessment"
+        work.setdefault("execution", {})["next_action"] = action("agent", path_assessment_instruction(work))
     if args.title:
         work["title"] = args.title
     work["sdd"]["provider"] = provider
@@ -1546,7 +1736,7 @@ def cmd_start(args: argparse.Namespace) -> int:
         work["sdd"]["native_ref"] = args.sdd_ref
     save_work(repo, work)
     native = run_sdd_command(repo, "inspect", [rel(p, repo)])
-    print(json.dumps({"ok": True, "action": "IMPLEMENT", "work_item": work_summary(work), "sdd": native}, ensure_ascii=False, indent=2)); return 0
+    print(json.dumps({"ok": True, "action": "ASSESS_PATH", "work_item": work_summary(work), "next_action": work.get("execution", {}).get("next_action"), "sdd": native}, ensure_ascii=False, indent=2)); return 0
 
 
 def cmd_list(args: argparse.Namespace) -> int:
@@ -1575,6 +1765,82 @@ def cmd_status(args: argparse.Namespace) -> int:
     print(json.dumps(out, ensure_ascii=False, indent=2)); return 0
 
 
+def cmd_path_assess(args: argparse.Namespace) -> int:
+    repo = repo_root(args.repo); ensure_initialized(repo)
+    index = load_index(repo)
+    wid = args.work or index.get("active_work")
+    work = load_work(repo, wid) if wid else None
+    if not work or work.get("status") not in {"active", "suspended"}:
+        print(json.dumps({"ok": False, "error": "NO_ACTIVE_WORK_ITEM"}, ensure_ascii=False, indent=2))
+        return 2
+
+    requirement = work.get("requirement") or {}
+    req_path = repo / str(requirement.get("path") or "")
+    if not req_path.is_file():
+        print(json.dumps({"ok": False, "error": "REQUIREMENT_FILE_MISSING", "path": requirement.get("path")}, ensure_ascii=False, indent=2))
+        return 2
+    current_sha = sha256_file(req_path)
+    if current_sha != requirement.get("sha256"):
+        print(json.dumps({
+            "ok": False,
+            "error": "REQUIREMENT_CHANGED",
+            "reason": "Review the requirement change and re-anchor the Work Item before reassessing its execution path.",
+            "next": f"Review `{requirement.get('path')}`; if intentional, run `cao start --requirement {requirement.get('path')} --replace`.",
+        }, ensure_ascii=False, indent=2))
+        return 2
+
+    provider = str((work.get("sdd") or {}).get("provider") or "auto")
+    assessment = build_path_assessment(
+        requested_profile=args.profile,
+        reason=args.reason,
+        risk_flags=args.risk_flag or [],
+        provider=provider,
+        requirement_sha256=current_sha,
+        questions=args.question or [],
+        assessed_by=args.assessed_by,
+    )
+    work["path_assessment"] = assessment
+    execution = work.setdefault("execution", {})
+    if "major_ambiguity" in assessment["risk_flags"]:
+        execution["step"] = "clarification-required"
+        questions = "; ".join(assessment["open_questions"])
+        detail = f" Open questions: {questions}." if questions else ""
+        execution["next_action"] = action(
+            "human",
+            "Clarify the material requirement ambiguity with the user, then rerun `cao path assess` without `--risk-flag major-ambiguity`. Do not implement until clarified." + detail,
+            profile=assessment["profile"],
+        )
+    else:
+        execution["step"] = "path-selected"
+        gate_text = ", ".join(assessment["required_gates"])
+        execution["next_action"] = action(
+            "agent",
+            f"Apply the {assessment['profile']} path using {provider}'s native workflow. {assessment['provider_guidance']} Required gates: {gate_text}. Reassess only if the scope, risk, or requirement materially changes.",
+            profile=assessment["profile"],
+            provider=provider,
+        )
+    save_work(repo, work)
+    print(json.dumps({"ok": True, "work_item": work_summary(work), "path_assessment": assessment, "next_action": execution["next_action"]}, ensure_ascii=False, indent=2))
+    return 0
+
+
+def cmd_path_show(args: argparse.Namespace) -> int:
+    repo = repo_root(args.repo); ensure_initialized(repo)
+    index = load_index(repo)
+    wid = args.work or index.get("active_work")
+    work = load_work(repo, wid) if wid else None
+    if not work:
+        print(json.dumps({"ok": False, "error": "NO_WORK_ITEM"}, ensure_ascii=False, indent=2))
+        return 2
+    print(json.dumps({
+        "ok": True,
+        "work_item": work_summary(work),
+        "path_assessment": work.get("path_assessment"),
+        "state": path_assessment_state(repo, work),
+    }, ensure_ascii=False, indent=2))
+    return 0
+
+
 def cmd_next(args: argparse.Namespace) -> int:
     repo = repo_root(args.repo); ensure_initialized(repo)
     index = load_index(repo); work = load_work(repo, args.work or index.get("active_work")) if (args.work or index.get("active_work")) else None
@@ -1589,6 +1855,15 @@ def cmd_next(args: argparse.Namespace) -> int:
         out = {"ok": True, "action": action("none", "Work item is completed."), "work_item": work_summary(work)}
     elif work.get("blockers"):
         out = {"ok": True, "action": action("human", "Resolve the active blocker before continuing."), "work_item": work_summary(work)}
+    elif not path_assessment_state(repo, work)["ready"]:
+        path_state = path_assessment_state(repo, work)
+        if path_state["reason"] == "major requirement ambiguity requires clarification":
+            nxt = action("human", "Clarify the material requirement ambiguity, then rerun `cao path assess` without `--risk-flag major-ambiguity`.")
+        elif path_state["reason"] == "requirement changed since work started":
+            nxt = action("human", completion_next_instruction(repo, work, {"ready": False, "reason": path_state["reason"]}))
+        else:
+            nxt = action("agent", path_assessment_instruction(work))
+        out = {"ok": True, "action": nxt, "work_item": work_summary(work)}
     else:
         execution = work.get("execution") or {}
         configured = execution.get("next_action")
@@ -1904,6 +2179,10 @@ def completion_next_instruction(repo: Path, work: dict[str, Any] | None, complet
             f"if the change is intentional, re-anchor the work item with `cao start --requirement {path} --replace`; "
             f"otherwise restore the previous requirement and run `cao verify`."
         )
+    if reason in {"execution path has not been assessed", "execution path assessment is stale"}:
+        return f"Review the requirement and current scope, then record or refresh the minimum-safe-path assessment: `cao path assess --profile <light|standard|comprehensive> --reason \"<short reason>\" --work {wid}`."
+    if reason == "major requirement ambiguity requires clarification":
+        return "Ask the user to resolve the material requirement ambiguity, then rerun `cao path assess` without `--risk-flag major-ambiguity`. Do not implement while the ambiguity remains unresolved."
     if reason == "verification is missing or stale":
         return "Run `cao verify` after the requirement, code, rules, and verification configuration are stable."
     if reason.startswith("work status is "):
@@ -1942,6 +2221,14 @@ def cmd_context(args: argparse.Namespace) -> int:
     print(render_context(repo, work, session_id=args.session, host=args.host)); return 0
 
 
+def cmd_path(args: argparse.Namespace) -> int:
+    if args.path_command == "assess":
+        return cmd_path_assess(args)
+    if args.path_command == "show":
+        return cmd_path_show(args)
+    raise ValueError(f"unsupported path command: {args.path_command}")
+
+
 def tool_is_mutating(raw: dict[str, Any]) -> bool:
     tool = str(raw.get("tool_name") or raw.get("tool") or raw.get("name") or "").lower()
     payload = raw.get("tool_input") or raw.get("input") or raw.get("arguments") or raw
@@ -1960,7 +2247,35 @@ def readonly_shell(command: str) -> bool:
     if not low:
         return True
     prefixes = ("git status", "git diff", "git log", "git show", "git branch", "ls", "dir", "cat ", "type ", "pwd", "find ", "grep ", "rg ", "sed ", "head ", "tail ", "pytest", "python -m unittest", "mvn test", "gradle test", "npm test")
-    return low.startswith(prefixes)
+    if low.startswith(prefixes):
+        return True
+    # CAO governance commands mutate CAO state, not product code. Permit these
+    # single commands through the code-mutation hook so an unassessed Work Item
+    # can run `cao path assess` and other required orchestration actions.
+    try:
+        tokens = shlex.split(command)
+    except ValueError:
+        return False
+    if not tokens or any(token in {";", "&&", "||", "|", ">", ">>", "<"} for token in tokens):
+        return False
+    command_tokens = tokens
+    if tokens[0] == "python" or re.fullmatch(r"python3(?:\.\d+)?", tokens[0]):
+        script_index = next((i for i, token in enumerate(tokens[1:], 1) if Path(token).as_posix().endswith("scripts/cao.py")), None)
+        if script_index is None or script_index + 1 >= len(tokens):
+            return False
+        command_tokens = tokens[script_index + 1:]
+    elif tokens[0] == "./cao":
+        command_tokens = tokens[1:]
+    elif tokens[0] == "cao":
+        command_tokens = tokens[1:]
+    else:
+        return False
+    safe_control_commands = {
+        "init", "bootstrap", "sdd", "start", "path", "list", "status", "next", "resume",
+        "checkpoint", "decision", "block", "unblock", "handoff", "sessions", "verify", "done",
+        "context", "artifact", "host-event",
+    }
+    return bool(command_tokens and command_tokens[0] in safe_control_commands)
 
 
 def host_event(args: argparse.Namespace) -> int:
@@ -2012,6 +2327,15 @@ def host_event(args: argparse.Namespace) -> int:
             provider = ((work.get("sdd") or {}).get("provider") or "auto")
             install = sdd_install_instruction(provider, args.host) if provider == "speckit" else sdd_install_instruction(provider)
             result = {"decision": "deny", "reason": f"SDD `{provider}` is not installed in the project. Install it before changing production code: `{install}`."}
+        elif tool_is_mutating(raw) and work and not path_assessment_state(repo, work)["ready"]:
+            path_state = path_assessment_state(repo, work)
+            if path_state["reason"] == "requirement changed since work started":
+                instruction = completion_next_instruction(repo, work, {"ready": False, "reason": path_state["reason"]})
+            elif path_state["reason"] == "major requirement ambiguity requires clarification":
+                instruction = "Clarify the material requirement ambiguity with the user, then rerun `cao path assess` without `--risk-flag major-ambiguity`. Do not implement while it remains unresolved."
+            else:
+                instruction = f"Assess scope/risk with `cao path assess --profile <light|standard|comprehensive> --reason \"<short reason>\" --work {work['id']}`."
+            result = {"decision": "deny", "reason": f"Execution path is not ready ({path_state['reason']}). {instruction}"}
         else:
             result = {"decision": "allow"}
         print(json.dumps(native_hook_output(args.host, event, result), ensure_ascii=False))
@@ -2077,6 +2401,20 @@ def build_parser() -> argparse.ArgumentParser:
     sp = sdd_sub.add_parser("select"); sp.add_argument("--repo", default="."); sp.add_argument("--provider", required=True, choices=sorted(SDD_CATALOG)); sp.set_defaults(fn=cmd_sdd_select)
     sp = sdd_sub.add_parser("install"); sp.add_argument("--repo", default="."); sp.add_argument("--provider", choices=sorted(SDD_CATALOG)); sp.add_argument("--tools", default=None, help="OpenSpec init tool ids, or all/none"); sp.add_argument("--host", choices=["claude-code", "codex", "pi"], default=None, help="Current coding-agent host; used by Spec Kit to select its integration"); sp.add_argument("--integration", default=None, help="Spec Kit integration key, e.g. claude, codex, pi, copilot"); sp.add_argument("--integration-options", default=None, help="Spec Kit integration options passed through as one value"); sp.add_argument("--yes", action="store_true", help="Confirm installation of external/project software"); sp.set_defaults(fn=cmd_sdd_install)
     sp = sub.add_parser("start"); sp.add_argument("--repo", default="."); sp.add_argument("--requirement"); sp.add_argument("--title", default=None, help="Human-readable Work Item title; overrides the requirement filename"); sp.add_argument("--sdd-ref"); sp.add_argument("--sdd-provider", choices=sorted(SDD_CATALOG)); sp.add_argument("--replace", action="store_true"); sp.add_argument("--reopen", action="store_true"); sp.set_defaults(fn=cmd_start)
+    path = sub.add_parser("path", help="Assess and inspect the minimum-safe execution path")
+    path_sub = path.add_subparsers(dest="path_command", required=True)
+    sp = path_sub.add_parser("assess", help="Record an Agent's lightweight scope/risk assessment")
+    sp.add_argument("--repo", default="."); sp.add_argument("--work")
+    sp.add_argument("--profile", required=True, choices=EXECUTION_PROFILES)
+    sp.add_argument("--reason", required=True, help="Short explanation for the selected profile")
+    risk_cli_names = sorted(set(PATH_RISK_MINIMUM) | {name.replace("_", "-") for name in PATH_RISK_MINIMUM})
+    sp.add_argument("--risk-flag", action="append", default=[], choices=risk_cli_names, help="Risk requiring a minimum profile; repeat as needed")
+    sp.add_argument("--question", action="append", default=[], help="Unresolved requirement question; repeat as needed")
+    sp.add_argument("--assessed-by", default="agent", help="Who performed the assessment")
+    sp.set_defaults(fn=cmd_path_assess)
+    sp = path_sub.add_parser("show", help="Show the current Work Item's path assessment")
+    sp.add_argument("--repo", default="."); sp.add_argument("--work")
+    sp.set_defaults(fn=cmd_path_show)
     artifact = sub.add_parser("artifact", help="Manage SDD artifact references")
     artifact_sub = artifact.add_subparsers(dest="artifact_command", required=True)
     sp = artifact_sub.add_parser("add"); sp.add_argument("--repo", default="."); sp.add_argument("--work"); sp.add_argument("--path", required=True); sp.add_argument("--role"); sp.add_argument("--native-type", dest="native_type"); sp.add_argument("--native-ref", dest="native_ref"); sp.set_defaults(fn=cmd_artifact_add)

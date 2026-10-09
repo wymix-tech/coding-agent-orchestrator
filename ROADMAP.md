@@ -26,6 +26,8 @@
 - [x] SDD artifact-reference writer lifecycle
 - [x] Work Item → index projection synchronization
 - [x] Project-owned verification scripts with no unsafe default
+- [x] Minimum-safe execution path selector with three profiles and deterministic risk upgrades
+- [x] SDD-specific execution-path guidance for BMAD, OpenSpec, and Spec Kit without duplicating native lifecycles
 
 ## Next
 

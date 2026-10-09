@@ -47,6 +47,8 @@ cao sdd install --provider openspec --yes
 cao sdd install --provider bmad --host claude-code --yes
 cao list
 cao start --requirement requirements/login.md --title "User login" --sdd-ref changes/add-login
+cao path assess --profile standard --reason "A small API change that needs a spec and integration tests"
+cao path show
 cao checkpoint --step implement-login-api --next "run integration tests" --summary "JWT endpoint implemented"
 cao decision --decision "Use Redis for refresh token" --reason "Supports revocation"
 cao block --reason "Need product confirmation" --suspend
@@ -85,6 +87,36 @@ cao sessions show --id <session-id> --host codex
 ```
 
 `recent` and `stale` are calculated from `last_event_at`; stale means “no recent event observed”, not “the Agent has ended”. Only an explicit end event closes a Session. Creating a Handoff alone does not end a Session; main-session stop events create a Handoff and then close that Session, while subagent stop events close only the subagent Session.
+
+### Minimum-safe execution path
+
+Every new Work Item starts with a lightweight path assessment before code mutation. The Agent chooses
+one profile based on the requirement, relevant project context, scope, uncertainty, risk, reversibility,
+and how the change can be verified. CAO does not use numeric scoring or a fact/evidence graph.
+
+| Profile | Typical use | Minimum process |
+|---|---|---|
+| `light` | Clear, local, low-risk, reversible change | Inspect relevant code, make the change, targeted verification |
+| `standard` | Ordinary feature or bug fix with limited design work | Scope/design as needed, tests, implementation review, verification |
+| `comprehensive` | High-risk, broad, materially ambiguous, or hard-to-reverse change | Requirements and design review, staged implementation, stronger verification |
+
+Create or refresh the assessment:
+
+```bash
+cao path assess --profile light --reason "Clear, local, reversible change"
+cao path show --work <work-id>
+```
+
+Risk flags are intentionally few and deterministic. `security`, `data-migration`, `irreversible-change`,
+`cross-system`, and `major-ambiguity` require at least `comprehensive`; `external-contract`,
+`multi-module`, and `compatibility` require at least `standard`. CAO upgrades a lower requested profile
+when needed and records the reason, required gates, requirement hash, and selected provider guidance.
+
+`major-ambiguity` pauses implementation until the user clarifies the material behavior and the Agent
+reassesses without that flag. Host Hooks deny code mutation while an assessment is missing/stale or a
+material ambiguity remains. A requirement-file change must follow CAO's re-anchor procedure before a
+new assessment. Provider-specific mapping remains guidance: BMAD, OpenSpec, and Spec Kit keep their
+native workflow and mandatory preconditions. Profiles do not waive configured Verification scripts.
 
 ### Handoff history and inspection
 
@@ -150,6 +182,9 @@ The package includes host adapters for Claude Code, Codex, and Pi. All adapters 
 
 There is no Fact Resolver, evidence provenance graph, independent state-manager module, or provider-
 specific governance engine. The core state is plain JSON, and SDD compatibility is reference-driven.
+The execution-path selector follows the same constraint: a short Agent assessment, a three-profile
+policy, a small hard-risk map, and Provider guidance. It does not add semantic scoring or evidence
+infrastructure.
 
 ## SDD installation gate
 

@@ -165,6 +165,41 @@ none
 The SDD provider can suggest a native action, but CAO records the resulting next action as execution
 continuity, not as an SDD artifact.
 
+## Minimum-safe execution path
+
+CAO chooses the minimum safe process depth independently of any specific SDD. A Work Item receives a
+single lightweight assessment with three profiles:
+
+```text
+light          clear, local, reversible, low-risk changes
+standard       ordinary feature/fix requiring limited analysis/design and review
+comprehensive  high-risk, broad, materially ambiguous, or hard-to-reverse changes
+```
+
+The Agent supplies the contextual judgment and one short reason. CAO validates the profile and applies
+deterministic minimums for a small list of risk flags. Security, data migration, irreversible changes,
+cross-system work, and major requirement ambiguity require at least `comprehensive`. External contracts,
+multi-module changes, and compatibility risks require at least `standard`. The effective profile and
+required gates are persisted under `work.path_assessment` with the current requirement hash.
+
+`major_ambiguity` pauses code mutation until the user clarifies the behavior and the Agent records a
+new assessment without that flag. Missing or stale assessments block mutating Host events and prevent
+`cao done`. If the requirement changes, the Work Item must follow the established re-anchor procedure
+before an assessment can be refreshed.
+
+Each built-in SDD Provider contains lightweight `path_guidance` for `light`, `standard`, and
+`comprehensive`. These are provider-specific native-workflow instructions, not a second lifecycle
+engine. CAO does not create SDD artifacts, issue a numeric score, scan the repository into a fact model,
+or build a provenance graph. Profile selection never waives provider-native prerequisites or configured
+Verification scripts.
+
+The CLI is deliberately small:
+
+```bash
+cao path assess --profile light --reason "Clear, local, reversible change"
+cao path show --work <work-id>
+```
+
 ## Decisions
 
 Decisions are append-only records intended for future Agents. They are not a knowledge graph.

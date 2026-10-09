@@ -32,7 +32,8 @@ class CoreTests(unittest.TestCase):
         with td:
             (repo / "requirements").mkdir(); (repo / "requirements/login.md").write_text("Add login", encoding="utf-8")
             rc, _, _ = run(repo, "init"); self.assertEqual(rc, 0)
-            rc, out, _ = run(repo, "start", "--requirement", "requirements/login.md"); self.assertEqual(rc, 0); self.assertEqual(out["action"], "IMPLEMENT")
+            rc, out, _ = run(repo, "start", "--requirement", "requirements/login.md"); self.assertEqual(rc, 0); self.assertEqual(out["action"], "ASSESS_PATH")
+            run(repo, "path", "assess", "--profile", "light", "--reason", "Small, clear, local change")
             rc, _, _ = run(repo, "checkpoint", "--step", "implement-login-api", "--next", "run integration tests", "--summary", "JWT API implemented", "--completed", "JWT API")
             self.assertEqual(rc, 0)
             rc, _, _ = run(repo, "verify", "--script", "python3 -c \"print('ok')\""); self.assertEqual(rc, 0)
@@ -42,7 +43,7 @@ class CoreTests(unittest.TestCase):
         td, repo = self.init_repo()
         with td:
             (repo / "requirements").mkdir(); (repo / "requirements/a.md").write_text("A", encoding="utf-8"); (repo / "app.py").write_text("x=1", encoding="utf-8")
-            run(repo, "init"); run(repo, "start", "--requirement", "requirements/a.md"); run(repo, "verify", "--script", "python3 -c \"pass\"")
+            run(repo, "init"); run(repo, "start", "--requirement", "requirements/a.md"); run(repo, "path", "assess", "--profile", "light", "--reason", "Small local change"); run(repo, "verify", "--script", "python3 -c \"pass\"")
             (repo / "app.py").write_text("x=2", encoding="utf-8")
             rc, out, _ = run(repo, "done"); self.assertEqual(rc, 2); self.assertEqual(out["error"], "COMPLETION_BLOCKED")
 
@@ -50,7 +51,7 @@ class CoreTests(unittest.TestCase):
         td, repo = self.init_repo()
         with td:
             (repo / "requirements").mkdir(); p = repo / "requirements/a.md"; p.write_text("A", encoding="utf-8")
-            run(repo, "init"); run(repo, "start", "--requirement", "requirements/a.md"); run(repo, "verify", "--script", "python3 -c \"pass\"")
+            run(repo, "init"); run(repo, "start", "--requirement", "requirements/a.md"); run(repo, "path", "assess", "--profile", "light", "--reason", "Small local change"); run(repo, "verify", "--script", "python3 -c \"pass\"")
             p.write_text("A changed", encoding="utf-8")
             rc, out, _ = run(repo, "done")
             self.assertEqual(rc, 2)
@@ -61,7 +62,7 @@ class CoreTests(unittest.TestCase):
         td, repo = self.init_repo()
         with td:
             (repo / "requirements").mkdir(); p = repo / "requirements/a.md"; p.write_text("A", encoding="utf-8")
-            run(repo, "init"); run(repo, "start", "--requirement", "requirements/a.md"); run(repo, "verify", "--script", "python3 -c \"pass\"")
+            run(repo, "init"); run(repo, "start", "--requirement", "requirements/a.md"); run(repo, "path", "assess", "--profile", "light", "--reason", "Small local change"); run(repo, "verify", "--script", "python3 -c \"pass\"")
             p.write_text("A changed", encoding="utf-8"); rc, out, _ = run(repo, "done"); self.assertEqual(rc, 2); self.assertIn("requirement changed", out["reason"])
 
     def test_multiple_work_items_have_independent_state(self):
