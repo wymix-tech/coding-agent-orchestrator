@@ -39,6 +39,40 @@ class CoreTests(unittest.TestCase):
             rc, _, _ = run(repo, "verify", "--script", "python3 -c \"print('ok')\""); self.assertEqual(rc, 0)
             rc, out, _ = run(repo, "done"); self.assertEqual(rc, 0); self.assertEqual(out["status"], "completed")
 
+    def test_standard_sdd_workflow_is_required_before_done(self):
+        td, repo = self.init_repo()
+        with td:
+            (repo / "_bmad").mkdir()
+            (repo / "requirements").mkdir(); (repo / "requirements/login.md").write_text("Add login", encoding="utf-8")
+            run(repo, "init"); run(repo, "sdd", "select", "--provider", "bmad")
+            run(repo, "start", "--requirement", "requirements/login.md")
+            rc, _, _ = run(repo, "path", "assess", "--profile", "standard", "--reason", "Feature requiring analysis and review")
+            self.assertEqual(rc, 0)
+            rc, out, _ = run(repo, "done")
+            self.assertEqual(rc, 2)
+            self.assertEqual(out["reason"], "native SDD workflow is not recorded as completed")
+            rc, out, _ = run(repo, "sdd", "workflow", "select", "--name", "BMAD Specify Requirements", "--entrypoint", "project-local BMAD workflow/skill")
+            self.assertEqual(rc, 0)
+            (repo / "_bmad-output").mkdir(); (repo / "_bmad-output/requirements.md").write_text("Requirements", encoding="utf-8")
+            rc, out, _ = run(repo, "sdd", "workflow", "complete", "--artifact", "_bmad-output/requirements.md")
+            self.assertEqual(rc, 0)
+            run(repo, "verify", "--script", "python3 -c \"pass\"")
+            rc, out, _ = run(repo, "done")
+            self.assertEqual(rc, 0)
+
+    def test_standard_sdd_workflow_requires_existing_artifacts(self):
+        td, repo = self.init_repo()
+        with td:
+            (repo / "openspec").mkdir(exist_ok=True)
+            (repo / "requirements").mkdir(); (repo / "requirements/a.md").write_text("A", encoding="utf-8")
+            run(repo, "init"); run(repo, "sdd", "select", "--provider", "openspec")
+            run(repo, "start", "--requirement", "requirements/a.md")
+            run(repo, "path", "assess", "--profile", "standard", "--reason", "Ordinary feature")
+            run(repo, "sdd", "workflow", "select", "--name", "OpenSpec change", "--entrypoint", "openspec new change")
+            rc, out, _ = run(repo, "sdd", "workflow", "complete", "--artifact", "openspec/missing.md")
+            self.assertEqual(rc, 2)
+            self.assertEqual(out["error"], "ARTIFACT_INVALID")
+
     def test_edit_after_verify_blocks_done(self):
         td, repo = self.init_repo()
         with td:

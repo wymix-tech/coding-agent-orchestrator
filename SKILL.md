@@ -105,6 +105,27 @@ Spec Kit, or another provider's own commands, artifacts, and mandatory precondit
 invent a duplicate SDD lifecycle. Reassess only when scope, requirement, or risk materially changes.
 The profile never bypasses the project's configured Verification scripts or provider-native gates.
 
+For `standard` and `comprehensive` paths with an installed SDD provider, selecting a path is not
+proof that its native workflow ran. Before implementation, record the actual provider-native workflow
+and entrypoint, then execute it using that provider's installed instructions:
+
+```bash
+cao sdd workflow select --name "<native workflow name>" --entrypoint "<native workflow command or skill>"
+```
+
+After actually executing the workflow, record its existing, repository-relative output files (repeat
+`--artifact` for each file):
+
+```bash
+cao sdd workflow complete --artifact <repo-relative-file>
+```
+
+CAO blocks `cao done` for these paths until the selected workflow is marked completed and its recorded
+output files exist. This contract applies across providers, not only BMAD. Do not fabricate artifact
+paths or mark a workflow completed before running it. If a provider-native workflow genuinely produces
+no files, do not bypass the gate silently: explicitly reassess whether `standard`/`comprehensive` is
+appropriate or extend the provider contract with a documented exception.
+
 ## State ownership
 
 CAO owns:

@@ -393,3 +393,8 @@ for Verification freshness.
 ## User language policy
 
 CAO stores one project-level preference at `language.user` (default `zh-CN`). User communication and SDD-generated documents follow this preference. Provider adapters apply it through each SDD's native configuration: BMAD communication/document language keys, OpenSpec project context, and Spec Kit constitution language principles. No provider-specific language selection algorithm is maintained. Applying the same preference is idempotent and only replaces CAO-managed sections or the provider's dedicated language keys. Explicit user language requests take precedence for the requested scope.
+
+
+## Native SDD workflow completion contract
+
+For `standard` and `comprehensive` Work Items using an installed SDD Provider, a successful code/test verification is not sufficient to complete the Work Item. The Agent records the provider-native workflow name and entrypoint with `cao sdd workflow select`, executes it according to the provider's own instructions, and records existing repository-relative output files with `cao sdd workflow complete --artifact ...`. `cao done` blocks unless the workflow is recorded completed and every referenced output file exists. This is provider-neutral orchestration metadata, not a replacement SDD workflow; native artifacts remain owned by the provider. Verification should run after native artifacts have stabilized so snapshot freshness remains valid.

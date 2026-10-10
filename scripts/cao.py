@@ -1543,6 +1543,29 @@ def completion_status(repo: Path, work: dict[str, Any] | None) -> dict[str, Any]
     path_state = path_assessment_state(repo, work)
     if not path_state["ready"]:
         return {"ready": False, "reason": path_state["reason"]}
+    sdd = work.get("sdd") or {}
+    assessment = work.get("path_assessment") or {}
+    provider = str(sdd.get("provider") or "none")
+    profile = str(assessment.get("profile") or "light")
+    if provider in SDD_CATALOG and profile in {"standard", "comprehensive"}:
+        workflow = sdd.get("workflow") or {}
+        if workflow.get("status") != "completed":
+            return {
+                "ready": False,
+                "reason": "native SDD workflow is not recorded as completed",
+                "workflow": workflow or None,
+                "provider": provider,
+                "profile": profile,
+            }
+        if not str(workflow.get("name") or "").strip() or not str(workflow.get("entrypoint") or "").strip():
+            return {"ready": False, "reason": "native SDD workflow record is incomplete", "workflow": workflow}
+        artifact_paths = workflow.get("artifacts") or []
+        if not artifact_paths:
+            return {"ready": False, "reason": "native SDD workflow has no recorded output artifacts", "workflow": workflow}
+        missing_artifacts = [path for path in artifact_paths if not (repo / str(path)).is_file()]
+        if missing_artifacts:
+            return {"ready": False, "reason": "native SDD workflow output artifacts are missing", "missing_artifacts": missing_artifacts, "workflow": workflow}
+
     cfg = config(repo)
     code_sha = code_snapshot(repo, {work["requirement"]["path"]})
     rules_sha = rules_snapshot(repo, cfg)
@@ -2041,6 +2064,47 @@ def cmd_sdd_install(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_sdd_workflow(args: argparse.Namespace) -> int:
+    repo = repo_root(args.repo); ensure_initialized(repo)
+    work = resolve_work(repo, args.work)
+    if not work:
+        print(json.dumps({"ok": False, "error": "NO_WORK_ITEM"}, ensure_ascii=False, indent=2)); return 2
+    sdd = work.setdefault("sdd", {})
+    if args.workflow_action == "select":
+        name = str(args.name or "").strip()
+        entrypoint = str(args.entrypoint or "").strip()
+        if not name or not entrypoint:
+            print(json.dumps({"ok": False, "error": "WORKFLOW_NAME_AND_ENTRYPOINT_REQUIRED"}, ensure_ascii=False, indent=2)); return 2
+        sdd["workflow"] = {"name": name, "entrypoint": entrypoint, "status": "selected", "selected_at": now(), "artifacts": []}
+        work.setdefault("execution", {})["step"] = "native-sdd-workflow-selected"
+        work["execution"]["next_action"] = action("agent", f"Execute the selected native SDD workflow `{name}` via `{entrypoint}`. Do not skip its native prerequisites. After execution, record the real output files with `cao sdd workflow complete --work {work['id']} --artifact <repo-relative-file>`.")
+    elif args.workflow_action == "complete":
+        workflow = sdd.get("workflow") or {}
+        if not workflow.get("name") or not workflow.get("entrypoint"):
+            print(json.dumps({"ok": False, "error": "NATIVE_WORKFLOW_NOT_SELECTED", "next": f"Run `cao sdd workflow select --name \"<workflow name>\" --entrypoint \"<native workflow command or skill>\" --work {work['id']}` first."}, ensure_ascii=False, indent=2)); return 2
+        paths = list(args.artifact or [])
+        if not paths:
+            print(json.dumps({"ok": False, "error": "NATIVE_WORKFLOW_ARTIFACT_REQUIRED", "reason": "At least one actual output file must be recorded."}, ensure_ascii=False, indent=2)); return 2
+        refs = []
+        try:
+            for value in paths:
+                ref = artifact_reference(repo, value, role="native-sdd-output", native_type=workflow["name"], native_ref=workflow["entrypoint"])
+                refs.append(ref)
+        except ValueError as exc:
+            print(json.dumps({"ok": False, "error": "ARTIFACT_INVALID", "reason": str(exc)}, ensure_ascii=False, indent=2)); return 2
+        artifacts = sdd.setdefault("artifacts", [])
+        for ref in refs:
+            artifacts[:] = [item for item in artifacts if item.get("path") != ref["path"]]
+            artifacts.append(ref)
+        workflow["artifacts"] = [ref["path"] for ref in refs]
+        workflow["status"] = "completed"
+        workflow["completed_at"] = now()
+        work["execution"]["step"] = "native-sdd-workflow-completed"
+        work["execution"]["next_action"] = action("agent", "Continue implementation/review/verification according to the selected path; record additional native workflow outputs if produced, then run `cao verify` and `cao done`.")
+    save_work(repo, work)
+    print(json.dumps({"ok": True, "work_item": work_summary(work), "workflow": sdd.get("workflow")}, ensure_ascii=False, indent=2)); return 0
+
+
 def cmd_sdd(args: argparse.Namespace) -> int:
     return int(args.fn(args))
 
@@ -2357,7 +2421,9 @@ def cmd_path_assess(args: argparse.Namespace) -> int:
         gate_text = ", ".join(assessment["required_gates"])
         execution["next_action"] = action(
             "agent",
-            f"Apply the {assessment['profile']} path using {provider}'s native workflow. {assessment['provider_guidance']} Required gates: {gate_text}. Reassess only if the scope, risk, or requirement materially changes.",
+            f"Apply the {assessment['profile']} path using {provider}'s native workflow. {assessment['provider_guidance']} "
+            + (f"Before implementation, select and record the native workflow with `cao sdd workflow select --name \"<native workflow name>\" --entrypoint \"<native workflow command or skill>\" --work {work['id']}`. After executing it, record completion and its real output files with `cao sdd workflow complete --work {work['id']} --artifact <repo-relative-file>` (repeat --artifact for each produced native artifact). `cao done` will block until this contract is satisfied. " if provider in SDD_CATALOG and assessment['profile'] in {'standard', 'comprehensive'} else "")
+            + f"Required gates: {gate_text}. Reassess only if the scope, risk, or requirement materially changes.",
             profile=assessment["profile"],
             provider=provider,
         )
@@ -2725,6 +2791,17 @@ def completion_next_instruction(repo: Path, work: dict[str, Any] | None, complet
         return f"Review the requirement and current scope, then record or refresh the minimum-safe-path assessment: `cao path assess --profile <light|standard|comprehensive> --reason \"<short reason>\" --work {wid}`."
     if reason == "major requirement ambiguity requires clarification":
         return "Ask the user to resolve the material requirement ambiguity, then rerun `cao path assess` without `--risk-flag major-ambiguity`. Do not implement while the ambiguity remains unresolved."
+    if reason == "native SDD workflow is not recorded as completed":
+        return (f"Select and execute the native {((work.get('sdd') or {}).get('provider') or 'SDD')} workflow before completion. "
+                f"Record it with `cao sdd workflow select --name \"<workflow name>\" --entrypoint \"<native workflow command or skill>\" --work {wid}`, "
+                f"then after actually running it record its real output files with `cao sdd workflow complete --work {wid} --artifact <repo-relative-file>`. Do not mark it complete before execution.")
+    if reason == "native SDD workflow record is incomplete":
+        return f"Record the actual native workflow name and entrypoint with `cao sdd workflow select --name \"<workflow name>\" --entrypoint \"<native workflow command or skill>\" --work {wid}`, then execute it and complete the record."
+    if reason == "native SDD workflow has no recorded output artifacts":
+        return f"Record the actual files produced by the selected native workflow using `cao sdd workflow complete --work {wid} --artifact <repo-relative-file>`; if the workflow legitimately produces no files, reassess the profile or document the provider-native exception explicitly rather than bypassing the gate."
+    if reason == "native SDD workflow output artifacts are missing":
+        missing = ", ".join(completion.get("missing_artifacts") or [])
+        return f"The native SDD workflow references missing output files ({missing}). Execute/fix the workflow and record existing files with `cao sdd workflow complete --work {wid} --artifact <repo-relative-file>`."
     if reason == "verification is missing or stale":
         return "Run `cao verify` after the requirement, code, rules, and verification configuration are stable."
     if reason.startswith("work status is "):
@@ -2966,6 +3043,12 @@ def build_parser() -> argparse.ArgumentParser:
     sp = sdd_sub.add_parser("list"); sp.add_argument("--repo", default="."); sp.set_defaults(fn=cmd_sdd_list)
     sp = sdd_sub.add_parser("select"); sp.add_argument("--repo", default="."); sp.add_argument("--provider", required=True, choices=sorted(SDD_CATALOG)); sp.set_defaults(fn=cmd_sdd_select)
     sp = sdd_sub.add_parser("install"); sp.add_argument("--repo", default="."); sp.add_argument("--provider", choices=sorted(SDD_CATALOG)); sp.add_argument("--tools", default=None, help="OpenSpec init tool ids, or all/none"); sp.add_argument("--host", choices=["claude-code", "codex", "pi"], default=None, help="Current coding-agent host; used by Spec Kit to select its integration"); sp.add_argument("--integration", default=None, help="Spec Kit integration key, e.g. claude, codex, pi, copilot"); sp.add_argument("--integration-options", default=None, help="Spec Kit integration options passed through as one value"); sp.add_argument("--yes", action="store_true", help="Confirm installation of external/project software"); sp.set_defaults(fn=cmd_sdd_install)
+    workflow = sdd_sub.add_parser("workflow", help="Record and enforce native SDD workflow execution")
+    workflow_sub = workflow.add_subparsers(dest="workflow_action", required=True)
+    sp = workflow_sub.add_parser("select", help="Record the provider-native workflow before executing it")
+    sp.add_argument("--repo", default="."); sp.add_argument("--work"); sp.add_argument("--name", required=True); sp.add_argument("--entrypoint", required=True); sp.set_defaults(fn=cmd_sdd_workflow)
+    sp = workflow_sub.add_parser("complete", help="Record native workflow completion and actual output files")
+    sp.add_argument("--repo", default="."); sp.add_argument("--work"); sp.add_argument("--artifact", action="append", required=True, help="Existing repository-relative output file; repeat for each file"); sp.set_defaults(fn=cmd_sdd_workflow)
     sp = sub.add_parser("start"); sp.add_argument("--repo", default="."); sp.add_argument("--requirement"); sp.add_argument("--title", default=None, help="Human-readable Work Item title; overrides the requirement filename"); sp.add_argument("--sdd-ref"); sp.add_argument("--sdd-provider", choices=sorted(SDD_CATALOG)); sp.add_argument("--replace", action="store_true"); sp.add_argument("--reopen", action="store_true"); sp.set_defaults(fn=cmd_start)
     path = sub.add_parser("path", help="Assess and inspect the minimum-safe execution path")
     path_sub = path.add_subparsers(dest="path_command", required=True)

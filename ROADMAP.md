@@ -28,12 +28,14 @@
 - [x] Project-owned verification scripts with no unsafe default
 - [x] Minimum-safe execution path selector with three profiles and deterministic risk upgrades
 - [x] SDD-specific execution-path guidance for BMAD, OpenSpec, and Spec Kit without duplicating native lifecycles
+- [x] Provider-neutral native-workflow completion contract for standard/comprehensive paths, including existing output-file references and a `cao done` completion gate
 
 ## Next
 
 1. Formalize optional SDD Provider discovery hooks and configurable provider installation recipes.
-2. Add fixture-based host-session-id extraction tests using real event payloads for each supported host.
-3. Add human-readable `cao status` table output alongside JSON.
-4. Add optional project-level completion gates without reintroducing an evidence graph.
+2. Add provider-specific workflow-contract fixtures to verify native workflow invocation guidance and expected output paths.
+3. Add fixture-based host-session-id extraction tests using real event payloads for each supported host.
+4. Add human-readable `cao status` table output alongside JSON.
+5. Add optional project-level completion gates without reintroducing an evidence graph.
 
 - [x] Local orchestration dashboard for Work Items, execution path, Sessions, Verification summaries, SDD providers, Handoff history, native SDD artifact inventory/status, safe preview, and hash-bound confirmation.
