@@ -458,6 +458,7 @@ def build_dashboard_overview(repo: Path, stale_after_minutes: int = 30) -> dict[
         load_index,
         load_json,
         path_assessment_state,
+        reconcile_native_sdd_state,
         rel,
         session_activity,
         work_summary,
@@ -473,6 +474,8 @@ def build_dashboard_overview(repo: Path, stale_after_minutes: int = 30) -> dict[
         for path in work_root.glob("*.json"):
             value = load_json(path, None)
             if isinstance(value, dict) and isinstance(value.get("id"), str):
+                if value.get("status") in {"active", "suspended"} and reconcile_native_sdd_state(repo, value):
+                    value = load_json(path, value)
                 raw_works.append(value)
 
     handoffs = list_handoff_records(repo) if initialized else []

@@ -98,7 +98,15 @@ SDD_CATALOG: dict[str, dict[str, Any]] = {
                 ["bun", "add", "-g", "@fission-ai/openspec@latest"],
                 ["yarn", "global", "add", "@fission-ai/openspec@latest"],
             ],
-            "project_command": ["openspec", "init", "--tools", "all"],
+            # Never install integrations for every coding host by default.
+            # The active host is detected at runtime and mapped to one native
+            # OpenSpec integration; an explicit --tools value remains an override.
+            "tool_by_host": {
+                "claude-code": "claude",
+                "codex": "codex",
+                "pi": "pi",
+            },
+            "project_command": ["openspec", "init", "--tools", "{tools}"],
         },
         "path_guidance": {
             "light": "Use the smallest native OpenSpec change workflow supported by the installed version. Do not create unrelated planning artifacts; preserve required native preconditions.",
@@ -1137,6 +1145,292 @@ def save_work(repo: Path, work: dict[str, Any]) -> None:
     sync_index_for_work(repo, work)
 
 
+def _slug(value: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "-", value.lower()).strip("-")
+
+
+def _native_candidates(repo: Path, provider: str, work: dict[str, Any], native_ref: str) -> tuple[list[Path], Path | None]:
+    """Return candidate artifact paths scoped to this Work Item, never the whole SDD tree by default."""
+    requirement_path = str((work.get("requirement") or {}).get("path") or "")
+    title = str(work.get("title") or "")
+    slugs = [_slug(Path(requirement_path).stem), _slug(title)]
+    slugs = [value for value in dict.fromkeys(slugs) if value]
+    ref_path = (repo / native_ref).resolve() if native_ref else None
+    try:
+        ref_path.relative_to(repo.resolve())
+    except (ValueError, AttributeError):
+        ref_path = None
+    if ref_path and ref_path.exists():
+        if ref_path.is_file():
+            if provider == "bmad":
+                return [ref_path], ref_path
+            parent = ref_path.parent
+            return sorted(p for p in parent.rglob("*.md") if p.is_file()), parent
+        if ref_path.is_dir():
+            return sorted(p for p in ref_path.rglob("*.md") if p.is_file()), ref_path
+
+    if provider == "bmad":
+        root = repo / "_bmad-output/implementation-artifacts"
+        if not root.is_dir():
+            return [], None
+        all_specs = sorted((p for p in root.glob("spec-*.md") if p.is_file()), key=lambda p: p.stat().st_mtime, reverse=True)
+        def bmad_matches(path: Path) -> bool:
+            file_slug = _slug(path.stem.removeprefix("spec-"))
+            return bool(file_slug and any(file_slug == wanted or file_slug in wanted or wanted in file_slug for wanted in slugs))
+        selected = [p for p in all_specs if bmad_matches(p)]
+        # Prefer an exact identity match before considering partial slug matches.
+        # When more than one candidate remains, fail closed: none of them may
+        # drive lifecycle state until the current Work Item is unambiguously bound.
+        exact = [p for p in selected if _slug(p.stem.removeprefix("spec-")) in slugs]
+        if len(exact) == 1:
+            return exact, exact[0].parent
+        if exact:
+            return [], None
+        if len(selected) == 1:
+            return selected, selected[0].parent
+        return [], None
+
+    root = repo / ("openspec/changes" if provider == "openspec" else "specs")
+    if not root.is_dir():
+        return [], None
+    dirs = [p for p in root.iterdir() if p.is_dir() and not p.name.startswith(".") and p.name != "archive"]
+    matching = [p for p in dirs if any(_slug(p.name) == wanted or _slug(p.name) in wanted or wanted in _slug(p.name) for wanted in slugs)]
+    exact = [p for p in matching if _slug(p.name) in slugs]
+    if len(exact) == 1:
+        matching = exact
+    elif exact or len(matching) != 1:
+        return [], None
+    feature_dir = matching[0]
+    return sorted(p for p in feature_dir.rglob("*.md") if p.is_file()), feature_dir
+
+
+def _read_native_status(provider: str, candidates: list[Path]) -> tuple[str | None, str | None, str | None, dict[str, Any] | None]:
+    """Extract only explicit machine status or task-checkbox evidence from work-specific files."""
+    if provider == "bmad":
+        for path in candidates:
+            try:
+                content = path.read_text(encoding="utf-8-sig")[:65536]
+            except (OSError, UnicodeError):
+                continue
+            if not content.startswith("---"):
+                continue
+            end = content.find("\n---", 3)
+            if end < 0:
+                continue
+            frontmatter = content[3:end]
+            match = re.search(r"(?im)^\s*status\s*:\s*['\"]?([a-z_-]+)", frontmatter)
+            if match:
+                raw = match.group(1).lower().replace("-", "_")
+                return raw, path.name, hashlib.sha256(content.encode("utf-8")).hexdigest(), None
+        return None, None, None, None
+
+    tasks = next((p for p in candidates if p.name.lower() == "tasks.md"), None)
+    if not tasks:
+        return None, None, None, None
+    try:
+        content = tasks.read_text(encoding="utf-8-sig")
+    except (OSError, UnicodeError):
+        return None, None, None, None
+    checked = len(re.findall(r"(?m)^\s*[-*+]\s+\[[xX]\]", content))
+    unchecked = len(re.findall(r"(?m)^\s*[-*+]\s+\[ \]", content))
+    total = checked + unchecked
+    if not total:
+        return None, tasks.name, hashlib.sha256(content.encode("utf-8")).hexdigest(), None
+    raw = "completed" if checked == total else "in_progress" if checked > 0 else "ready_for_dev"
+    return raw, tasks.name, hashlib.sha256(content.encode("utf-8")).hexdigest(), {"checked": checked, "unchecked": unchecked, "total": total}
+
+
+def _canonical_native_state(raw: str | None) -> str | None:
+    if not raw:
+        return None
+    value = raw.lower().replace("-", "_").strip()
+    if value in {"ready_for_dev", "ready", "ready_to_implement", "approved"}:
+        return "ready"
+    if value in {"in_progress", "in_process", "implementing", "implementation", "in_review", "in_reviewing"}:
+        return "in_progress" if value not in {"in_review", "in_reviewing"} else "in_review"
+    if value in {"done", "completed", "complete", "closed"}:
+        return "completed"
+    if value in {"blocked", "failed", "cancelled", "canceled"}:
+        return value
+    return None
+
+
+def _append_lifecycle_event(repo: Path, event: dict[str, Any]) -> bool:
+    """Append one event under an exclusive cross-process lock; return False for duplicates."""
+    path = repo / ORCH / "lifecycle" / "events.jsonl"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    lock_path = path.with_suffix(".lock")
+    lock_fd = None
+    deadline = time.monotonic() + 5.0
+    while lock_fd is None:
+        try:
+            lock_fd = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+        except FileExistsError:
+            try:
+                if time.time() - lock_path.stat().st_mtime > 30:
+                    lock_path.unlink(missing_ok=True)
+                    continue
+            except OSError:
+                pass
+            if time.monotonic() >= deadline:
+                raise RuntimeError("LIFECYCLE_EVENT_LOCK_TIMEOUT")
+            time.sleep(0.025)
+    try:
+        with os.fdopen(lock_fd, "w", encoding="utf-8") as lock_file:
+            lock_file.write(str(os.getpid()))
+        if path.exists():
+            with path.open("r", encoding="utf-8") as existing:
+                for line in existing:
+                    try:
+                        if json.loads(line).get("idempotency_key") == event.get("idempotency_key"):
+                            return False
+                    except (json.JSONDecodeError, AttributeError):
+                        continue
+        with path.open("a", encoding="utf-8") as stream:
+            stream.write(json.dumps(event, ensure_ascii=False, sort_keys=True) + "\n")
+            stream.flush()
+            os.fsync(stream.fileno())
+        return True
+    finally:
+        lock_path.unlink(missing_ok=True)
+
+
+def list_lifecycle_events(repo: Path, work_id: str | None = None, limit: int = 100) -> list[dict[str, Any]]:
+    path = repo / ORCH / "lifecycle" / "events.jsonl"
+    if not path.is_file():
+        return []
+    events: list[dict[str, Any]] = []
+    with path.open("r", encoding="utf-8") as stream:
+        for line in stream:
+            try:
+                event = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(event, dict) and (not work_id or event.get("work_item_id") == work_id):
+                events.append(event)
+    return events[-max(1, limit):][::-1]
+
+
+def reconcile_native_sdd_state(repo: Path, work: dict[str, Any]) -> bool:
+    """Reconcile a Work Item with its work-specific native SDD evidence and emit durable events.
+
+    Artifact discovery may bind a unique matching native reference, but artifact existence alone
+    never means execution has started. Provider-native status/task progress is required for phase
+    projection. Native completion advances CAO to review, never directly to closed/done.
+    """
+    sdd = work.get("sdd") if isinstance(work.get("sdd"), dict) else {}
+    provider = str(sdd.get("provider") or "").lower()
+    if provider not in {"bmad", "openspec", "speckit"} or work.get("status") not in {"active", "suspended"}:
+        return False
+    changed = False
+    native_ref = str(sdd.get("native_ref") or "").strip()
+    candidates, anchor = _native_candidates(repo, provider, work, native_ref)
+    if not native_ref and anchor and candidates:
+        preferred_names = {
+            "bmad": ("spec-",),
+            "openspec": ("proposal.md", "tasks.md", "design.md"),
+            "speckit": ("spec.md", "plan.md", "tasks.md"),
+        }[provider]
+        preferred: list[Path] = []
+        for wanted in preferred_names:
+            preferred = [p for p in candidates if (p.name.lower().startswith(wanted) if wanted.endswith("-") else p.name.lower() == wanted)]
+            if preferred:
+                break
+        # Native directory anchors are valid stable references when no canonical entry file exists.
+        chosen = preferred[0] if len(preferred) == 1 else (anchor if anchor.is_dir() and not preferred else None)
+        if chosen:
+            sdd["native_ref"] = chosen.relative_to(repo).as_posix()
+            native_ref = sdd["native_ref"]
+            changed = True
+    raw_state, status_source, evidence_hash, task_counts = _read_native_status(provider, candidates)
+    if status_source:
+        source_path = next((p for p in candidates if p.name == status_source), None)
+        if source_path:
+            status_source = source_path.relative_to(repo).as_posix()
+    canonical = _canonical_native_state(raw_state)
+    old_native = sdd.get("native_state") if isinstance(sdd.get("native_state"), dict) else {}
+    old_raw = old_native.get("raw")
+    old_canonical = old_native.get("canonical")
+    new_snapshot = {
+        "raw": raw_state,
+        "canonical": canonical,
+        "source": status_source,
+        "evidence_sha256": evidence_hash,
+        "task_counts": task_counts,
+    }
+    if canonical is not None and (old_native.get("canonical") != canonical or old_native.get("raw") != raw_state or old_native.get("evidence_sha256") != evidence_hash):
+        revision = int(old_native.get("revision") or 0) + 1
+        new_snapshot["revision"] = revision
+        new_snapshot["observed_at"] = now()
+        from_state = old_canonical or None
+        identity = {
+            "work_item_id": work.get("id"), "provider": provider, "native_ref": native_ref or status_source,
+            "revision": revision, "from_state": from_state, "to_state": canonical,
+            "evidence_sha256": evidence_hash,
+        }
+        idem = hashlib.sha256(json.dumps(identity, sort_keys=True).encode("utf-8")).hexdigest()
+        base_event = {
+            "event_id": "evt-" + idem[:20], "idempotency_key": idem, "work_item_id": work.get("id"),
+            "source": provider, "native_ref": native_ref or None, "from_state": from_state,
+            "to_state": canonical, "raw_state": raw_state, "source_path": status_source,
+            "evidence_sha256": evidence_hash, "occurred_at": new_snapshot["observed_at"],
+        }
+        if old_canonical != canonical:
+            _append_lifecycle_event(repo, {**base_event, "event": "sdd.native_state.changed"})
+            if canonical == "ready":
+                _append_lifecycle_event(repo, {**base_event, "event": "task.ready", "idempotency_key": idem + ":ready", "event_id": "evt-" + idem[:16] + "ready"})
+            elif canonical == "in_progress":
+                _append_lifecycle_event(repo, {**base_event, "event": "task.execution.started", "idempotency_key": idem + ":started", "event_id": "evt-" + idem[:16] + "started"})
+            elif canonical == "completed":
+                _append_lifecycle_event(repo, {**base_event, "event": "task.execution.completed", "idempotency_key": idem + ":execution-completed", "event_id": "evt-" + idem[:16] + "complete"})
+            elif canonical == "in_review":
+                _append_lifecycle_event(repo, {**base_event, "event": "task.review.started", "idempotency_key": idem + ":review", "event_id": "evt-" + idem[:16] + "review"})
+            elif canonical == "blocked":
+                _append_lifecycle_event(repo, {**base_event, "event": "task.blocked", "idempotency_key": idem + ":blocked", "event_id": "evt-" + idem[:16] + "blocked"})
+        elif old_native.get("evidence_sha256") != evidence_hash:
+            _append_lifecycle_event(repo, {**base_event, "event": "sdd.native_artifact.changed", "idempotency_key": idem + ":artifact", "event_id": "evt-" + idem[:16] + "artifact"})
+        sdd["native_state"] = new_snapshot
+        changed = True
+        work.setdefault("resume", {})["last_native_sync_at"] = new_snapshot["observed_at"]
+
+    # Reconcile the CAO phase on every read, not only on a newly observed native
+    # transition. This repairs stale CAO state even if an earlier sync was missed.
+    if canonical is not None:
+        execution = work.setdefault("execution", {})
+        current_step = str(execution.get("step") or "").lower()
+        if canonical == "ready" and current_step in {"path-selected", "planning", "plan-selected", "sdd-planning"}:
+            execution["step"] = "ready-for-dev"
+            execution["next_action"] = action("agent", f"Native {provider} work is ready; begin implementation using the bound native work item.")
+            work.setdefault("resume", {})["summary"] = f"Native SDD reports ready for implementation ({provider})."
+            changed = True
+        elif canonical == "in_progress" and current_step not in {"implementation", "review", "verification", "release", "done"}:
+            execution["step"] = "implementation"
+            execution["next_action"] = action("agent", f"Continue implementation using the native {provider} work item; phase synchronized from explicit native status/task progress.")
+            work.setdefault("resume", {})["summary"] = f"Native SDD reports implementation in progress ({provider}); CAO phase reconciled."
+            changed = True
+        elif canonical in {"completed", "in_review"} and current_step in {"path-selected", "planning", "plan-selected", "sdd-planning", "ready-for-dev", "implementation"}:
+            execution["step"] = "review"
+            execution["next_action"] = action("agent", "Native implementation is ready for review; complete implementation review and CAO verification before closing the Work Item.")
+            work.setdefault("resume", {})["summary"] = f"Native SDD reports review/implementation completion ({provider}); CAO moved to review, not closed."
+            changed = True
+        elif canonical == "blocked":
+            blockers = work.setdefault("blockers", [])
+            if not any(isinstance(item, dict) and item.get("id") == "native-sdd-state" for item in blockers):
+                blockers.append({"id": "native-sdd-state", "reason": f"Native {provider} state is blocked", "source": status_source, "observed_at": now()})
+                changed = True
+    if changed:
+        work["sdd"] = sdd
+        save_work(repo, work)
+    return changed
+
+
+def cmd_lifecycle_events(args: argparse.Namespace) -> int:
+    repo = repo_root(args.repo); ensure_initialized(repo)
+    index = load_index(repo)
+    wid = args.work or index.get("active_work")
+    print(json.dumps({"ok": True, "work_item_id": wid, "events": list_lifecycle_events(repo, wid, args.limit)}, ensure_ascii=False, indent=2))
+    return 0
+
 def is_current_session_record(raw: Any) -> bool:
     """Return whether a record satisfies the current Session data contract.
 
@@ -1774,6 +2068,11 @@ def cmd_bootstrap(args: argparse.Namespace) -> int:
     installed = status["installed"]
     active_id = load_index(repo).get("active_work")
     work = load_work(repo, active_id) if active_id else None
+    # Bootstrap is a state-read boundary too. Reconcile native SDD state before
+    # constructing a new-session context so a previous Agent's phase cursor
+    # cannot remain stale after the native workflow has advanced.
+    if work and work.get("status") in {"active", "suspended"} and reconcile_native_sdd_state(repo, work):
+        work = load_work(repo, active_id) or work
 
     # Existing work owns its provider choice. A missing provider is repaired
     # before any resume/implementation action is exposed.
@@ -1800,7 +2099,7 @@ def cmd_bootstrap(args: argparse.Namespace) -> int:
             "selection_required": True,
             "selection_policy": "explicit_user_choice_only",
             "options": sdd_options(status),
-            "next": action("human", "HARD STOP: no SDD is installed and no provider is authorized. Ask the user to explicitly choose OpenSpec, BMad Method, or GitHub Spec Kit and wait for their answer. Do not infer a choice from recommendations, popularity, existing global CLIs, Agent preference, or task type. Do not run any provider install/select command before the user answers. After an explicit answer only, run `cao sdd install --provider <chosen-provider> --yes`; for BMad pass `--host` or explicit `--tools`, and for Spec Kit pass `--host` or `--integration`. If the interaction channel cannot ask the user, stop with SDD_SELECTION_REQUIRED. Do not start or modify production code before installation completes."),
+            "next": action("human", "HARD STOP: no SDD is installed and no provider is authorized. Ask the user to explicitly choose OpenSpec, BMad Method, or GitHub Spec Kit and wait for their answer. Do not infer a choice from recommendations, popularity, existing global CLIs, Agent preference, or task type. Do not run any provider install/select command before the user answers. After an explicit answer only, run `cao sdd install --provider <chosen-provider> --yes`. The installer must detect the active host from the current Agent runtime and install only that host's integration. If detection is unavailable or ambiguous, stop and request `--host` (or a provider-specific explicit integration/tools option); never use an all-hosts default. If the interaction channel cannot ask the user, stop with SDD_SELECTION_REQUIRED. Do not start or modify production code before installation completes."),
         }
         next_out["project_instructions"] = project_instructions
         print(json.dumps(next_out, ensure_ascii=False, indent=2))
@@ -1932,6 +2231,52 @@ def cmd_sdd_select(args: argparse.Namespace) -> int:
     return 0
 
 
+def detect_current_host(environ: dict[str, str] | None = None) -> str | None:
+    """Detect the active coding-agent host from its runtime environment.
+
+    Explicit CLI arguments take precedence at call sites. Detection is
+    intentionally conservative: if multiple hosts appear active, return None
+    instead of installing integrations for all of them.
+    """
+    env = os.environ if environ is None else environ
+    declared = str(env.get("CAO_HOST") or "").strip().lower()
+    aliases = {
+        "claude": "claude-code", "claude-code": "claude-code",
+        "codex": "codex", "pi": "pi",
+    }
+    if declared in aliases:
+        return aliases[declared]
+
+    matches: set[str] = set()
+    if any(env.get(key) for key in ("CLAUDE_CODE", "CLAUDE_CODE_SESSION_ID", "CLAUDE_SESSION_ID")):
+        matches.add("claude-code")
+    if any(env.get(key) for key in ("CODEX_THREAD_ID", "CODEX_SANDBOX", "CODEX_HOME")):
+        matches.add("codex")
+    if any(env.get(key) for key in ("PI_CODING_AGENT", "PI_SESSION_ID")):
+        matches.add("pi")
+    return next(iter(matches)) if len(matches) == 1 else None
+
+
+def openspec_tool_for_host(host: str | None) -> str | None:
+    if not host:
+        return None
+    return str((SDD_CATALOG["openspec"]["install"].get("tool_by_host") or {}).get(host) or "") or None
+
+
+def build_openspec_project_command(args: argparse.Namespace) -> list[str]:
+    tools = args.tools
+    if not tools:
+        host = args.host or detect_current_host()
+        tools = openspec_tool_for_host(host)
+    if not tools:
+        raise ValueError(
+            "OpenSpec installation requires a detectable current host or explicit "
+            "--host <claude-code|codex|pi> / --tools <tool-id>. Refusing --tools all "
+            "because it installs integrations for unrelated hosts."
+        )
+    return ["openspec", "init", "--tools", tools]
+
+
 def speckit_integration_for_host(host: str | None) -> str | None:
     if not host:
         return None
@@ -1959,7 +2304,7 @@ def sdd_install_instruction(provider: str, host: str | None = None, tools: str |
 
 
 def build_bmad_project_command(args: argparse.Namespace, repo: Path) -> list[str]:
-    tools = args.tools or bmad_tool_for_host(args.host)
+    tools = args.tools or bmad_tool_for_host(args.host or detect_current_host())
     if not tools:
         raise ValueError("BMad installation requires --host <claude-code|codex|pi> or explicit --tools <tool-id>")
     template = list(SDD_CATALOG["bmad"]["install"].get("project_command") or [])
@@ -1970,7 +2315,7 @@ def build_bmad_project_command(args: argparse.Namespace, repo: Path) -> list[str
 
 
 def build_speckit_project_command(args: argparse.Namespace) -> list[str]:
-    integration = args.integration or speckit_integration_for_host(args.host)
+    integration = args.integration or speckit_integration_for_host(args.host or detect_current_host())
     if not integration:
         raise ValueError("Spec Kit installation requires --host <claude-code|codex|pi> or --integration <spec-kit integration>")
     command = ["specify", "init", "--here", "--force", "--non-interactive", "--integration", integration, "--ignore-agent-tools"]
@@ -2008,8 +2353,12 @@ def cmd_sdd_install(args: argparse.Namespace) -> int:
     if external:
         plan.append({"scope": "machine", "command": shlex.join(external)})
     project_command = list(meta.get("project_command") or [])
-    if provider == "openspec" and args.tools:
-        project_command = ["openspec", "init", "--tools", args.tools]
+    if provider == "openspec":
+        try:
+            project_command = build_openspec_project_command(args)
+        except ValueError as exc:
+            print(json.dumps({"ok": False, "error": "SDD_INSTALL_ARGUMENTS_REQUIRED", "provider": provider, "reason": str(exc)}, ensure_ascii=False, indent=2))
+            return 2
     elif provider == "bmad":
         try:
             project_command = build_bmad_project_command(args, repo)
@@ -2314,6 +2663,7 @@ def cmd_start(args: argparse.Namespace) -> int:
             create_handoff(repo, active, None, None, reason="execution re-anchored to another work item")
     wid = stable_work_id(repo, p)
     existing = load_work(repo, wid)
+    is_new_work = existing is None
     if existing and existing.get("status") == "completed" and not args.reopen:
         print(json.dumps({"ok": False, "error": "WORK_ITEM_ALREADY_COMPLETED", "work_item": work_summary(existing)}, ensure_ascii=False, indent=2)); return 2
     configured_provider = str((config(repo).get("sdd") or {}).get("provider") or "auto")
@@ -2345,6 +2695,10 @@ def cmd_start(args: argparse.Namespace) -> int:
     if args.sdd_ref:
         work["sdd"]["native_ref"] = args.sdd_ref
     save_work(repo, work)
+    if is_new_work:
+        created_at = work.get("created_at") or now()
+        created_key = hashlib.sha256(f"{wid}:task.created:{created_at}".encode("utf-8")).hexdigest()
+        _append_lifecycle_event(repo, {"event_id": "evt-" + created_key[:20], "idempotency_key": created_key, "event": "task.created", "work_item_id": wid, "source": "cao", "native_ref": work.get("sdd", {}).get("native_ref"), "occurred_at": created_at})
     native = run_sdd_command(repo, "inspect", [rel(p, repo)])
     print(json.dumps({"ok": True, "action": "ASSESS_PATH", "work_item": work_summary(work), "next_action": work.get("execution", {}).get("next_action"), "sdd": native}, ensure_ascii=False, indent=2)); return 0
 
@@ -2356,6 +2710,8 @@ def cmd_list(args: argparse.Namespace) -> int:
     for p in sorted((repo / WORK_DIR).glob("*.json")):
         work = load_json(p, None)
         if work:
+            if work.get("status") in {"active", "suspended"} and reconcile_native_sdd_state(repo, work):
+                work = load_work(repo, work.get("id")) or work
             items.append(work_summary(work))
     index["work_items"] = items
     save_index(repo, index)
@@ -2367,6 +2723,8 @@ def cmd_status(args: argparse.Namespace) -> int:
     index = load_index(repo)
     wid = args.work or index.get("active_work")
     work = load_work(repo, wid) if wid else None
+    if work and reconcile_native_sdd_state(repo, work):
+        work = load_work(repo, wid) or work
     out = {"ok": True, "work": resume_payload(repo, work) if work else None, "work_items": []}
     for p in sorted((repo / WORK_DIR).glob("*.json")):
         w = load_json(p, None)
@@ -2458,7 +2816,10 @@ def cmd_next(args: argparse.Namespace) -> int:
     index = load_index(repo); work = load_work(repo, args.work or index.get("active_work")) if (args.work or index.get("active_work")) else None
     if not work:
         out = {"ok": True, "action": action("agent", "Select a requirement and run `cao start --requirement <path>`."), "work_item": None}
-    elif not work_sdd_ready(repo, work)[0]:
+        print(json.dumps(out, ensure_ascii=False, indent=2)); return 0
+    if reconcile_native_sdd_state(repo, work):
+        work = load_work(repo, work["id"]) or work
+    if not work_sdd_ready(repo, work)[0]:
         provider = ((work.get("sdd") or {}).get("provider") or "auto")
         out = {"ok": True, "action": action("human", f"Install the work item's SDD `{provider}` before continuing: `cao sdd install --provider {provider} --yes`."), "work_item": work_summary(work)}
     elif work.get("status") in {"todo", "suspended"}:
@@ -2639,6 +3000,8 @@ def cmd_resume(args: argparse.Namespace) -> int:
         else:
             print(json.dumps({"ok": False, "error": "NO_RESUMABLE_WORK"}, ensure_ascii=False, indent=2))
         return 2
+    if reconcile_native_sdd_state(repo, work):
+        work = load_work(repo, work["id"]) or work
     ready, detected = work_sdd_ready(repo, work)
     if not ready:
         provider = ((work.get("sdd") or {}).get("provider") or "auto")
@@ -2835,6 +3198,9 @@ def cmd_done(args: argparse.Namespace) -> int:
     work["status"] = "completed"; work["completed_at"] = now(); work["execution"]["step"] = "done"; work["execution"]["next_action"] = action("none", "Work item is completed.")
     work["resume"]["summary"] = "Work item completed and verification was fresh."
     save_work(repo, work)
+    completed_identity = {"work_item_id": work.get("id"), "completed_at": work.get("completed_at"), "event": "task.closed"}
+    completed_key = hashlib.sha256(json.dumps(completed_identity, sort_keys=True).encode("utf-8")).hexdigest()
+    _append_lifecycle_event(repo, {"event_id": "evt-" + completed_key[:20], "idempotency_key": completed_key, "event": "task.closed", "work_item_id": work.get("id"), "source": "cao", "to_state": "closed", "occurred_at": work.get("completed_at")})
     print(json.dumps({"ok": True, "status": "completed", "work_item": work_summary(work), "sdd_transition": transition}, ensure_ascii=False, indent=2)); return 0
 
 
@@ -3053,6 +3419,10 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--repo", default="."); sp.add_argument("--work"); sp.add_argument("--name", required=True); sp.add_argument("--entrypoint", required=True); sp.set_defaults(fn=cmd_sdd_workflow)
     sp = workflow_sub.add_parser("complete", help="Record native workflow completion and actual output files")
     sp.add_argument("--repo", default="."); sp.add_argument("--work"); sp.add_argument("--artifact", action="append", required=True, help="Existing repository-relative output file; repeat for each file"); sp.set_defaults(fn=cmd_sdd_workflow)
+    lifecycle = sub.add_parser("lifecycle", help="Inspect persisted CAO lifecycle events")
+    lifecycle_sub = lifecycle.add_subparsers(dest="lifecycle_command", required=True)
+    sp = lifecycle_sub.add_parser("events", help="List lifecycle events from native SDD reconciliation and CAO transitions")
+    sp.add_argument("--repo", default="."); sp.add_argument("--work"); sp.add_argument("--limit", type=int, default=100); sp.set_defaults(fn=cmd_lifecycle_events)
     sp = sub.add_parser("start"); sp.add_argument("--repo", default="."); sp.add_argument("--requirement"); sp.add_argument("--title", default=None, help="Human-readable Work Item title; overrides the requirement filename"); sp.add_argument("--sdd-ref"); sp.add_argument("--sdd-provider", choices=sorted(SDD_CATALOG)); sp.add_argument("--replace", action="store_true"); sp.add_argument("--reopen", action="store_true"); sp.set_defaults(fn=cmd_start)
     path = sub.add_parser("path", help="Assess and inspect the minimum-safe execution path")
     path_sub = path.add_subparsers(dest="path_command", required=True)
