@@ -9,7 +9,7 @@ $:
         - name: install pi env
           script: export PATH="/root/.pi/agent/bin:$PATH" && echo 'export PATH="/root/.pi/agent/bin:$PATH"' >> ~/.zshrc
         - name: install pi extentions
-          script: export PATH="/root/.pi/agent/bin:$PATH" && pi install npm:pi-mcp-adapter && pi install npm:pi-subagents && pi install npm:@juicesharp/rpiv-todo && pi install npm:@juicesharp/rpiv-ask-user-question
+          script: export PATH="/root/.pi/agent/bin:$PATH" && pi install npm:pi-subagents && pi install npm:@juicesharp/rpiv-todo && pi install npm:@juicesharp/rpiv-ask-user-question
         - name: create demo source
           script: mkdir -p /tmp/demo_bak/.agents/skills/coding-agent-orchestrator
         - name: add create demo func
