@@ -4102,7 +4102,13 @@ def cmd_verify(args: argparse.Namespace) -> int:
                 "ok": False,
                 "error": "VERIFICATION_CONFIGURED_AFTER_START",
                 "reason": "The verification standard was configured after this Work Item started, so it cannot certify the requirement. Acceptance criteria must exist before work begins.",
-                "next": "Ask the user to confirm the verification standard, then start a fresh Work Item (or `cao reopen` after correcting the standard together).",
+                "next": (
+                    "Fix the standard first: `cao init --verify-script \"<real test command>\" --force` "
+                    "(it must run tests when the path requires a `tests` gate). Then re-anchor this Work Item "
+                    f"with `cao reopen --work {work.get('id', '<work id>')} --reason \"<why>\" --reanchor`, which restarts the clock, "
+                    "clears the gates and verification earned under the invalid standard, and lets `cao verify` run again. "
+                    "Starting a fresh Work Item is the other option, but it discards this item's progress."
+                ),
             }, ensure_ascii=False, indent=2)); return 2
         # A standard that never runs the tests cannot satisfy a `tests` gate:
         # compiling is not testing (demo11 satisfied `tests` with "mvnw clean
@@ -4240,14 +4246,29 @@ def cmd_reopen(args: argparse.Namespace) -> int:
     work = load_work(repo, wid) if wid else None
     if not work:
         print(json.dumps({"ok": False, "error": "NO_WORK_ITEM"}, ensure_ascii=False, indent=2)); return 2
-    if work.get("status") != "completed":
+    reanchored = bool(getattr(args, "reanchor", False))
+    status = str(work.get("status") or "")
+    # Re-anchoring resets the clock rather than reversing a completion, so it
+    # also applies to work that is already active: a Work Item whose standard
+    # was set after it started can never verify, and had no way out.
+    allowed = {"active", "completed"} if reanchored else {"completed"}
+    if status not in allowed:
         print(json.dumps({
             "ok": False,
-            "error": "WORK_ITEM_NOT_COMPLETED",
-            "status": work.get("status"),
-            "reason": f"Only a completed Work Item can be reopened; this one is `{work.get('status')}`. Active work continues as-is.",
+            "error": "WORK_ITEM_NOT_COMPLETED" if not reanchored else "WORK_ITEM_NOT_REANCHORABLE",
+            "status": status,
+            "reason": (
+                f"Only a completed Work Item can be reopened; this one is `{status}`. Active work continues as-is."
+                if not reanchored else
+                f"Only an active or completed Work Item can be re-anchored; this one is `{status}`."
+            ),
         }, ensure_ascii=False, indent=2)); return 2
 
+    if reanchored:
+        # Everything earned so far was earned under a standard that cannot
+        # certify this work, so the clock restarts and the evidence is void.
+        work["started_at"] = now()
+        work["reanchored_at"] = now()
     work["status"] = "active"
     work["completed_at"] = None
     work["execution"]["step"] = "reopened"
@@ -4255,9 +4276,14 @@ def cmd_reopen(args: argparse.Namespace) -> int:
         "agent",
         f"The Work Item was reopened: it was marked completed but the requirement is not actually satisfied."
         + (f" Reopen reason: {args.reason}." if args.reason else "")
+        + (" The verification clock was re-anchored to now, so the current standard is now the one the work is measured against."
+           if reanchored else "")
         + " Continue the requirement from where it truly stands. Gates and verification were cleared and must be re-earned with real evidence.",
     )
-    work["resume"]["summary"] = args.reason or "Reopened after being completed without the requirement actually being satisfied."
+    work["resume"]["summary"] = args.reason or (
+        "Re-anchored: the verification standard now precedes this Work Item's start; everything must be re-earned."
+        if reanchored else "Reopened after being completed without the requirement actually being satisfied."
+    )
     work["gate_status"] = {}
     work["verification"] = {}
     save_work(repo, work)
@@ -4268,8 +4294,14 @@ def cmd_reopen(args: argparse.Namespace) -> int:
         "to_state": "active",
         "occurred_at": now(),
         "reason": args.reason or "not specified",
+        "reanchored": reanchored,
     })
-    print(json.dumps({"ok": True, "status": "active", "work_item": work_summary(work)}, ensure_ascii=False, indent=2)); return 0
+    print(json.dumps({
+        "ok": True,
+        "status": "active",
+        "reanchored": reanchored,
+        "work_item": work_summary(work),
+    }, ensure_ascii=False, indent=2)); return 0
 
 
 def cmd_done(args: argparse.Namespace) -> int:
@@ -4807,7 +4839,7 @@ def build_parser() -> argparse.ArgumentParser:
     sp = sessions_sub.add_parser("show"); sp.add_argument("--repo", default="."); sp.add_argument("--id", required=True); sp.add_argument("--host", choices=["claude-code", "codex", "pi"]); sp.add_argument("--stale-after-minutes", type=int, default=30); sp.set_defaults(fn=cmd_sessions_show)
     sp = sub.add_parser("verify"); sp.add_argument("--repo", default="."); sp.add_argument("--work"); sp.add_argument("--script", action="append", help="One-off verification script command; repeat to run multiple scripts"); sp.add_argument("--command", action="append", help=argparse.SUPPRESS); sp.set_defaults(fn=cmd_verify)
     sp = sub.add_parser("done"); sp.add_argument("--repo", default="."); sp.add_argument("--work"); sp.set_defaults(fn=cmd_done)
-    sp = sub.add_parser("reopen", help="Reopen a completed Work Item that should not have been closed"); sp.add_argument("--repo", default="."); sp.add_argument("--work"); sp.add_argument("--reason", help="Why the completion was wrong, e.g. which part of the requirement is missing"); sp.set_defaults(fn=cmd_reopen)
+    sp = sub.add_parser("reopen", help="Reopen a completed Work Item that should not have been closed"); sp.add_argument("--repo", default="."); sp.add_argument("--work"); sp.add_argument("--reason", help="Why the completion was wrong, e.g. which part of the requirement is missing"); sp.add_argument("--reanchor", action="store_true", help="Also restart the verification clock, so an already-active Work Item whose standard was set after it started can be verified again"); sp.set_defaults(fn=cmd_reopen)
     sp = sub.add_parser("context"); sp.add_argument("--repo", default="."); sp.add_argument("--work"); sp.add_argument("--session"); sp.add_argument("--host", default="unknown"); sp.set_defaults(fn=cmd_context)
     requirement = sub.add_parser("requirement", help="Allocate numbered CAO requirement documents")
     requirement_sub = requirement.add_subparsers(dest="requirement_action")

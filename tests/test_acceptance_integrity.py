@@ -10,6 +10,7 @@ import pathlib
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -60,7 +61,7 @@ def standard_path(repo: pathlib.Path, wid: str) -> None:
     assert rc == 0, out
 
 
-def config_verification(repo: pathlib.Path, command: str, *, after_start: bool = False) -> None:
+def config_verification(repo: pathlib.Path, command: str, *, after_start: bool = False, at: int | None = None) -> None:
     cfg = json.loads((repo / ".orchestrator" / "config.json").read_text(encoding="utf-8"))
     cfg.setdefault("verification", {})["scripts"] = [{"name": "script-1", "command": command, "required": True}]
     # By default the standard predates the Work Item, so tests can exercise the
@@ -68,7 +69,13 @@ def config_verification(repo: pathlib.Path, command: str, *, after_start: bool =
     index = json.loads((repo / ".orchestrator" / "index.json").read_text(encoding="utf-8"))
     work_file = next((repo / ".orchestrator" / "work").glob("*.json"), None)
     started = json.loads(work_file.read_text(encoding="utf-8"))["started_at"] if work_file else 0
-    cfg["verification"]["configured_at"] = started + (3600 if after_start else -100)
+    if at is not None:
+        cfg["verification"]["configured_at"] = at
+    # `after_start` means "configured now, while the work is already underway" —
+    # the demo11 move. It must stay a real past moment rather than a far-future
+    # one, so that re-anchoring the clock can actually precede it.
+    else:
+        cfg["verification"]["configured_at"] = started + 1 if after_start else started - 100
     (repo / ".orchestrator" / "config.json").write_text(json.dumps(cfg), encoding="utf-8")
 
 
@@ -181,6 +188,97 @@ class Reopen(unittest.TestCase):
                 run(repo, "gate", "satisfy", "--gate", gate, "--evidence", "re-reviewed", "--work", wid)
             rc, out = run(repo, "done", "--work", wid)
             self.assertEqual(rc, 0, out)
+
+
+class Reanchor(unittest.TestCase):
+    """A Work Item whose standard was set after it started had no way out.
+
+    `cao verify` refuses a standard configured after `started_at`, and nothing
+    reset `started_at`, so such an item could never verify or close. demo11 hit
+    exactly this: an active Work Item stuck on `VERIFICATION_CONFIGURED_AFTER_START`.
+    """
+
+    def verification_stuck_work(self, repo: pathlib.Path) -> str:
+        """An active Work Item whose standard postdates its start."""
+        wid = active_work(repo)
+        standard_path(repo, wid)
+        config_verification(repo, "python3 -m unittest --help", after_start=True)
+        rc, out = run(repo, "verify", "--work", wid)
+        self.assertEqual(out["error"], "VERIFICATION_CONFIGURED_AFTER_START", out)
+        return wid
+
+    def test_reanchor_lets_a_stuck_active_item_verify_again(self):
+        with tempfile.TemporaryDirectory() as td:
+            repo = pathlib.Path(td)
+            wid = self.verification_stuck_work(repo)
+            before = json.loads((repo / ".orchestrator" / "work" / f"{wid}.json").read_text(encoding="utf-8"))["started_at"]
+            time.sleep(2.1)  # epochs are whole seconds; let the clock move past the standard
+            rc, out = run(repo, "reopen", "--work", wid, "--reason", "standard was set after start", "--reanchor")
+            self.assertEqual(rc, 0, out)
+            self.assertTrue(out["reanchored"])
+            work = json.loads((repo / ".orchestrator" / "work" / f"{wid}.json").read_text(encoding="utf-8"))
+            self.assertEqual(work["status"], "active")
+            self.assertGreater(work["started_at"], before, "the clock must restart")
+            rc, out = run(repo, "verify", "--work", wid)
+            self.assertEqual(rc, 0, out)
+            self.assertEqual(out["verification"]["status"], "passed")
+
+    def test_reanchor_clears_evidence_earned_under_the_invalid_standard(self):
+        with tempfile.TemporaryDirectory() as td:
+            repo = pathlib.Path(td)
+            wid = active_work(repo)
+            standard_path(repo, wid)
+            # Gates self-satisfied while the invalid standard was in force.
+            for gate in ("scope_review", "tests", "implementation_review"):
+                run(repo, "gate", "satisfy", "--gate", gate, "--evidence", "reviewed", "--work", wid)
+            config_verification(repo, "python3 -m unittest --help", after_start=True)
+            rc, out = run(repo, "reopen", "--work", wid, "--reason", "re-anchoring", "--reanchor")
+            self.assertEqual(rc, 0, out)
+            work = json.loads((repo / ".orchestrator" / "work" / f"{wid}.json").read_text(encoding="utf-8"))
+            self.assertEqual(work.get("gate_status"), {})
+            self.assertEqual(work.get("verification"), {})
+
+    def test_reanchor_still_does_not_exempt_a_standard_that_never_runs_tests(self):
+        """Re-anchoring restarts the clock; it does not lower the bar."""
+        with tempfile.TemporaryDirectory() as td:
+            repo = pathlib.Path(td)
+            wid = active_work(repo)
+            standard_path(repo, wid)
+            # A standard that predates the start, so only the coverage rule (B)
+            # is in play and the result does not depend on clock timing.
+            config_verification(repo, "python3 -c 'pass'")
+            run(repo, "reopen", "--work", wid, "--reason", "re-anchoring", "--reanchor")
+            rc, out = run(repo, "verify", "--work", wid)
+            self.assertEqual(rc, 2, out)
+            self.assertEqual(out["error"], "VERIFICATION_DOES_NOT_RUN_TESTS")
+
+    def test_reanchor_records_itself_in_the_lifecycle(self):
+        with tempfile.TemporaryDirectory() as td:
+            repo = pathlib.Path(td)
+            wid = self.verification_stuck_work(repo)
+            run(repo, "reopen", "--work", wid, "--reason", "re-anchored", "--reanchor")
+            events = [json.loads(line) for line in (repo / ".orchestrator" / "lifecycle" / "events.jsonl").read_text(encoding="utf-8").splitlines()]
+            reopens = [e for e in events if e.get("event") == "task.reopened"]
+            self.assertTrue(reopens, "re-anchoring must be auditable")
+            self.assertTrue(reopens[-1]["reanchored"])
+
+    def test_reopen_without_reanchor_does_not_move_the_clock(self):
+        with tempfile.TemporaryDirectory() as td:
+            repo = pathlib.Path(td)
+            wid = active_work(repo)
+            standard_path(repo, wid)
+            config_verification(repo, "python3 -m unittest --help")
+            run(repo, "verify", "--work", wid)
+            for gate in ("scope_review", "tests", "implementation_review"):
+                run(repo, "gate", "satisfy", "--gate", gate, "--evidence", "reviewed", "--work", wid)
+            rc, out = run(repo, "done", "--work", wid)
+            self.assertEqual(rc, 0, out)
+            before = json.loads((repo / ".orchestrator" / "work" / f"{wid}.json").read_text(encoding="utf-8"))["started_at"]
+            rc, out = run(repo, "reopen", "--work", wid, "--reason", "incomplete")
+            self.assertEqual(rc, 0, out)
+            self.assertFalse(out["reanchored"])
+            work = json.loads((repo / ".orchestrator" / "work" / f"{wid}.json").read_text(encoding="utf-8"))
+            self.assertEqual(work["started_at"], before, "a plain reopen must not restart the clock")
 
 
 if __name__ == "__main__":
