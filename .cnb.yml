@@ -51,4 +51,3 @@ $:
               echo "技能文件已复制到: $skills_dir"
             }
             EOF
-            source ~/.zshrc
