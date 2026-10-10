@@ -235,7 +235,29 @@ cao sdd install --provider speckit --integration copilot --yes
 
 Spec Kit keeps its native `.specify/`, `specs/`, and agent integration files. CAO records the provider and native references without copying or reimplementing Spec Kit's workflow.
 
-### Verification configuration
+#
+## User language and SDD artifacts
+
+Conversation with the user and all SDD-produced artifacts follow the project user-language preference in `.orchestrator/config.json`:
+
+```json
+{
+  "language": { "user": "zh-CN" }
+}
+```
+
+Set it at initialization or change it later:
+
+```bash
+cao init --language zh-CN
+cao language show
+cao language set --language en-US
+cao language apply
+```
+
+The default is Simplified Chinese (`zh-CN`). `language.user` controls both user-facing communication and generated SDD documentation. CAO applies the preference through provider-native configuration: BMAD language config keys, OpenSpec `openspec/config.yaml` context, and Spec Kit `.specify/memory/constitution.md`. Bootstrap, provider selection, and installation reapply the configured preference. Managed language sections are idempotent and preserve unrelated project settings and content. Explicit user instructions to use another language for a specific scope take precedence.
+
+## Verification configuration
 
 CAO only orchestrates project verification. The project owns the actual verification logic by
 providing one or more scripts in `.orchestrator/config.json`. A script returns an exit code and a

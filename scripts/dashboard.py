@@ -591,7 +591,14 @@ def make_handler(repo: Path, refresh_seconds: int = 10, *, allow_remote: bool = 
                 try:
                     page = html_path.read_bytes()
                     can_confirm = "true" if _is_loopback(bind_host) else "false"
-                    runtime = f"<script>window.CAO_REFRESH_SECONDS={refresh_seconds};window.CAO_CAN_CONFIRM_ARTIFACTS={can_confirm};</script>".encode("utf-8")
+                    config_path = repo / ".orchestrator" / "config.json"
+                    try:
+                        cfg = json.loads(config_path.read_text(encoding="utf-8")) if config_path.is_file() else {}
+                    except (OSError, json.JSONDecodeError):
+                        cfg = {}
+                    language = str((cfg.get("language") or {}).get("user") or "zh-CN")
+                    language_json = json.dumps(language, ensure_ascii=False)
+                    runtime = f"<script>window.CAO_REFRESH_SECONDS={refresh_seconds};window.CAO_CAN_CONFIRM_ARTIFACTS={can_confirm};window.CAO_LANGUAGE={language_json};</script>".encode("utf-8")
                     page = page.replace(b"<!-- CAO_RUNTIME_CONFIG -->", runtime)
                     self._send(200, "text/html; charset=utf-8", page)
                 except OSError:

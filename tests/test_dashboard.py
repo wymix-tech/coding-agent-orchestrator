@@ -90,6 +90,10 @@ class DashboardTests(unittest.TestCase):
         from scripts.dashboard import dashboard_html_path
         html = dashboard_html_path().read_text(encoding="utf-8")
         self.assertIn("研发编排总览", html)
+        self.assertIn('id="overview-page"', html)
+        self.assertIn('id="detail-page"', html)
+        self.assertIn("任务列表", html)
+        self.assertIn("back-overview", html)
         self.assertIn("/api/overview", html)
         self.assertIn("LOCAL · CONTROLLED ACTIONS", html)
 

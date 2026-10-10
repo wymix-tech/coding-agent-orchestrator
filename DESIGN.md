@@ -389,3 +389,7 @@ editing the SDD-owned file. Markdown and other bounded text files can be preview
 is restricted to a loopback-bound dashboard; remote binding requires `--allow-remote` and disables confirmation.
 Full repository code snapshots are not recalculated on every browser refresh; `cao done` remains authoritative
 for Verification freshness.
+
+## User language policy
+
+CAO stores one project-level preference at `language.user` (default `zh-CN`). User communication and SDD-generated documents follow this preference. Provider adapters apply it through each SDD's native configuration: BMAD communication/document language keys, OpenSpec project context, and Spec Kit constitution language principles. No provider-specific language selection algorithm is maintained. Applying the same preference is idempotent and only replaces CAO-managed sections or the provider's dedicated language keys. Explicit user language requests take precedence for the requested scope.

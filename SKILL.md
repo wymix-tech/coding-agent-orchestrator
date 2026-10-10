@@ -286,3 +286,11 @@ as `未生成`, `已生成`, or `已确认`, and permits previewing supported te
 ## Orchestration visualization
 
 For a visual overview of Work Items, execution paths, Sessions, Verification summaries, Handoff history, and provider-native SDD artifacts, run `cao dashboard --open`. The dashboard can preview bounded text/Markdown artifacts and confirm an artifact by recording its current hash in CAO metadata; it never edits the SDD-owned source file. Artifact confirmation is enabled only on a loopback-bound dashboard. `cao done` remains responsible for authoritative Verification freshness checks.
+
+## User language policy
+
+The project language preference is `.orchestrator/config.json` → `language.user` (default `zh-CN`). Use it for communication with the user and for every SDD-produced artifact, regardless of provider: BMAD, OpenSpec, Spec Kit, or future providers. Preserve code identifiers, API names, commands, standardized tokens, and file names where required. An explicit user request for a different language takes precedence for the requested scope.
+
+Use `cao language show` to inspect the setting, `cao language set --language <locale>` to update it and apply it to installed SDDs, or `cao language apply` to reapply the current preference. Bootstrap and SDD selection/installation apply the preference automatically.
+
+If the user expresses an ongoing language preference that differs from `language.user`, update the project setting with `cao language set --language <locale>` before producing further SDD artifacts; do not change the preference merely for a one-off explicitly requested artifact.

@@ -13,3 +13,9 @@ Before editing code:
 7. Before completion, run `cao verify` and then `cao done`.
 
 Explicit user instructions remain authoritative. CAO coordinates continuity; it does not replace the project's SDD or the Agent's normal coding capabilities.
+
+## Language policy
+
+Read `.orchestrator/config.json` → `language.user`. Communicate with the user in that language and write all SDD artifacts and project documentation in the same language, including specifications, proposals, designs, plans, tasks, architecture documents, reviews, and summaries. Keep code symbols, API names, commands, standardized keywords, and file names unchanged where required. If the user explicitly requests a different language for a specific scope, follow that request for that scope. Use `cao language show` to inspect the preference and `cao language set --language <locale>` to change it.
+
+If the user expresses an ongoing language preference that differs from the configured value, update it with `cao language set --language <locale>` before producing more SDD artifacts.
