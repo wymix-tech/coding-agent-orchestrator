@@ -96,6 +96,7 @@ on a trusted network. Press `Ctrl+C` to stop the server.
 ├── index.json
 ├── work/<work-id>.json
 ├── sessions/<session-internal-id>.json
+├── lifecycle/events.jsonl             # append-only lifecycle event log
 └── handoffs/
     └── <work-id>/<handoff-id>.json    # immutable handoff history
 ```
@@ -112,6 +113,19 @@ cao sessions show --id <session-id> --host codex
 ```
 
 `recent` and `stale` are calculated from `last_event_at`; stale means “no recent event observed”, not “the Agent has ended”. Only an explicit end event closes a Session. Creating a Handoff alone does not end a Session; main-session stop events create a Handoff and then close that Session, while subagent stop events close only the subagent Session.
+
+### SDD lifecycle reconciliation
+
+CAO reconciles native SDD state when `cao bootstrap`, `cao status`, `cao list`, `cao resume`/`cao next`, or the Dashboard reads an active Work Item. In particular, bootstrap reconciles before it builds a new-session context, so a stale CAO phase cursor is repaired before the Agent resumes. The adapters for BMAD, OpenSpec, and Spec Kit bind only artifacts matched to the current requirement/work-item identity. Exact identity matches take precedence over partial matches; ambiguous BMAD candidates are not used to infer state or bind `native_ref`. A file's existence can establish an artifact reference, but it does **not** by itself mean implementation has started. BMAD requires an explicit machine-readable state; OpenSpec and Spec Kit use task checkbox progress (`all unchecked` = ready, `some checked` = in progress, `all checked` = implementation complete). Native implementation completion projects CAO to `review`, never directly to `done`; `cao done` still enforces CAO completion gates.
+
+Observed state transitions and CAO creation/closure events are appended to `.orchestrator/lifecycle/events.jsonl` with idempotency keys. Inspect them with:
+
+```bash
+cao lifecycle events
+cao lifecycle events --work <work-id> --limit 50
+```
+
+This is query/command-triggered reconciliation, not a permanent background file watcher. Native changes are observed on the next status/list/resume/next or Dashboard refresh; a failed or bypassed framework command is therefore recovered by subsequent reconciliation.
 
 ### Minimum-safe execution path
 
@@ -235,7 +249,29 @@ cao sdd install --provider speckit --integration copilot --yes
 
 Spec Kit keeps its native `.specify/`, `specs/`, and agent integration files. CAO records the provider and native references without copying or reimplementing Spec Kit's workflow.
 
-### Verification configuration
+#
+## User language and SDD artifacts
+
+Conversation with the user and all SDD-produced artifacts follow the project user-language preference in `.orchestrator/config.json`:
+
+```json
+{
+  "language": { "user": "zh-CN" }
+}
+```
+
+Set it at initialization or change it later:
+
+```bash
+cao init --language zh-CN
+cao language show
+cao language set --language en-US
+cao language apply
+```
+
+The default is Simplified Chinese (`zh-CN`). `language.user` controls both user-facing communication and generated SDD documentation. CAO applies the preference through provider-native configuration: BMAD language config keys, OpenSpec `openspec/config.yaml` context, and Spec Kit `.specify/memory/constitution.md`. Bootstrap, provider selection, and installation reapply the configured preference. Managed language sections are idempotent and preserve unrelated project settings and content. Explicit user instructions to use another language for a specific scope take precedence.
+
+## Verification configuration
 
 CAO only orchestrates project verification. The project owns the actual verification logic by
 providing one or more scripts in `.orchestrator/config.json`. A script returns an exit code and a

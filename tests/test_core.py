@@ -27,6 +27,156 @@ class CoreTests(unittest.TestCase):
         (repo / "openspec/config.yaml").write_text("context: test\n", encoding="utf-8")
         return td, repo
 
+    def test_status_reconciles_bmad_execution_artifact_and_native_ref(self):
+        td, repo = self.init_repo()
+        with td:
+            (repo / "requirements").mkdir()
+            (repo / "requirements/spring-boot-auth-login.md").write_text("Implement login", encoding="utf-8")
+            (repo / "_bmad").mkdir()
+            run(repo, "init"); run(repo, "sdd", "select", "--provider", "bmad")
+            run(repo, "start", "--requirement", "requirements/spring-boot-auth-login.md")
+            run(repo, "path", "assess", "--profile", "standard", "--reason", "Feature with planning")
+            run(repo, "checkpoint", "--step", "path-selected", "--next", "Run BMAD planning")
+            artifact = repo / "_bmad-output/implementation-artifacts/spec-spring-boot-auth-login.md"
+            artifact.parent.mkdir(parents=True)
+            artifact.write_text("---\nstatus: ready_for_dev\n---\n# Login implementation spec\n", encoding="utf-8")
+            rc, out, _ = run(repo, "status")
+            self.assertEqual(rc, 0)
+            self.assertEqual(out["work"]["execution"]["step"], "ready-for-dev")
+            self.assertEqual(out["work"]["work_item"]["sdd"]["native_ref"], "_bmad-output/implementation-artifacts/spec-spring-boot-auth-login.md")
+            artifact.write_text("---\nstatus: in_process\n---\n# Login implementation spec\n", encoding="utf-8")
+            rc, out, _ = run(repo, "status")
+            self.assertEqual(rc, 0)
+            work = out["work"]
+            self.assertEqual(work["execution"]["step"], "implementation")
+            self.assertEqual(work["work_item"]["sdd"]["native_state"]["canonical"], "in_progress")
+            run(repo, "status")
+            rc, events, _ = run(repo, "lifecycle", "events")
+            self.assertEqual(rc, 0)
+            names = [event["event"] for event in events["events"]]
+            self.assertEqual(names.count("task.execution.started"), 1)
+            self.assertEqual(names.count("sdd.native_state.changed"), 2)
+            self.assertIn("task.ready", names)
+            # Simulate a stale older session writing a planning cursor after native state sync.
+            work_file = next((repo / ".orchestrator/work").glob("*.json"))
+            persisted = json.loads(work_file.read_text(encoding="utf-8"))
+            persisted["execution"]["step"] = "path-selected"
+            work_file.write_text(json.dumps(persisted), encoding="utf-8")
+            rc, out, _ = run(repo, "status")
+            self.assertEqual(rc, 0)
+            self.assertEqual(out["work"]["execution"]["step"], "implementation")
+            rc, after, _ = run(repo, "lifecycle", "events")
+            self.assertEqual(rc, 0)
+            self.assertEqual(len(after["events"]), len(events["events"]))
+
+    def test_bootstrap_reconciles_native_state_before_new_session_context(self):
+        td, repo = self.init_repo()
+        with td:
+            (repo / "requirements").mkdir()
+            (repo / "requirements/spring-boot-auth-login.md").write_text("Implement login", encoding="utf-8")
+            (repo / "_bmad").mkdir()
+            run(repo, "init"); run(repo, "sdd", "select", "--provider", "bmad")
+            run(repo, "start", "--requirement", "requirements/spring-boot-auth-login.md")
+            run(repo, "path", "assess", "--profile", "standard", "--reason", "Feature with planning")
+            run(repo, "checkpoint", "--step", "path-selected", "--next", "Run BMAD planning")
+            artifact = repo / "_bmad-output/implementation-artifacts/spec-spring-boot-auth-login.md"
+            artifact.parent.mkdir(parents=True)
+            artifact.write_text("---\nstatus: in_process\n---\n# Login implementation spec\n", encoding="utf-8")
+            rc, out, _ = run(repo, "bootstrap")
+            self.assertEqual(rc, 0)
+            self.assertEqual(out["mode"], "resume")
+            self.assertEqual(out["context"]["work_item"]["sdd"]["native_state"]["canonical"], "in_progress")
+            rc, state, _ = run(repo, "status")
+            self.assertEqual(rc, 0)
+            self.assertEqual(state["work"]["execution"]["step"], "implementation")
+
+    def test_ambiguous_bmad_artifacts_do_not_bind_or_advance_state(self):
+        td, repo = self.init_repo()
+        with td:
+            (repo / "requirements").mkdir()
+            (repo / "requirements/spring-boot-auth-login.md").write_text("Implement login", encoding="utf-8")
+            (repo / "_bmad").mkdir()
+            run(repo, "init"); run(repo, "sdd", "select", "--provider", "bmad")
+            run(repo, "start", "--requirement", "requirements/spring-boot-auth-login.md")
+            run(repo, "path", "assess", "--profile", "standard", "--reason", "Feature with planning")
+            run(repo, "checkpoint", "--step", "path-selected", "--next", "Run BMAD planning")
+            root = repo / "_bmad-output/implementation-artifacts"
+            root.mkdir(parents=True)
+            (root / "spec-auth-login.md").write_text("---\nstatus: in_process\n---\n# Candidate A\n", encoding="utf-8")
+            (root / "spec-boot-auth-login.md").write_text("---\nstatus: in_process\n---\n# Candidate B\n", encoding="utf-8")
+            rc, out, _ = run(repo, "status")
+            self.assertEqual(rc, 0)
+            self.assertEqual(out["work"]["execution"]["step"], "path-selected")
+            self.assertIsNone(out["work"]["work_item"]["sdd"].get("native_ref"))
+
+    def test_bmad_artifact_without_status_binds_but_does_not_start_execution(self):
+        td, repo = self.init_repo()
+        with td:
+            (repo / "requirements").mkdir()
+            (repo / "requirements/spring-boot-auth-login.md").write_text("Implement login", encoding="utf-8")
+            (repo / "_bmad").mkdir()
+            run(repo, "init"); run(repo, "sdd", "select", "--provider", "bmad")
+            run(repo, "start", "--requirement", "requirements/spring-boot-auth-login.md")
+            run(repo, "path", "assess", "--profile", "standard", "--reason", "Feature with planning")
+            run(repo, "checkpoint", "--step", "path-selected", "--next", "Run BMAD planning")
+            artifact = repo / "_bmad-output/implementation-artifacts/spec-spring-boot-auth-login.md"
+            artifact.parent.mkdir(parents=True)
+            artifact.write_text("# Login implementation spec\n", encoding="utf-8")
+            rc, out, _ = run(repo, "status")
+            self.assertEqual(rc, 0)
+            self.assertEqual(out["work"]["execution"]["step"], "path-selected")
+            self.assertEqual(out["work"]["work_item"]["sdd"]["native_ref"], "_bmad-output/implementation-artifacts/spec-spring-boot-auth-login.md")
+            rc, events, _ = run(repo, "lifecycle", "events")
+            self.assertEqual(rc, 0)
+            self.assertEqual([event["event"] for event in events["events"]], ["task.created"])
+
+    def test_status_reconciles_openspec_tasks_without_native_ref(self):
+        td, repo = self.init_repo()
+        with td:
+            (repo / "requirements").mkdir()
+            (repo / "requirements/add-login.md").write_text("Add login", encoding="utf-8")
+            run(repo, "init"); run(repo, "sdd", "select", "--provider", "openspec")
+            run(repo, "start", "--requirement", "requirements/add-login.md")
+            run(repo, "path", "assess", "--profile", "standard", "--reason", "Feature with planning")
+            run(repo, "checkpoint", "--step", "path-selected", "--next", "Run OpenSpec")
+            change = repo / "openspec/changes/add-login"
+            change.mkdir(parents=True)
+            (change / "proposal.md").write_text("# Proposal", encoding="utf-8")
+            (change / "tasks.md").write_text("# Tasks\n- [ ] Implement", encoding="utf-8")
+            rc, out, _ = run(repo, "status")
+            self.assertEqual(rc, 0)
+            self.assertEqual(out["work"]["execution"]["step"], "ready-for-dev")
+            self.assertEqual(out["work"]["work_item"]["sdd"]["native_ref"], "openspec/changes/add-login/proposal.md")
+            (change / "tasks.md").write_text("# Tasks\n- [x] Implement\n- [ ] Verify\n", encoding="utf-8")
+            rc, out, _ = run(repo, "status")
+            self.assertEqual(rc, 0)
+            self.assertEqual(out["work"]["execution"]["step"], "implementation")
+            (change / "tasks.md").write_text("# Tasks\n- [x] Implement\n- [x] Verify\n", encoding="utf-8")
+            rc, out, _ = run(repo, "status")
+            self.assertEqual(rc, 0)
+            self.assertEqual(out["work"]["execution"]["step"], "review")
+            self.assertEqual(out["work_item"]["status"] if "work_item" in out else out["work"]["work_item"]["status"], "active")
+
+    def test_status_reconciles_speckit_tasks_without_native_ref(self):
+        td, repo = self.init_repo()
+        with td:
+            (repo / "requirements").mkdir()
+            (repo / "requirements/add-login.md").write_text("Add login", encoding="utf-8")
+            (repo / ".specify/memory").mkdir(parents=True)
+            (repo / ".specify/memory/constitution.md").write_text("Constitution", encoding="utf-8")
+            run(repo, "init"); run(repo, "sdd", "select", "--provider", "speckit")
+            run(repo, "start", "--requirement", "requirements/add-login.md")
+            run(repo, "path", "assess", "--profile", "standard", "--reason", "Feature with planning")
+            run(repo, "checkpoint", "--step", "path-selected", "--next", "Run Spec Kit")
+            feature = repo / "specs/add-login"
+            feature.mkdir(parents=True)
+            (feature / "spec.md").write_text("# Spec", encoding="utf-8")
+            (feature / "tasks.md").write_text("# Tasks\n- [ ] Implement", encoding="utf-8")
+            rc, out, _ = run(repo, "status")
+            self.assertEqual(rc, 0)
+            self.assertEqual(out["work"]["execution"]["step"], "ready-for-dev")
+            self.assertEqual(out["work"]["work_item"]["sdd"]["native_ref"], "specs/add-login/spec.md")
+
     def test_lifecycle(self):
         td, repo = self.init_repo()
         with td:
@@ -38,6 +188,45 @@ class CoreTests(unittest.TestCase):
             self.assertEqual(rc, 0)
             rc, _, _ = run(repo, "verify", "--script", "python3 -c \"print('ok')\""); self.assertEqual(rc, 0)
             rc, out, _ = run(repo, "done"); self.assertEqual(rc, 0); self.assertEqual(out["status"], "completed")
+            rc, events, _ = run(repo, "lifecycle", "events")
+            self.assertEqual(rc, 0)
+            names = [event["event"] for event in events["events"]]
+            self.assertIn("task.created", names)
+            self.assertIn("task.closed", names)
+
+    def test_standard_sdd_workflow_is_required_before_done(self):
+        td, repo = self.init_repo()
+        with td:
+            (repo / "_bmad").mkdir()
+            (repo / "requirements").mkdir(); (repo / "requirements/login.md").write_text("Add login", encoding="utf-8")
+            run(repo, "init"); run(repo, "sdd", "select", "--provider", "bmad")
+            run(repo, "start", "--requirement", "requirements/login.md")
+            rc, _, _ = run(repo, "path", "assess", "--profile", "standard", "--reason", "Feature requiring analysis and review")
+            self.assertEqual(rc, 0)
+            rc, out, _ = run(repo, "done")
+            self.assertEqual(rc, 2)
+            self.assertEqual(out["reason"], "native SDD workflow is not recorded as completed")
+            rc, out, _ = run(repo, "sdd", "workflow", "select", "--name", "BMAD Specify Requirements", "--entrypoint", "project-local BMAD workflow/skill")
+            self.assertEqual(rc, 0)
+            (repo / "_bmad-output").mkdir(); (repo / "_bmad-output/requirements.md").write_text("Requirements", encoding="utf-8")
+            rc, out, _ = run(repo, "sdd", "workflow", "complete", "--artifact", "_bmad-output/requirements.md")
+            self.assertEqual(rc, 0)
+            run(repo, "verify", "--script", "python3 -c \"pass\"")
+            rc, out, _ = run(repo, "done")
+            self.assertEqual(rc, 0)
+
+    def test_standard_sdd_workflow_requires_existing_artifacts(self):
+        td, repo = self.init_repo()
+        with td:
+            (repo / "openspec").mkdir(exist_ok=True)
+            (repo / "requirements").mkdir(); (repo / "requirements/a.md").write_text("A", encoding="utf-8")
+            run(repo, "init"); run(repo, "sdd", "select", "--provider", "openspec")
+            run(repo, "start", "--requirement", "requirements/a.md")
+            run(repo, "path", "assess", "--profile", "standard", "--reason", "Ordinary feature")
+            run(repo, "sdd", "workflow", "select", "--name", "OpenSpec change", "--entrypoint", "openspec new change")
+            rc, out, _ = run(repo, "sdd", "workflow", "complete", "--artifact", "openspec/missing.md")
+            self.assertEqual(rc, 2)
+            self.assertEqual(out["error"], "ARTIFACT_INVALID")
 
     def test_edit_after_verify_blocks_done(self):
         td, repo = self.init_repo()

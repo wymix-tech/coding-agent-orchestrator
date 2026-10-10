@@ -1,4 +1,5 @@
 import json
+import os
 import pathlib
 import subprocess
 import sys
@@ -9,8 +10,11 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 CAO = ROOT / "scripts" / "cao.py"
 
 
-def run(repo, *args, input_text=None):
-    p = subprocess.run([sys.executable, str(CAO), *args], cwd=repo, text=True, capture_output=True, input=input_text, timeout=20)
+def run(repo, *args, input_text=None, env=None):
+    process_env = os.environ.copy()
+    if env:
+        process_env.update(env)
+    p = subprocess.run([sys.executable, str(CAO), *args], cwd=repo, text=True, capture_output=True, input=input_text, timeout=20, env=process_env)
     try:
         out = json.loads(p.stdout)
     except Exception:
@@ -36,8 +40,13 @@ class SddBootstrapTests(unittest.TestCase):
             self.assertEqual(rc, 0)
             self.assertEqual(out["mode"], "sdd_select")
             self.assertEqual(out["sdd"]["status"], "not_installed")
+            self.assertTrue(out["selection_required"])
+            self.assertEqual(out["selection_policy"], "explicit_user_choice_only")
             self.assertEqual({x["provider"] for x in out["options"]}, {"openspec", "bmad", "speckit"})
-            self.assertIn("sdd install", out["next"]["instruction"])
+            instruction = out["next"]["instruction"]
+            self.assertIn("wait for their answer", instruction)
+            self.assertIn("Do not run any provider install/select command before the user answers", instruction)
+            self.assertIn("If the interaction channel cannot ask the user, stop", instruction)
 
     def test_start_is_blocked_when_sdd_is_missing(self):
         td, repo = self.init_repo()
@@ -62,17 +71,47 @@ class SddBootstrapTests(unittest.TestCase):
             config = json.loads((repo / ".orchestrator/config.json").read_text(encoding="utf-8"))
             self.assertEqual(config["sdd"]["provider"], "openspec")
 
-    def test_sdd_install_without_yes_returns_plan(self):
+    def test_openspec_install_refuses_all_hosts_when_host_is_unknown(self):
         td, repo = self.init_repo()
         with td:
-            rc, out = run(repo, "sdd", "install", "--provider", "openspec")
-            # This may fail the runtime prerequisite check on a stripped test host.
-            if rc == 0:
-                self.assertEqual(out["status"], "confirmation_required")
-                self.assertEqual(out["provider"], "openspec")
-                self.assertTrue(out["install_plan"])
-            else:
-                self.assertEqual(out["error"], "SDD_PREREQUISITE_FAILED")
+            rc, out = run(repo, "sdd", "install", "--provider", "openspec", env={"CAO_HOST": "", "CLAUDE_CODE": "", "CLAUDE_CODE_SESSION_ID": "", "CODEX_THREAD_ID": "", "CODEX_SANDBOX": "", "CODEX_HOME": "", "PI_CODING_AGENT": "", "PI_SESSION_ID": ""})
+            if rc == 2 and out.get("error") == "SDD_PREREQUISITE_FAILED":
+                self.skipTest("OpenSpec runtime prerequisites unavailable on this host")
+            self.assertEqual(rc, 2)
+            self.assertEqual(out["error"], "SDD_INSTALL_ARGUMENTS_REQUIRED")
+            self.assertIn("Refusing --tools all", out["reason"])
+
+    def test_openspec_install_uses_explicit_host_only(self):
+        td, repo = self.init_repo()
+        with td:
+            rc, out = run(repo, "sdd", "install", "--provider", "openspec", "--host", "claude-code")
+            if rc == 2 and out.get("error") == "SDD_PREREQUISITE_FAILED":
+                self.skipTest("OpenSpec runtime prerequisites unavailable on this host")
+            self.assertEqual(rc, 0)
+            commands = [x["command"] for x in out["install_plan"]]
+            self.assertIn("openspec init --tools claude", commands)
+            self.assertNotIn("openspec init --tools all", commands)
+
+    def test_openspec_install_detects_runtime_host(self):
+        td, repo = self.init_repo()
+        with td:
+            rc, out = run(repo, "sdd", "install", "--provider", "openspec", env={"CLAUDE_CODE_SESSION_ID": "test-session", "CODEX_THREAD_ID": "", "CODEX_SANDBOX": "", "CODEX_HOME": "", "PI_CODING_AGENT": "", "PI_SESSION_ID": ""})
+            if rc == 2 and out.get("error") == "SDD_PREREQUISITE_FAILED":
+                self.skipTest("OpenSpec runtime prerequisites unavailable on this host")
+            self.assertEqual(rc, 0)
+            commands = [x["command"] for x in out["install_plan"]]
+            self.assertIn("openspec init --tools claude", commands)
+            self.assertNotIn("openspec init --tools all", commands)
+
+    def test_openspec_install_respects_explicit_tools_override(self):
+        td, repo = self.init_repo()
+        with td:
+            rc, out = run(repo, "sdd", "install", "--provider", "openspec", "--tools", "claude,codex")
+            if rc == 2 and out.get("error") == "SDD_PREREQUISITE_FAILED":
+                self.skipTest("OpenSpec runtime prerequisites unavailable on this host")
+            self.assertEqual(rc, 0)
+            commands = [x["command"] for x in out["install_plan"]]
+            self.assertIn("openspec init --tools claude,codex", commands)
 
     def test_existing_speckit_project_is_detected_and_inferred(self):
         td, repo = self.init_repo()

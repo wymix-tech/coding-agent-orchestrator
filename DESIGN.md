@@ -389,3 +389,21 @@ editing the SDD-owned file. Markdown and other bounded text files can be preview
 is restricted to a loopback-bound dashboard; remote binding requires `--allow-remote` and disables confirmation.
 Full repository code snapshots are not recalculated on every browser refresh; `cao done` remains authoritative
 for Verification freshness.
+
+## User language policy
+
+CAO stores one project-level preference at `language.user` (default `zh-CN`). User communication and SDD-generated documents follow this preference. Provider adapters apply it through each SDD's native configuration: BMAD communication/document language keys, OpenSpec project context, and Spec Kit constitution language principles. No provider-specific language selection algorithm is maintained. Applying the same preference is idempotent and only replaces CAO-managed sections or the provider's dedicated language keys. Explicit user language requests take precedence for the requested scope.
+
+
+## Native SDD workflow completion contract
+
+For `standard` and `comprehensive` Work Items using an installed SDD Provider, a successful code/test verification is not sufficient to complete the Work Item. The Agent records the provider-native workflow name and entrypoint with `cao sdd workflow select`, executes it according to the provider's own instructions, and records existing repository-relative output files with `cao sdd workflow complete --artifact ...`. `cao done` blocks unless the workflow is recorded completed and every referenced output file exists. This is provider-neutral orchestration metadata, not a replacement SDD workflow; native artifacts remain owned by the provider. Verification should run after native artifacts have stabilized so snapshot freshness remains valid.
+
+
+## SDD lifecycle reconciliation and event log
+
+Provider adapters discover work-item-scoped artifacts and extract native status evidence. They do not infer `in_progress` merely from a generated Markdown file. BMAD uses explicit machine-readable status on the matched artifact; OpenSpec and Spec Kit use task checkbox state. Unknown status remains unknown. Native `completed` means the native implementation plan is complete and projects CAO to `review`; it never closes a Work Item.
+
+A successful observation updates `WorkItem.sdd.native_ref` when one unique, requirement-matched entry artifact is available, persists the latest normalized native state, and appends an idempotent event to `.orchestrator/lifecycle/events.jsonl`. Exact artifact identity wins over partial-slug matches; ambiguous BMAD candidates are ignored until the Work Item can be bound safely. Event append is guarded by an exclusive lock and flushed to disk before the command returns. Repeated polling of the same native state does not emit a second transition event. `cao lifecycle events` provides an audit view.
+
+Reconciliation is invoked at bootstrap/status/list/resume/next and Dashboard refresh boundaries rather than relying on all SDD systems to expose the same native Hook. Bootstrap performs the read before constructing the resumed session context. This is a compensating-read model: provider-specific Hooks or command wrappers can be added later without changing the canonical CAO event names. It does not claim immediate background observation when no CAO command or Dashboard refresh is running.

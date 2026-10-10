@@ -21,7 +21,7 @@ cao bootstrap
 
 Bootstrap initializes CAO state when needed, verifies that a project SDD is installed, reports the active/resumable Work Item, and returns the next action.
 It never creates a Work Item and never reruns requirement intake because an Agent or session changed.
-If no SDD is installed, bootstrap stops before coding, asks the user to choose an SDD, and requires the Agent to complete installation before proceeding.
+If no SDD is installed, bootstrap stops before coding. If `cao bootstrap` reports `mode: sdd_select`, this is a hard authorization boundary, not a recommendation. You MUST ask the user directly which provider they want and wait for an explicit answer before running any `cao sdd install` or `cao sdd select` command. Never choose a provider yourself based on a recommendation label, popularity, task type, installed global CLI, or personal preference. Do not treat `auto` as a user choice. If the current interface cannot ask the user, stop and report `SDD_SELECTION_REQUIRED`; do not install anything or begin coding. A recommendation is informational only and is never the default or authorization. After the user explicitly chooses, install only that provider and rerun bootstrap.
 
 ## Resume before restarting work
 
@@ -48,7 +48,8 @@ Useful commands:
 ```bash
 cao bootstrap
 cao sdd list
-cao sdd install --provider <openspec|bmad|speckit> --yes
+# Run install only after the user explicitly chooses a provider:
+cao sdd install --provider <user-chosen-provider> --yes
 # Spec Kit:
 cao sdd install --provider speckit --host <claude-code|codex|pi> --yes
 # Or use any supported Spec Kit integration:
@@ -104,6 +105,27 @@ The selected SDD Provider supplies profile-specific native-workflow guidance. Fo
 Spec Kit, or another provider's own commands, artifacts, and mandatory preconditions; CAO does not
 invent a duplicate SDD lifecycle. Reassess only when scope, requirement, or risk materially changes.
 The profile never bypasses the project's configured Verification scripts or provider-native gates.
+
+For `standard` and `comprehensive` paths with an installed SDD provider, selecting a path is not
+proof that its native workflow ran. Before implementation, record the actual provider-native workflow
+and entrypoint, then execute it using that provider's installed instructions:
+
+```bash
+cao sdd workflow select --name "<native workflow name>" --entrypoint "<native workflow command or skill>"
+```
+
+After actually executing the workflow, record its existing, repository-relative output files (repeat
+`--artifact` for each file):
+
+```bash
+cao sdd workflow complete --artifact <repo-relative-file>
+```
+
+CAO blocks `cao done` for these paths until the selected workflow is marked completed and its recorded
+output files exist. This contract applies across providers, not only BMAD. Do not fabricate artifact
+paths or mark a workflow completed before running it. If a provider-native workflow genuinely produces
+no files, do not bypass the gate silently: explicitly reassess whether `standard`/`comprehensive` is
+appropriate or extend the provider contract with a documented exception.
 
 ## State ownership
 
@@ -286,3 +308,11 @@ as `未生成`, `已生成`, or `已确认`, and permits previewing supported te
 ## Orchestration visualization
 
 For a visual overview of Work Items, execution paths, Sessions, Verification summaries, Handoff history, and provider-native SDD artifacts, run `cao dashboard --open`. The dashboard can preview bounded text/Markdown artifacts and confirm an artifact by recording its current hash in CAO metadata; it never edits the SDD-owned source file. Artifact confirmation is enabled only on a loopback-bound dashboard. `cao done` remains responsible for authoritative Verification freshness checks.
+
+## User language policy
+
+The project language preference is `.orchestrator/config.json` → `language.user` (default `zh-CN`). Use it for communication with the user and for every SDD-produced artifact, regardless of provider: BMAD, OpenSpec, Spec Kit, or future providers. Preserve code identifiers, API names, commands, standardized tokens, and file names where required. An explicit user request for a different language takes precedence for the requested scope.
+
+Use `cao language show` to inspect the setting, `cao language set --language <locale>` to update it and apply it to installed SDDs, or `cao language apply` to reapply the current preference. Bootstrap and SDD selection/installation apply the preference automatically.
+
+If the user expresses an ongoing language preference that differs from `language.user`, update the project setting with `cao language set --language <locale>` before producing further SDD artifacts; do not change the preference merely for a one-off explicitly requested artifact.

@@ -1,5 +1,8 @@
 {
   "version": 1,
+  "language": {
+    "user": "zh-CN"
+  },
   "verification": {
     "scripts": [
       {

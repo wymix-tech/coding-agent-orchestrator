@@ -1,4 +1,5 @@
 import subprocess
+import sys
 import unittest
 from pathlib import Path
 
@@ -49,6 +50,21 @@ class CliEntryTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("usage: cao dashboard", result.stdout)
         self.assertIn("--allow-remote", result.stdout)
+
+    def test_direct_python_script_dashboard_import_works_outside_repo_cwd(self):
+        # Running scripts/cao.py sets sys.path[0] to `scripts/`, not the project
+        # root. Dashboard must still import its sibling package modules.
+        missing_repo = ROOT / "this-repo-does-not-exist-for-dashboard-test"
+        result = subprocess.run(
+            [sys.executable, str(ROOT / "scripts" / "cao.py"), "dashboard", "--repo", str(missing_repo)],
+            cwd=ROOT.parent,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertNotIn("ModuleNotFoundError", result.stderr)
+        self.assertIn("Repository directory does not exist", result.stdout)
 
     def test_hooks_use_shared_runner(self):
         claude = (ROOT / "hosts/claude-code/settings.fragment.json").read_text()
