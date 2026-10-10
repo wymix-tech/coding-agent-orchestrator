@@ -101,10 +101,29 @@ CAO does not need to own or persist the host's complete chat transcript.
 │   └── <work-id>.json
 ├── sessions/
 │   └── <session-internal-id>.json
+├── requirements/
+│   └── 001-requirement-<slug>-<date>.md
 └── handoffs/
     └── <work-id>/
         └── <handoff-id>.json          # immutable history records
 ```
+
+## Requirement documents
+
+A requirement stated inline in conversation has no file, and `cao start` requires one. CAO owns the
+location (`.orchestrator/requirements/`) and the numbering (`NNN-requirement-<slug>-<YYYY-MM-DD>.md`);
+the Agent owns the content. `cao requirement next-id` allocates the next path from the highest existing
+number and creates it with a skeleton; the Agent edits the file, so requirement text is never squeezed
+through a CLI argument. CAO creates it because a mutating tool call is gated until a Work Item exists —
+an Agent that must create the requirement file itself is blocked before `cao start` can ever run.
+`requirement_files()` always includes `.orchestrator/requirements/**/*.md`, so requirement discovery
+works in projects initialized before the glob existed in the default config.
+
+These documents are CAO-owned intake records, not SDD artifacts: provider output directories
+(`_bmad-output/`, `openspec/`, `specs/`, `.specify/`) remain the only places `cao sdd workflow complete`
+accepts native artifacts from. Requirement documents live outside the code snapshot
+(`SNAPSHOT_IGNORE_DIRS` contains `.orchestrator`), so landing or editing one does not invalidate
+verification freshness.
 
 ## State transitions
 
@@ -192,6 +211,15 @@ Each built-in SDD Provider contains lightweight `path_guidance` for `light`, `st
 engine. CAO does not create SDD artifacts, issue a numeric score, scan the repository into a fact model,
 or build a provenance graph. Profile selection never waives provider-native prerequisites or configured
 Verification scripts.
+
+The profile also never waives the native SDD workflow: `light`, `standard`, and `comprehensive` all
+require the provider's own workflow to be selected, executed, and completed. `light` only reduces how
+much of that workflow runs. Exempting `light` previously let an Agent go straight from path selection to
+verification, skipping native planning, implementation, and review entirely.
+
+Each provider also declares `output_dirs` (the directories it owns) and `workflow_hints` (tokens that
+identify its own CLI/skill entrypoints). Both are used only for validation; CAO still never writes SDD
+artifacts itself.
 
 The CLI is deliberately small:
 
@@ -318,8 +346,12 @@ The bootstrap layer is not a second state machine. It exists only to make the CA
 reliably discoverable at session start.
 
 `templates/AGENTS.md` and `templates/CLAUDE.md` are host-specific project-instruction templates.
-When `cao bootstrap --repo <project>` runs, it copies each template into the target project root
-only if the destination file is absent; existing project instructions are never overwritten. The
+They are read when a session starts, so like the host hooks they are provisioned by `cao init`, which
+copies only the template the provisioned host reads — `CLAUDE.md` for Claude Code, `AGENTS.md` for
+Codex and Pi, both when no host is known — into the target project root if the destination file is
+absent, and renders the known host into the instructions. `cao bootstrap` re-checks them idempotently so a deleted file is
+restored and a project provisioned earlier still gets them. Existing project instructions are never
+overwritten. The
 CAO package itself does not ship a nested `.agents/` directory because the whole package is intended
 to be installed as `.agents/skills/coding-agent-orchestrator/`. Template files are included in both
 source-checkout and Python package installs.
@@ -397,7 +429,55 @@ CAO stores one project-level preference at `language.user` (default `zh-CN`). Us
 
 ## Native SDD workflow completion contract
 
-For `standard` and `comprehensive` Work Items using an installed SDD Provider, a successful code/test verification is not sufficient to complete the Work Item. The Agent records the provider-native workflow name and entrypoint with `cao sdd workflow select`, executes it according to the provider's own instructions, and records existing repository-relative output files with `cao sdd workflow complete --artifact ...`. `cao done` blocks unless the workflow is recorded completed and every referenced output file exists. This is provider-neutral orchestration metadata, not a replacement SDD workflow; native artifacts remain owned by the provider. Verification should run after native artifacts have stabilized so snapshot freshness remains valid.
+For **every** profile (`light`, `standard`, `comprehensive`) on a Work Item using an installed SDD Provider, a successful code/test verification is not sufficient to complete the Work Item. The Agent records the provider-native workflow name and entrypoint with `cao sdd workflow select`, records that it actually ran the workflow with `cao sdd workflow execute --command ...`, and records existing repository-relative output files with `cao sdd workflow complete --artifact ...`. `cao done` blocks unless the workflow is selected, executed, and completed with every referenced output file present. This is provider-neutral orchestration metadata, not a replacement SDD workflow; native artifacts remain owned by the provider. Verification should run after native artifacts have stabilized so snapshot freshness remains valid.
+
+The contract is verifiable, not self-certifying. CAO refuses:
+
+- a placeholder entrypoint (`echo`, `true`, `printf`, ...) — it satisfies every structural check while executing nothing;
+- an entrypoint that does not reference the selected provider (matched against `SDD_CATALOG[provider].workflow_hints`);
+- output files outside the provider's own directories (`output_dirs`: BMAD `_bmad-output/`, OpenSpec `openspec/`, Spec Kit `specs/` and `.specify/`) — product source files are not SDD artifacts.
+
+A provider that genuinely cannot satisfy the contract is handled by an explicit, auditable exception: `--allow-unverified --reason "<why>"`. The exception is stored in `sdd.workflow.unverified` and appended to `.orchestrator/lifecycle/events.jsonl` as `workflow.unverified_exception`. It is never a silent bypass.
+
+## Execution gates
+
+`path_assessment.required_gates` is enforced, not decorative. Verification-flavoured gates (`verification`, `targeted_verification`, any `*_verification`) are derived from CAO's own verification snapshot freshness. Every other gate can only be observed by the Agent and must be marked with `cao gate satisfy --gate <name> --evidence "<what was done>"`, which writes `work["gate_status"]`. `cao done` blocks while any required gate is pending and returns `pending_gates`.
+
+### Intake exemption in the PreToolUse gate
+
+The PreToolUse gate denies code mutation while no active Work Item exists. Taken alone that deadlocks
+intake: a one-sentence requirement has no requirement file yet, `cao start` needs one to create the Work
+Item, and the hook denied writing it. Writes inside a provider-owned SDD output directory
+(`SDD_CATALOG[*].output_dirs`: `_bmad-output/`, `openspec/`, `specs/`, `.specify/`) are therefore exempt
+for every mutating branch of the gate — with or without a Work Item. Requirement, PRD, and spec
+artifacts are prerequisites of the lifecycle, not product code, and the same directories are the only
+ones `cao sdd workflow complete` accepts artifacts from, so the exemption cannot be used to smuggle
+product source past completion checks.
+
+## Host hook provisioning
+
+Host hooks are process-startup integrations, so they belong to provisioning rather than to the
+per-session read path. Claude Code reads its settings file and Pi loads its extensions when the host
+process starts; installing an adapter from `cao bootstrap` would therefore always be one session too
+late, because the session running bootstrap has already missed its own `SessionStart`.
+
+`cao init --host <host>` wires the adapter: it renders the shipped fragment with the real install path
+(replacing `/PATH/TO/coding-agent-orchestrator` and `${PLUGIN_ROOT}` while leaving runtime variables such
+as `${CLAUDE_PROJECT_DIR}` intact), then deep-merges it into the host's own configuration. Claude Code
+targets `.claude/settings.local.json` so the integration stays local and does not force teammates to load
+it. Pi registers a package instead of a JSON fragment and uses `pi install --local`.
+
+The merge is idempotent and non-destructive: existing entries are preserved, an already-registered CAO
+command is not duplicated, and matchers are kept separate. An unknown host never fails initialization; it
+is reported as `host_adapters.status: host_required` with the exact remediation command, and
+`cao host install` backfills an already-initialized project.
+
+Because the current session can never receive its own `SessionStart`, `cao bootstrap` reports adapter
+status instead of installing, and the Session fallback below covers that first session.
+
+## Session registration fallback
+
+Host adapters register Sessions through `host-event`, but that only works when the adapter is installed. `cao bootstrap` and `cao start` therefore call `register_session` as a fallback whenever `host_session_identity()` can resolve both a host and a native session id from the environment (`CAO_HOST`, `CLAUDE_CODE_SESSION_ID`, `CODEX_THREAD_ID`, `PI_SESSION_ID`). When neither is visible, CAO records nothing instead of inventing an `unknown` Session. This keeps Session continuity from depending on a single integration point.
 
 
 ## SDD lifecycle reconciliation and event log

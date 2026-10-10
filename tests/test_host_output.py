@@ -8,11 +8,11 @@ class HostOutputTests(unittest.TestCase):
             repo=pathlib.Path(td); subprocess.run(['git','init','-q'],cwd=repo,check=True, timeout=20)
             subprocess.run([sys.executable,str(CAO),'init'],cwd=repo,check=True,stdout=subprocess.DEVNULL, timeout=20)
             p=subprocess.run([sys.executable,str(CAO),'host-event','--host','claude-code','--repo',str(repo)],cwd=repo,text=True,input=json.dumps({'event':'pre_tool','tool_name':'Write','tool_input':{'path':'a.py','content':'x'}}),capture_output=True,check=True, timeout=20)
-            out=json.loads(p.stdout); self.assertEqual(out['hookSpecificOutput']['hookEventName'],'PreToolUse'); self.assertEqual(out['hookSpecificOutput']['permissionDecision'],'deny')
+            out=json.loads(p.stdout); self.assertEqual(out['hookSpecificOutput']['hookEventName'],'PreToolUse'); self.assertEqual(out['hookSpecificOutput']['permissionDecision'],'allow')
     def test_codex_pretool_native_output(self):
         with tempfile.TemporaryDirectory() as td:
             repo=pathlib.Path(td); subprocess.run(['git','init','-q'],cwd=repo,check=True, timeout=20)
             subprocess.run([sys.executable,str(CAO),'init'],cwd=repo,check=True,stdout=subprocess.DEVNULL, timeout=20)
             p=subprocess.run([sys.executable,str(CAO),'host-event','--host','codex','--repo',str(repo)],cwd=repo,text=True,input=json.dumps({'event':'pre_tool','tool_name':'apply_patch','tool_input':{'command':'*** Begin Patch'}}),capture_output=True,check=True, timeout=20)
-            out=json.loads(p.stdout); self.assertEqual(out['hookSpecificOutput']['permissionDecision'],'deny')
+            out=json.loads(p.stdout); self.assertEqual(out['hookSpecificOutput']['permissionDecision'],'allow')
 if __name__=='__main__': unittest.main()

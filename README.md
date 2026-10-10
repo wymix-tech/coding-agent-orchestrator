@@ -41,7 +41,9 @@ The repository also includes a `./cao` source-checkout launcher for shell-based 
 ## Core commands
 
 ```bash
-cao init
+cao init --host <claude-code|codex|pi>
+cao host install --host <host>
+cao host status
 cao bootstrap
 cao sdd list
 cao sdd install --provider openspec --yes
@@ -50,6 +52,11 @@ cao list
 cao start --requirement requirements/login.md --title "User login" --sdd-ref changes/add-login
 cao path assess --profile standard --reason "A small API change that needs a spec and integration tests"
 cao path show
+cao sdd workflow select --name "<native workflow>" --entrypoint "<native command or skill>"
+cao sdd workflow execute --command "<command actually run>" --exit-code 0
+cao sdd workflow complete --artifact _bmad-output/requirements.md
+cao gate satisfy --gate scope_review --evidence "Reviewed the requirement scope"
+cao gate show
 cao checkpoint --step implement-login-api --next "run integration tests" --summary "JWT endpoint implemented"
 cao decision --decision "Use Redis for refresh token" --reason "Supports revocation"
 cao block --reason "Need product confirmation" --suspend
@@ -97,9 +104,26 @@ on a trusted network. Press `Ctrl+C` to stop the server.
 ├── work/<work-id>.json
 ├── sessions/<session-internal-id>.json
 ├── lifecycle/events.jsonl             # append-only lifecycle event log
+├── requirements/
+│   └── 001-requirement-<slug>-<date>.md   # numbered requirement documents
 └── handoffs/
     └── <work-id>/<handoff-id>.json    # immutable handoff history
 ```
+
+Requirement documents stated inline must be landed here before a Work Item can be created. CAO owns the
+location and numbering; the Agent writes the content:
+
+```bash
+cao requirement next-id --title "用户登录"   # creates .orchestrator/requirements/001-requirement-用户登录-2026-10-10.md
+# edit that file with the requirement content, then:
+cao start --requirement .orchestrator/requirements/001-requirement-用户登录-2026-10-10.md
+cao requirement list                        # what already exists
+```
+
+Numbers are derived from existing files so they never collide. This directory is exempt from the
+PreToolUse mutation gate, because a requirement must exist before `cao start` can create a Work Item —
+blocking those writes deadlocks intake. The rest of `.orchestrator/` holds CAO state the Agent must not
+hand-edit.
 
 ### Session lifecycle and inspection
 
@@ -112,7 +136,12 @@ cao sessions list --stale-after-minutes 30
 cao sessions show --id <session-id> --host codex
 ```
 
-`recent` and `stale` are calculated from `last_event_at`; stale means “no recent event observed”, not “the Agent has ended”. Only an explicit end event closes a Session. Creating a Handoff alone does not end a Session; main-session stop events create a Handoff and then close that Session, while subagent stop events close only the subagent Session.
+`recent` and `stale` are calculated from `last_event_at`; stale means "no recent event observed", not "the Agent has ended". Only an explicit end event closes a Session. Creating a Handoff alone does not end a Session; main-session stop events create a Handoff and then close that Session, while subagent stop events close only the subagent Session.
+
+Host adapters register Sessions through `host-event`, which only happens when the adapter is installed. As a
+fallback, `cao bootstrap` and `cao start` attach the runtime Session whenever the host and its native session
+id are visible (`CAO_HOST`, `CLAUDE_CODE_SESSION_ID`, `CODEX_THREAD_ID`, `PI_SESSION_ID`); otherwise CAO records
+nothing rather than inventing an `unknown` Session.
 
 ### SDD lifecycle reconciliation
 
@@ -139,6 +168,11 @@ and how the change can be verified. CAO does not use numeric scoring or a fact/e
 | `standard` | Ordinary feature or bug fix with limited design work | Scope/design as needed, tests, implementation review, verification |
 | `comprehensive` | High-risk, broad, materially ambiguous, or hard-to-reverse change | Requirements and design review, staged implementation, stronger verification |
 
+Every profile — including `light` — must run the provider's own native workflow before `cao done`. CAO
+rejects placeholder entrypoints (`echo`, `true`, ...) and rejects output files outside the provider's own
+directory, so product source files cannot be recorded as SDD artifacts. A genuine exception requires
+`--allow-unverified --reason "<why>"`, which is recorded in the Work Item and the lifecycle event log.
+
 Create or refresh the assessment:
 
 ```bash
@@ -156,6 +190,11 @@ reassesses without that flag. Host Hooks deny code mutation while an assessment 
 material ambiguity remains. A requirement-file change must follow CAO's re-anchor procedure before a
 new assessment. Provider-specific mapping remains guidance: BMAD, OpenSpec, and Spec Kit keep their
 native workflow and mandatory preconditions. Profiles do not waive configured Verification scripts.
+
+Intake is exempt from this gate: writes inside a provider's native output directory
+(`_bmad-output/`, `openspec/`, `specs/`, `.specify/`) are allowed without an active Work Item, because a
+requirement/PRD must exist before `cao start` can create one — blocking those writes deadlocks intake.
+Product code everywhere else still requires an active, assessed Work Item.
 
 ### Handoff history and inspection
 
@@ -203,8 +242,11 @@ SDD provider + task/domain skills
 ```
 
 `templates/AGENTS.md` and `templates/CLAUDE.md` are templates, not project-level instructions for
-this CAO source repository. On `cao bootstrap`, CAO copies either template into the target project
-root only when that file does not already exist. Existing user instructions are never overwritten.
+this CAO source repository. On `cao init`, CAO copies **only the template the provisioned host reads**
+(`CLAUDE.md` for Claude Code, `AGENTS.md` for Codex and Pi) into the target project root, and only when
+that file does not already exist, rendering the known host into the instructions. When no host can be
+detected, both are installed as a fallback. `cao bootstrap` re-checks them idempotently. Existing user
+instructions are never overwritten.
 The CAO package deliberately does not contain a nested `.agents/` tree because its installation
 directory is already the Skill directory.
 
@@ -216,6 +258,34 @@ The CAO Skill then governs resume, next action, checkpoint, decision, blocker, v
 and handoff. The SDD remains authoritative for its native artifacts and workflow.
 
 The package includes host adapters for Claude Code, Codex, and Pi. All adapters invoke the same `cao` CLI entry point when installed, and fall back to the source-checkout launcher when used directly from a plugin checkout.
+
+### Host hooks are wired during `cao init`, not `cao bootstrap`
+
+Host hooks are **process-startup integrations**: Claude Code reads its settings file and Pi loads its
+extensions when the host process starts. Installing them from `cao bootstrap` is too late — that command
+already runs inside a session whose `SessionStart` hook was missed, so no host event would be delivered
+until the *next* session.
+
+`cao init` therefore wires the adapter as part of provisioning:
+
+```bash
+cao init --host claude-code      # -> .claude/settings.local.json
+cao init --host codex            # -> .codex/hooks.json
+cao init --host pi               # -> pi install --local <cao-package> (.pi/settings.json)
+cao host install --host <host>   # backfill an already-initialized project
+cao host status                  # inspect whether each adapter is wired
+```
+
+If no host can be determined, `cao init` still succeeds and reports `host_adapters.status: host_required`
+with the exact `cao host install --host ...` command. Initialization is never blocked by an unknown host.
+
+Installation is idempotent and non-destructive: existing host settings are deep-merged, never rewritten,
+and an already-registered CAO command is not added twice. Claude Code hooks go to `settings.local.json`
+(usually git-ignored) so teammates who do not use CAO are never forced to load them.
+
+Even with hooks installed, the current session cannot receive its own `SessionStart`. `cao bootstrap` and
+`cao start` therefore attach the runtime Session as a fallback whenever the host and its native session id
+are visible, which covers that first session. The two mechanisms are complementary, not alternatives.
 
 ## Why the core is intentionally small
 

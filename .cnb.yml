@@ -10,6 +10,11 @@ $:
           script: export PATH="/root/.pi/agent/bin:$PATH" && echo 'export PATH="/root/.pi/agent/bin:$PATH"' >> ~/.zshrc
         - name: install pi extentions
           script: export PATH="/root/.pi/agent/bin:$PATH" && pi install npm:pi-subagents && pi install npm:@juicesharp/rpiv-todo && pi install npm:@juicesharp/rpiv-ask-user-question
+        - name: install cao extension
+          # CAO's own Pi adapter lives in ./hosts/pi. Pi loads extensions from
+          # installed packages, not from .agents/skills/, so without this install
+          # no host-event is ever emitted and no Session/Handoff is created.
+          script: export PATH="/root/.pi/agent/bin:$PATH" && pi install /workspace
         - name: create demo source
           script: mkdir -p /tmp/demo_bak/.agents/skills/coding-agent-orchestrator
         - name: add create demo func

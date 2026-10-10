@@ -95,7 +95,7 @@ class PathSelectionTests(unittest.TestCase):
             event = {"event": "pre_tool", "tool_name": "write", "tool_input": {"path": "src.py", "content": "x"}}
             rc, blocked, _ = run(repo, "host-event", "--host", "claude-code", input_text=json.dumps(event))
             self.assertEqual(rc, 0)
-            self.assertEqual(blocked["hookSpecificOutput"]["permissionDecision"], "deny")
+            self.assertEqual(blocked["hookSpecificOutput"]["permissionDecision"], "allow")
             rc, cleared, _ = self.assess(repo, "standard", "User clarified expected behavior")
             self.assertEqual(rc, 0, cleared)
             self.assertTrue(cleared["path_assessment"]["profile"] == "standard")
@@ -114,14 +114,14 @@ class PathSelectionTests(unittest.TestCase):
             self.assertIn("major_ambiguity", out["path_assessment"]["risk_flags"])
             self.assertEqual(out["next_action"]["type"], "human")
 
-    def test_code_mutation_requires_path_assessment(self):
+    def test_code_mutation_is_not_blocked_by_the_hook(self):
+        """The PreToolUse gate is removed; CAO advises instead of blocking tools."""
         td, repo = self.init_repo()
         with td:
             event = {"event": "pre_tool", "tool_name": "write", "tool_input": {"path": "src.py", "content": "x"}}
             rc, out, _ = run(repo, "host-event", "--host", "codex", input_text=json.dumps(event))
             self.assertEqual(rc, 0)
-            self.assertEqual(out["hookSpecificOutput"]["permissionDecision"], "deny")
-            self.assertIn("cao path assess", out["hookSpecificOutput"]["permissionDecisionReason"])
+            self.assertNotEqual(out.get("hookSpecificOutput", {}).get("permissionDecision"), "deny")
 
     def test_cao_path_assess_shell_command_is_not_mistaken_for_product_code_mutation(self):
         td, repo = self.init_repo()
@@ -140,7 +140,7 @@ class PathSelectionTests(unittest.TestCase):
             }
             rc, out, _ = run(repo, "host-event", "--host", "claude-code", input_text=json.dumps(chained))
             self.assertEqual(rc, 0)
-            self.assertEqual(out["hookSpecificOutput"]["permissionDecision"], "deny")
+            self.assertEqual(out["hookSpecificOutput"]["permissionDecision"], "allow")
 
     def test_assessment_becomes_stale_when_requirement_changes(self):
         td, repo = self.init_repo()

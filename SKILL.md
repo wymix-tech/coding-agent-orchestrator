@@ -10,14 +10,49 @@ CAO is the repository's work continuity layer. It is not an SDD and not a coding
 ## First action
 
 This skill is normally triggered by the project-level Agent instructions. The `AGENTS.md` and
-`CLAUDE.md` files are shipped as templates under `templates/` and installed by `cao bootstrap` when
-missing; existing project instructions are preserved. The Skill itself is installed at
+`CLAUDE.md` files are shipped as templates under `templates/`; `cao init` installs the one the
+provisioned host reads (`CLAUDE.md` for Claude Code, `AGENTS.md` for Codex and Pi, both when no host
+can be detected); `cao bootstrap` re-checks them idempotently. Existing project instructions are preserved. The Skill itself is installed at
 `.agents/skills/coding-agent-orchestrator/` and intentionally contains no nested `.agents/` tree.
 At the start of repository coding work, run exactly:
 
 ```bash
 cao bootstrap
 ```
+
+Host hooks (SessionStart, PreToolUse, Stop) are process-startup integrations and are wired by
+`cao init --host <claude-code|codex|pi>`, not by `cao bootstrap` — a bootstrap-time install would miss
+the current session's own `SessionStart`. If `cao bootstrap` reports `host_adapter.installed: false`, run
+`cao host install --host <host>`; it takes effect from the next session. Until then, the completion gate
+and Session/Handoff events are not enforced by hooks, so you must still run `cao resume`, `cao checkpoint`,
+and `cao handoff` yourself.
+
+### Landing a one-sentence requirement
+
+A requirement stated inline has no file yet, and `cao start` needs one. CAO owns the location and
+numbering; you own the content:
+
+```
+cao requirement next-id --title "<short title>"
+```
+
+creates the numbered file and returns its `path` (for example
+`.orchestrator/requirements/001-requirement-用户登录-2026-10-10.md`). CAO creates it with a skeleton
+because a mutating tool call is gated until a Work Item exists — an Agent that has to create the file
+itself can be blocked before `cao start` is ever reachable. Edit that file with the requirement content,
+then `cao start --requirement <path>`. Do not create the file yourself and do not place requirement
+documents anywhere else — CAO allocates numbers from existing files so they never collide, and
+`cao requirement list` shows what already exists.
+
+### Intake from a one-sentence requirement
+
+The first requirement usually does not exist as a file yet. Writes inside a provider's native output
+directory (`_bmad-output/`, `openspec/`, `specs/`, `.specify/`) are allowed **without** an active Work
+Item, so create the requirement/PRD there and then run `cao start --requirement <path>`. Writes anywhere
+else still require an active Work Item; do not move product code into a native output directory to dodge
+the gate — `cao done` only accepts native artifacts recorded from a provider workflow that actually ran.
+`cao start` reports `REQUIREMENT_FILE_MISSING` when an explicit requirement path does not exist yet:
+create the file first, do not guess another path.
 
 Bootstrap initializes CAO state when needed, verifies that a project SDD is installed, reports the active/resumable Work Item, and returns the next action.
 It never creates a Work Item and never reruns requirement intake because an Agent or session changed.
@@ -59,6 +94,11 @@ cao list
 cao start --requirement <path> [--title <human title>] [--sdd-ref <native-ref>]
 cao path assess --profile <light|standard|comprehensive> --reason "<short reason>" [--risk-flag <flag>]
 cao path show --work <id>
+cao sdd workflow select --name "<native workflow>" --entrypoint "<native command or skill>"
+cao sdd workflow execute --command "<command actually run>" --exit-code <code>
+cao sdd workflow complete --artifact <repo-relative-file>
+cao gate satisfy --gate <gate> --evidence "<what was done>"
+cao gate show
 cao checkpoint --step <step> --next "<next action>" --summary "<progress>"
 cao decision --decision "<decision>" --reason "<why>"
 cao block --reason "<blocker>" [--suspend]
@@ -83,6 +123,9 @@ standard       ordinary feature/fix requiring some analysis/design, tests and re
 comprehensive  major uncertainty, cross-system or high-risk change; explicit planning and stronger gates
 ```
 
+`light` reduces *how much* native workflow runs, not *whether* it runs. Every profile must still select,
+execute, and complete the provider's own native workflow.
+
 Record the assessment in the Work Item:
 
 ```bash
@@ -106,26 +149,52 @@ Spec Kit, or another provider's own commands, artifacts, and mandatory precondit
 invent a duplicate SDD lifecycle. Reassess only when scope, requirement, or risk materially changes.
 The profile never bypasses the project's configured Verification scripts or provider-native gates.
 
-For `standard` and `comprehensive` paths with an installed SDD provider, selecting a path is not
-proof that its native workflow ran. Before implementation, record the actual provider-native workflow
-and entrypoint, then execute it using that provider's installed instructions:
+For **every** profile (`light`, `standard`, `comprehensive`) with an installed SDD provider, selecting a
+path is not proof that its native workflow ran. Before implementation, record the actual provider-native
+workflow and entrypoint, then execute it using that provider's installed instructions:
 
 ```bash
 cao sdd workflow select --name "<native workflow name>" --entrypoint "<native workflow command or skill>"
 ```
 
-After actually executing the workflow, record its existing, repository-relative output files (repeat
-`--artifact` for each file):
+After actually executing the workflow, record the run itself:
+
+```bash
+cao sdd workflow execute --command "<command actually run>" --exit-code <code> [--output "<tail>"]
+```
+
+Then record its existing, repository-relative output files (repeat `--artifact` for each file):
 
 ```bash
 cao sdd workflow complete --artifact <repo-relative-file>
 ```
 
-CAO blocks `cao done` for these paths until the selected workflow is marked completed and its recorded
-output files exist. This contract applies across providers, not only BMAD. Do not fabricate artifact
-paths or mark a workflow completed before running it. If a provider-native workflow genuinely produces
-no files, do not bypass the gate silently: explicitly reassess whether `standard`/`comprehensive` is
-appropriate or extend the provider contract with a documented exception.
+CAO blocks `cao done` until the workflow is selected, executed, and completed with existing output files.
+This contract applies to all profiles and across providers, not only BMAD. `light` is **not** exempt: it
+requires the provider's smallest safe native workflow.
+
+CAO rejects workflow records it can verify as fake:
+
+- a placeholder entrypoint (`echo`, `true`, `printf`, ...) is refused;
+- an entrypoint that does not reference the selected provider is refused;
+- output files outside the provider's own directory (BMAD `_bmad-output/`, OpenSpec `openspec/`,
+  Spec Kit `specs/` and `.specify/`) are refused — **your own product source files are not SDD artifacts**.
+
+Do not fabricate artifact paths, do not record a command you did not run, and do not mark a workflow
+completed before running it. If a provider-native workflow genuinely cannot satisfy this contract, do not
+bypass the gate silently: pass `--allow-unverified --reason "<why>"`. That exception is recorded in the
+Work Item and appended to the lifecycle event log for audit.
+
+After the workflow, satisfy the gates only the Agent can observe:
+
+```bash
+cao gate satisfy --gate <gate> --evidence "<what was done>"
+cao gate show
+```
+
+Verification-flavoured gates (`verification`, `targeted_verification`, `*_verification`) are derived from
+CAO's own verification freshness; run `cao verify` instead of marking them. `cao done` blocks until every
+required gate is satisfied.
 
 ## State ownership
 
@@ -195,6 +264,12 @@ execution anchor; it does not mean that the original requirement was superseded.
 ## Session inspection
 
 Use `cao sessions list` and `cao sessions show --id <id> --host <host>` to inspect runtime Session records. Session state is stored only in `.orchestrator/sessions/`; Work Item progress remains in the Work Item file. A stale activity label does not mean the Session has ended.
+
+Host adapters create Sessions automatically, but only when the adapter is actually installed. `cao bootstrap`
+and `cao start` therefore attach the runtime Session as a fallback whenever the host and its native session id
+are visible to the process (`CAO_HOST`, `CLAUDE_CODE_SESSION_ID`, `CODEX_THREAD_ID`, `PI_SESSION_ID`). If those
+are absent, CAO records nothing rather than inventing an `unknown` Session. Prefer `cao resume --host <host>
+--session <id>` so the Session is bound explicitly.
 
 ## Session handoff
 

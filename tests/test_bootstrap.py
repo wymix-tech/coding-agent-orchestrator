@@ -1,4 +1,5 @@
 import json
+import os
 import pathlib
 import subprocess
 import sys
@@ -9,8 +10,20 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 CAO = ROOT / "scripts" / "cao.py"
 
 
-def run(repo, *args):
-    p = subprocess.run([sys.executable, str(CAO), *args], cwd=repo, text=True, capture_output=True, timeout=20)
+HOST_ENV_KEYS = (
+    "CAO_HOST", "CLAUDE_CODE", "CLAUDE_CODE_SESSION_ID", "CLAUDE_SESSION_ID",
+    "CODEX_THREAD_ID", "CODEX_SANDBOX", "CODEX_HOME", "PI_SESSION_ID", "PI_CODING_AGENT",
+)
+# With no host detectable, every template is installed as a fallback. That is the
+# state this test needs to exercise both install and skip in one repo.
+NO_HOST_ENV = {key: "" for key in HOST_ENV_KEYS}
+
+
+def run(repo, *args, env_extra=None):
+    env = os.environ.copy()
+    if env_extra:
+        env.update(env_extra)
+    p = subprocess.run([sys.executable, str(CAO), *args], cwd=repo, text=True, capture_output=True, timeout=20, env=env)
     try:
         out = json.loads(p.stdout)
     except Exception:
@@ -23,15 +36,17 @@ class BootstrapTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             repo = pathlib.Path(td)
             subprocess.run(["git", "init", "-q"], cwd=repo, check=True, timeout=20)
-            rc, out = run(repo, "bootstrap")
+            rc, out = run(repo, "bootstrap", "--host", "codex")
             self.assertEqual(rc, 0)
             self.assertEqual(out["mode"], "sdd_select")
             self.assertIsNone(out["work_item"])
             self.assertTrue((repo / ".orchestrator/config.json").exists())
             self.assertIn("sdd install", out["next"]["instruction"])
-            self.assertEqual(set(out["project_instructions"]["installed"]), {"AGENTS.md", "CLAUDE.md"})
+            # Only the file this host reads. Asserting both made the test depend
+            # on whatever host this machine happens to report.
+            self.assertEqual(out["project_instructions"]["installed"], ["AGENTS.md"])
             self.assertTrue((repo / "AGENTS.md").is_file())
-            self.assertTrue((repo / "CLAUDE.md").is_file())
+            self.assertFalse((repo / "CLAUDE.md").exists())
 
     def test_bootstrap_installs_only_missing_templates_and_never_overwrites(self):
         with tempfile.TemporaryDirectory() as td:
@@ -40,7 +55,7 @@ class BootstrapTests(unittest.TestCase):
             custom_agents = "# Existing team guidance\nKeep this content.\n"
             (repo / "AGENTS.md").write_text(custom_agents, encoding="utf-8")
 
-            rc, first = run(repo, "bootstrap")
+            rc, first = run(repo, "bootstrap", env_extra=NO_HOST_ENV)
             self.assertEqual(rc, 0)
             self.assertEqual((repo / "AGENTS.md").read_text(encoding="utf-8"), custom_agents)
             self.assertTrue((repo / "CLAUDE.md").is_file())
@@ -48,7 +63,7 @@ class BootstrapTests(unittest.TestCase):
             self.assertEqual(first["project_instructions"]["skipped_existing"], ["AGENTS.md"])
 
             (repo / "CLAUDE.md").write_text("# User customized Claude instructions\n", encoding="utf-8")
-            rc, second = run(repo, "bootstrap")
+            rc, second = run(repo, "bootstrap", env_extra=NO_HOST_ENV)
             self.assertEqual(rc, 0)
             self.assertEqual((repo / "CLAUDE.md").read_text(encoding="utf-8"), "# User customized Claude instructions\n")
             self.assertEqual(set(second["project_instructions"]["skipped_existing"]), {"AGENTS.md", "CLAUDE.md"})

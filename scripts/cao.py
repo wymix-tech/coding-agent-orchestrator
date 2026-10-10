@@ -34,6 +34,7 @@ INDEX_REL = ORCH / "index.json"
 WORK_DIR = ORCH / "work"
 SESSION_DIR = ORCH / "sessions"
 HANDOFF_DIR = ORCH / "handoffs"
+REQUIREMENT_DIR = ORCH / "requirements"
 SNAPSHOT_IGNORE_DIRS = {".git", ".orchestrator", ".venv", "venv", "node_modules", "target", "build", "dist", "__pycache__", ".pytest_cache", ".mypy_cache"}
 
 DEFAULT_CONFIG: dict[str, Any] = {
@@ -44,7 +45,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "sdd": {
         "provider": "auto",
         "selected_at": None,
-        "requirement_globs": ["requirements/**/*.md", "specs/**/*.md", "openspec/**/*.md", "_bmad/**/*.md"],
+        "requirement_globs": ["requirements/**/*.md", "specs/**/*.md", "openspec/**/*.md", "_bmad/**/*.md", ".orchestrator/requirements/**/*.md"],
         "exclude_globs": [],
         "command": {"inspect": "", "next": "", "transition": ""},
     },
@@ -113,6 +114,15 @@ SDD_CATALOG: dict[str, dict[str, Any]] = {
             "standard": "Create or update the relevant OpenSpec proposal/spec/tasks as needed, apply the change, and verify the affected behavior.",
             "comprehensive": "Use a complete OpenSpec change with explicit proposal, affected specs, design/tasks where supported, staged implementation, and verification. Split independent changes when that reduces risk.",
         },
+        # Directories the provider owns. Native workflow outputs must live here so
+        # ordinary product source files cannot be recorded as SDD artifacts.
+        "output_dirs": ["openspec/"],
+        # Tokens that identify this provider's own CLI/skill entrypoints.
+        "workflow_hints": ["openspec"],
+        # Optional native workflow name allow-list. Left empty on purpose: provider
+        # versions differ, so an incomplete list would reject valid workflows. When
+        # empty, entrypoint validation falls back to the provider-identity check.
+        "workflows": {},
     },
     "bmad": {
         "name": "BMad Method",
@@ -142,6 +152,9 @@ SDD_CATALOG: dict[str, dict[str, Any]] = {
             "standard": "Use relevant BMAD analysis/specification or build workflows and create only the native artifacts needed to clarify scope, implement, review, and verify the change.",
             "comprehensive": "Use the applicable full BMAD planning path, including requirements, architecture, epics/stories when warranted, then implement in stages with explicit review and verification.",
         },
+        "output_dirs": ["_bmad-output/"],
+        "workflow_hints": ["bmad"],
+        "workflows": {},
     },
     "speckit": {
         "name": "GitHub Spec Kit",
@@ -163,13 +176,207 @@ SDD_CATALOG: dict[str, dict[str, Any]] = {
             "standard": "Use the relevant Spec Kit Specify/Plan/Tasks/Implement steps needed for the change; create only the specifications and plans justified by the scope.",
             "comprehensive": "Use a full Spec Kit specification, planning, task decomposition, and staged implementation flow. Apply clarification and analysis steps where uncertainty or integration risk warrants them.",
         },
+        "output_dirs": ["specs/", ".specify/"],
+        "workflow_hints": ["specify", "speckit"],
+        "workflows": {},
     },
 }
+
+
+# Commands that can never be a provider-native workflow entrypoint. They satisfy
+# every structural check while executing nothing, which is exactly how the native
+# workflow contract was previously bypassed.
+PLACEHOLDER_ENTRYPOINT_COMMANDS = {"echo", "true", "false", ":", "printf", "cat", "sleep", "test", "touch"}
+
+# Gates CAO can derive from its own state. Everything else must be marked
+# explicitly with `cao gate satisfy` because only the Agent can observe it.
+AUTO_DERIVED_GATES = {"verification", "targeted_verification"}
+
+
+def provider_output_dirs(provider: str) -> list[str]:
+    meta = SDD_CATALOG.get(provider) or {}
+    return [str(item) for item in (meta.get("output_dirs") or [])]
+
+
+def workflow_entrypoint_tokens(entrypoint: str) -> list[str]:
+    try:
+        return shlex.split(entrypoint)
+    except ValueError:
+        return str(entrypoint).split()
+
+
+# Where hosts install agent skills inside a project. BMad v6, for example,
+# installs its workflows as `.agents/skills/bmad-<workflow>/SKILL.md` — they are
+# model-invoked skills, not shell commands.
+PROVIDER_SKILL_ROOTS = (".agents/skills", ".claude/skills", ".codex/skills", "skills")
+
+
+def provider_native_skills(repo: Path, provider: str) -> list[dict[str, str]]:
+    """Agent-skill assets this provider installed into the project.
+
+    Providers differ in how they ship workflows, so this scans every known skill
+    root rather than assuming one. BMad installs them as `.agents/skills/bmad-<workflow>/`
+    skills; OpenSpec and Spec Kit are primarily CLI-driven and usually install
+    none. Each result carries the real repo-relative path, so guidance can never
+    point at a plausible-looking but wrong location.
+    """
+    hints = [str(hint).strip().lower() for hint in (SDD_CATALOG.get(provider, {}).get("workflow_hints") or [provider])]
+    found: dict[str, str] = {}
+    for root in PROVIDER_SKILL_ROOTS:
+        base = repo / root
+        if not base.is_dir():
+            continue
+        for child in sorted(base.iterdir()):
+            if not child.is_dir() or not (child / "SKILL.md").is_file():
+                continue
+            lowered = child.name.lower()
+            if not any(lowered == hint or lowered.startswith(f"{hint}-") for hint in hints):
+                continue
+            rel_path = f"{root}/{child.name}/SKILL.md"
+            found.setdefault(child.name, rel_path)
+    return [{"name": name, "rel_path": found[name]} for name in sorted(found)]
+
+
+def skill_invocation_guidance(repo: Path, provider: str, entrypoint: str) -> str:
+    """Explain how to actually run the selected native workflow for any provider.
+
+    An Agent skips a workflow mostly when it cannot tell how to invoke it. The
+    answer depends on how the provider ships workflows, so this covers both
+    forms instead of assuming BMad's skill layout.
+    """
+    skills = provider_native_skills(repo, provider)
+    if skills:
+        lowered = entrypoint.strip().lower()
+        matched = next((s for s in skills if s["name"].lower() == lowered), None)
+        if matched:
+            return (
+                f" This provider exposes this workflow as an agent skill, not a shell command: invoke the "
+                f"`{matched['name']}` skill (read `{matched['rel_path']}` and follow it, including its native "
+                f"preconditions). Do not substitute your own implementation for running it."
+            )
+        listed = ", ".join(f"`{s['name']}`" for s in skills)
+        return (
+            f" This provider's installed agent skills are: {listed}. Invoke the one matching this workflow "
+            f"(read its SKILL.md and follow it). Do not substitute your own implementation."
+        )
+    cli = str((SDD_CATALOG.get(provider) or {}).get("cli") or "").strip()
+    if cli:
+        return (
+            f" This provider runs its workflows through its own CLI (`{cli}`), not by writing code directly; "
+            f"run the native workflow with that CLI and record the exact command you ran. "
+            f"Do not substitute your own implementation."
+        )
+    return ""
+
+
+def validate_workflow_entrypoint(provider: str, name: str, entrypoint: str) -> dict[str, Any]:
+    """Reject placeholder entrypoints and entrypoints unrelated to the provider.
+
+    The native-workflow contract is only meaningful when the recorded entrypoint
+    can plausibly invoke the provider's own workflow. A placeholder such as
+    `echo '...'` passes every structural check while executing nothing, so it is
+    rejected explicitly. Providers that declare a workflow allow-list get strict
+    name validation; the rest fall back to a provider-identity check.
+    """
+    tokens = workflow_entrypoint_tokens(entrypoint)
+    if not tokens:
+        return {"ok": False, "reason": "workflow entrypoint is empty"}
+    head = tokens[0].rsplit("/", 1)[-1].lower()
+    if head in PLACEHOLDER_ENTRYPOINT_COMMANDS:
+        return {
+            "ok": False,
+            "reason": f"workflow entrypoint `{tokens[0]}` is a placeholder command, not a native {provider} workflow",
+        }
+    meta = SDD_CATALOG.get(provider) or {}
+    declared = meta.get("workflows") or {}
+    known: list[str] = []
+    for values in declared.values():
+        if isinstance(values, list):
+            known.extend(str(value).strip().lower() for value in values)
+    if known:
+        if str(name).strip().lower() not in known:
+            return {
+                "ok": False,
+                "reason": f"workflow name `{name}` is not one of the native {provider} workflows declared by this CAO version",
+            }
+        return {"ok": True, "reason": None}
+    hints = [str(hint).strip().lower() for hint in (meta.get("workflow_hints") or [provider])]
+    if not any(hint in str(entrypoint).lower() for hint in hints):
+        return {
+            "ok": False,
+            "reason": f"workflow entrypoint does not reference the {provider} provider; expected one of: {', '.join(hints)}",
+        }
+    return {"ok": True, "reason": None}
+
+
+def validate_workflow_artifacts(provider: str, paths: list[str]) -> dict[str, Any]:
+    """Require native workflow outputs to live inside the provider's own directories."""
+    dirs = provider_output_dirs(provider)
+    if not dirs:
+        return {"ok": True, "offending": [], "reason": None}
+    offending: list[str] = []
+    for value in paths:
+        normalized = str(value).replace("\\", "/")
+        if normalized.startswith("./"):
+            normalized = normalized[2:]
+        if not any(normalized == d.rstrip("/") or normalized.startswith(d) for d in dirs):
+            offending.append(str(value))
+    if offending:
+        return {
+            "ok": False,
+            "offending": offending,
+            "reason": f"native {provider} workflow outputs must live under {', '.join(dirs)}; recorded product files are not SDD artifacts: {', '.join(offending)}",
+        }
+    return {"ok": True, "offending": [], "reason": None}
+
+
+def gate_is_auto_derived(name: str) -> bool:
+    low = str(name).strip().lower()
+    return low in AUTO_DERIVED_GATES or low.endswith("_verification")
+
+
+def gate_state(work: dict[str, Any], verification_fresh: bool) -> dict[str, Any]:
+    """Split the assessment's required gates into satisfied and pending ones.
+
+    Verification-flavoured gates are derived from CAO's own snapshot freshness.
+    Every other gate (scope review, implementation review, ...) can only be
+    observed by the Agent, so it must be marked with `cao gate satisfy`.
+    """
+    assessment = work.get("path_assessment") or {}
+    gates = [str(gate) for gate in (assessment.get("required_gates") or [])]
+    status = work.get("gate_status") or {}
+    satisfied: list[str] = []
+    pending: list[str] = []
+    for gate in gates:
+        if gate_is_auto_derived(gate):
+            ok = bool(verification_fresh)
+        else:
+            ok = bool((status.get(gate) or {}).get("satisfied"))
+        (satisfied if ok else pending).append(gate)
+    return {"gates": gates, "satisfied": satisfied, "pending": pending}
 
 
 def command_exists(command: str) -> bool:
     from shutil import which
     return which(command) is not None
+
+
+# Files unknown hosts might read. When the host is not known, install every
+# template rather than guessing which one applies.
+ALL_INSTRUCTION_TEMPLATES = ("AGENTS.md", "CLAUDE.md")
+
+# Which instruction file each host actually reads. Only Claude Code reads
+# `CLAUDE.md`; Codex and Pi read `AGENTS.md`. Installing both meant a Pi project
+# carried a `CLAUDE.md` telling it to run `bootstrap --host claude-code`.
+INSTRUCTION_TEMPLATES_BY_HOST = {
+    "claude-code": ("CLAUDE.md",),
+    "codex": ("AGENTS.md",),
+    "pi": ("AGENTS.md",),
+}
+
+
+def instruction_templates_for_host(host: str | None) -> tuple[str, ...]:
+    return INSTRUCTION_TEMPLATES_BY_HOST.get(host or "", ALL_INSTRUCTION_TEMPLATES)
 
 
 def instruction_template_dir() -> Path | None:
@@ -180,15 +387,56 @@ def instruction_template_dir() -> Path | None:
         Path(sysconfig.get_path("data")) / "share" / "coding-agent-orchestrator" / "templates",
         Path(sysconfig.get_path("data")) / "templates",
     ]
-    required = ("AGENTS.md", "CLAUDE.md")
+    required = list(ALL_INSTRUCTION_TEMPLATES)
     for candidate in candidates:
         if all((candidate / name).is_file() for name in required):
             return candidate
     return None
 
 
-def install_project_instruction_templates(repo: Path) -> dict[str, Any]:
-    """Install missing project bootstrap instructions without overwriting user files."""
+def cao_invocation(root: Path | None = None) -> dict[str, str]:
+    """Resolve exactly how the Agent should invoke CAO in this installation.
+
+    The skill directory ships a `cao` launcher at its root; the installed package
+    root *is* the skill directory. Agents must call that launcher and must never
+    be pointed at `scripts/cao.py`, so the implementation stays out of the
+    Agent's context and cannot be read around or reasoned about instead of run.
+
+    Guessing produced failures such as `cao: command not found` followed by
+    invented paths like `.agents/skills/.../scripts/cao.py`, so the resolved
+    invocation is rendered into the project instruction files instead.
+    """
+    if command_exists("cao"):
+        return {"command": "cao", "source": "console-script"}
+    root = root or package_root_dir()
+    if root:
+        launcher = root / "cao"
+        if launcher.is_file():
+            # Wheel installs can drop the executable bit, so fall back to `sh`.
+            usable = os.access(launcher, os.X_OK)
+            return {
+                "command": str(launcher) if usable else f"sh {launcher}",
+                "source": "skill-launcher",
+                "path": str(launcher),
+                "executable_bit": usable,
+            }
+        # Last resort only: the launcher is missing from this installation.
+        script = root / "scripts" / "cao.py"
+        if script.is_file():
+            return {"command": f"python3 {script}", "source": "checkout-script", "path": str(script)}
+    return {"command": "cao", "source": "unresolved"}
+
+
+def install_project_instruction_templates(repo: Path, host: str | None = None) -> dict[str, Any]:
+    """Install missing project bootstrap instructions without overwriting user files.
+
+    Instruction files are read when a session starts, so like the host hooks they
+    belong to provisioning. They are installed from `cao init` and re-checked
+    from `cao bootstrap`, which is idempotent and never overwrites. Only the file
+    the provisioned host reads is installed, so a project is not left carrying
+    instructions for a different host.
+    """
+    templates = instruction_templates_for_host(host)
     template_dir = instruction_template_dir()
     result: dict[str, Any] = {
         "status": "installed",
@@ -198,16 +446,23 @@ def install_project_instruction_templates(repo: Path) -> dict[str, Any]:
     }
     if template_dir is None:
         result["status"] = "templates_unavailable"
-        result["missing_templates"] = ["AGENTS.md", "CLAUDE.md"]
+        result["missing_templates"] = list(templates)
         return result
 
-    for name in ("AGENTS.md", "CLAUDE.md"):
+    for name in templates:
         target = repo / name
         source = template_dir / name
         try:
             target.parent.mkdir(parents=True, exist_ok=True)
             with target.open("x", encoding="utf-8", newline="\n") as stream:
-                stream.write(source.read_text(encoding="utf-8"))
+                content = source.read_text(encoding="utf-8")
+                # Resolve the host placeholder when provisioning knows the host,
+                # so the Agent never has to guess it.
+                if host:
+                    content = content.replace("--host <host>", f"--host {host}")
+                # Render the real CAO invocation so the Agent never invents a path.
+                content = content.replace("{{CAO_COMMAND}}", cao_invocation()["command"])
+                stream.write(content)
             result["installed"].append(name)
         except FileExistsError:
             result["skipped_existing"].append(name)
@@ -220,6 +475,189 @@ def install_project_instruction_templates(repo: Path) -> dict[str, Any]:
         elif result["skipped_existing"]:
             result["status"] = "already_present"
     return result
+
+
+# Host adapters are process-startup integrations: Claude Code reads its settings
+# file and Pi loads its extensions when the host process starts, not when a
+# command inside the session runs. They must therefore be wired during project
+# provisioning (`cao init`), never from `cao bootstrap` — by then the current
+# session's SessionStart hook has already been missed.
+HOST_ADAPTER_META: dict[str, dict[str, Any]] = {
+    "claude-code": {
+        "fragment": "hosts/claude-code/settings.fragment.json",
+        # Local, usually git-ignored: only affects this machine, so a team member
+        # who does not use CAO is never forced to load its hooks.
+        "target": ".claude/settings.local.json",
+    },
+    "codex": {
+        "fragment": "hosts/codex/hooks.json",
+        "target": ".codex/hooks.json",
+    },
+    "pi": {
+        # Pi registers extensions as packages, not as a JSON fragment.
+        "target": ".pi/settings.json",
+        "install": "pi-cli",
+    },
+}
+
+# Placeholders inside the shipped fragments that must be resolved to the real
+# install location. `${CLAUDE_PROJECT_DIR}` is deliberately absent: it is
+# expanded by the host at runtime.
+HOST_FRAGMENT_PLACEHOLDERS = ("/PATH/TO/coding-agent-orchestrator", "${PLUGIN_ROOT}")
+
+
+def package_root_dir() -> Path | None:
+    """Locate the installed CAO package root that owns the `hosts/` adapters."""
+    source_root = Path(__file__).resolve().parents[1]
+    candidates = [
+        source_root,
+        Path(sysconfig.get_path("data")) / "share" / "coding-agent-orchestrator",
+    ]
+    for candidate in candidates:
+        if (candidate / "hosts").is_dir():
+            return candidate
+    return None
+
+
+def render_host_fragment(fragment: dict[str, Any], root: Path) -> dict[str, Any]:
+    """Resolve install-location placeholders inside a host fragment."""
+    text = json.dumps(fragment)
+    for token in HOST_FRAGMENT_PLACEHOLDERS:
+        text = text.replace(token, str(root))
+    return json.loads(text)
+
+
+def merge_hook_config(existing: dict[str, Any], incoming: dict[str, Any]) -> tuple[dict[str, Any], bool]:
+    """Deep-merge incoming host hooks into an existing host settings file.
+
+    Existing entries are never removed or rewritten. An incoming command that is
+    already registered for the same event is skipped, so the merge is idempotent
+    and safe to re-run.
+    """
+    merged = json.loads(json.dumps(existing)) if isinstance(existing, dict) else {}
+    changed = False
+    for event, entries in (incoming.get("hooks") or {}).items():
+        if not isinstance(entries, list):
+            continue
+        bucket = merged.setdefault("hooks", {}).setdefault(event, [])
+        for entry in entries:
+            if not isinstance(entry, dict):
+                continue
+            for inner in entry.get("hooks") or []:
+                if not isinstance(inner, dict):
+                    continue
+                if any(inner.get("command") == h.get("command") for e in bucket for h in (e.get("hooks") or [])):
+                    continue
+                matcher = entry.get("matcher")
+                target = next((e for e in bucket if e.get("matcher") == matcher), None)
+                if target is None:
+                    target = {"hooks": []}
+                    if matcher:
+                        target["matcher"] = matcher
+                    bucket.append(target)
+                target.setdefault("hooks", []).append(json.loads(json.dumps(inner)))
+                changed = True
+    return merged, changed
+
+
+def host_adapter_status(repo: Path, host: str, root: Path | None = None) -> dict[str, Any]:
+    """Report whether a host adapter is wired into the project."""
+    meta = HOST_ADAPTER_META.get(host)
+    if not meta:
+        return {"host": host, "installed": False, "reason": "unsupported host"}
+    root = root or package_root_dir()
+    if meta.get("install") == "pi-cli":
+        target = repo / meta["target"]
+        try:
+            settings = load_json(target, {}) or {}
+        except (OSError, ValueError):
+            settings = {}
+        packages = [str(p) for p in (settings.get("packages") or [])]
+        installed = any("coding-agent-orchestrator" in p for p in packages)
+        return {"host": host, "installed": installed, "target": meta["target"], "packages": packages}
+    if root is None:
+        return {"host": host, "installed": False, "target": meta["target"], "reason": "adapter files unavailable"}
+    fragment_path = root / meta["fragment"]
+    if not fragment_path.is_file():
+        return {"host": host, "installed": False, "target": meta["target"], "reason": "fragment missing"}
+    target = repo / meta["target"]
+    try:
+        fragment = render_host_fragment(json.loads(fragment_path.read_text(encoding="utf-8")), root)
+    except (OSError, ValueError) as exc:
+        return {"host": host, "installed": False, "target": meta["target"], "reason": str(exc)}
+    if not target.is_file():
+        return {"host": host, "installed": False, "target": str(target), "reason": "host settings file missing"}
+    try:
+        existing = json.loads(target.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        return {"host": host, "installed": False, "target": str(target), "reason": str(exc)}
+    _, changed = merge_hook_config(existing, fragment)
+    return {"host": host, "installed": not changed, "target": str(target)}
+
+
+def install_host_adapter(repo: Path, host: str) -> dict[str, Any]:
+    """Wire one host adapter into the project. Idempotent and non-destructive."""
+    meta = HOST_ADAPTER_META.get(host)
+    if not meta:
+        return {"host": host, "status": "error", "reason": f"unsupported host: {host}"}
+    root = package_root_dir()
+    if root is None:
+        return {"host": host, "status": "error", "reason": "CAO host adapter files are unavailable in this installation"}
+
+    if meta.get("install") == "pi-cli":
+        if not command_exists("pi"):
+            return {
+                "host": host,
+                "status": "skipped",
+                "reason": "`pi` CLI not found on PATH",
+                "next": "pi install --local <path-to-coding-agent-orchestrator>",
+            }
+        result = subprocess.run(
+            ["pi", "install", "--local", str(root)],
+            cwd=repo, text=True, capture_output=True, timeout=120,
+        )
+        return {
+            "host": host,
+            "status": "installed" if result.returncode == 0 else "error",
+            "target": meta["target"],
+            "command": f"pi install --local {root}",
+            "exit_code": result.returncode,
+            "stderr": result.stderr.strip()[-500:] or None,
+        }
+
+    fragment_path = root / meta["fragment"]
+    target = repo / meta["target"]
+    try:
+        fragment = render_host_fragment(json.loads(fragment_path.read_text(encoding="utf-8")), root)
+    except (OSError, ValueError) as exc:
+        return {"host": host, "status": "error", "reason": str(exc)}
+
+    try:
+        existing = json.loads(target.read_text(encoding="utf-8")) if target.is_file() else {}
+    except (OSError, ValueError) as exc:
+        return {"host": host, "status": "error", "target": str(target), "reason": f"cannot read existing host settings: {exc}"}
+    if not isinstance(existing, dict):
+        return {"host": host, "status": "error", "target": str(target), "reason": "existing host settings is not an object"}
+
+    merged, changed = merge_hook_config(existing, fragment)
+    if not changed:
+        return {"host": host, "status": "already_present", "target": str(target)}
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        save_json(target, merged)
+    except OSError as exc:
+        return {"host": host, "status": "error", "target": str(target), "reason": str(exc)}
+    return {"host": host, "status": "installed", "target": str(target)}
+
+
+def install_host_adapters(repo: Path, hosts: list[str]) -> dict[str, Any]:
+    results = [install_host_adapter(repo, host) for host in hosts]
+    return {
+        "hosts": results,
+        "installed": [r["host"] for r in results if r["status"] == "installed"],
+        "already_present": [r["host"] for r in results if r["status"] == "already_present"],
+        "failed": [r["host"] for r in results if r["status"] in {"error", "skipped"}],
+    }
 
 
 def command_output(argv: list[str], timeout: float = 3.0) -> tuple[int, str, str]:
@@ -492,6 +930,22 @@ def verification_scripts(cfg: dict[str, Any]) -> list[dict[str, Any]]:
 
 # Compatibility alias for internal callers and older integrations.
 verification_commands = verification_scripts
+
+# Matches a command that actually executes a test suite, as opposed to a build
+# or compile step. Searched as a substring of the whole command, so compound
+# commands (`cd app && mvn test`) match too.
+TEST_COMMAND_PATTERN = re.compile(
+    r"(^|[\s;&])(mvn|maven)(?:\s+[^;&]*)?\s+test(\s|$)|gradlew?(?:\s+[^;&]*)?\s+test(\s|$)|"
+    r"pytest|python[0-9.]*\s+-m\s+(pytest|unittest)|tox(\s|$)|"
+    r"npm\s+(run\s+)?t?est|yarn\s+test|pnpm\s+test|vitest|jest(\s|$)|"
+    r"go\s+test|cargo\s+test|dotnet\s+test|ctest|make\s+test|phpunit|rspec",
+    re.IGNORECASE,
+)
+
+
+def looks_like_test_command(command: str) -> bool:
+    """Whether a verification script actually runs tests rather than only builds."""
+    return bool(TEST_COMMAND_PATTERN.search(str(command or "")))
 
 
 LANGUAGE_LABELS = {
@@ -968,10 +1422,74 @@ def matches_any(path: str, patterns: list[str]) -> bool:
     return any(fnmatch.fnmatch(path, p) or fnmatch.fnmatch(path, f"*/{p}") for p in patterns)
 
 
+def requirement_slug(title: str) -> str:
+    """Turn a requirement title into a readable filename stem.
+
+    Chinese titles keep their characters; everything unsafe becomes a hyphen.
+    """
+    slug = re.sub(r"[^\w-]+", "-", str(title).strip())
+    slug = re.sub(r"-{2,}", "-", slug).strip("-")
+    return slug[:60]
+
+
+def requirement_filename(number: int, slug: str, date: str) -> str:
+    stem = f"{number:03d}-requirement"
+    if slug:
+        stem = f"{stem}-{slug}"
+    return f"{stem}-{date}.md"
+
+
+def next_requirement_number(repo: Path) -> int:
+    """Next requirement number, derived from existing files so it never collides."""
+    directory = repo / REQUIREMENT_DIR
+    if not directory.is_dir():
+        return 1
+    highest = 0
+    for path in directory.glob("*.md"):
+        match = re.match(r"^(\d+)-", path.name)
+        if match:
+            highest = max(highest, int(match.group(1)))
+    return highest + 1
+
+
+def new_requirement_path(repo: Path, title: str, date: str | None = None) -> Path:
+    """Allocate the numbered, dated path for a new requirement document."""
+    day = date or time.strftime("%Y-%m-%d", time.localtime())
+    return repo / REQUIREMENT_DIR / requirement_filename(next_requirement_number(repo), requirement_slug(title), day)
+
+
+def requirement_skeleton(title: str, number: str, date: str | None, cfg: dict[str, Any]) -> str:
+    """Starter content for a newly allocated requirement document."""
+    day = date or time.strftime("%Y-%m-%d", time.localtime())
+    language = str((cfg.get("language") or {}).get("user") or "zh-CN")
+    if language.lower().startswith("zh"):
+        return (
+            f"# {title}\n\n"
+            f"- 需求编号: {number}\n"
+            f"- 创建日期: {day}\n"
+            f"- 状态: draft\n\n"
+            f"## 需求描述\n\n<!-- 在此描述需求。 -->\n\n"
+            f"## 验收标准\n\n<!-- 完成时必须满足的条件。 -->\n\n"
+            f"## 范围外\n\n<!-- 明确不属于本次需求的内容（可选）。 -->\n"
+        )
+    return (
+        f"# {title}\n\n"
+        f"- Requirement ID: {number}\n"
+        f"- Created: {day}\n"
+        f"- Status: draft\n\n"
+        f"## Description\n\n<!-- Describe the requirement here. -->\n\n"
+        f"## Acceptance criteria\n\n<!-- What must be true when this is done. -->\n\n"
+        f"## Out of scope\n\n<!-- What is explicitly not part of this requirement (optional). -->\n"
+    )
+
+
 def requirement_files(repo: Path, cfg: dict[str, Any]) -> list[Path]:
     sdd = cfg.get("sdd") or {}
     files: set[Path] = set()
-    for pattern in sdd.get("requirement_globs") or []:
+    # CAO's own numbered requirement documents always count, including in
+    # projects initialized before the glob was added to the default config.
+    patterns = list(dict.fromkeys(list(sdd.get("requirement_globs") or []) + [str(REQUIREMENT_DIR / "**" / "*.md")]))
+    for pattern in patterns:
         for item in glob.glob(str(repo / pattern), recursive=True):
             p = Path(item)
             if p.is_file() and not matches_any(rel(p, repo), sdd.get("exclude_globs") or []):
@@ -1821,6 +2339,81 @@ def path_assessment_instruction(work: dict[str, Any] | None = None) -> str:
     )
 
 
+# Each provider records its own plan, and each format says "not done yet"
+# differently: BMAD keeps epic/story states in `sprint-status.yaml`, OpenSpec
+# and Spec Kit keep checkbox lists in `tasks.md`. A Work Item is a single unit,
+# so without reading these an Agent can finish one story of thirteen and close
+# the requirement as complete (demo11 did exactly that).
+PLAN_ARCHIVE_MARKERS = ("/archive/",)
+
+# `sprint-status.yaml` line: an indented `name: state` pair whose value is a bare
+# state word (so metadata like `generated: 10-10-2026 23:30` does not match).
+SPRINT_STATUS_LINE = re.compile(r"^\s+(?P<name>[^#\s][^:]*?):\s*(?P<state>[a-z][a-z-]*)\s*$")
+SPRINT_DONE_STATES = frozenset({"done"})
+# Retrospectives are optional by definition, and an epic's state is derived from
+# its stories, so counting both would double-report the same work.
+SPRINT_IGNORED_NAMES = ("epic-", "-retrospective")
+
+TASK_PENDING_LINE = re.compile(r"^\s*[-*]\s*\[\s\]\s*(?P<task>\S.*?)\s*$")
+
+
+def _pending_sprint_status(path: Path) -> list[str]:
+    """Unfinished BMAD epics/stories, from their own status file."""
+    pending: list[str] = []
+    for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+        match = SPRINT_STATUS_LINE.match(line)
+        if not match:
+            continue
+        name = match.group("name").strip().strip("\"'")
+        state = match.group("state").strip()
+        if state in SPRINT_DONE_STATES or state.startswith("optional"):
+            continue
+        lowered = name.lower()
+        if any(marker in lowered for marker in SPRINT_IGNORED_NAMES):
+            continue
+        pending.append(f"{name} ({state})")
+    return pending
+
+
+def _pending_checkbox_tasks(path: Path) -> list[str]:
+    """Unchecked tasks, as OpenSpec and Spec Kit write them."""
+    pending: list[str] = []
+    for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+        match = TASK_PENDING_LINE.match(line)
+        if match:
+            task = match.group("task").strip()
+            # Strip a leading task id so the message stays readable.
+            pending.append(task[:80])
+    return pending
+
+
+def provider_pending_plan_items(repo: Path, provider: str | None) -> list[str]:
+    """Unfinished items in the provider's own plan, for any supported provider.
+
+    Only the provider's declared output directories are scanned, so a `tasks.md`
+    in product code is never mistaken for an SDD plan. Formats are detected by
+    file, so a provider that does not write one of these is simply not checked.
+    """
+    meta = SDD_CATALOG.get(provider or "") or {}
+    pending: list[str] = []
+    for out in meta.get("output_dirs") or []:
+        root = repo / out
+        if not root.exists():
+            continue
+        for path in sorted(root.rglob("*")):
+            if not path.is_file():
+                continue
+            rel = path.relative_to(repo).as_posix()
+            if any(marker in f"/{rel}" for marker in PLAN_ARCHIVE_MARKERS):
+                continue  # archived changes are finished by definition
+            name = path.name.lower()
+            if name == "sprint-status.yaml":
+                pending.extend(_pending_sprint_status(path))
+            elif name == "tasks.md":
+                pending.extend(_pending_checkbox_tasks(path))
+    return pending
+
+
 def completion_status(repo: Path, work: dict[str, Any] | None) -> dict[str, Any]:
     if not work:
         return {"ready": False, "reason": "no work item"}
@@ -1837,11 +2430,33 @@ def completion_status(repo: Path, work: dict[str, Any] | None) -> dict[str, Any]
     path_state = path_assessment_state(repo, work)
     if not path_state["ready"]:
         return {"ready": False, "reason": path_state["reason"]}
+    cfg = config(repo)
+    code_sha = code_snapshot(repo, {work["requirement"]["path"]})
+    rules_sha = rules_snapshot(repo, cfg)
+    verification_cfg_sha = verification_snapshot(cfg)
+    v = work.get("verification") or {}
+    # Only a config-sourced verification can close the Work Item. A one-off
+    # `cao verify --command "true"` is fine for an engineer to sanity-check, but
+    # the implementer choosing the acceptance command at done-time is exactly
+    # the demo11 escape hatch.
+    config_bound = v.get("source") == "config"
+    fresh = (
+        config_bound
+        and v.get("status") == "passed"
+        and v.get("code_snapshot") == code_sha
+        and v.get("rules_snapshot") == rules_sha
+        and v.get("requirement_sha256") == req_sha
+        and v.get("verification_config_sha256") == verification_cfg_sha
+    )
+
+    # The native-workflow contract applies to every profile, including `light`.
+    # Exempting `light` let an Agent go straight from path selection to
+    # verification with no native planning, implementation, or review step.
     sdd = work.get("sdd") or {}
     assessment = work.get("path_assessment") or {}
     provider = str(sdd.get("provider") or "none")
     profile = str(assessment.get("profile") or "light")
-    if provider in SDD_CATALOG and profile in {"standard", "comprehensive"}:
+    if provider in SDD_CATALOG and profile in PROFILE_RANK:
         workflow = sdd.get("workflow") or {}
         if workflow.get("status") != "completed":
             return {
@@ -1850,6 +2465,7 @@ def completion_status(repo: Path, work: dict[str, Any] | None) -> dict[str, Any]
                 "workflow": workflow or None,
                 "provider": provider,
                 "profile": profile,
+                "next": f"Run the provider-native workflow, then record it: `cao sdd workflow select --name \"<native workflow>\" --entrypoint \"<native command or skill>\" --work {work['id']}` → `cao sdd workflow execute --command \"<command actually run>\" --work {work['id']}` → `cao sdd workflow complete --artifact <repo-relative-file> --work {work['id']}`.",
             }
         if not str(workflow.get("name") or "").strip() or not str(workflow.get("entrypoint") or "").strip():
             return {"ready": False, "reason": "native SDD workflow record is incomplete", "workflow": workflow}
@@ -1859,23 +2475,47 @@ def completion_status(repo: Path, work: dict[str, Any] | None) -> dict[str, Any]
         missing_artifacts = [path for path in artifact_paths if not (repo / str(path)).is_file()]
         if missing_artifacts:
             return {"ready": False, "reason": "native SDD workflow output artifacts are missing", "missing_artifacts": missing_artifacts, "workflow": workflow}
+        # Running the workflow once is not the same as finishing the plan it
+        # produced. A single Work Item can span many stories/specs, and without
+        # this check an Agent closes the requirement after the first one.
+        pending_items = provider_pending_plan_items(repo, provider)
+        if pending_items:
+            shown = ", ".join(pending_items[:5])
+            more = f" (+{len(pending_items) - 5} more)" if len(pending_items) > 5 else ""
+            return {
+                "ready": False,
+                "reason": f"the provider's plan still has {len(pending_items)} unfinished item(s)",
+                "pending_plan_items": pending_items,
+                "provider": provider,
+                "next": f"Finish the remaining items in the provider's own plan ({shown}{more}), or get the user to confirm the reduced scope, then run `cao verify` and `cao done` again.",
+            }
+        if not workflow.get("execution") and not (workflow.get("unverified") or {}).get("allowed"):
+            return {
+                "ready": False,
+                "reason": "native SDD workflow has no recorded execution",
+                "workflow": workflow,
+                "provider": provider,
+                "next": f"Record the execution with `cao sdd workflow execute --command \"<command actually run>\" --exit-code <code> --work {work['id']}`.",
+            }
 
-    cfg = config(repo)
-    code_sha = code_snapshot(repo, {work["requirement"]["path"]})
-    rules_sha = rules_snapshot(repo, cfg)
-    verification_cfg_sha = verification_snapshot(cfg)
-    v = work.get("verification") or {}
-    config_bound = v.get("source", "config") == "config"
-    fresh = (
-        v.get("status") == "passed"
-        and v.get("code_snapshot") == code_sha
-        and v.get("rules_snapshot") == rules_sha
-        and v.get("requirement_sha256") == req_sha
-        and (not config_bound or v.get("verification_config_sha256") == verification_cfg_sha)
-    )
+    gates = gate_state(work, fresh)
+    if gates["pending"]:
+        manual = [gate for gate in gates["pending"] if not gate_is_auto_derived(gate)]
+        return {
+            "ready": False,
+            "reason": "required execution gates are not satisfied",
+            "pending_gates": gates["pending"],
+            "gates": gates,
+            "next": (
+                "Mark each observed gate with `cao gate satisfy --gate " + "|".join(manual) + " --evidence \"<what was done>\"`."
+                if manual else "Run `cao verify` so the verification gates become fresh."
+            ),
+        }
+
     return {
         "ready": fresh,
         "reason": None if fresh else "verification is missing or stale",
+        "gates": gates,
         "current_code_snapshot": code_sha,
         "current_rules_snapshot": rules_sha,
         "current_verification_config_sha256": verification_cfg_sha,
@@ -1998,6 +2638,20 @@ def register_session(
     return session
 
 
+# Fields that define what a Handoff snapshot *says*. Everything else (id,
+# created_at, sequence) is record metadata, so comparing only these collapses
+# the identical snapshots that every Stop event produces.
+HANDOFF_IDENTITY_FIELDS = (
+    "work_item", "session_id", "host", "reason", "step", "next_action",
+    "path_assessment", "summary", "completed", "pending", "decisions",
+    "blockers", "verification",
+)
+
+
+def handoff_identity(handoff: dict[str, Any]) -> dict[str, Any]:
+    return {key: handoff.get(key) for key in HANDOFF_IDENTITY_FIELDS}
+
+
 def create_handoff(repo: Path, work: dict[str, Any], session_id: str | None, host: str | None, reason: str = "session stop") -> dict[str, Any]:
     session = load_session(repo, session_id, host=host) if session_id else None
     existing_records = list_handoff_records(repo, work["id"])
@@ -2024,6 +2678,15 @@ def create_handoff(repo: Path, work: dict[str, Any], session_id: str | None, hos
     }
     # Each Handoff is an independent immutable record. There is no flat latest
     # projection; readers derive the latest record from this history directory.
+    # Repeated identical snapshots are idempotent: Stop fires after every tool
+    # call, so without this a single Work Item accumulated dozens of copies of
+    # the same state and the history became unreadable.
+    latest = max(existing_records, key=lambda item: int(item.get("sequence", 0) or 0), default=None)
+    if latest is not None and handoff_identity(latest) == handoff_identity(handoff):
+        if session:
+            session["last_handoff_id"] = latest["id"]
+            save_session(repo, session)
+        return latest
     save_json(handoff_record_path(repo, work["id"], handoff["id"]), handoff)
     if session:
         session["last_handoff_id"] = handoff["id"]
@@ -2045,6 +2708,55 @@ def ensure_initialized(repo: Path) -> None:
         raise RuntimeError("Project is not initialized. Run `cao init` first.")
 
 
+def cmd_requirement_next_id(args: argparse.Namespace) -> int:
+    """Allocate the next numbered requirement path without writing any content.
+
+    CAO allocates the number and creates the file with a skeleton; the Agent
+    edits that file. Creating it here matters because a mutating tool call is
+    gated until a Work Item exists, so an Agent that has to `write` a brand new
+    requirement file can be blocked before `cao start` can ever run.
+    """
+    repo = repo_root(args.repo or os.getcwd())
+    ensure_initialized(repo)
+    title = args.title or "requirement"
+    path = new_requirement_path(repo, title, args.date)
+    rel_path = rel(path, repo)
+    number = re.match(r"^(\d+)-", path.name)
+    number = number.group(1) if number else "001"
+    created = False
+    if not path.exists():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(requirement_skeleton(title, number, args.date, config(repo)), encoding="utf-8")
+        created = True
+    print(json.dumps({
+        "ok": True,
+        "number": number,
+        "title": title,
+        "path": rel_path,
+        "absolute_path": str(path.resolve()),
+        "directory": REQUIREMENT_DIR.as_posix(),
+        "created": created,
+        "next": f"Edit `{rel_path}` with the requirement content, then run `cao start --requirement {rel_path}`",
+    }, ensure_ascii=False, indent=2))
+    return 0
+
+
+def cmd_requirement_list(args: argparse.Namespace) -> int:
+    repo = repo_root(args.repo or os.getcwd())
+    ensure_initialized(repo)
+    files = [p for p in requirement_files(repo, config(repo)) if REQUIREMENT_DIR.as_posix() in p.as_posix()]
+    items = []
+    for p in sorted(files)[: max(0, args.limit)]:
+        items.append({
+            "path": rel(p, repo),
+            "name": p.name,
+            "sha256": sha256_file(p),
+            "updated_at": time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(p.stat().st_mtime)),
+        })
+    print(json.dumps({"ok": True, "directory": REQUIREMENT_DIR.as_posix(), "requirements": items, "next": f"{next_requirement_number(repo):03d}"}, ensure_ascii=False, indent=2))
+    return 0
+
+
 def cmd_bootstrap(args: argparse.Namespace) -> int:
     """Return the always-on startup context for an Agent.
 
@@ -2054,7 +2766,9 @@ def cmd_bootstrap(args: argparse.Namespace) -> int:
     Agent changed.
     """
     repo = repo_root(args.repo)
-    project_instructions = install_project_instruction_templates(repo)
+    # Idempotent re-check: covers projects provisioned before this step existed,
+    # and files the user deleted. Never overwrites an existing file.
+    project_instructions = install_project_instruction_templates(repo, getattr(args, "host", None) or detect_current_host())
     if not (repo / CONFIG_REL).exists():
         save_json(repo / CONFIG_REL, json.loads(json.dumps(DEFAULT_CONFIG)))
         save_index(repo, load_index(repo))
@@ -2073,6 +2787,17 @@ def cmd_bootstrap(args: argparse.Namespace) -> int:
     # cannot remain stale after the native workflow has advanced.
     if work and work.get("status") in {"active", "suspended"} and reconcile_native_sdd_state(repo, work):
         work = load_work(repo, active_id) or work
+
+    # Session continuity must not depend solely on the host adapter being
+    # installed. When the runtime exposes a host and a native session id, attach
+    # the Session here as well so `cao sessions list` is never empty.
+    identity = host_session_identity(getattr(args, "host", None))
+    bootstrap_session = register_session(repo, work, identity[1], identity[0], event="bootstrap") if identity else None
+
+    # Report, do not install. Adapters load when the host process starts, so a
+    # bootstrap-time install could never deliver this session's SessionStart.
+    adapter_host = identity[0] if identity else getattr(args, "host", None)
+    bootstrap_adapter = host_adapter_status(repo, adapter_host) if adapter_host else None
 
     # Existing work owns its provider choice. A missing provider is repaired
     # before any resume/implementation action is exposed.
@@ -2182,6 +2907,12 @@ def cmd_bootstrap(args: argparse.Namespace) -> int:
             "context": None,
             "next": action("agent", "Select a requirement and run `cao start --requirement <path>`. Do not invent a new requirement while resuming."),
         }
+    if bootstrap_session:
+        next_out["session"] = bootstrap_session
+    if bootstrap_adapter is not None:
+        next_out["host_adapter"] = bootstrap_adapter
+        if not bootstrap_adapter["installed"]:
+            next_out["host_adapter"]["next"] = f"cao host install --host {adapter_host}  (takes effect from the next session)"
     next_out["language_configuration"] = language_configuration
     next_out["project_instructions"] = project_instructions
     print(json.dumps(next_out, ensure_ascii=False, indent=2))
@@ -2255,6 +2986,31 @@ def detect_current_host(environ: dict[str, str] | None = None) -> str | None:
     if any(env.get(key) for key in ("PI_CODING_AGENT", "PI_SESSION_ID")):
         matches.add("pi")
     return next(iter(matches)) if len(matches) == 1 else None
+
+
+HOST_SESSION_ENV_KEYS: dict[str, tuple[str, ...]] = {
+    "claude-code": ("CLAUDE_CODE_SESSION_ID", "CLAUDE_SESSION_ID"),
+    "codex": ("CODEX_THREAD_ID",),
+    "pi": ("PI_SESSION_ID",),
+}
+
+
+def host_session_identity(host: str | None, environ: dict[str, str] | None = None) -> tuple[str, str] | None:
+    """Resolve (host, native session id) when the runtime exposes both.
+
+    Host adapters are supposed to register the Session through `host-event`, but
+    that only happens when the adapter is actually installed. Returning None
+    here keeps CAO from inventing an `unknown` Session for every command.
+    """
+    env = os.environ if environ is None else environ
+    resolved = host or detect_current_host(env)
+    if not resolved:
+        return None
+    for key in HOST_SESSION_ENV_KEYS.get(resolved, ()):
+        value = str(env.get(key) or "").strip()
+        if value:
+            return resolved, value
+    return None
 
 
 def openspec_tool_for_host(host: str | None) -> str | None:
@@ -2417,27 +3173,117 @@ def cmd_sdd_install(args: argparse.Namespace) -> int:
     return 0
 
 
+def record_workflow_unverified(repo: Path, work: dict[str, Any], provider: str, name: str, reason: str) -> None:
+    """Persist an auditable trace for a documented native-workflow exception."""
+    identity = {"work_item_id": work["id"], "event": "workflow.unverified_exception", "workflow": name, "reason": reason}
+    key = hashlib.sha256(json.dumps(identity, sort_keys=True).encode("utf-8")).hexdigest()
+    _append_lifecycle_event(repo, {
+        "event_id": "evt-" + key[:20],
+        "idempotency_key": key,
+        "event": "workflow.unverified_exception",
+        "work_item_id": work["id"],
+        "source": "cao",
+        "provider": provider,
+        "workflow": name,
+        "reason": reason,
+        "occurred_at": now(),
+    })
+
+
 def cmd_sdd_workflow(args: argparse.Namespace) -> int:
     repo = repo_root(args.repo); ensure_initialized(repo)
     work = resolve_work(repo, args.work)
     if not work:
         print(json.dumps({"ok": False, "error": "NO_WORK_ITEM"}, ensure_ascii=False, indent=2)); return 2
     sdd = work.setdefault("sdd", {})
+    provider = str(sdd.get("provider") or "none")
+    unverified_reason = str(getattr(args, "reason", "") or "").strip()
+    allow_unverified = bool(getattr(args, "allow_unverified", False))
+    if allow_unverified and not unverified_reason:
+        print(json.dumps({"ok": False, "error": "UNVERIFIED_REASON_REQUIRED", "reason": "--allow-unverified requires --reason explaining why the native workflow cannot be verified."}, ensure_ascii=False, indent=2)); return 2
+
     if args.workflow_action == "select":
         name = str(args.name or "").strip()
         entrypoint = str(args.entrypoint or "").strip()
         if not name or not entrypoint:
             print(json.dumps({"ok": False, "error": "WORKFLOW_NAME_AND_ENTRYPOINT_REQUIRED"}, ensure_ascii=False, indent=2)); return 2
-        sdd["workflow"] = {"name": name, "entrypoint": entrypoint, "status": "selected", "selected_at": now(), "artifacts": []}
+        if allow_unverified:
+            check = {"ok": True, "reason": None}
+        else:
+            check = validate_workflow_entrypoint(provider, name, entrypoint)
+        if not check["ok"]:
+            print(json.dumps({
+                "ok": False,
+                "error": "NATIVE_WORKFLOW_ENTRYPOINT_INVALID",
+                "reason": check["reason"],
+                "provider": provider,
+                "next": f"Record the provider's real native workflow entrypoint, or pass `--allow-unverified --reason \"<why>\"` to record a documented exception.",
+            }, ensure_ascii=False, indent=2)); return 2
+        sdd["workflow"] = {
+            "name": name,
+            "entrypoint": entrypoint,
+            "status": "selected",
+            "selected_at": now(),
+            "artifacts": [],
+            "execution": None,
+            "unverified": {"allowed": True, "reason": unverified_reason, "at": now(), "by": str(getattr(args, "assessed_by", "agent") or "agent")} if allow_unverified else None,
+        }
+        if allow_unverified:
+            record_workflow_unverified(repo, work, provider, name, unverified_reason)
         work.setdefault("execution", {})["step"] = "native-sdd-workflow-selected"
-        work["execution"]["next_action"] = action("agent", f"Execute the selected native SDD workflow `{name}` via `{entrypoint}`. Do not skip its native prerequisites. After execution, record the real output files with `cao sdd workflow complete --work {work['id']} --artifact <repo-relative-file>`.")
+        guidance = skill_invocation_guidance(repo, provider, entrypoint)
+        work["execution"]["next_action"] = action("agent", f"Execute the selected native SDD workflow `{name}` via `{entrypoint}` now. Do not skip its native prerequisites, and do not implement the change yourself instead of running the workflow - `cao done` refuses completion until it has actually run and its artifacts are recorded.{guidance} Then record the execution with `cao sdd workflow execute --command \"<command actually run>\" --exit-code <code> --work {work['id']}`, and record the real output files with `cao sdd workflow complete --work {work['id']} --artifact <repo-relative-file>`.")
+    elif args.workflow_action == "execute":
+        workflow = sdd.get("workflow") or {}
+        if not workflow.get("name") or not workflow.get("entrypoint"):
+            print(json.dumps({"ok": False, "error": "NATIVE_WORKFLOW_NOT_SELECTED", "next": f"Run `cao sdd workflow select --name \"<workflow name>\" --entrypoint \"<native workflow command or skill>\" --work {work['id']}` first."}, ensure_ascii=False, indent=2)); return 2
+        command = str(getattr(args, "command", "") or "").strip()
+        if not command:
+            print(json.dumps({"ok": False, "error": "WORKFLOW_COMMAND_REQUIRED", "reason": "Record the command that was actually executed."}, ensure_ascii=False, indent=2)); return 2
+        if not allow_unverified:
+            check = validate_workflow_entrypoint(provider, str(workflow.get("name") or ""), command)
+            if not check["ok"]:
+                print(json.dumps({
+                    "ok": False,
+                    "error": "NATIVE_WORKFLOW_EXECUTION_INVALID",
+                    "reason": check["reason"],
+                    "provider": provider,
+                    "next": f"Record the command that actually ran the `{workflow.get('name')}` workflow, or pass `--allow-unverified --reason \"<why>\"`.",
+                }, ensure_ascii=False, indent=2)); return 2
+        workflow["execution"] = {
+            "command": command,
+            "exit_code": int(getattr(args, "exit_code", 0) or 0),
+            "executed_at": now(),
+            "output_tail": str(getattr(args, "output", "") or "").strip()[-2000:],
+        }
+        workflow["unverified"] = {"allowed": True, "reason": unverified_reason, "at": now(), "by": "agent"} if allow_unverified else workflow.get("unverified")
+        work.setdefault("execution", {})["step"] = "native-sdd-workflow-executed"
+        work["execution"]["next_action"] = action("agent", f"Record the real output files produced by `{workflow.get('name')}` with `cao sdd workflow complete --work {work['id']} --artifact <repo-relative-file>` (repeat --artifact for each file).")
     elif args.workflow_action == "complete":
         workflow = sdd.get("workflow") or {}
         if not workflow.get("name") or not workflow.get("entrypoint"):
             print(json.dumps({"ok": False, "error": "NATIVE_WORKFLOW_NOT_SELECTED", "next": f"Run `cao sdd workflow select --name \"<workflow name>\" --entrypoint \"<native workflow command or skill>\" --work {work['id']}` first."}, ensure_ascii=False, indent=2)); return 2
+        if not workflow.get("execution") and not allow_unverified:
+            print(json.dumps({
+                "ok": False,
+                "error": "NATIVE_WORKFLOW_EXECUTION_REQUIRED",
+                "reason": f"`{workflow.get('name')}` has no recorded execution. Run the workflow, then record it with `cao sdd workflow execute --command \"<command actually run>\" --exit-code <code> --work {work['id']}`.",
+                "workflow": workflow,
+            }, ensure_ascii=False, indent=2)); return 2
         paths = list(args.artifact or [])
         if not paths:
             print(json.dumps({"ok": False, "error": "NATIVE_WORKFLOW_ARTIFACT_REQUIRED", "reason": "At least one actual output file must be recorded."}, ensure_ascii=False, indent=2)); return 2
+        if not allow_unverified:
+            dir_check = validate_workflow_artifacts(provider, paths)
+            if not dir_check["ok"]:
+                print(json.dumps({
+                    "ok": False,
+                    "error": "NATIVE_WORKFLOW_ARTIFACT_OUTSIDE_PROVIDER_DIRS",
+                    "reason": dir_check["reason"],
+                    "provider": provider,
+                    "offending": dir_check["offending"],
+                    "next": f"Record only files the native workflow produced under {', '.join(provider_output_dirs(provider)) or 'the provider directory'}; product source files are not SDD artifacts.",
+                }, ensure_ascii=False, indent=2)); return 2
         refs = []
         try:
             for value in paths:
@@ -2452,8 +3298,11 @@ def cmd_sdd_workflow(args: argparse.Namespace) -> int:
         workflow["artifacts"] = [ref["path"] for ref in refs]
         workflow["status"] = "completed"
         workflow["completed_at"] = now()
+        if allow_unverified:
+            workflow["unverified"] = {"allowed": True, "reason": unverified_reason, "at": now(), "by": "agent"}
+            record_workflow_unverified(repo, work, provider, str(workflow.get("name") or ""), unverified_reason)
         work["execution"]["step"] = "native-sdd-workflow-completed"
-        work["execution"]["next_action"] = action("agent", "Continue implementation/review/verification according to the selected path; record additional native workflow outputs if produced, then run `cao verify` and `cao done`.")
+        work["execution"]["next_action"] = action("agent", "Continue implementation/review/verification according to the selected path; satisfy every required gate with `cao gate satisfy`, record additional native workflow outputs if produced, then run `cao verify` and `cao done`.")
     save_work(repo, work)
     print(json.dumps({"ok": True, "work_item": work_summary(work), "workflow": sdd.get("workflow")}, ensure_ascii=False, indent=2)); return 0
 
@@ -2596,7 +3445,17 @@ def cmd_init(args: argparse.Namespace) -> int:
     cfg_path = repo / CONFIG_REL
     if cfg_path.exists() and not args.force:
         out = {"ok": True, "status": "already_initialized", "config": str(cfg_path)}
+        pending = [h for h in HOST_ADAPTER_META if not host_adapter_status(repo, h)["installed"]]
+        if pending:
+            out["host_adapters"] = {"not_installed": pending, "next": f"cao host install --host {'|'.join(pending)}"}
         print(json.dumps(out, ensure_ascii=False, indent=2)); return 0
+
+    # Host adapters are process-startup integrations, so they belong to
+    # provisioning. The host must be explicit: guessing here would silently wire
+    # the wrong host's hooks. An unknown host is reported as an unresolved
+    # adapter instead of failing initialization, so a plain-shell `cao init`
+    # (and CI) still works while the hook gap stays visible.
+    host = args.host or detect_current_host()
     cfg = json.loads(json.dumps(DEFAULT_CONFIG))
     if args.sdd:
         cfg["sdd"]["provider"] = args.sdd
@@ -2608,13 +3467,65 @@ def cmd_init(args: argparse.Namespace) -> int:
             {"name": f"script-{i}", "command": str(command).strip(), "required": True}
             for i, command in enumerate(verify_scripts, 1) if str(command).strip()
         ]
+        # When the acceptance bar was set. `cao verify` refuses to pass a Work
+        # Item whose verification standard was configured after the Work Item
+        # started: an Agent that only compiles at the end must not be able to
+        # define "compiles = verified" and then close its own ticket (demo11).
+        cfg["verification"]["configured_at"] = now()
     save_json(cfg_path, cfg)
     index = load_index(repo)
     save_index(repo, index)
     for d in (WORK_DIR, SESSION_DIR, HANDOFF_DIR):
         (repo / d).mkdir(parents=True, exist_ok=True)
-    out = {"ok": True, "status": "initialized", "config": str(cfg_path), "state": str(repo / INDEX_REL)}
+    if host:
+        adapters = install_host_adapters(repo, [host])
+    else:
+        adapters = {
+            "hosts": [],
+            "installed": [],
+            "already_present": [],
+            "failed": [],
+            "status": "host_required",
+        }
+    project_instructions = install_project_instruction_templates(repo, host)
+    out = {"ok": True, "status": "initialized", "config": str(cfg_path), "state": str(repo / INDEX_REL), "host": host, "host_adapters": adapters, "project_instructions": project_instructions}
+    if not host:
+        out["host_adapters"]["next"] = f"cao host install --host {'|'.join(sorted(HOST_ADAPTER_META))}"
+        out["warning"] = (
+            "No coding-agent host could be determined, so no host adapter was installed. Host events (Session, Handoff, completion gate) will not fire. "
+            "CAO's bootstrap/start Session fallback still covers the current session."
+        )
+    elif adapters["failed"]:
+        out["warning"] = (
+            f"Host adapter for `{host}` could not be installed. Host events (Session, Handoff, completion gate) will not fire in this project "
+            "for hosts started after this point. CAO's bootstrap/start Session fallback still covers the current session."
+        )
     print(json.dumps(out, ensure_ascii=False, indent=2)); return 0
+
+
+def cmd_host(args: argparse.Namespace) -> int:
+    """Wire or inspect host adapters for an already-initialized project."""
+    repo = repo_root(args.repo)
+    if args.host_command == "install":
+        host = args.host or detect_current_host()
+        if not host:
+            print(json.dumps({
+                "ok": False,
+                "error": "HOST_REQUIRED",
+                "reason": "Cannot determine the coding-agent host from this environment.",
+                "hosts": sorted(HOST_ADAPTER_META),
+                "next": "cao host install --host <claude-code|codex|pi>",
+            }, ensure_ascii=False, indent=2)); return 2
+        adapters = install_host_adapters(repo, [host])
+        print(json.dumps({"ok": True, "host": host, "host_adapters": adapters}, ensure_ascii=False, indent=2))
+        return 0 if not adapters["failed"] else 1
+    hosts = [args.host] if args.host else sorted(HOST_ADAPTER_META)
+    print(json.dumps({
+        "ok": True,
+        "hosts": [host_adapter_status(repo, host) for host in hosts],
+        "note": "Host adapters load when the host process starts, so install them before the next session.",
+    }, ensure_ascii=False, indent=2))
+    return 0
 
 
 def cmd_start(args: argparse.Namespace) -> int:
@@ -2648,6 +3559,16 @@ def cmd_start(args: argparse.Namespace) -> int:
             return 1
     p = resolve_requirement(repo, args.requirement)
     if p is None:
+        if args.requirement:
+            # An explicit path that does not exist is a different failure from
+            # "which requirement do you mean?": the Agent must write the file
+            # first (native SDD output dirs are writable for exactly that).
+            print(json.dumps({
+                "ok": False,
+                "error": "REQUIREMENT_FILE_MISSING",
+                "requirement": args.requirement,
+                "reason": "The requirement file does not exist yet. Create it first (inside the provider's native output directory), then rerun `cao start`.",
+            }, ensure_ascii=False, indent=2)); return 2
         candidates = [rel(x, repo) for x in requirement_files(repo, config(repo))]
         print(json.dumps({"ok": False, "error": "REQUIREMENT_SELECTION_REQUIRED", "candidates": candidates}, ensure_ascii=False, indent=2)); return 2
     index = load_index(repo)
@@ -2700,7 +3621,14 @@ def cmd_start(args: argparse.Namespace) -> int:
         created_key = hashlib.sha256(f"{wid}:task.created:{created_at}".encode("utf-8")).hexdigest()
         _append_lifecycle_event(repo, {"event_id": "evt-" + created_key[:20], "idempotency_key": created_key, "event": "task.created", "work_item_id": wid, "source": "cao", "native_ref": work.get("sdd", {}).get("native_ref"), "occurred_at": created_at})
     native = run_sdd_command(repo, "inspect", [rel(p, repo)])
-    print(json.dumps({"ok": True, "action": "ASSESS_PATH", "work_item": work_summary(work), "next_action": work.get("execution", {}).get("next_action"), "sdd": native}, ensure_ascii=False, indent=2)); return 0
+    # Attach the current runtime Session so the Work Item is never worked on
+    # without a Session record, even when no host adapter is installed.
+    identity = host_session_identity(getattr(args, "host", None))
+    session = register_session(repo, work, identity[1], identity[0], event="start") if identity else None
+    out = {"ok": True, "action": "ASSESS_PATH", "work_item": work_summary(work), "next_action": work.get("execution", {}).get("next_action"), "sdd": native}
+    if session:
+        out["session"] = session
+    print(json.dumps(out, ensure_ascii=False, indent=2)); return 0
 
 
 def cmd_list(args: argparse.Namespace) -> int:
@@ -2784,8 +3712,8 @@ def cmd_path_assess(args: argparse.Namespace) -> int:
         execution["next_action"] = action(
             "agent",
             f"Apply the {assessment['profile']} path using {provider}'s native workflow. {assessment['provider_guidance']} "
-            + (f"Before implementation, select and record the native workflow with `cao sdd workflow select --name \"<native workflow name>\" --entrypoint \"<native workflow command or skill>\" --work {work['id']}`. After executing it, record completion and its real output files with `cao sdd workflow complete --work {work['id']} --artifact <repo-relative-file>` (repeat --artifact for each produced native artifact). `cao done` will block until this contract is satisfied. " if provider in SDD_CATALOG and assessment['profile'] in {'standard', 'comprehensive'} else "")
-            + f"Required gates: {gate_text}. Reassess only if the scope, risk, or requirement materially changes.",
+            + (f"Before implementation, select and record the native workflow with `cao sdd workflow select --name \"<native workflow name>\" --entrypoint \"<native workflow command or skill>\" --work {work['id']}`. Then execute it and record the run with `cao sdd workflow execute --command \"<command actually run>\" --exit-code <code> --work {work['id']}`. Finally record its real output files with `cao sdd workflow complete --work {work['id']} --artifact <repo-relative-file>` (repeat --artifact for each produced native artifact). Outputs must live under the provider's own directory; product source files are not SDD artifacts. `cao done` blocks until this contract is satisfied. " if provider in SDD_CATALOG else "")
+            + f"Required gates: {gate_text}. Mark each observed gate with `cao gate satisfy --gate <gate> --evidence \"<what was done>\"`; `cao done` blocks until all are satisfied. Reassess only if the scope, risk, or requirement materially changes.",
             profile=assessment["profile"],
             provider=provider,
         )
@@ -2807,6 +3735,67 @@ def cmd_path_show(args: argparse.Namespace) -> int:
         "work_item": work_summary(work),
         "path_assessment": work.get("path_assessment"),
         "state": path_assessment_state(repo, work),
+    }, ensure_ascii=False, indent=2))
+    return 0
+
+
+def cmd_gate(args: argparse.Namespace) -> int:
+    """Mark or inspect the execution gates that only the Agent can observe."""
+    repo = repo_root(args.repo); ensure_initialized(repo)
+    index = load_index(repo)
+    wid = args.work or index.get("active_work")
+    work = load_work(repo, wid) if wid else None
+    if not work:
+        print(json.dumps({"ok": False, "error": "NO_WORK_ITEM"}, ensure_ascii=False, indent=2))
+        return 2
+    assessment = work.get("path_assessment")
+    if not isinstance(assessment, dict):
+        print(json.dumps({"ok": False, "error": "PATH_ASSESSMENT_REQUIRED", "next": path_assessment_instruction(work)}, ensure_ascii=False, indent=2))
+        return 2
+    if args.gate_command == "satisfy":
+        name = str(args.gate or "").strip()
+        required = [str(gate) for gate in (assessment.get("required_gates") or [])]
+        if name not in required:
+            print(json.dumps({
+                "ok": False,
+                "error": "GATE_NOT_REQUIRED",
+                "gate": name,
+                "required_gates": required,
+            }, ensure_ascii=False, indent=2))
+            return 2
+        if gate_is_auto_derived(name):
+            print(json.dumps({
+                "ok": False,
+                "error": "GATE_IS_AUTO_DERIVED",
+                "gate": name,
+                "reason": "This gate is derived from verification freshness; run `cao verify` instead.",
+            }, ensure_ascii=False, indent=2))
+            return 2
+        evidence = str(args.evidence or "").strip()
+        if not evidence:
+            print(json.dumps({"ok": False, "error": "GATE_EVIDENCE_REQUIRED", "reason": "Record what was actually done to satisfy the gate."}, ensure_ascii=False, indent=2))
+            return 2
+        work.setdefault("gate_status", {})[name] = {
+            "satisfied": True,
+            "evidence": evidence,
+            "at": now(),
+            "by": str(args.satisfied_by or "agent"),
+        }
+        save_work(repo, work)
+        print(json.dumps({
+            "ok": True,
+            "work_item": work_summary(work),
+            "gate": name,
+            "gates": gate_state(work, False),
+        }, ensure_ascii=False, indent=2))
+        return 0
+    fresh = (work.get("verification") or {}).get("status") == "passed"
+    print(json.dumps({
+        "ok": True,
+        "work_item": work_summary(work),
+        "required_gates": assessment.get("required_gates") or [],
+        "gates": gate_state(work, fresh),
+        "gate_status": work.get("gate_status") or {},
     }, ensure_ascii=False, indent=2))
     return 0
 
@@ -2882,6 +3871,27 @@ def cmd_decision(args: argparse.Namespace) -> int:
     work.setdefault("decisions", []).append(d)
     save_work(repo, work)
     print(json.dumps({"ok": True, "decision": d}, ensure_ascii=False, indent=2)); return 0
+
+
+def cmd_decision_list(args: argparse.Namespace) -> int:
+    """Read back recorded decisions.
+
+    Recording existed, but only reaching them was missing: an Agent could write
+    decisions with `cao decision` yet had no way to look at the ones already
+    made, so the recorded reasoning went unread and un superseded.
+    """
+    repo = repo_root(args.repo); ensure_initialized(repo)
+    index = load_index(repo); wid = args.work or index.get("active_work")
+    work = load_work(repo, wid) if wid else None
+    if not work:
+        print(json.dumps({"ok": False, "error": "NO_WORK_ITEM"}, ensure_ascii=False, indent=2)); return 2
+    decisions = work.get("decisions") or []
+    print(json.dumps({
+        "ok": True,
+        "work_item": work["id"],
+        "count": len(decisions),
+        "decisions": decisions[-int(args.limit or 50):],
+    }, ensure_ascii=False, indent=2)); return 0
 
 
 def cmd_block(args: argparse.Namespace) -> int:
@@ -3080,6 +4090,32 @@ def cmd_verify(args: argparse.Namespace) -> int:
             "next": "Configure verification.scripts in .orchestrator/config.json"
         }, ensure_ascii=False, indent=2)); return 2
 
+    if source == "config":
+        # Acceptance criteria predate the work, or they are not acceptance
+        # criteria. A standard configured after `cao start` (demo11: the Agent
+        # ran `cao init --verify-script "<compile>" --force` right before
+        # closing) lets the implementer define what counts as done.
+        configured_at = ((cfg.get("verification") or {}).get("configured_at"))
+        started_at = work.get("started_at")
+        if configured_at and started_at and configured_at > started_at:
+            print(json.dumps({
+                "ok": False,
+                "error": "VERIFICATION_CONFIGURED_AFTER_START",
+                "reason": "The verification standard was configured after this Work Item started, so it cannot certify the requirement. Acceptance criteria must exist before work begins.",
+                "next": "Ask the user to confirm the verification standard, then start a fresh Work Item (or `cao reopen` after correcting the standard together).",
+            }, ensure_ascii=False, indent=2)); return 2
+        # A standard that never runs the tests cannot satisfy a `tests` gate:
+        # compiling is not testing (demo11 satisfied `tests` with "mvnw clean
+        # compile succeeded").
+        required_gates = ((work.get("path_assessment") or {}).get("required_gates")) or []
+        if "tests" in required_gates and not any(looks_like_test_command(item["command"]) for item in scripts):
+            print(json.dumps({
+                "ok": False,
+                "error": "VERIFICATION_DOES_NOT_RUN_TESTS",
+                "reason": "This Work Item requires a `tests` gate, but no verification script runs tests (only build/compile commands were configured).",
+                "next": "Add a real test command to verification.scripts in .orchestrator/config.json, for example `mvn test`, `gradle test`, `pytest`, or `npm test`.",
+            }, ensure_ascii=False, indent=2)); return 2
+
     req = repo / work["requirement"]["path"]
     if not req.exists():
         print(json.dumps({"ok": False, "error": "REQUIREMENT_FILE_MISSING"}, ensure_ascii=False, indent=2)); return 2
@@ -3158,6 +4194,15 @@ def completion_next_instruction(repo: Path, work: dict[str, Any] | None, complet
         return f"Review the requirement and current scope, then record or refresh the minimum-safe-path assessment: `cao path assess --profile <light|standard|comprehensive> --reason \"<short reason>\" --work {wid}`."
     if reason == "major requirement ambiguity requires clarification":
         return "Ask the user to resolve the material requirement ambiguity, then rerun `cao path assess` without `--risk-flag major-ambiguity`. Do not implement while the ambiguity remains unresolved."
+    if reason.startswith("the provider's plan still has"):
+        items = completion.get("pending_plan_items") or []
+        listed = "; ".join(str(item) for item in items[:5])
+        more = f"; and {len(items) - 5} more" if len(items) > 5 else ""
+        return (
+            f"Run the native workflow for each remaining item in the provider's own plan ({listed}{more}). "
+            f"Closing now would mark the whole requirement complete while that work is still outstanding. "
+            f"If the user has actually reduced the scope, update the plan in the provider's own files first, then run `cao verify` and `cao done`."
+        )
     if reason == "native SDD workflow is not recorded as completed":
         return (f"Select and execute the native {((work.get('sdd') or {}).get('provider') or 'SDD')} workflow before completion. "
                 f"Record it with `cao sdd workflow select --name \"<workflow name>\" --entrypoint \"<native workflow command or skill>\" --work {wid}`, "
@@ -3181,17 +4226,65 @@ def completion_next_instruction(repo: Path, work: dict[str, Any] | None, complet
     return "Resolve the blocking condition shown above, then run `cao verify` and retry `cao done`."
 
 
+def cmd_reopen(args: argparse.Namespace) -> int:
+    """Return a completed Work Item to active.
+
+    demo11 closed a requirement that was never implemented: the Agent satisfied
+    every gate with self-description, defined "compiles" as the verification
+    standard, and `cao done` accepted it. `done` is append-only, so reopening is
+    the honest correction path: previously satisfied gates and verification are
+    cleared because they were earned by the same evidence that was wrong.
+    """
+    repo = repo_root(args.repo); ensure_initialized(repo)
+    index = load_index(repo); wid = args.work or index.get("active_work")
+    work = load_work(repo, wid) if wid else None
+    if not work:
+        print(json.dumps({"ok": False, "error": "NO_WORK_ITEM"}, ensure_ascii=False, indent=2)); return 2
+    if work.get("status") != "completed":
+        print(json.dumps({
+            "ok": False,
+            "error": "WORK_ITEM_NOT_COMPLETED",
+            "status": work.get("status"),
+            "reason": f"Only a completed Work Item can be reopened; this one is `{work.get('status')}`. Active work continues as-is.",
+        }, ensure_ascii=False, indent=2)); return 2
+
+    work["status"] = "active"
+    work["completed_at"] = None
+    work["execution"]["step"] = "reopened"
+    work["execution"]["next_action"] = action(
+        "agent",
+        f"The Work Item was reopened: it was marked completed but the requirement is not actually satisfied."
+        + (f" Reopen reason: {args.reason}." if args.reason else "")
+        + " Continue the requirement from where it truly stands. Gates and verification were cleared and must be re-earned with real evidence.",
+    )
+    work["resume"]["summary"] = args.reason or "Reopened after being completed without the requirement actually being satisfied."
+    work["gate_status"] = {}
+    work["verification"] = {}
+    save_work(repo, work)
+    _append_lifecycle_event(repo, {
+        "event": "task.reopened",
+        "work_item_id": work["id"],
+        "source": "cao",
+        "to_state": "active",
+        "occurred_at": now(),
+        "reason": args.reason or "not specified",
+    })
+    print(json.dumps({"ok": True, "status": "active", "work_item": work_summary(work)}, ensure_ascii=False, indent=2)); return 0
+
+
 def cmd_done(args: argparse.Namespace) -> int:
     repo = repo_root(args.repo); ensure_initialized(repo)
     index = load_index(repo); wid = args.work or index.get("active_work"); work = load_work(repo, wid) if wid else None
     c = completion_status(repo, work)
     if not c["ready"]:
-        print(json.dumps({
-            "ok": False,
-            "error": "COMPLETION_BLOCKED",
-            "reason": c["reason"],
-            "next": completion_next_instruction(repo, work, c),
-        }, ensure_ascii=False, indent=2)); return 2
+        blocked: dict[str, Any] = {"ok": False, "error": "COMPLETION_BLOCKED", "reason": c["reason"]}
+        # Report the concrete items, not just the category: knowing that a plan
+        # is unfinished is useless without knowing which parts.
+        for key in ("pending_plan_items", "missing_artifacts", "unmet_gates", "workflow"):
+            if c.get(key):
+                blocked[key] = c[key]
+        blocked["next"] = completion_next_instruction(repo, work, c)
+        print(json.dumps(blocked, ensure_ascii=False, indent=2)); return 2
     transition = sdd_transition(repo, "done")
     if transition is not None and transition["exit_code"] != 0:
         print(json.dumps({"ok": False, "error": "SDD_TRANSITION_FAILED", "transition": transition}, ensure_ascii=False, indent=2)); return 1
@@ -3218,16 +4311,198 @@ def cmd_path(args: argparse.Namespace) -> int:
     raise ValueError(f"unsupported path command: {args.path_command}")
 
 
-def tool_is_mutating(raw: dict[str, Any]) -> bool:
-    tool = str(raw.get("tool_name") or raw.get("tool") or raw.get("name") or "").lower()
+def native_output_dirs() -> list[str]:
+    """Every provider-owned SDD output directory across the catalog."""
+    dirs: list[str] = []
+    for meta in SDD_CATALOG.values():
+        for out in meta.get("output_dirs") or []:
+            if out not in dirs:
+                dirs.append(out)
+    return dirs
+
+
+# Compared against lower-cased keys, so every entry must be lower-case too.
+WRITE_TOOL_PATH_KEYS = ("path", "file_path", "filepath", "filename", "notebook_path")
+
+# Tools whose target lives in a command string rather than a path argument.
+SHELL_TOOLS = frozenset({"bash", "shell", "exec", "command"})
+
+
+def _collect_path_strings(node: Any, depth: int = 0) -> list[str]:
+    """Recursively collect path-like string values.
+
+    Hosts disagree on where a tool call's target path lives: `tool_input.path`,
+    `input.filePath`, `params.path`, or nested further. Reading only the first
+    level silently disabled the intake exemption in Pi, whose event shape does
+    not match any single-level guess, and that reproduced the intake deadlock.
+    """
+    if depth > 5:
+        return []
+    found: list[str] = []
+    if isinstance(node, dict):
+        for key, value in node.items():
+            k = str(key).lower()
+            if isinstance(value, str):
+                if k in WRITE_TOOL_PATH_KEYS and value.strip():
+                    found.append(value.strip())
+            elif isinstance(value, (dict, list)):
+                found.extend(_collect_path_strings(value, depth + 1))
+    elif isinstance(node, list):
+        for item in node[:25]:
+            found.extend(_collect_path_strings(item, depth + 1))
+    return found
+
+
+def orch_agent_writable_dir() -> str:
+    """The only part of `.orchestrator` an Agent may write directly.
+
+    Everything else under `.orchestrator` is CAO-derived state: it is computed
+    from commands and files the Agent already controls, so a hand edit is always
+    either wrong (it will be overwritten) or a way to fake orchestration state.
+    """
+    return f"{ORCH.as_posix()}/requirements"
+
+
+def write_targets_protected_state(raw: dict[str, Any]) -> list[str]:
+    """Targets under `.orchestrator` that CAO derives and the Agent must not edit."""
+    orch = ORCH.as_posix()
+    writable = orch_agent_writable_dir()
+    hits: list[str] = []
+    for target in tool_write_targets(raw):
+        if orch in target and writable not in target and target not in hits:
+            hits.append(target)
+    return hits
+
+
+def protected_state_advice(targets: list[str]) -> str:
+    """Point at the command that owns this state instead of a hand edit."""
+    joined = " ".join(targets).lower()
+    if "requirements" in joined:
+        return "Requirement documents are Agent-authored; use `cao requirement next-id` to create one."
+    if "/work/" in joined:
+        return ("Work Item state is CAO-derived. Use its commands instead: `cao checkpoint --summary ...`, "
+                "`cao decision add --text ...`, `cao path assess ...`, `cao sdd workflow <select|execute|complete>`, "
+                "`cao verify`, `cao done`.")
+    if "config.json" in joined:
+        return "Project config is written by `cao init`, `cao language set`, and provider install commands."
+    if "index.json" in joined:
+        return "`index.json` is regenerated from `work/*.json` after every Work Item mutation; it never needs editing."
+    if "sessions/" in joined or "handoffs/" in joined:
+        return "Session and Handoff records are written by the host hooks automatically."
+    if "lifecycle/" in joined:
+        return "`lifecycle/events.jsonl` is an append-only audit log written by CAO."
+    return "CAO state is derived from its own commands; hand edits would be overwritten."
+
+
+def _event_key(raw: Any, *keys: str) -> str:
+    """Read a top-level string key case-insensitively.
+
+    Hosts spell the tool name differently (`tool_name`, `toolName`, `tool`), and
+    `dict.get("toolname")` misses `toolName`, which silently made every Pi shell
+    call look targetless.
+    """
+    if not isinstance(raw, dict):
+        return ""
+    lowered = {str(key).lower(): value for key, value in raw.items()}
+    for key in keys:
+        value = lowered.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return ""
+
+
+def tool_write_targets(raw: dict[str, Any]) -> list[str]:
+    """Best-effort file targets of a mutating tool call, at any nesting depth."""
+    tool = _event_key(raw, "tool_name", "toolname", "tool", "name").lower()
     payload = raw.get("tool_input") or raw.get("input") or raw.get("arguments") or raw
-    if tool in {"write", "edit", "apply_patch", "str_replace", "insert", "delete", "mv", "move", "write_file"}:
+    targets: list[str] = []
+    if isinstance(payload, dict):
+        targets.extend(_collect_path_strings(payload))
+    elif isinstance(payload, str):
+        targets.append(payload)
+    if payload is not raw:
+        targets.extend(_collect_path_strings(raw))
+    if tool in SHELL_TOOLS:
+        # A shell tool carries its target inside the command string, and hosts
+        # nest it differently (`params.command`, `tool_input.command`, ...), so
+        # read it from the whole event rather than one guessed level. Missing it
+        # let `rm -rf .orchestrator` through the guard.
+        targets.extend(str(value) for value in _collect_values_for_keys(raw, ("command", "cmd")))
+    return [t for t in targets if t]
+
+
+def intake_writable_dirs() -> list[str]:
+    """Directories that stay writable before a Work Item exists.
+
+    - provider-owned SDD output dirs: requirement/PRD/spec artifacts, which are
+      also the only places native workflow artifacts may live;
+    - `.orchestrator/requirements/`: CAO's own numbered requirement documents.
+
+    Blocking writes to either deadlocks intake: the hook demands an active Work
+    Item, `cao start` demands a requirement file, and the file can never be
+    written. Only `.orchestrator/requirements/` is exempt — the rest of
+    `.orchestrator/` holds CAO state the Agent must not hand-edit.
+    """
+    return native_output_dirs() + [f"{REQUIREMENT_DIR.as_posix()}/"]
+
+
+def write_targets_native_sdd_output(raw: dict[str, Any]) -> bool:
+    """True when the write lands in an intake-writable directory."""
+    targets = tool_write_targets(raw)
+    if not targets:
+        return False
+    return any(out_dir in target for out_dir in intake_writable_dirs() for target in targets)
+
+
+MUTATING_TOOLS = {"write", "edit", "apply_patch", "str_replace", "strreplace", "insert", "delete", "mv", "move", "write_file", "create_file", "patch"}
+# `command`/`cmd` are deliberately absent: shell calls are judged by
+# `readonly_shell` below, and treating any command as a mutation would block
+# read-only shell usage entirely.
+MUTATION_PAYLOAD_KEYS = {"new_string", "newstring", "old_string", "patch", "content"}
+TOOL_NAME_KEYS = {"tool_name", "toolname", "tool", "name"}
+
+
+def _collect_values_for_keys(node: Any, keys: frozenset[str] | set[str], depth: int = 0) -> list[str]:
+    """Collect string values stored under `keys`, at any nesting depth."""
+    if depth > 5:
+        return []
+    found: list[str] = []
+    if isinstance(node, dict):
+        for key, value in node.items():
+            k = str(key).lower()
+            if isinstance(value, str):
+                if k in keys and value.strip():
+                    found.append(value.strip())
+            elif isinstance(value, (dict, list)):
+                found.extend(_collect_values_for_keys(value, keys, depth + 1))
+    elif isinstance(node, list):
+        for item in node[:25]:
+            found.extend(_collect_values_for_keys(item, keys, depth + 1))
+    return found
+
+
+def tool_is_mutating(raw: dict[str, Any]) -> bool:
+    """Whether a tool call changes files.
+
+    Hosts nest tool arguments differently (`tool_input`, `input`, `params`, ...).
+    Reading only the top level silently disabled the whole gate for Pi-shaped
+    events: nothing looked mutating, so every write was allowed through. The
+    checks below therefore look at any depth.
+    """
+    tool = str(raw.get("tool_name") or raw.get("tool") or raw.get("name") or "").lower()
+    if not tool:
+        for candidate in _collect_values_for_keys(raw, TOOL_NAME_KEYS):
+            tool = candidate.lower()
+            break
+    if tool in MUTATING_TOOLS:
         return True
-    if any(k in payload for k in ("new_string", "patch", "content")):
+    payload = raw.get("tool_input") or raw.get("input") or raw.get("arguments") or raw
+    if _collect_values_for_keys(payload if payload is not raw else raw, MUTATION_PAYLOAD_KEYS):
         return True
     if tool in {"bash", "shell", "exec", "command"}:
-        cmd = str(payload.get("command") or payload.get("cmd") or "") if isinstance(payload, dict) else str(payload)
-        return not readonly_shell(cmd)
+        commands = _collect_values_for_keys(payload if payload is not raw else raw, {"command", "cmd"})
+        cmd = commands[0] if commands else ""
+        return bool(cmd) and not readonly_shell(cmd)
     return False
 
 
@@ -3235,9 +4510,13 @@ def readonly_shell(command: str) -> bool:
     low = command.strip().lower()
     if not low:
         return True
-    prefixes = ("git status", "git diff", "git log", "git show", "git branch", "ls", "dir", "cat ", "type ", "pwd", "find ", "grep ", "rg ", "sed ", "head ", "tail ", "pytest", "python -m unittest", "mvn test", "gradle test", "npm test")
+    prefixes = ("git status", "git diff", "git log", "git show", "git branch", "ls", "dir", "cat ", "type ", "pwd", "find ", "grep ", "rg ", "head ", "tail ", "pytest", "python -m unittest", "mvn test", "gradle test", "npm test")
     if low.startswith(prefixes):
         return True
+    # `sed` alone only prints, but `sed -i` rewrites the file in place, so it is
+    # a write. Treating it as read-only let an Agent edit CAO state via shell.
+    if low.startswith("sed "):
+        return not re.search(r"(^|\s)-i(\s|$)", low)
     # CAO governance commands mutate CAO state, not product code. Permit these
     # single commands through the code-mutation hook so an unassessed Work Item
     # can run `cao path assess` and other required orchestration actions.
@@ -3262,7 +4541,7 @@ def readonly_shell(command: str) -> bool:
     safe_control_commands = {
         "init", "bootstrap", "sdd", "start", "path", "list", "status", "next", "resume",
         "checkpoint", "decision", "block", "unblock", "handoff", "sessions", "verify", "done",
-        "context", "artifact", "host-event",
+        "context", "artifact", "host-event", "requirement",
     }
     return bool(command_tokens and command_tokens[0] in safe_control_commands)
 
@@ -3310,23 +4589,43 @@ def host_event(args: argparse.Namespace) -> int:
         return 0
 
     if event == "pre_tool":
-        if tool_is_mutating(raw) and (not work or work.get("status") != "active"):
-            result = {"decision": "deny", "reason": "No active work item. Start or resume a requirement before changing production code: `cao start --requirement <path>` or `cao resume --work <id>`."}
-        elif tool_is_mutating(raw) and work and not work_sdd_ready(repo, work)[0]:
-            provider = ((work.get("sdd") or {}).get("provider") or "auto")
-            install = sdd_install_instruction(provider, args.host) if provider == "speckit" else sdd_install_instruction(provider)
-            result = {"decision": "deny", "reason": f"SDD `{provider}` is not installed in the project. Install it before changing production code: `{install}`."}
-        elif tool_is_mutating(raw) and work and not path_assessment_state(repo, work)["ready"]:
-            path_state = path_assessment_state(repo, work)
-            if path_state["reason"] == "requirement changed since work started":
-                instruction = completion_next_instruction(repo, work, {"ready": False, "reason": path_state["reason"]})
-            elif path_state["reason"] == "major requirement ambiguity requires clarification":
-                instruction = "Clarify the material requirement ambiguity with the user, then rerun `cao path assess` without `--risk-flag major-ambiguity`. Do not implement while it remains unresolved."
-            else:
-                instruction = f"Assess scope/risk with `cao path assess --profile <light|standard|comprehensive> --reason \"<short reason>\" --work {work['id']}`."
-            result = {"decision": "deny", "reason": f"Execution path is not ready ({path_state['reason']}). {instruction}"}
-        else:
-            result = {"decision": "allow"}
+        # The gate never blocks: it deadlocked intake (a requirement file had to
+        # exist before `cao start`, but writing it was denied) and host adapters
+        # fail closed, so a broken hook denied everything including `cao
+        # bootstrap`. It still speaks, though: writing product code before the
+        # selected native SDD workflow has actually run means `cao done` will
+        # refuse to close the Work Item, so every such write carries a reminder.
+        result: dict[str, Any] = {"decision": "allow"}
+        # CAO's own state narrow enough that it can never deadlock intake:
+        # `requirements/` stays writable (the Agent authors those), and CAO
+        # itself writes state through commands, not through this hook.
+        protected = write_targets_protected_state(raw)
+        if protected and tool_is_mutating(raw):
+            result = {
+                "decision": "deny",
+                "reason": (
+                    f"Do not edit CAO-managed state by hand ({', '.join(protected[:3])}). "
+                    f"{protected_state_advice(protected)}"
+                ),
+            }
+            print(json.dumps(native_hook_output(args.host, event, result), ensure_ascii=False))
+            return 0
+        if (
+            work and work.get("status") == "active"
+            and tool_is_mutating(raw)
+            and not write_targets_native_sdd_output(raw)
+        ):
+            workflow = ((work.get("sdd") or {}).get("workflow") or {})
+            unverified = workflow.get("unverified") or {}
+            execution = workflow.get("execution") or {}
+            if not execution.get("executed_at") and not unverified.get("allowed"):
+                name = workflow.get("name") or "<native workflow>"
+                result["additional_context"] = (
+                    f"CAO reminder: native SDD workflow `{name}` is selected but has NOT been executed. "
+                    f"Do not implement product code yourself instead of running it - `cao done` refuses "
+                    f"completion until the workflow has run and its artifacts are recorded. "
+                    f"Run the workflow now, then record it with `cao sdd workflow execute --work {work['id']} --command \"<command actually run>\"`."
+                )
         print(json.dumps(native_hook_output(args.host, event, result), ensure_ascii=False))
         return 0
 
@@ -3344,8 +4643,19 @@ def host_event(args: argparse.Namespace) -> int:
         return 0
 
     if event == "stop":
-        should_gate = bool(work and work.get("status") == "active" and str(raw.get("last_assistant_message") or "").strip())
-        if should_gate and re.search(r"(?i)\b(done|finished|completed|ready to merge)\b|已完成|完成|可以合并", str(raw.get("last_assistant_message") or "")):
+        # Hosts name this field differently. Accept the common variants so the
+        # completion gate is not silently skipped when a host omits one key.
+        stop_message = ""
+        for key in ("last_assistant_message", "lastAssistantMessage", "final_message", "message"):
+            value = raw.get(key)
+            if isinstance(value, dict):
+                value = value.get("text")
+            candidate = str(value or "").strip()
+            if candidate:
+                stop_message = candidate
+                break
+        should_gate = bool(work and work.get("status") == "active" and stop_message)
+        if should_gate and re.search(r"(?i)\b(done|finished|completed|ready to merge)\b|已完成|完成|可以合并", stop_message):
             completion = completion_status(repo, work)
             if not completion["ready"]:
                 # The host denied the stop, so the Session remains active.
@@ -3371,6 +4681,11 @@ def native_hook_output(host: str, event: str, result: dict[str, Any]) -> dict[st
     context = result.get("additional_context")
     if context:
         out["hookSpecificOutput"] = {"hookEventName": hook_name, "additionalContext": context}
+    if event == "pre_tool" and result.get("decision") != "deny":
+        # State the decision explicitly rather than staying silent, so hosts and
+        # tests can rely on a `permissionDecision` for every PreToolUse event.
+        out["hookSpecificOutput"] = {"hookEventName": hook_name, "permissionDecision": "allow"}
+        return out
     if result.get("decision") == "deny":
         if event == "pre_tool":
             out["hookSpecificOutput"] = {"hookEventName": hook_name, "permissionDecision": "deny", "permissionDecisionReason": result.get("reason") or "Blocked by CAO"}
@@ -3388,7 +4703,15 @@ def cmd_dashboard(args: argparse.Namespace) -> int:
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="cao", description="Coding Agent Orchestrator")
     sub = p.add_subparsers(dest="command", required=True)
-    sp = sub.add_parser("init"); sp.add_argument("--repo", default="."); sp.add_argument("--sdd", default=None); sp.add_argument("--language", default=None, help="User language / locale for conversation and all SDD artifacts, e.g. zh-CN or en-US"); sp.add_argument("--verify-script", action="append", default=None, help="Project verification script command; repeat for multiple scripts"); sp.add_argument("--verify-command", action="append", default=None, help=argparse.SUPPRESS); sp.add_argument("--force", action="store_true"); sp.set_defaults(fn=cmd_init)
+    sp = sub.add_parser("init"); sp.add_argument("--repo", default="."); sp.add_argument("--sdd", default=None); sp.add_argument("--language", default=None, help="User language / locale for conversation and all SDD artifacts, e.g. zh-CN or en-US"); sp.add_argument("--verify-script", action="append", default=None, help="Project verification script command; repeat for multiple scripts"); sp.add_argument("--verify-command", action="append", default=None, help=argparse.SUPPRESS); sp.add_argument("--host", choices=sorted(HOST_ADAPTER_META), default=None, help="Coding-agent host whose hooks are wired during initialization"); sp.add_argument("--force", action="store_true"); sp.set_defaults(fn=cmd_init)
+    host = sub.add_parser("host", help="Wire or inspect the coding-agent host hooks for this project")
+    host_sub = host.add_subparsers(dest="host_command", required=True)
+    sp = host_sub.add_parser("install", help="Install the host adapter (SessionStart/PreToolUse/Stop hooks)")
+    sp.add_argument("--repo", default="."); sp.add_argument("--host", choices=sorted(HOST_ADAPTER_META), default=None, help="Host to wire; auto-detected from the environment when omitted")
+    sp.set_defaults(fn=cmd_host)
+    sp = host_sub.add_parser("status", help="Show whether each host adapter is wired")
+    sp.add_argument("--repo", default="."); sp.add_argument("--host", choices=sorted(HOST_ADAPTER_META), default=None, help="Host to inspect; defaults to all")
+    sp.set_defaults(fn=cmd_host)
     sp = sub.add_parser("bootstrap"); sp.add_argument("--repo", default="."); sp.add_argument("--host", default=None, choices=["claude-code", "codex", "pi"]); sp.set_defaults(fn=cmd_bootstrap)
     sp = sub.add_parser("dashboard", help="Launch the read-only local orchestration dashboard")
     sp.add_argument("--repo", default=".", help="Project repository root")
@@ -3416,14 +4739,27 @@ def build_parser() -> argparse.ArgumentParser:
     workflow = sdd_sub.add_parser("workflow", help="Record and enforce native SDD workflow execution")
     workflow_sub = workflow.add_subparsers(dest="workflow_action", required=True)
     sp = workflow_sub.add_parser("select", help="Record the provider-native workflow before executing it")
-    sp.add_argument("--repo", default="."); sp.add_argument("--work"); sp.add_argument("--name", required=True); sp.add_argument("--entrypoint", required=True); sp.set_defaults(fn=cmd_sdd_workflow)
+    sp.add_argument("--repo", default="."); sp.add_argument("--work"); sp.add_argument("--name", required=True); sp.add_argument("--entrypoint", required=True)
+    sp.add_argument("--allow-unverified", action="store_true", help="Record a documented exception when the entrypoint cannot be verified; requires --reason")
+    sp.add_argument("--reason", default=None, help="Why this workflow cannot be verified natively; required with --allow-unverified")
+    sp.set_defaults(fn=cmd_sdd_workflow)
+    sp = workflow_sub.add_parser("execute", help="Record that the selected native workflow was actually executed")
+    sp.add_argument("--repo", default="."); sp.add_argument("--work"); sp.add_argument("--command", required=True, help="The command or skill invocation that was actually run")
+    sp.add_argument("--exit-code", type=int, default=0, help="Exit code returned by the executed workflow")
+    sp.add_argument("--output", default=None, help="Tail of the workflow output to keep as evidence")
+    sp.add_argument("--allow-unverified", action="store_true", help="Record a documented exception; requires --reason")
+    sp.add_argument("--reason", default=None, help="Why the executed command cannot be verified; required with --allow-unverified")
+    sp.set_defaults(fn=cmd_sdd_workflow)
     sp = workflow_sub.add_parser("complete", help="Record native workflow completion and actual output files")
-    sp.add_argument("--repo", default="."); sp.add_argument("--work"); sp.add_argument("--artifact", action="append", required=True, help="Existing repository-relative output file; repeat for each file"); sp.set_defaults(fn=cmd_sdd_workflow)
+    sp.add_argument("--repo", default="."); sp.add_argument("--work"); sp.add_argument("--artifact", action="append", required=True, help="Existing repository-relative output file; repeat for each file")
+    sp.add_argument("--allow-unverified", action="store_true", help="Record a documented exception when outputs fall outside the provider directory; requires --reason")
+    sp.add_argument("--reason", default=None, help="Why these outputs cannot be verified; required with --allow-unverified")
+    sp.set_defaults(fn=cmd_sdd_workflow)
     lifecycle = sub.add_parser("lifecycle", help="Inspect persisted CAO lifecycle events")
     lifecycle_sub = lifecycle.add_subparsers(dest="lifecycle_command", required=True)
     sp = lifecycle_sub.add_parser("events", help="List lifecycle events from native SDD reconciliation and CAO transitions")
     sp.add_argument("--repo", default="."); sp.add_argument("--work"); sp.add_argument("--limit", type=int, default=100); sp.set_defaults(fn=cmd_lifecycle_events)
-    sp = sub.add_parser("start"); sp.add_argument("--repo", default="."); sp.add_argument("--requirement"); sp.add_argument("--title", default=None, help="Human-readable Work Item title; overrides the requirement filename"); sp.add_argument("--sdd-ref"); sp.add_argument("--sdd-provider", choices=sorted(SDD_CATALOG)); sp.add_argument("--replace", action="store_true"); sp.add_argument("--reopen", action="store_true"); sp.set_defaults(fn=cmd_start)
+    sp = sub.add_parser("start"); sp.add_argument("--repo", default="."); sp.add_argument("--requirement"); sp.add_argument("--title", default=None, help="Human-readable Work Item title; overrides the requirement filename"); sp.add_argument("--sdd-ref"); sp.add_argument("--sdd-provider", choices=sorted(SDD_CATALOG)); sp.add_argument("--host", choices=["claude-code", "codex", "pi"], default=None, help="Current coding-agent host; used to attach the runtime Session"); sp.add_argument("--replace", action="store_true"); sp.add_argument("--reopen", action="store_true"); sp.set_defaults(fn=cmd_start)
     path = sub.add_parser("path", help="Assess and inspect the minimum-safe execution path")
     path_sub = path.add_subparsers(dest="path_command", required=True)
     sp = path_sub.add_parser("assess", help="Record an Agent's lightweight scope/risk assessment")
@@ -3438,6 +4774,16 @@ def build_parser() -> argparse.ArgumentParser:
     sp = path_sub.add_parser("show", help="Show the current Work Item's path assessment")
     sp.add_argument("--repo", default="."); sp.add_argument("--work")
     sp.set_defaults(fn=cmd_path_show)
+    gate = sub.add_parser("gate", help="Satisfy and inspect the execution gates of the selected path")
+    gate_sub = gate.add_subparsers(dest="gate_command", required=True)
+    sp = gate_sub.add_parser("satisfy", help="Record that a required gate has actually been satisfied")
+    sp.add_argument("--repo", default="."); sp.add_argument("--work"); sp.add_argument("--gate", required=True, help="Gate name from `cao path show`, e.g. scope_review")
+    sp.add_argument("--evidence", required=True, help="What was actually done to satisfy this gate")
+    sp.add_argument("--satisfied-by", default="agent", help="Who satisfied the gate")
+    sp.set_defaults(fn=cmd_gate)
+    sp = gate_sub.add_parser("show", help="Show the required gates and their current status")
+    sp.add_argument("--repo", default="."); sp.add_argument("--work")
+    sp.set_defaults(fn=cmd_gate)
     artifact = sub.add_parser("artifact", help="Manage SDD artifact references")
     artifact_sub = artifact.add_subparsers(dest="artifact_command", required=True)
     sp = artifact_sub.add_parser("add"); sp.add_argument("--repo", default="."); sp.add_argument("--work"); sp.add_argument("--path", required=True); sp.add_argument("--role"); sp.add_argument("--native-type", dest="native_type"); sp.add_argument("--native-ref", dest="native_ref"); sp.set_defaults(fn=cmd_artifact_add)
@@ -3454,13 +4800,19 @@ def build_parser() -> argparse.ArgumentParser:
     sp = sub.add_parser("block"); sp.add_argument("--repo", default="."); sp.add_argument("--work"); sp.add_argument("--reason", required=True); sp.add_argument("--resolution"); sp.add_argument("--suspend", action="store_true"); sp.set_defaults(fn=cmd_block)
     sp = sub.add_parser("unblock"); sp.add_argument("--repo", default="."); sp.add_argument("--work", required=True); sp.add_argument("--blocker"); sp.set_defaults(fn=cmd_unblock)
     sp = sub.add_parser("handoff", help="Create or inspect Handoff records"); sp.add_argument("handoff_action", nargs="?", choices=["list", "show"]); sp.add_argument("--repo", default="."); sp.add_argument("--work"); sp.add_argument("--session"); sp.add_argument("--host"); sp.add_argument("--reason", default="manual checkpoint"); sp.add_argument("--summary"); sp.add_argument("--end-session", action="store_true", help="End the referenced Session after creating the handoff"); sp.add_argument("--id", dest="handoff_id"); sp.add_argument("--limit", type=int, default=20); sp.set_defaults(fn=cmd_handoff)
+    sp = sub.add_parser("decisions", help="List recorded decisions for a Work Item"); sp.add_argument("--repo", default="."); sp.add_argument("--work"); sp.add_argument("--limit", type=int, default=50); sp.set_defaults(fn=cmd_decision_list)
     sessions = sub.add_parser("sessions", help="Inspect Agent Sessions")
     sessions_sub = sessions.add_subparsers(dest="sessions_command", required=True)
     sp = sessions_sub.add_parser("list"); sp.add_argument("--repo", default="."); sp.add_argument("--host", choices=["claude-code", "codex", "pi"]); sp.add_argument("--work"); sp.add_argument("--status", choices=["active", "ended"]); sp.add_argument("--stale-after-minutes", type=int, default=30); sp.set_defaults(fn=cmd_sessions_list)
     sp = sessions_sub.add_parser("show"); sp.add_argument("--repo", default="."); sp.add_argument("--id", required=True); sp.add_argument("--host", choices=["claude-code", "codex", "pi"]); sp.add_argument("--stale-after-minutes", type=int, default=30); sp.set_defaults(fn=cmd_sessions_show)
     sp = sub.add_parser("verify"); sp.add_argument("--repo", default="."); sp.add_argument("--work"); sp.add_argument("--script", action="append", help="One-off verification script command; repeat to run multiple scripts"); sp.add_argument("--command", action="append", help=argparse.SUPPRESS); sp.set_defaults(fn=cmd_verify)
     sp = sub.add_parser("done"); sp.add_argument("--repo", default="."); sp.add_argument("--work"); sp.set_defaults(fn=cmd_done)
+    sp = sub.add_parser("reopen", help="Reopen a completed Work Item that should not have been closed"); sp.add_argument("--repo", default="."); sp.add_argument("--work"); sp.add_argument("--reason", help="Why the completion was wrong, e.g. which part of the requirement is missing"); sp.set_defaults(fn=cmd_reopen)
     sp = sub.add_parser("context"); sp.add_argument("--repo", default="."); sp.add_argument("--work"); sp.add_argument("--session"); sp.add_argument("--host", default="unknown"); sp.set_defaults(fn=cmd_context)
+    requirement = sub.add_parser("requirement", help="Allocate numbered CAO requirement documents")
+    requirement_sub = requirement.add_subparsers(dest="requirement_action")
+    sp = requirement_sub.add_parser("next-id", help="Reserve the next numbered requirement path"); sp.add_argument("--repo", default="."); sp.add_argument("--title", help="Requirement title, used for the filename slug"); sp.add_argument("--date", help="Override the date segment (YYYY-MM-DD)"); sp.set_defaults(fn=cmd_requirement_next_id)
+    sp = requirement_sub.add_parser("list", help="List CAO requirement documents"); sp.add_argument("--repo", default="."); sp.add_argument("--limit", type=int, default=50); sp.set_defaults(fn=cmd_requirement_list)
     sp = sub.add_parser("host-event"); sp.add_argument("--repo", default="."); sp.add_argument("--host", default="unknown"); sp.set_defaults(fn=host_event)
     return p
 

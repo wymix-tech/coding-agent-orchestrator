@@ -49,7 +49,9 @@ class SessionModelTests(unittest.TestCase):
             init_repo(repo, with_work=True)
             rc, out, _ = run(repo, "host-event", "--host", "codex", payload={"event": "session_start", "session_id": "native-1"})
             self.assertEqual(rc, 0)
-            sessions = sessions_in(repo)
+            # `cao start` attaches the current runtime Session as well, so scope
+            # the assertion to the host-session identity under test.
+            sessions = [s for s in sessions_in(repo) if s["host_session_id"] == "native-1"]
             self.assertEqual(len(sessions), 1)
             session = sessions[0]
             self.assertEqual(session["schema_version"], 2)
