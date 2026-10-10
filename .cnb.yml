@@ -12,3 +12,43 @@ $:
           script: export PATH="/root/.pi/agent/bin:$PATH" && pi install npm:pi-mcp-adapter && pi install npm:pi-subagents && pi install npm:@juicesharp/rpiv-todo && pi install npm:@juicesharp/rpiv-ask-user-question
         - name: create demo source
           script: mkdir -p /tmp/demo_bak/.agents/skills/coding-agent-orchestrator
+        - name: add create demo func
+          script: |
+            cat <<'EOF' >> ~/.zshrc
+
+            # 创建 Coding Agent 测试项目
+            create_agent_demo() {
+              if [[ $# -ne 1 || -z "$1" ]]; then
+                echo "用法: create_agent_demo <文件夹名称>"
+                return 1
+              fi
+            
+              local name="$1"
+              local src="/tmp/demo_bak"
+              local dest="/tmp/$name"
+              local skills_dir="$dest/.agents/skills/coding-agent-orchestrator"
+
+              if [[ ! -d "$src" ]]; then
+                echo "错误: 源目录不存在: $src"
+                return 1
+              fi
+
+              if [[ ! -d /workspace ]]; then
+                echo "错误: 源目录不存在: /workspace"
+                return 1
+              fi
+
+              if [[ -e "$dest" ]]; then
+                echo "错误: 目标路径已存在: $dest"
+                return 1
+              fi
+
+              cp -R "$src" "$dest" || return 1
+              mkdir -p "$skills_dir" || return 1
+              cp -R /workspace/. "$skills_dir/" || return 1
+            
+              echo "创建成功: $dest"
+              echo "技能文件已复制到: $skills_dir"
+            }
+            EOF
+            source ~/.zshrc
