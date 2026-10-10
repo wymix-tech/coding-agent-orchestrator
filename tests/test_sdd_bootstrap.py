@@ -36,8 +36,13 @@ class SddBootstrapTests(unittest.TestCase):
             self.assertEqual(rc, 0)
             self.assertEqual(out["mode"], "sdd_select")
             self.assertEqual(out["sdd"]["status"], "not_installed")
+            self.assertTrue(out["selection_required"])
+            self.assertEqual(out["selection_policy"], "explicit_user_choice_only")
             self.assertEqual({x["provider"] for x in out["options"]}, {"openspec", "bmad", "speckit"})
-            self.assertIn("sdd install", out["next"]["instruction"])
+            instruction = out["next"]["instruction"]
+            self.assertIn("wait for their answer", instruction)
+            self.assertIn("Do not run any provider install/select command before the user answers", instruction)
+            self.assertIn("If the interaction channel cannot ask the user, stop", instruction)
 
     def test_start_is_blocked_when_sdd_is_missing(self):
         td, repo = self.init_repo()

@@ -21,7 +21,7 @@ cao bootstrap
 
 Bootstrap initializes CAO state when needed, verifies that a project SDD is installed, reports the active/resumable Work Item, and returns the next action.
 It never creates a Work Item and never reruns requirement intake because an Agent or session changed.
-If no SDD is installed, bootstrap stops before coding, asks the user to choose an SDD, and requires the Agent to complete installation before proceeding.
+If no SDD is installed, bootstrap stops before coding. If `cao bootstrap` reports `mode: sdd_select`, this is a hard authorization boundary, not a recommendation. You MUST ask the user directly which provider they want and wait for an explicit answer before running any `cao sdd install` or `cao sdd select` command. Never choose a provider yourself based on a recommendation label, popularity, task type, installed global CLI, or personal preference. Do not treat `auto` as a user choice. If the current interface cannot ask the user, stop and report `SDD_SELECTION_REQUIRED`; do not install anything or begin coding. A recommendation is informational only and is never the default or authorization. After the user explicitly chooses, install only that provider and rerun bootstrap.
 
 ## Resume before restarting work
 
@@ -48,7 +48,8 @@ Useful commands:
 ```bash
 cao bootstrap
 cao sdd list
-cao sdd install --provider <openspec|bmad|speckit> --yes
+# Run install only after the user explicitly chooses a provider:
+cao sdd install --provider <user-chosen-provider> --yes
 # Spec Kit:
 cao sdd install --provider speckit --host <claude-code|codex|pi> --yes
 # Or use any supported Spec Kit integration:

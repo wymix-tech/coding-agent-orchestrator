@@ -72,6 +72,10 @@ _PREVIEW_EXTENSIONS = {
     ".tsx", ".js", ".jsx", ".java", ".kt", ".go", ".rs", ".sh", ".feature",
 }
 _PREVIEW_MAX_BYTES = 512 * 1024
+# The SDD artifact catalog is a document workbench, not a source-code browser.
+# Keep this allowlist narrower than preview support: code/config files may be
+# previewable elsewhere, but must never be classified as native SDD documents.
+_SDD_DOCUMENT_EXTENSIONS = {".md", ".mdx", ".rst", ".adoc", ".txt"}
 
 
 def _safe_repo_file(repo: Path, raw_path: str | None) -> tuple[Path | None, str | None]:
@@ -137,6 +141,12 @@ def build_sdd_artifact_catalog(repo: Path, work: dict[str, Any]) -> list[dict[st
     def add_discovered(path_value: str, role: str | None = None, title: str | None = None, source: str = "provider") -> None:
         safe, relative = _safe_repo_file(repo, path_value)
         if safe is None or relative is None or not safe.is_file():
+            return
+        # A file being registered or located beneath a provider directory does
+        # not make it an SDD artifact. Exclude implementation source, tests,
+        # configuration, and other non-document files for every provider,
+        # including explicit native_ref and `cao artifact add` references.
+        if safe.suffix.lower() not in _SDD_DOCUMENT_EXTENSIONS:
             return
         inferred_role, inferred_title = _artifact_label(relative)
         discovered[relative] = {
@@ -209,10 +219,28 @@ def build_sdd_artifact_catalog(repo: Path, work: dict[str, Any]) -> list[dict[st
             else:
                 add_expected("spec", "Spec / 需求规格", f"{feature_rel}/specs/", "生成后显示 change 下的规格文件")
         else:
-            add_expected("proposal", "Proposal / 变更提案", None, "由 native_ref 指定 openspec/changes/<change>")
-            add_expected("spec", "Spec / 需求规格", None, "由 native_ref 指定 change 目录下的 specs/")
-            add_expected("design", "Design / 设计方案", None, "由 native_ref 指定 openspec/changes/<change>")
-            add_expected("plan", "Tasks / 实施任务", None, "由 native_ref 指定 openspec/changes/<change>")
+            # A Work Item may not have native_ref yet, and OpenSpec repositories can
+            # contain archived/older changes alongside the active change. Do not make
+            # discovery depend on there being exactly one directory: surface real
+            # native artifacts from change folders until an explicit anchor is known.
+            changes_root = repo / "openspec/changes"
+            candidates = sorted(
+                (p for p in changes_root.iterdir() if p.is_dir() and not p.name.startswith(".")),
+                key=lambda p: p.stat().st_mtime,
+                reverse=True,
+            ) if changes_root.is_dir() else []
+            identity = _slug(str(work.get("id") or ""))
+            title_slug = _slug(str(work.get("title") or ""))
+            matched = [p for p in candidates if p.name.lower() in {identity, title_slug} or identity.startswith(p.name.lower() + "-") or title_slug.startswith(p.name.lower() + "-")]
+            scan_roots = matched or candidates
+            for change_dir in scan_roots:
+                for file in sorted(change_dir.rglob("*.md")):
+                    add_discovered(file.relative_to(repo).as_posix(), source="provider-discovery")
+            if not discovered:
+                add_expected("proposal", "Proposal / 变更提案", None, "未定位到 OpenSpec change；生成文件后会自动扫描")
+                add_expected("spec", "Spec / 需求规格", None, "未定位到 OpenSpec change；生成文件后会自动扫描")
+                add_expected("design", "Design / 设计方案", None, "未定位到 OpenSpec change；生成文件后会自动扫描")
+                add_expected("tasks", "Tasks / 实施任务", None, "未定位到 OpenSpec change；生成文件后会自动扫描")
     elif provider == "speckit":
         feature_root, feature_rel = choose_feature_root(Path("specs"), "specs")
         # Spec Kit commonly stores spec.md, plan.md and tasks.md under specs/<feature>/.
@@ -226,9 +254,24 @@ def build_sdd_artifact_catalog(repo: Path, work: dict[str, Any]) -> list[dict[st
             for file in sorted(feature_root.rglob("*.md")) if feature_root else []:
                 add_discovered(file.relative_to(repo).as_posix())
         else:
-            add_expected("spec", "Spec / 需求规格", None, "由 native_ref 指定 specs/<feature>/")
-            add_expected("design", "Plan / 技术计划", None, "由 native_ref 指定 specs/<feature>/")
-            add_expected("plan", "Tasks / 实施任务", None, "由 native_ref 指定 specs/<feature>/")
+            # As with other native SDDs, discover real files even when CAO has not
+            # yet persisted a feature-specific native_ref or several feature folders exist.
+            specs_root = repo / "specs"
+            feature_dirs = sorted(
+                (p for p in specs_root.iterdir() if p.is_dir() and not p.name.startswith(".")),
+                key=lambda p: p.stat().st_mtime,
+                reverse=True,
+            ) if specs_root.is_dir() else []
+            identity = _slug(str(work.get("id") or ""))
+            title_slug = _slug(str(work.get("title") or ""))
+            matched = [p for p in feature_dirs if p.name.lower() in {identity, title_slug} or identity.startswith(p.name.lower() + "-") or title_slug.startswith(p.name.lower() + "-")]
+            for feature_dir in (matched or feature_dirs):
+                for file in sorted(feature_dir.rglob("*.md")):
+                    add_discovered(file.relative_to(repo).as_posix(), source="provider-discovery")
+            if not discovered:
+                add_expected("spec", "Spec / 需求规格", None, "未定位到 Spec Kit feature；生成文件后会自动扫描")
+                add_expected("design", "Plan / 技术计划", None, "未定位到 Spec Kit feature；生成文件后会自动扫描")
+                add_expected("tasks", "Tasks / 实施任务", None, "未定位到 Spec Kit feature；生成文件后会自动扫描")
         constitution = repo / ".specify/memory/constitution.md"
         if constitution.is_file():
             add_discovered(constitution.relative_to(repo).as_posix(), "constitution", "Constitution / 项目原则")
@@ -369,6 +412,37 @@ def preview_artifact(repo: Path, work_id: str, artifact_path: str) -> dict[str, 
         content = path.read_text(encoding="utf-8", errors="replace")
     return {"ok": True, "work_item_id": work_id, "path": relative, "title": item.get("title"), "role": item.get("role"), "content": content, "size": size, "sha256": item.get("sha256"), "status": item.get("status")}
 
+def infer_execution_phase(work: dict[str, Any], artifact_catalog: list[dict[str, Any]]) -> dict[str, str]:
+    """Infer a dashboard phase from common CAO signals and native SDD artifact roles.
+
+    Explicit later CAO checkpoints win. If the stored step is stale at planning,
+    the presence of native task/story artifacts is a cross-provider signal that the
+    native workflow has reached implementation.
+    """
+    execution = work.get("execution") if isinstance(work.get("execution"), dict) else {}
+    step = str(execution.get("step") or "").lower()
+    if work.get("status") == "completed" or re.search(r"done|complete|closed", step):
+        return {"id": "done", "source": "cao-state"}
+    if re.search(r"verif|test", step):
+        return {"id": "verification", "source": "cao-state"}
+    if re.search(r"review|audit", step):
+        return {"id": "review", "source": "cao-state"}
+    if re.search(r"implement|code|build|bugfix", step):
+        return {"id": "implementation", "source": "cao-state"}
+
+    generated_roles = {
+        str(item.get("role") or "").lower()
+        for item in artifact_catalog
+        if item.get("exists") and item.get("status") in {"generated", "confirmed"}
+    }
+    workflow = ((work.get("sdd") or {}).get("workflow") or {})
+    if generated_roles.intersection({"tasks", "story"}) or workflow.get("status") == "completed":
+        return {"id": "implementation", "source": "native-sdd-artifacts"}
+    if not work.get("path_assessment"):
+        return {"id": "path", "source": "cao-state"}
+    return {"id": "planning", "source": "cao-state"}
+
+
 def build_dashboard_overview(repo: Path, stale_after_minutes: int = 30) -> dict[str, Any]:
     """Build a read-only projection from CAO's existing JSON state files."""
     from scripts.cao import (
@@ -429,6 +503,8 @@ def build_dashboard_overview(repo: Path, stale_after_minutes: int = 30) -> dict[
         sdd = work.get("sdd") or {}
         execution = work.get("execution") or {}
         resume = work.get("resume") or {}
+        artifact_catalog = build_sdd_artifact_catalog(repo, work)
+        current_phase = infer_execution_phase(work, artifact_catalog)
         work_items.append({
             "id": work["id"],
             "title": work.get("title") or work["id"],
@@ -441,6 +517,8 @@ def build_dashboard_overview(repo: Path, stale_after_minutes: int = 30) -> dict[
             "execution": {
                 "step": execution.get("step") or "not recorded",
                 "next_action": execution.get("next_action") or {},
+                "current_phase": current_phase["id"],
+                "phase_source": current_phase["source"],
             },
             "path_assessment": assessment,
             "path_state": assessment_state,
@@ -457,7 +535,7 @@ def build_dashboard_overview(repo: Path, stale_after_minutes: int = 30) -> dict[
             "handoff_count": handoff_counts.get(work["id"], 0),
             "latest_handoff_id": (latest_by_work.get(work["id"]) or {}).get("id"),
             "artifact_count": len(sdd.get("artifacts") or []),
-            "artifact_catalog": build_sdd_artifact_catalog(repo, work),
+            "artifact_catalog": artifact_catalog,
             "decision_count": len(work.get("decisions") or []),
             "last_agent": summary.get("last_agent"),
         })

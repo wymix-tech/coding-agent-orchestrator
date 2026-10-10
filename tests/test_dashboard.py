@@ -96,6 +96,10 @@ class DashboardTests(unittest.TestCase):
         self.assertIn("back-overview", html)
         self.assertIn("/api/overview", html)
         self.assertIn("LOCAL · CONTROLLED ACTIONS", html)
+        # Auto-refresh calls renderAll() -> showPage(currentPage); scrolling to top
+        # must happen only on an actual page transition, not on every refresh.
+        self.assertIn("const pageChanged=page!==currentPage", html)
+        self.assertIn("if(detail&&pageChanged)window.scrollTo({top:0,behavior:'smooth'})", html)
 
 
     def test_openspec_artifact_catalog_shows_generated_missing_and_confirmed(self):
@@ -116,6 +120,73 @@ class DashboardTests(unittest.TestCase):
         spec_row = next(row for row in catalog if row.get("path") == spec_path)
         self.assertEqual(spec_row["status"], "confirmed")
         self.assertEqual(spec_row["confirmed_by"], "tester")
+
+    def test_openspec_discovers_native_artifacts_without_native_ref_and_with_multiple_changes(self):
+        self.work["sdd"] = {"provider": "openspec", "native_ref": "", "artifacts": []}
+        self.work["execution"]["step"] = "path-selected"
+        self.work["path_assessment"] = {"profile": "standard", "reason": "test"}
+        (self.repo / ".orchestrator/work" / f"{self.work_id}.json").write_text(json.dumps(self.work), encoding="utf-8")
+        old = self.repo / "openspec/changes/older-feature"
+        active = self.repo / "openspec/changes/new-auth-flow"
+        old.mkdir(parents=True)
+        active.mkdir(parents=True)
+        (old / "proposal.md").write_text("# Old proposal", encoding="utf-8")
+        (active / "proposal.md").write_text("# Auth flow", encoding="utf-8")
+        (active / "tasks.md").write_text("# Tasks\n- [ ] Implement auth", encoding="utf-8")
+        catalog = build_sdd_artifact_catalog(self.repo, self.work)
+        paths = {row.get("path") for row in catalog}
+        self.assertIn("openspec/changes/new-auth-flow/tasks.md", paths)
+        data = build_dashboard_overview(self.repo)
+        item = data["work_items"][0]
+        self.assertEqual(item["execution"]["current_phase"], "implementation")
+        self.assertEqual(item["execution"]["phase_source"], "native-sdd-artifacts")
+
+    def test_speckit_discovers_tasks_without_native_ref(self):
+        self.work["sdd"] = {"provider": "speckit", "native_ref": "", "artifacts": []}
+        feature = self.repo / "specs/new-feature"
+        feature.mkdir(parents=True)
+        (feature / "spec.md").write_text("# Spec", encoding="utf-8")
+        (feature / "tasks.md").write_text("# Tasks\n- [ ] Implement feature", encoding="utf-8")
+        catalog = build_sdd_artifact_catalog(self.repo, self.work)
+        found = {row.get("path") for row in catalog}
+        self.assertIn("specs/new-feature/spec.md", found)
+        self.assertIn("specs/new-feature/tasks.md", found)
+
+    def test_sdd_catalog_excludes_source_code_for_every_discovery_path(self):
+        change = self.repo / "openspec/changes/login"
+        change.mkdir(parents=True)
+        (change / "proposal.md").write_text("# Proposal", encoding="utf-8")
+        (change / "Implementation.java").write_text("class Implementation {}", encoding="utf-8")
+        source = self.repo / "src/login.py"
+        source.parent.mkdir(parents=True)
+        source.write_text("print('implementation')", encoding="utf-8")
+
+        # Provider directory scanning must not expose implementation source.
+        catalog = build_sdd_artifact_catalog(self.repo, self.work)
+        paths = {row.get("path") for row in catalog}
+        self.assertIn("openspec/changes/login/proposal.md", paths)
+        self.assertNotIn("openspec/changes/login/Implementation.java", paths)
+
+        # Explicit native_ref and manually registered refs are filtered too.
+        self.work["sdd"] = {
+            "provider": "custom", "native_ref": "src/login.py",
+            "artifacts": [{"path": "src/login.py", "role": "implementation"}],
+        }
+        catalog = build_sdd_artifact_catalog(self.repo, self.work)
+        self.assertFalse(any(row.get("path") == "src/login.py" for row in catalog))
+        with self.assertRaisesRegex(ValueError, "ARTIFACT_NOT_DISCOVERED_OR_MISSING"):
+            preview_artifact(self.repo, self.work_id, "src/login.py")
+
+    def test_speckit_catalog_excludes_code_even_inside_feature_directory(self):
+        self.work["sdd"] = {"provider": "speckit", "native_ref": "", "artifacts": []}
+        feature = self.repo / "specs/login"
+        feature.mkdir(parents=True)
+        (feature / "spec.md").write_text("# Spec", encoding="utf-8")
+        (feature / "main.ts").write_text("export const login = true", encoding="utf-8")
+        catalog = build_sdd_artifact_catalog(self.repo, self.work)
+        paths = {row.get("path") for row in catalog}
+        self.assertIn("specs/login/spec.md", paths)
+        self.assertNotIn("specs/login/main.ts", paths)
 
     def test_artifact_confirmation_becomes_generated_when_file_changes(self):
         change = self.repo / "openspec/changes/login"

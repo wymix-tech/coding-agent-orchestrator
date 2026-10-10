@@ -1797,8 +1797,10 @@ def cmd_bootstrap(args: argparse.Namespace) -> int:
             "mode": "sdd_select",
             "work_item": work_summary(work) if work else None,
             "sdd": {"status": "not_installed", "selected": selected},
+            "selection_required": True,
+            "selection_policy": "explicit_user_choice_only",
             "options": sdd_options(status),
-            "next": action("human", "No SDD is installed in this project. Ask the user to choose OpenSpec, BMad Method, or GitHub Spec Kit, then run `cao sdd install --provider <provider> --yes`; for BMad pass `--host` or explicit `--tools`, and for Spec Kit pass `--host` or `--integration`. Do not start or modify production code before installation completes."),
+            "next": action("human", "HARD STOP: no SDD is installed and no provider is authorized. Ask the user to explicitly choose OpenSpec, BMad Method, or GitHub Spec Kit and wait for their answer. Do not infer a choice from recommendations, popularity, existing global CLIs, Agent preference, or task type. Do not run any provider install/select command before the user answers. After an explicit answer only, run `cao sdd install --provider <chosen-provider> --yes`; for BMad pass `--host` or explicit `--tools`, and for Spec Kit pass `--host` or `--integration`. If the interaction channel cannot ask the user, stop with SDD_SELECTION_REQUIRED. Do not start or modify production code before installation completes."),
         }
         next_out["project_instructions"] = project_instructions
         print(json.dumps(next_out, ensure_ascii=False, indent=2))
@@ -1830,8 +1832,10 @@ def cmd_bootstrap(args: argparse.Namespace) -> int:
             "mode": "sdd_select",
             "work_item": work_summary(work) if work else None,
             "sdd": {"status": "multiple_installed", "selected": "auto"},
+            "selection_required": True,
+            "selection_policy": "explicit_user_choice_only",
             "options": sdd_options(status),
-            "next": action("human", "Multiple SDDs are installed. Ask the user to choose one, then run `cao sdd select --provider <provider>` and bootstrap again."),
+            "next": action("human", "HARD STOP: multiple SDDs are installed and no provider is authorized. Ask the user to explicitly choose one and wait for their answer. Do not infer a choice from recommendations, task type, or Agent preference. Only after the user answers, run `cao sdd select --provider <chosen-provider>` and bootstrap again. If unable to ask, stop with SDD_SELECTION_REQUIRED."),
             "language_configuration": language_configuration,
         }
         next_out["project_instructions"] = project_instructions
