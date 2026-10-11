@@ -28,6 +28,8 @@ if __package__ in (None, ""):
     if _source_root not in sys.path:
         sys.path.insert(0, _source_root)
 
+from scripts.state_store import atomic_json, repo_transaction
+
 ORCH = Path(".orchestrator")
 CONFIG_REL = ORCH / "config.json"
 INDEX_REL = ORCH / "index.json"
@@ -863,8 +865,7 @@ def load_json(path: Path, default: Any) -> Any:
 
 
 def save_json(path: Path, value: Any) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(value, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    atomic_json(path, value)
 
 
 def deep_merge(dst: dict[str, Any], src: dict[str, Any]) -> None:
