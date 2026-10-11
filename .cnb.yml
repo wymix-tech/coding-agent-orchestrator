@@ -51,18 +51,7 @@ $:
               echo "技能文件已复制到: $skills_dir"
             }
             EOF
-方案：用 git-sync 插件把 CNB 的变更同步到 GitHub
 
-CNB 官方插件市场里有一个专用插件 tencentcom/git-sync，专门用于「跨 Git 平台同步代码」，正好覆盖你的需求：CNB 各仓库的实时变更 → GitHub。
-
-核心思路
-
-触发条件：使用 **（匹配所有分支）的 push 事件，这样任意分支一有提交就触发同步，实现「实时」。如果你的仓库还有 Tag，也可以加 tag_push。
-同步动作：调用 tencentcom/git-sync 插件，把当前仓库推送到 GitHub 对应仓库。
-凭据安全：GitHub 的用户名和访问令牌（Access Token）不要明文写进 .cnb.yml，而是放进 CNB 密钥仓库文件，再用 imports 注入环境变量。
-配置文件
-
-yaml
 # .cnb.yml
 "**": # 匹配所有分支，任意分支 push 即同步
   push:
