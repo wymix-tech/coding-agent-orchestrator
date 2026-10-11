@@ -79,7 +79,7 @@ def ready_to_close(repo: pathlib.Path, provider: str, artifact: str, profile: st
         plan(repo)
     rc, out = run(repo, "verify", "--work", wid)
     assert rc == 0, f"verify failed: {out}"
-    for gate in ("scope_review", "tests", "implementation_review"):
+    for gate in ("scope_review", "implementation_review"):
         rc, out = run(repo, "gate", "satisfy", "--gate", gate, "--evidence", "done", "--work", wid)
         assert rc == 0, f"gate {gate} failed: {out}"
     return wid

@@ -8,6 +8,35 @@ SNAPSHOT_KEYS = ("requirement_sha256", "code_snapshot", "rules_snapshot",
                  "verification_config_sha256", "assessment_revision")
 
 
+def normalize_scripts(raw: list) -> list[dict]:
+    if not isinstance(raw, list):
+        raise ValueError("verification.scripts must be a list")
+    result, names = [], set()
+    for index, item in enumerate(raw, 1):
+        if isinstance(item, str):
+            item = {"command": item}
+        if not isinstance(item, dict):
+            raise ValueError("VERIFICATION_SCRIPT_INVALID")
+        command = str(item.get("command") or "").strip()
+        name = str(item.get("name") or f"script-{index}").strip()
+        required = item.get("required", True)
+        gates = item.get("gates", [])
+        if not command or not name or name in names or not isinstance(required, bool):
+            raise ValueError("VERIFICATION_SCRIPT_INVALID")
+        if not isinstance(gates, list) or any(not isinstance(gate, str) or gate != "tests" for gate in gates):
+            raise ValueError("VERIFICATION_GATE_INVALID")
+        names.add(name)
+        result.append({"name": name, "command": command, "required": required,
+                       "gates": sorted(set(gates))})
+    return result
+
+
+def tests_satisfied(verification: dict) -> bool:
+    results = [result for result in verification.get("results", [])
+               if result.get("required") and "tests" in result.get("gates", [])]
+    return bool(results) and all(result.get("status") == "passed" for result in results)
+
+
 def acceptance_hash(scripts: list[dict]) -> str:
     encoded = json.dumps(scripts, ensure_ascii=False, sort_keys=True,
                          separators=(",", ":")).encode("utf-8")

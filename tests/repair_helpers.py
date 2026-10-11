@@ -30,13 +30,9 @@ class RepairCase(unittest.TestCase):
         argv = [sys.executable, "-m", "unittest", "discover", "-s", "acceptance-tests", "-v"]
         self.test_command = subprocess.list2cmdline(argv) if os.name == "nt" else shlex.join(argv)
         rc, out = self.run_cli("init", "--host", "codex", "--sdd", "bmad",
-                               "--verify-script", self.test_command)
+                               "--test-script", self.test_command)
         self.assertEqual(rc, 0, out)
         (self.repo / "_bmad").mkdir()
-        cfg_path = self.repo / ".orchestrator/config.json"
-        cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
-        cfg["verification"]["scripts"][0]["gates"] = ["tests"]
-        cfg_path.write_text(json.dumps(cfg), encoding="utf-8")
 
     def run_cli(self, *args, payload=None) -> tuple[int, dict]:
         env = dict(os.environ)

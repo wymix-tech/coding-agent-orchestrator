@@ -132,7 +132,7 @@ class RepairTests(unittest.TestCase):
     def test_legacy_single_verification_command_is_migrated(self):
         cfg = {"verification": {"command": "mvn -q test"}}
         commands = cao.verification_scripts(cfg)
-        self.assertEqual(commands, [{"name": "default", "command": "mvn -q test", "required": True}])
+        self.assertEqual(commands, [{"name": "default", "command": "mvn -q test", "required": True, "gates": []}])
 
     def test_legacy_command_list_is_migrated_to_scripts(self):
         cfg = {

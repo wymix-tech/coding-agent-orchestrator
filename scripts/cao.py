@@ -32,7 +32,7 @@ if __package__ in (None, ""):
 from scripts.state_store import atomic_json, backup_once, repo_transaction
 from scripts.completion_policy import (
     acceptance_hash, anchor_acceptance, reset_requirement, evidence_matches,
-    verification_fresh as bound_verification_fresh,
+    verification_fresh as bound_verification_fresh, normalize_scripts, tests_satisfied,
 )
 
 
@@ -214,7 +214,7 @@ PLACEHOLDER_ENTRYPOINT_COMMANDS = {"echo", "true", "false", ":", "printf", "cat"
 
 # Gates CAO can derive from its own state. Everything else must be marked
 # explicitly with `cao gate satisfy` because only the Agent can observe it.
-AUTO_DERIVED_GATES = {"verification", "targeted_verification"}
+AUTO_DERIVED_GATES = {"verification", "targeted_verification", "tests"}
 
 
 def provider_output_dirs(provider: str) -> list[str]:
@@ -362,8 +362,8 @@ def gate_is_auto_derived(name: str) -> bool:
 def gate_state(work: dict[str, Any], verification_fresh: bool) -> dict[str, Any]:
     """Split the assessment's required gates into satisfied and pending ones.
 
-    Verification-flavoured gates are derived from CAO's own snapshot freshness.
-    Every other gate (scope review, implementation review, ...) can only be
+    Verification gates require fresh configured evidence; tests additionally need
+    successful required scripts declaring that capability. Other gates can only be
     observed by the Agent, so it must be marked with `cao gate satisfy`.
     """
     assessment = work.get("path_assessment") or {}
@@ -372,7 +372,9 @@ def gate_state(work: dict[str, Any], verification_fresh: bool) -> dict[str, Any]
     satisfied: list[str] = []
     pending: list[str] = []
     for gate in gates:
-        if gate_is_auto_derived(gate):
+        if gate == "tests":
+            ok = bool(verification_fresh and tests_satisfied(work.get("verification") or {}))
+        elif gate_is_auto_derived(gate):
             ok = bool(verification_fresh)
         else:
             evidence = status.get(gate) or {}
@@ -932,46 +934,11 @@ def verification_scripts(cfg: dict[str, Any]) -> list[dict[str, Any]]:
         raw = verification.get("commands") or []
         if not raw and verification.get("command"):
             raw = [{"name": "default", "command": str(verification["command"]), "required": True}]
-    if not isinstance(raw, list):
-        raise ValueError("verification.scripts must be a list")
-
-    scripts: list[dict[str, Any]] = []
-    for index, item in enumerate(raw, 1):
-        if isinstance(item, str):
-            command = item.strip()
-            name = f"script-{index}"
-            required = True
-        elif isinstance(item, dict):
-            command = str(item.get("command") or "").strip()
-            name = str(item.get("name") or f"script-{index}").strip()
-            required = bool(item.get("required", True))
-        else:
-            raise ValueError(f"verification.scripts[{index - 1}] must be an object or string")
-        if not command:
-            raise ValueError(f"verification.scripts[{index - 1}] has an empty command")
-        scripts.append({"name": name or f"script-{index}", "command": command, "required": required})
-    return scripts
+    return normalize_scripts(raw)
 
 
 # Compatibility alias for internal callers and older integrations.
 verification_commands = verification_scripts
-
-# Matches a command that actually executes a test suite, as opposed to a build
-# or compile step. Searched as a substring of the whole command, so compound
-# commands (`cd app && mvn test`) match too.
-TEST_COMMAND_PATTERN = re.compile(
-    r"(^|[\s;&])(mvn|maven)(?:\s+[^;&]*)?\s+test(\s|$)|gradlew?(?:\s+[^;&]*)?\s+test(\s|$)|"
-    r"pytest|python[0-9.]*\s+-m\s+(pytest|unittest)|tox(\s|$)|"
-    r"npm\s+(run\s+)?t?est|yarn\s+test|pnpm\s+test|vitest|jest(\s|$)|"
-    r"go\s+test|cargo\s+test|dotnet\s+test|ctest|make\s+test|phpunit|rspec",
-    re.IGNORECASE,
-)
-
-
-def looks_like_test_command(command: str) -> bool:
-    """Whether a verification script actually runs tests rather than only builds."""
-    return bool(TEST_COMMAND_PATTERN.search(str(command or "")))
-
 
 LANGUAGE_LABELS = {
     "zh-cn": "Simplified Chinese",
@@ -2550,6 +2517,14 @@ def provider_pending_plan_items(repo: Path, provider: str | None) -> list[str]:
     return pending
 
 
+def verification_inputs(repo: Path, work: dict, cfg: dict) -> dict:
+    return {"requirement_sha256": sha256_file(repo / work["requirement"]["path"]),
+            "code_snapshot": code_snapshot(repo, {work["requirement"]["path"]}),
+            "rules_snapshot": rules_snapshot(repo, cfg),
+            "verification_config_sha256": verification_snapshot(cfg),
+            "assessment_revision": (work.get("path_assessment") or {}).get("revision")}
+
+
 def completion_status(repo: Path, work: dict[str, Any] | None) -> dict[str, Any]:
     if not work:
         return {"ready": False, "reason": "no work item"}
@@ -2567,18 +2542,15 @@ def completion_status(repo: Path, work: dict[str, Any] | None) -> dict[str, Any]
     if not path_state["ready"]:
         return {"ready": False, "reason": path_state["reason"]}
     cfg = config(repo)
-    code_sha = code_snapshot(repo, {work["requirement"]["path"]})
-    rules_sha = rules_snapshot(repo, cfg)
-    verification_cfg_sha = verification_snapshot(cfg)
+    current = verification_inputs(repo, work, cfg)
+    code_sha = current["code_snapshot"]
+    rules_sha = current["rules_snapshot"]
+    verification_cfg_sha = current["verification_config_sha256"]
     anchor = work.get("acceptance") or {}
     if anchor.get("version") != 2 or anchor.get("config_sha256") != verification_cfg_sha:
         return {"ready": False, "reason": "verification standard is missing or changed",
                 "next": f"Review the standard, then run `cao reopen --work {work['id']} --reanchor --reason \"<why>\"`."}
-    fresh = bound_verification_fresh(work, {
-        "requirement_sha256": req_sha, "code_snapshot": code_sha, "rules_snapshot": rules_sha,
-        "verification_config_sha256": verification_cfg_sha,
-        "assessment_revision": (work.get("path_assessment") or {}).get("revision"),
-    })
+    fresh = bound_verification_fresh(work, current)
 
     # The native-workflow contract applies to every profile, including `light`.
     # Exempting `light` let an Agent go straight from path selection to
@@ -3609,15 +3581,14 @@ def _initialize_state(args: argparse.Namespace):
     if getattr(args, "language", None):
         cfg.setdefault("language", {})["user"] = args.language.strip()
     verify_scripts = args.verify_script or args.verify_command or []
-    if verify_scripts:
-        cfg["verification"]["scripts"] = [
-            {"name": f"script-{i}", "command": str(command).strip(), "required": True}
-            for i, command in enumerate(verify_scripts, 1) if str(command).strip()
-        ]
-        # When the acceptance bar was set. `cao verify` refuses to pass a Work
-        # Item whose verification standard was configured after the Work Item
-        # started: an Agent that only compiles at the end must not be able to
-        # define "compiles = verified" and then close its own ticket (demo11).
+    test_scripts = getattr(args, "test_script", None) or []
+    if verify_scripts or test_scripts:
+        general = [{"name": f"script-{i}", "command": str(command).strip(), "required": True}
+                   for i, command in enumerate(verify_scripts, 1)]
+        tests = [{"name": f"test-{i}", "command": str(command).strip(), "required": True, "gates": ["tests"]}
+                 for i, command in enumerate(test_scripts, 1)]
+        cfg["verification"]["scripts"] = normalize_scripts(general + tests)
+        # Informational time only; accepted configuration hashes are authoritative.
         cfg["verification"]["configured_at"] = now()
     save_json(cfg_path, cfg)
     index = load_index(repo)
@@ -3901,7 +3872,7 @@ def cmd_path_assess(args: argparse.Namespace) -> int:
             "agent",
             f"Apply the {assessment['profile']} path using {provider}'s native workflow. {assessment['provider_guidance']} "
             + (f"Before implementation, select and record the native workflow with `cao sdd workflow select --name \"<native workflow name>\" --entrypoint \"<native workflow command or skill>\" --work {work['id']}`. Then execute it and record the run with `cao sdd workflow execute --command \"<command actually run>\" --exit-code <code> --work {work['id']}`. Finally record its real output files with `cao sdd workflow complete --work {work['id']} --artifact <repo-relative-file>` (repeat --artifact for each produced native artifact). Outputs must live under the provider's own directory; product source files are not SDD artifacts. `cao done` blocks until this contract is satisfied. " if provider in SDD_CATALOG else "")
-            + f"Required gates: {gate_text}. Mark each observed gate with `cao gate satisfy --gate <gate> --evidence \"<what was done>\"`; `cao done` blocks until all are satisfied. Reassess only if the scope, risk, or requirement materially changes.",
+            + f"Required gates: {gate_text}. Record observed manual reviews with `cao gate satisfy --gate <gate> --evidence \"<what was done>\"`; verification and tests gates come from fresh configured scripts, not manual claims. `cao done` blocks until all are satisfied. Reassess only if the scope, risk, or requirement materially changes.",
             profile=assessment["profile"],
             provider=provider,
         )
@@ -3983,7 +3954,7 @@ def cmd_gate(args: argparse.Namespace) -> int:
             "gates": gate_state(work, False),
         }, ensure_ascii=False, indent=2))
         return 0
-    fresh = (work.get("verification") or {}).get("status") == "passed"
+    fresh = bound_verification_fresh(work, verification_inputs(repo, work, config(repo)))
     print(json.dumps({
         "ok": True,
         "work_item": work_summary(work),
@@ -4302,17 +4273,17 @@ def _prepare_verification(args: argparse.Namespace):
     cfg = config(repo)
     cfg_scripts = verification_scripts(cfg)
     cli_values = args.script or args.command or []
-    cli_override = [
+    cli_override = normalize_scripts([
         {"name": f"script-{i}", "command": str(command).strip(), "required": True}
         for i, command in enumerate(cli_values, 1) if str(command).strip()
-    ]
+    ])
     source = "cli" if cli_override else "config"
     scripts = cli_override or cfg_scripts
     if not scripts:
         print(json.dumps({
             "ok": False,
             "error": "VERIFICATION_SCRIPT_REQUIRED",
-            "next": "Configure verification.scripts in .orchestrator/config.json"
+            "next": "Configure required verification with `cao init --test-script \"<real test command>\" --force`, then explicitly re-anchor the Work Item."
         }, ensure_ascii=False, indent=2)); return 2
 
     if source == "config":
@@ -4325,31 +4296,45 @@ def _prepare_verification(args: argparse.Namespace):
                 "reason": "The configured verification standard is not the Work Item's accepted standard.",
                 "next": f"Review the standard, then run `cao reopen --work {work['id']} --reanchor --reason \"<why>\"`; re-earn gates and run `cao verify`.",
             }, ensure_ascii=False, indent=2)); return 2
-        # A standard that never runs the tests cannot satisfy a `tests` gate:
-        # compiling is not testing (demo11 satisfied `tests` with "mvnw clean
-        # compile succeeded").
         required_gates = ((work.get("path_assessment") or {}).get("required_gates")) or []
-        if "tests" in required_gates and not any(looks_like_test_command(item["command"]) for item in scripts):
+        if "tests" in required_gates and not any(item["required"] and "tests" in item["gates"] for item in scripts):
             print(json.dumps({
-                "ok": False,
-                "error": "VERIFICATION_DOES_NOT_RUN_TESTS",
-                "reason": "This Work Item requires a `tests` gate, but no verification script runs tests (only build/compile commands were configured).",
-                "next": "Add a real test command to verification.scripts in .orchestrator/config.json, for example `mvn test`, `gradle test`, `pytest`, or `npm test`.",
+                "ok": False, "error": "VERIFICATION_GATE_UNBOUND",
+                "reason": "The tests gate needs a required verification script explicitly declaring gates: [tests].",
+                "next": "Use `cao init --test-script \"<real test command>\" --force`, then `cao reopen --reanchor --reason \"<why>\"` and rerun `cao verify`.",
             }, ensure_ascii=False, indent=2)); return 2
 
     req = repo / work["requirement"]["path"]
     if not req.exists():
         print(json.dumps({"ok": False, "error": "REQUIREMENT_FILE_MISSING"}, ensure_ascii=False, indent=2)); return 2
-    req_sha = sha256_file(req); code_sha = code_snapshot(repo, {work["requirement"]["path"]}); rules_sha = rules_snapshot(repo, cfg)
-    verification_cfg_sha = verification_snapshot(cfg)
-    return repo, work["id"], scripts, source, req_sha, code_sha, rules_sha, verification_cfg_sha, (work.get("path_assessment") or {}).get("revision")
+    return repo, work["id"], scripts, source, verification_inputs(repo, work, cfg)
+
+
+def commit_verification(repo, wid, inputs, scripts, results, source, started):
+    with repo_transaction(repo):
+        work = load_work(repo, wid)
+        if work is None:
+            raise RuntimeError("WORK_ITEM_NOT_FOUND")
+        current = verification_inputs(repo, work, config(repo))
+        changed = current != inputs
+        status = overall_verification_status(results)
+        verification = {"version": 2, "source": source, "at": started, **inputs,
+                        "scripts": scripts, "results": results,
+                        "status": "stale" if changed else status, "run_status": status}
+        work["verification"] = verification
+        if not changed:
+            work["execution"]["step"] = "verification"
+            work["execution"]["next_action"] = action("agent", "Run `cao done`." if status == "passed" else "Fix verification and rerun `cao verify`.")
+            work["resume"]["summary"] = "Verification passed." if status == "passed" else f"Verification {status}. See verification.results for script status and reasons."
+        save_work(repo, work)
+        return verification
 
 
 def cmd_verify(args: argparse.Namespace) -> int:
     prepared = _prepare_verification(args)
     if isinstance(prepared, int):
         return prepared
-    repo, wid, scripts, source, req_sha, code_sha, rules_sha, verification_cfg_sha, assessment_revision = prepared
+    repo, wid, scripts, source, inputs = prepared
     started = now()
     results: list[dict[str, Any]] = []
     for item in scripts:
@@ -4369,6 +4354,7 @@ def cmd_verify(args: argparse.Namespace) -> int:
             "name": item["name"],
             "command": command,
             "required": item["required"],
+            "gates": list(item["gates"]),
             "exit_code": exit_code,
             "status": status_for_script,
             "reason": verification_reason(stdout, stderr, status_for_script),
@@ -4377,31 +4363,13 @@ def cmd_verify(args: argparse.Namespace) -> int:
             "stderr_tail": stderr[-4000:],
         })
 
-    status = overall_verification_status(results)
-    verification = {
-        "version": 2,
-        "assessment_revision": assessment_revision,
-        "status": status,
-        "source": source,
-        "scripts": scripts,
-        "results": results,
-        "at": started,
-        "requirement_sha256": req_sha,
-        "code_snapshot": code_sha,
-        "rules_snapshot": rules_sha,
-        "verification_config_sha256": verification_cfg_sha if source == "config" else None,
-    }
+    verification = commit_verification(repo, wid, inputs, scripts, results, source, started)
+    status = verification["status"]
     with repo_transaction(repo):
         work = load_work(repo, wid)
-        if work is None:
-            raise RuntimeError("WORK_ITEM_NOT_FOUND")
-        work["verification"] = verification
-        work["execution"]["step"] = "verification"
-        work["execution"]["next_action"] = action("agent", "Run `cao done` after verification passes and remains fresh." if status == "passed" else "Fix or unblock the verification script(s), then run `cao verify`.")
-        work["resume"]["summary"] = "Verification passed." if status == "passed" else f"Verification {status}. See verification.results for script status and reasons."
-        save_work(repo, work)
-    cao_exit = {"passed": 0, "failed": 1, "blocked": 2, "error": 3}[status]
-    print(json.dumps({"ok": status == "passed", "verification": verification, "next": work["execution"]["next_action"]}, ensure_ascii=False, indent=2)); return cao_exit
+        next_action = work["execution"]["next_action"]
+    cao_exit = {"passed": 0, "failed": 1, "blocked": 2, "error": 3, "stale": 2}[status]
+    print(json.dumps({"ok": status == "passed", "verification": verification, "next": next_action}, ensure_ascii=False, indent=2)); return cao_exit
 
 
 def sdd_transition(repo: Path, target: str) -> dict[str, Any] | None:
@@ -4980,7 +4948,7 @@ def cmd_dashboard(args: argparse.Namespace) -> int:
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="cao", description="Coding Agent Orchestrator")
     sub = p.add_subparsers(dest="command", required=True)
-    sp = sub.add_parser("init"); sp.add_argument("--repo", default="."); sp.add_argument("--sdd", default=None); sp.add_argument("--language", default=None, help="User language / locale for conversation and all SDD artifacts, e.g. zh-CN or en-US"); sp.add_argument("--verify-script", action="append", default=None, help="Project verification script command; repeat for multiple scripts"); sp.add_argument("--verify-command", action="append", default=None, help=argparse.SUPPRESS); sp.add_argument("--host", choices=sorted(HOST_ADAPTER_META), default=None, help="Coding-agent host whose hooks are wired during initialization"); sp.add_argument("--force", action="store_true"); sp.set_defaults(fn=cmd_init)
+    sp = sub.add_parser("init"); sp.add_argument("--repo", default="."); sp.add_argument("--sdd", default=None); sp.add_argument("--language", default=None, help="User language / locale for conversation and all SDD artifacts, e.g. zh-CN or en-US"); sp.add_argument("--verify-script", action="append", default=None, help="Project verification script command; repeat for multiple scripts"); sp.add_argument("--test-script", action="append", default=None, help="Required verification script declaring the tests gate; repeat for multiple test suites"); sp.add_argument("--verify-command", action="append", default=None, help=argparse.SUPPRESS); sp.add_argument("--host", choices=sorted(HOST_ADAPTER_META), default=None, help="Coding-agent host whose hooks are wired during initialization"); sp.add_argument("--force", action="store_true"); sp.set_defaults(fn=cmd_init)
     host = sub.add_parser("host", help="Wire or inspect the coding-agent host hooks for this project")
     host_sub = host.add_subparsers(dest="host_command", required=True)
     sp = host_sub.add_parser("install", help="Install the host adapter (SessionStart/PreToolUse/Stop hooks)")
@@ -5084,7 +5052,7 @@ def build_parser() -> argparse.ArgumentParser:
     sp = sessions_sub.add_parser("show"); sp.add_argument("--repo", default="."); sp.add_argument("--id", required=True); sp.add_argument("--host", choices=["claude-code", "codex", "pi"]); sp.add_argument("--stale-after-minutes", type=int, default=30); sp.set_defaults(fn=cmd_sessions_show)
     sp = sub.add_parser("verify"); sp.add_argument("--repo", default="."); sp.add_argument("--work"); sp.add_argument("--script", action="append", help="One-off verification script command; repeat to run multiple scripts"); sp.add_argument("--command", action="append", help=argparse.SUPPRESS); sp.set_defaults(fn=cmd_verify)
     sp = sub.add_parser("done"); sp.add_argument("--repo", default="."); sp.add_argument("--work"); sp.set_defaults(fn=cmd_done)
-    sp = sub.add_parser("reopen", help="Reopen a completed Work Item that should not have been closed"); sp.add_argument("--repo", default="."); sp.add_argument("--work"); sp.add_argument("--reason", help="Why the completion was wrong, e.g. which part of the requirement is missing"); sp.add_argument("--reanchor", action="store_true", help="Also restart the verification clock, so an already-active Work Item whose standard was set after it started can be verified again"); sp.set_defaults(fn=cmd_reopen)
+    sp = sub.add_parser("reopen", help="Reopen a completed Work Item that should not have been closed"); sp.add_argument("--repo", default="."); sp.add_argument("--work"); sp.add_argument("--reason", help="Why the completion was wrong, e.g. which part of the requirement is missing"); sp.add_argument("--reanchor", action="store_true", help="Explicitly accept the current verification standard and clear gates/verification; also supports active Work Items"); sp.set_defaults(fn=cmd_reopen)
     sp = sub.add_parser("context"); sp.add_argument("--repo", default="."); sp.add_argument("--work"); sp.add_argument("--session"); sp.add_argument("--host", default="unknown"); sp.set_defaults(fn=cmd_context)
     requirement = sub.add_parser("requirement", help="Allocate numbered CAO requirement documents")
     requirement_sub = requirement.add_subparsers(dest="requirement_action")

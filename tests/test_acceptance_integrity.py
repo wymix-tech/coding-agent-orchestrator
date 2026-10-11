@@ -95,7 +95,7 @@ class StandardMustCoverRequiredGates(unittest.TestCase):
             standard_path(repo, wid)
             rc, out = run(repo, "verify", "--work", wid)
             self.assertEqual(rc, 2, out)
-            self.assertEqual(out["error"], "VERIFICATION_DOES_NOT_RUN_TESTS")
+            self.assertEqual(out["error"], "VERIFICATION_GATE_UNBOUND")
 
     def test_a_real_test_command_satisfies_the_tests_gate_requirement(self):
         with tempfile.TemporaryDirectory() as td:
@@ -127,7 +127,7 @@ class Reopen(unittest.TestCase):
         standard_path(repo, wid)
         rc, out = run(repo, "verify", "--work", wid)
         self.assertEqual(rc, 0, out)
-        for gate in ("scope_review", "tests", "implementation_review"):
+        for gate in ("scope_review", "implementation_review"):
             run(repo, "gate", "satisfy", "--gate", gate, "--evidence", "observed and reviewed", "--work", wid)
         rc, out = run(repo, "done", "--work", wid)
         self.assertEqual(rc, 0, out)
@@ -161,7 +161,7 @@ class Reopen(unittest.TestCase):
             run(repo, "reopen", "--work", wid, "--reason", "incomplete")
             rc, out = run(repo, "verify", "--work", wid)
             self.assertEqual(rc, 0, out)
-            for gate in ("scope_review", "tests", "implementation_review"):
+            for gate in ("scope_review", "implementation_review"):
                 run(repo, "gate", "satisfy", "--gate", gate, "--evidence", "re-reviewed", "--work", wid)
             rc, out = run(repo, "done", "--work", wid)
             self.assertEqual(rc, 0, out)
@@ -195,7 +195,7 @@ class Reanchor(unittest.TestCase):
             repo = pathlib.Path(td)
             wid = active_work(repo)
             standard_path(repo, wid)
-            for gate in ("scope_review", "tests", "implementation_review"):
+            for gate in ("scope_review", "implementation_review"):
                 run(repo, "gate", "satisfy", "--gate", gate, "--evidence", "reviewed", "--work", wid)
             change_test_standard(repo)
             rc, out = run(repo, "reopen", "--work", wid, "--reason", "re-anchoring", "--reanchor")
@@ -213,7 +213,7 @@ class Reanchor(unittest.TestCase):
             self.assertEqual(rc, 0, out)
             rc, out = run(repo, "verify", "--work", wid)
             self.assertEqual(rc, 2, out)
-            self.assertEqual(out["error"], "VERIFICATION_DOES_NOT_RUN_TESTS")
+            self.assertEqual(out["error"], "VERIFICATION_GATE_UNBOUND")
 
     def test_reanchor_records_itself_in_the_lifecycle(self):
         with tempfile.TemporaryDirectory() as td:

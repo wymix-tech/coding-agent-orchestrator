@@ -235,7 +235,7 @@ class CoreTests(unittest.TestCase):
             rc, out, _ = run(repo, "done")
             self.assertEqual(rc, 2)
             self.assertEqual(out["reason"], "required execution gates are not satisfied")
-            for gate in ("scope_review", "tests", "implementation_review"):
+            for gate in ("scope_review", "implementation_review"):
                 rc, out, _ = run(repo, "gate", "satisfy", "--gate", gate, "--evidence", f"{gate} performed")
                 self.assertEqual(rc, 0)
             rc, out, _ = run(repo, "done")
@@ -386,8 +386,8 @@ class CoreTests(unittest.TestCase):
             self.assertEqual(
                 cfg["verification"]["scripts"],
                 [
-                    {"name": "script-1", "command": "./verify-unit.sh", "required": True},
-                    {"name": "script-2", "command": "./verify-coverage.sh", "required": True},
+                    {"name": "script-1", "command": "./verify-unit.sh", "required": True, "gates": []},
+                    {"name": "script-2", "command": "./verify-coverage.sh", "required": True, "gates": []},
                 ],
             )
 
