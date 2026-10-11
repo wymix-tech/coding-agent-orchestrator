@@ -7,7 +7,7 @@ import threading
 import unittest
 from http.server import ThreadingHTTPServer
 from urllib.error import HTTPError
-from urllib.request import Request, urlopen
+from urllib.request import ProxyHandler, Request, build_opener
 
 from scripts.cao import cmd_artifact_refresh, load_work, stable_session_id
 from scripts.dashboard import build_dashboard_overview, build_sdd_artifact_catalog, confirm_artifact, make_handler, preview_artifact, validate_bind_host
@@ -19,6 +19,7 @@ class DashboardTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.repo = pathlib.Path(self.temp.name)
+        self.urlopen = build_opener(ProxyHandler({})).open
         state = self.repo / ".orchestrator"
         for name in ("work", "sessions", "handoffs"):
             (state / name).mkdir(parents=True, exist_ok=True)
@@ -221,13 +222,13 @@ class DashboardTests(unittest.TestCase):
         try:
             from urllib.parse import urlencode
             query = urlencode({"work_item_id": self.work_id, "path": "openspec/changes/login/proposal.md"})
-            with urlopen(base + "/api/artifact-preview?" + query, timeout=5) as response:
+            with self.urlopen(base + "/api/artifact-preview?" + query, timeout=5) as response:
                 preview = json.loads(response.read())
                 self.assertEqual(response.status, 200)
                 self.assertIn("Native proposal", preview["content"])
             body = json.dumps({"work_item_id": self.work_id, "path": "openspec/changes/login/proposal.md"}).encode("utf-8")
             request = Request(base + "/api/artifact/confirm", data=body, method="POST", headers={"Content-Type": "application/json", "Origin": base})
-            with urlopen(request, timeout=5) as response:
+            with self.urlopen(request, timeout=5) as response:
                 result = json.loads(response.read())
                 self.assertEqual(response.status, 200)
                 self.assertTrue(result["ok"])
@@ -285,7 +286,7 @@ class DashboardTests(unittest.TestCase):
             body = json.dumps({"work_item_id": self.work_id, "path": "openspec/changes/login/proposal.md"}).encode("utf-8")
             request = Request(base + "/api/artifact/confirm", data=body, method="POST", headers={"Content-Type": "application/json", "Origin": base})
             with self.assertRaises(HTTPError) as raised:
-                urlopen(request, timeout=5)
+                self.urlopen(request, timeout=5)
             self.assertEqual(raised.exception.code, 403)
         finally:
             server.shutdown()
@@ -323,7 +324,7 @@ class DashboardTests(unittest.TestCase):
             body = json.dumps({"work_item_id": self.work_id, "path": "openspec/changes/login/proposal.md"}).encode("utf-8")
             request = Request(base + "/api/artifact/confirm", data=body, method="POST", headers={"Content-Type": "application/json", "Origin": "http://attacker.example", "Host": "attacker.example"})
             with self.assertRaises(HTTPError) as raised:
-                urlopen(request, timeout=5)
+                self.urlopen(request, timeout=5)
             self.assertEqual(raised.exception.code, 403)
         finally:
             server.shutdown()
@@ -345,7 +346,7 @@ class DashboardTests(unittest.TestCase):
         try:
             request = Request(base + "/api/overview", headers={"Host": "attacker.example"})
             with self.assertRaises(HTTPError) as raised:
-                urlopen(request, timeout=5)
+                self.urlopen(request, timeout=5)
             self.assertEqual(raised.exception.code, 403)
         finally:
             server.shutdown()
@@ -358,17 +359,17 @@ class DashboardTests(unittest.TestCase):
         thread.start()
         base = f"http://127.0.0.1:{server.server_address[1]}"
         try:
-            with urlopen(base + "/", timeout=5) as response:
+            with self.urlopen(base + "/", timeout=5) as response:
                 page = response.read().decode("utf-8")
                 self.assertEqual(response.status, 200)
                 self.assertIn("window.CAO_REFRESH_SECONDS=5", page)
-            with urlopen(base + "/api/overview", timeout=5) as response:
+            with self.urlopen(base + "/api/overview", timeout=5) as response:
                 data = json.loads(response.read())
                 self.assertEqual(response.status, 200)
                 self.assertEqual(data["work_items"][0]["id"], self.work_id)
             request = Request(base + "/api/overview", method="POST")
             with self.assertRaises(HTTPError) as raised:
-                urlopen(request, timeout=5)
+                self.urlopen(request, timeout=5)
             self.assertEqual(raised.exception.code, 405)
         finally:
             server.shutdown()
