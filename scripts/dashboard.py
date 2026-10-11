@@ -12,6 +12,8 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlparse, urlsplit
 
+from scripts.cao import locked_repo
+
 
 def dashboard_html_path() -> Path:
     """Locate the dashboard page in a source checkout or installed wheel."""
@@ -372,6 +374,7 @@ def build_sdd_artifact_catalog(repo: Path, work: dict[str, Any]) -> list[dict[st
     return rows[:150]
 
 
+@locked_repo
 def confirm_artifact(repo: Path, work_id: str, artifact_path: str, confirmed_by: str = "dashboard") -> dict[str, Any]:
     """Record an explicit human confirmation against the current file hash."""
     from scripts.cao import load_work, mark_artifact_confirmed
@@ -443,6 +446,7 @@ def infer_execution_phase(work: dict[str, Any], artifact_catalog: list[dict[str,
     return {"id": "planning", "source": "cao-state"}
 
 
+@locked_repo
 def build_dashboard_overview(repo: Path, stale_after_minutes: int = 30) -> dict[str, Any]:
     """Build a read-only projection from CAO's existing JSON state files."""
     from scripts.cao import (

@@ -15,8 +15,9 @@ import sys
 import sysconfig
 import time
 import uuid
+from functools import wraps
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 # When invoked as `python scripts/cao.py`, Python puts only the `scripts/`
 # directory on sys.path. Dashboard helpers import the `scripts` package, so
@@ -29,6 +30,23 @@ if __package__ in (None, ""):
         sys.path.insert(0, _source_root)
 
 from scripts.state_store import atomic_json, repo_transaction
+
+
+def locked_command(fn):
+    @wraps(fn)
+    def call(args):
+        with repo_transaction(repo_root(args.repo)):
+            return fn(args)
+    return call
+
+
+def locked_repo(fn):
+    @wraps(fn)
+    def call(repo, *args, **kwargs):
+        with repo_transaction(repo):
+            return fn(repo, *args, **kwargs)
+    return call
+
 
 ORCH = Path(".orchestrator")
 CONFIG_REL = ORCH / "config.json"
@@ -749,6 +767,7 @@ def sdd_options(status: dict[str, Any]) -> list[dict[str, Any]]:
     return options
 
 
+@locked_repo
 def select_sdd_provider(repo: Path, provider: str) -> None:
     if provider not in SDD_CATALOG:
         raise ValueError(f"Unsupported SDD provider: {provider}")
@@ -975,6 +994,7 @@ LANGUAGE_POLICY_START = "CAO_LANGUAGE_POLICY_START"
 LANGUAGE_POLICY_END = "CAO_LANGUAGE_POLICY_END"
 
 
+@locked_repo
 def ensure_language_preference(repo: Path) -> str:
     """Persist the default user-language preference into existing CAO configs."""
     path = repo / CONFIG_REL
@@ -1373,6 +1393,7 @@ def cmd_language_show(args: argparse.Namespace) -> int:
     return 0
 
 
+@locked_command
 def cmd_language_set(args: argparse.Namespace) -> int:
     repo = repo_root(args.repo)
     ensure_initialized(repo)
@@ -1387,6 +1408,7 @@ def cmd_language_set(args: argparse.Namespace) -> int:
     return 0 if not result["failures"] else 1
 
 
+@locked_command
 def cmd_language_apply(args: argparse.Namespace) -> int:
     repo = repo_root(args.repo)
     ensure_initialized(repo)
@@ -1632,7 +1654,27 @@ def empty_index() -> dict[str, Any]:
 
 
 def load_index(repo: Path) -> dict[str, Any]:
-    return load_json(repo / INDEX_REL, empty_index())
+    return recover_index(repo)
+
+
+@locked_repo
+def recover_index(repo: Path) -> dict[str, Any]:
+    """Rebuild a missing, corrupt or stale projection from authoritative Work Items."""
+    works = [load_json(p, None) for p in sorted((repo / WORK_DIR).glob("*.json"))]
+    works = [work for work in works if isinstance(work, dict)]
+    active = [work["id"] for work in works if work.get("status") == "active"]
+    projection = {"version": 1, "active_work": active[0] if len(active) == 1 else None,
+                  "work_items": [work_summary(work) for work in works]}
+    try:
+        index = load_json(repo / INDEX_REL, None)
+    except (json.JSONDecodeError, UnicodeError):
+        index = None
+    if not isinstance(index, dict) or any(index.get(key) != value for key, value in projection.items()):
+        save_index(repo, projection)
+        index = projection
+    if len(active) > 1:
+        raise RuntimeError("MULTIPLE_ACTIVE_WORK_ITEMS: " + ",".join(active))
+    return index
 
 
 def save_index(repo: Path, index: dict[str, Any]) -> None:
@@ -1646,22 +1688,40 @@ def load_work(repo: Path, work_id: str) -> dict[str, Any] | None:
 
 
 def sync_index_for_work(repo: Path, work: dict[str, Any]) -> None:
-    """Project a Work Item into index.json after every Work Item mutation."""
-    index = load_index(repo)
-    items = [item for item in index.get("work_items", []) if item.get("id") != work.get("id")]
-    items.append(work_summary(work))
-    index["work_items"] = items
-    if work.get("status") == "active":
-        index["active_work"] = work["id"]
-    elif index.get("active_work") == work.get("id"):
-        index["active_work"] = None
-    save_index(repo, index)
+    """Project committed authoritative records; never trust an old active pointer."""
+    recover_index(repo)
 
 
+@locked_repo
 def save_work(repo: Path, work: dict[str, Any]) -> None:
-    work["updated_at"] = now()
-    save_json(work_path(repo, work["id"]), work)
+    current = load_work(repo, work["id"])
+    revision = int((current or {}).get("state_revision", 0))
+    if int(work.get("state_revision", 0)) != revision:
+        raise RuntimeError("STALE_WORK_REVISION")
+    saved = {**work, "state_revision": revision + 1, "updated_at": now()}
+    save_json(work_path(repo, work["id"]), saved)
+    # Advance the caller only after authority commits, even if projection fails.
+    work.update(saved)
     sync_index_for_work(repo, work)
+
+
+@locked_repo
+def mutate_work(repo: Path, wid: str, update: Callable[[dict], None]) -> dict:
+    work = load_work(repo, wid)
+    if work is None:
+        raise RuntimeError("WORK_ITEM_NOT_FOUND")
+    update(work)
+    save_work(repo, work)
+    return work
+
+
+def _refresh_work(repo: Path, work: dict[str, Any]) -> None:
+    """Helpers modify fresh authority, not a caller's potentially stale snapshot."""
+    fresh = load_work(repo, work["id"])
+    if fresh is None:
+        raise RuntimeError("WORK_ITEM_NOT_FOUND")
+    work.clear()
+    work.update(fresh)
 
 
 def _slug(value: str) -> str:
@@ -1830,6 +1890,7 @@ def list_lifecycle_events(repo: Path, work_id: str | None = None, limit: int = 1
     return events[-max(1, limit):][::-1]
 
 
+@locked_repo
 def reconcile_native_sdd_state(repo: Path, work: dict[str, Any]) -> bool:
     """Reconcile a Work Item with its work-specific native SDD evidence and emit durable events.
 
@@ -1837,6 +1898,7 @@ def reconcile_native_sdd_state(repo: Path, work: dict[str, Any]) -> bool:
     never means execution has started. Provider-native status/task progress is required for phase
     projection. Native completion advances CAO to review, never directly to closed/done.
     """
+    _refresh_work(repo, work)
     sdd = work.get("sdd") if isinstance(work.get("sdd"), dict) else {}
     provider = str(sdd.get("provider") or "").lower()
     if provider not in {"bmad", "openspec", "speckit"} or work.get("status") not in {"active", "suspended"}:
@@ -2067,6 +2129,7 @@ def list_sessions(repo: Path) -> list[dict[str, Any]]:
     return sorted(found.values(), key=lambda s: (s.get("last_event_at") or 0, s.get("id") or ""), reverse=True)
 
 
+@locked_repo
 def update_session_event(
     repo: Path,
     session_ref: str,
@@ -2077,6 +2140,8 @@ def update_session_event(
     kind: str = "primary",
     parent_session_id: str | None = None,
 ) -> dict[str, Any]:
+    if work:
+        _refresh_work(repo, work)
     session = load_session(repo, session_ref, host=host)
     if session is None:
         return register_session(repo, work, session_ref, host, event=event, kind=kind, parent_session_id=parent_session_id)
@@ -2109,6 +2174,7 @@ def update_session_event(
     return session
 
 
+@locked_repo
 def touch_session(repo: Path, session_ref: str, event: str, work: dict[str, Any] | None = None, host: str | None = None) -> dict[str, Any] | None:
     session = load_session(repo, session_ref, host=host)
     if not session:
@@ -2121,6 +2187,7 @@ def touch_session(repo: Path, session_ref: str, event: str, work: dict[str, Any]
     return session
 
 
+@locked_repo
 def end_session(repo: Path, session_ref: str, host: str | None, reason: str, event: str = "stop") -> dict[str, Any] | None:
     session = load_session(repo, session_ref, host=host)
     if not session:
@@ -2582,6 +2649,7 @@ def render_context(repo: Path, work: dict[str, Any] | None, *, session_id: str |
     return "\n".join(lines)
 
 
+@locked_repo
 def register_session(
     repo: Path,
     work: dict[str, Any] | None,
@@ -2593,6 +2661,8 @@ def register_session(
     parent_session_id: str | None = None,
 ) -> dict[str, Any]:
     """Create or reattach a Session using the host-native ID as its lookup key."""
+    if work:
+        _refresh_work(repo, work)
     ts = now()
     existing = load_session(repo, session_id, host=host)
     previous_internal_id = existing.get("id") if existing else None
@@ -2653,7 +2723,9 @@ def handoff_identity(handoff: dict[str, Any]) -> dict[str, Any]:
     return {key: handoff.get(key) for key in HANDOFF_IDENTITY_FIELDS}
 
 
+@locked_repo
 def create_handoff(repo: Path, work: dict[str, Any], session_id: str | None, host: str | None, reason: str = "session stop") -> dict[str, Any]:
+    _refresh_work(repo, work)
     session = load_session(repo, session_id, host=host) if session_id else None
     existing_records = list_handoff_records(repo, work["id"])
     sequence = max((int(item.get("sequence", 0) or 0) for item in existing_records), default=0) + 1
@@ -2709,6 +2781,7 @@ def ensure_initialized(repo: Path) -> None:
         raise RuntimeError("Project is not initialized. Run `cao init` first.")
 
 
+@locked_command
 def cmd_requirement_next_id(args: argparse.Namespace) -> int:
     """Allocate the next numbered requirement path without writing any content.
 
@@ -2758,6 +2831,7 @@ def cmd_requirement_list(args: argparse.Namespace) -> int:
     return 0
 
 
+@locked_command
 def cmd_bootstrap(args: argparse.Namespace) -> int:
     """Return the always-on startup context for an Agent.
 
@@ -2941,6 +3015,7 @@ def cmd_sdd_list(args: argparse.Namespace) -> int:
     return 0
 
 
+@locked_command
 def cmd_sdd_select(args: argparse.Namespace) -> int:
     repo = repo_root(args.repo); ensure_initialized(repo)
     detected = detect_sdd(repo, args.provider)
@@ -3191,6 +3266,7 @@ def record_workflow_unverified(repo: Path, work: dict[str, Any], provider: str, 
     })
 
 
+@locked_command
 def cmd_sdd_workflow(args: argparse.Namespace) -> int:
     repo = repo_root(args.repo); ensure_initialized(repo)
     work = resolve_work(repo, args.work)
@@ -3342,6 +3418,7 @@ def artifact_reference(repo: Path, value: str, role: str | None = None, native_t
     }
 
 
+@locked_command
 def cmd_artifact_add(args: argparse.Namespace) -> int:
     repo = repo_root(args.repo); ensure_initialized(repo)
     work = resolve_work(repo, args.work)
@@ -3358,8 +3435,10 @@ def cmd_artifact_add(args: argparse.Namespace) -> int:
     print(json.dumps({"ok": True, "artifact": ref, "work_item": work_summary(work)}, ensure_ascii=False, indent=2)); return 0
 
 
+@locked_repo
 def mark_artifact_confirmed(repo: Path, work: dict[str, Any], value: str, confirmed_by: str = "user") -> dict[str, Any]:
     """Record explicit confirmation for the current content hash of a native artifact."""
+    _refresh_work(repo, work)
     sdd = work.setdefault("sdd", {})
     artifacts = sdd.setdefault("artifacts", [])
     role = None
@@ -3379,6 +3458,7 @@ def mark_artifact_confirmed(repo: Path, work: dict[str, Any], value: str, confir
     return ref
 
 
+@locked_command
 def cmd_artifact_confirm(args: argparse.Namespace) -> int:
     repo = repo_root(args.repo); ensure_initialized(repo)
     work = resolve_work(repo, args.work)
@@ -3399,6 +3479,7 @@ def cmd_artifact_list(args: argparse.Namespace) -> int:
     print(json.dumps({"ok": True, "work_item": work["id"], "artifacts": work.get("sdd", {}).get("artifacts", [])}, ensure_ascii=False, indent=2)); return 0
 
 
+@locked_command
 def cmd_artifact_remove(args: argparse.Namespace) -> int:
     repo = repo_root(args.repo); ensure_initialized(repo)
     work = resolve_work(repo, args.work)
@@ -3412,6 +3493,7 @@ def cmd_artifact_remove(args: argparse.Namespace) -> int:
     print(json.dumps({"ok": True, "removed": before - len(work["sdd"]["artifacts"]), "artifacts": work["sdd"]["artifacts"]}, ensure_ascii=False, indent=2)); return 0
 
 
+@locked_command
 def cmd_artifact_refresh(args: argparse.Namespace) -> int:
     repo = repo_root(args.repo); ensure_initialized(repo)
     work = resolve_work(repo, args.work)
@@ -3441,7 +3523,8 @@ def cmd_artifact_refresh(args: argparse.Namespace) -> int:
     print(json.dumps({"ok": True, "refreshed": refreshed, "artifacts": artifacts}, ensure_ascii=False, indent=2)); return 0
 
 
-def cmd_init(args: argparse.Namespace) -> int:
+@locked_command
+def _initialize_state(args: argparse.Namespace):
     repo = repo_root(args.repo)
     cfg_path = repo / CONFIG_REL
     if cfg_path.exists() and not args.force:
@@ -3478,6 +3561,15 @@ def cmd_init(args: argparse.Namespace) -> int:
     save_index(repo, index)
     for d in (WORK_DIR, SESSION_DIR, HANDOFF_DIR):
         (repo / d).mkdir(parents=True, exist_ok=True)
+    return repo, cfg_path, host
+
+
+def cmd_init(args: argparse.Namespace) -> int:
+    prepared = _initialize_state(args)
+    if isinstance(prepared, int):
+        return prepared
+    repo, cfg_path, host = prepared
+    # Host installation may run an external package manager; never hold state locks.
     if host:
         adapters = install_host_adapters(repo, [host])
     else:
@@ -3529,7 +3621,8 @@ def cmd_host(args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_start(args: argparse.Namespace) -> int:
+@locked_command
+def _prepare_start(args: argparse.Namespace):
     repo = repo_root(args.repo); ensure_initialized(repo)
     if args.sdd_provider:
         detected = detect_sdd(repo, args.sdd_provider)
@@ -3621,17 +3714,29 @@ def cmd_start(args: argparse.Namespace) -> int:
         created_at = work.get("created_at") or now()
         created_key = hashlib.sha256(f"{wid}:task.created:{created_at}".encode("utf-8")).hexdigest()
         _append_lifecycle_event(repo, {"event_id": "evt-" + created_key[:20], "idempotency_key": created_key, "event": "task.created", "work_item_id": wid, "source": "cao", "native_ref": work.get("sdd", {}).get("native_ref"), "occurred_at": created_at})
-    native = run_sdd_command(repo, "inspect", [rel(p, repo)])
-    # Attach the current runtime Session so the Work Item is never worked on
-    # without a Session record, even when no host adapter is installed.
+    # Associate the new work and Session in the same transaction as activation.
     identity = host_session_identity(getattr(args, "host", None))
     session = register_session(repo, work, identity[1], identity[0], event="start") if identity else None
-    out = {"ok": True, "action": "ASSESS_PATH", "work_item": work_summary(work), "next_action": work.get("execution", {}).get("next_action"), "sdd": native}
-    if session:
-        out["session"] = session
-    print(json.dumps(out, ensure_ascii=False, indent=2)); return 0
+    return repo, wid, rel(p, repo), session
 
 
+def cmd_start(args: argparse.Namespace) -> int:
+    prepared = _prepare_start(args)
+    if isinstance(prepared, int):
+        return prepared
+    repo, wid, requirement, session = prepared
+    native = run_sdd_command(repo, "inspect", [requirement])
+    with repo_transaction(repo):
+        work = load_work(repo, wid)
+        if work is None:
+            raise RuntimeError("WORK_ITEM_NOT_FOUND")
+        out = {"ok": True, "action": "ASSESS_PATH", "work_item": work_summary(work), "next_action": work.get("execution", {}).get("next_action"), "sdd": native}
+        if session:
+            out["session"] = load_session(repo, session["id"]) or session
+        print(json.dumps(out, ensure_ascii=False, indent=2)); return 0
+
+
+@locked_command
 def cmd_list(args: argparse.Namespace) -> int:
     repo = repo_root(args.repo); ensure_initialized(repo)
     index = load_index(repo)
@@ -3647,6 +3752,7 @@ def cmd_list(args: argparse.Namespace) -> int:
     print(json.dumps({"ok": True, "active_work": index.get("active_work"), "work_items": items}, ensure_ascii=False, indent=2)); return 0
 
 
+@locked_command
 def cmd_status(args: argparse.Namespace) -> int:
     repo = repo_root(args.repo); ensure_initialized(repo)
     index = load_index(repo)
@@ -3662,6 +3768,7 @@ def cmd_status(args: argparse.Namespace) -> int:
     print(json.dumps(out, ensure_ascii=False, indent=2)); return 0
 
 
+@locked_command
 def cmd_path_assess(args: argparse.Namespace) -> int:
     repo = repo_root(args.repo); ensure_initialized(repo)
     index = load_index(repo)
@@ -3740,6 +3847,7 @@ def cmd_path_show(args: argparse.Namespace) -> int:
     return 0
 
 
+@locked_command
 def cmd_gate(args: argparse.Namespace) -> int:
     """Mark or inspect the execution gates that only the Agent can observe."""
     repo = repo_root(args.repo); ensure_initialized(repo)
@@ -3801,6 +3909,7 @@ def cmd_gate(args: argparse.Namespace) -> int:
     return 0
 
 
+@locked_command
 def cmd_next(args: argparse.Namespace) -> int:
     repo = repo_root(args.repo); ensure_initialized(repo)
     index = load_index(repo); work = load_work(repo, args.work or index.get("active_work")) if (args.work or index.get("active_work")) else None
@@ -3841,6 +3950,7 @@ def cmd_next(args: argparse.Namespace) -> int:
     print(json.dumps(out, ensure_ascii=False, indent=2)); return 0
 
 
+@locked_command
 def cmd_checkpoint(args: argparse.Namespace) -> int:
     repo = repo_root(args.repo); ensure_initialized(repo)
     index = load_index(repo); wid = args.work or index.get("active_work"); work = load_work(repo, wid) if wid else None
@@ -3863,6 +3973,7 @@ def cmd_checkpoint(args: argparse.Namespace) -> int:
     print(json.dumps({"ok": True, "work_item": work_summary(work), "next": work.get("execution", {}).get("next_action")}, ensure_ascii=False, indent=2)); return 0
 
 
+@locked_command
 def cmd_decision(args: argparse.Namespace) -> int:
     repo = repo_root(args.repo); ensure_initialized(repo)
     index = load_index(repo); wid = args.work or index.get("active_work"); work = load_work(repo, wid) if wid else None
@@ -3895,6 +4006,7 @@ def cmd_decision_list(args: argparse.Namespace) -> int:
     }, ensure_ascii=False, indent=2)); return 0
 
 
+@locked_command
 def cmd_block(args: argparse.Namespace) -> int:
     repo = repo_root(args.repo); ensure_initialized(repo)
     index = load_index(repo); wid = args.work or index.get("active_work"); work = load_work(repo, wid) if wid else None
@@ -3907,6 +4019,7 @@ def cmd_block(args: argparse.Namespace) -> int:
     print(json.dumps({"ok": True, "blocker": b, "status": work["status"]}, ensure_ascii=False, indent=2)); return 0
 
 
+@locked_command
 def cmd_unblock(args: argparse.Namespace) -> int:
     repo = repo_root(args.repo); ensure_initialized(repo)
     work = load_work(repo, args.work)
@@ -3955,6 +4068,7 @@ def cmd_handoff_show(args: argparse.Namespace, repo: Path) -> int:
     return 0
 
 
+@locked_command
 def cmd_handoff(args: argparse.Namespace) -> int:
     repo = repo_root(args.repo); ensure_initialized(repo)
     if args.handoff_action == "list":
@@ -3997,6 +4111,7 @@ def work_sdd_ready(repo: Path, work: dict[str, Any] | None) -> tuple[bool, dict[
     return bool(detected["installed"]), detected
 
 
+@locked_command
 def cmd_resume(args: argparse.Namespace) -> int:
     repo = repo_root(args.repo); ensure_initialized(repo)
     work = choose_resume_work(repo, args.work)
@@ -4069,7 +4184,8 @@ def overall_verification_status(results: list[dict[str, Any]]) -> str:
     return "passed"
 
 
-def cmd_verify(args: argparse.Namespace) -> int:
+@locked_command
+def _prepare_verification(args: argparse.Namespace):
     repo = repo_root(args.repo); ensure_initialized(repo)
     index = load_index(repo); wid = args.work or index.get("active_work"); work = load_work(repo, wid) if wid else None
     if not work:
@@ -4128,6 +4244,14 @@ def cmd_verify(args: argparse.Namespace) -> int:
         print(json.dumps({"ok": False, "error": "REQUIREMENT_FILE_MISSING"}, ensure_ascii=False, indent=2)); return 2
     req_sha = sha256_file(req); code_sha = code_snapshot(repo, {work["requirement"]["path"]}); rules_sha = rules_snapshot(repo, cfg)
     verification_cfg_sha = verification_snapshot(cfg)
+    return repo, work["id"], scripts, source, req_sha, code_sha, rules_sha, verification_cfg_sha
+
+
+def cmd_verify(args: argparse.Namespace) -> int:
+    prepared = _prepare_verification(args)
+    if isinstance(prepared, int):
+        return prepared
+    repo, wid, scripts, source, req_sha, code_sha, rules_sha, verification_cfg_sha = prepared
     started = now()
     results: list[dict[str, Any]] = []
     for item in scripts:
@@ -4167,11 +4291,15 @@ def cmd_verify(args: argparse.Namespace) -> int:
         "rules_snapshot": rules_sha,
         "verification_config_sha256": verification_cfg_sha if source == "config" else None,
     }
-    work["verification"] = verification
-    work["execution"]["step"] = "verification"
-    work["execution"]["next_action"] = action("agent", "Run `cao done` after verification passes and remains fresh." if status == "passed" else "Fix or unblock the verification script(s), then run `cao verify`.")
-    work["resume"]["summary"] = "Verification passed." if status == "passed" else f"Verification {status}. See verification.results for script status and reasons."
-    save_work(repo, work)
+    with repo_transaction(repo):
+        work = load_work(repo, wid)
+        if work is None:
+            raise RuntimeError("WORK_ITEM_NOT_FOUND")
+        work["verification"] = verification
+        work["execution"]["step"] = "verification"
+        work["execution"]["next_action"] = action("agent", "Run `cao done` after verification passes and remains fresh." if status == "passed" else "Fix or unblock the verification script(s), then run `cao verify`.")
+        work["resume"]["summary"] = "Verification passed." if status == "passed" else f"Verification {status}. See verification.results for script status and reasons."
+        save_work(repo, work)
     cao_exit = {"passed": 0, "failed": 1, "blocked": 2, "error": 3}[status]
     print(json.dumps({"ok": status == "passed", "verification": verification, "next": work["execution"]["next_action"]}, ensure_ascii=False, indent=2)); return cao_exit
 
@@ -4233,6 +4361,7 @@ def completion_next_instruction(repo: Path, work: dict[str, Any] | None, complet
     return "Resolve the blocking condition shown above, then run `cao verify` and retry `cao done`."
 
 
+@locked_command
 def cmd_reopen(args: argparse.Namespace) -> int:
     """Return a completed Work Item to active.
 
@@ -4305,29 +4434,41 @@ def cmd_reopen(args: argparse.Namespace) -> int:
     }, ensure_ascii=False, indent=2)); return 0
 
 
+def _completion_blocked(repo: Path, work: dict[str, Any] | None, c: dict[str, Any]) -> int:
+    blocked: dict[str, Any] = {"ok": False, "error": "COMPLETION_BLOCKED", "reason": c["reason"]}
+    # Report concrete items, not just an unfinished category.
+    for key in ("pending_plan_items", "missing_artifacts", "unmet_gates", "workflow"):
+        if c.get(key):
+            blocked[key] = c[key]
+    blocked["next"] = completion_next_instruction(repo, work, c)
+    print(json.dumps(blocked, ensure_ascii=False, indent=2)); return 2
+
+
 def cmd_done(args: argparse.Namespace) -> int:
     repo = repo_root(args.repo); ensure_initialized(repo)
-    index = load_index(repo); wid = args.work or index.get("active_work"); work = load_work(repo, wid) if wid else None
-    c = completion_status(repo, work)
-    if not c["ready"]:
-        blocked: dict[str, Any] = {"ok": False, "error": "COMPLETION_BLOCKED", "reason": c["reason"]}
-        # Report the concrete items, not just the category: knowing that a plan
-        # is unfinished is useless without knowing which parts.
-        for key in ("pending_plan_items", "missing_artifacts", "unmet_gates", "workflow"):
-            if c.get(key):
-                blocked[key] = c[key]
-        blocked["next"] = completion_next_instruction(repo, work, c)
-        print(json.dumps(blocked, ensure_ascii=False, indent=2)); return 2
+    with repo_transaction(repo):
+        index = load_index(repo)
+        wid = args.work or index.get("active_work")
+        work = load_work(repo, wid) if wid else None
+        c = completion_status(repo, work)
+        if not c["ready"]:
+            return _completion_blocked(repo, work, c)
     transition = sdd_transition(repo, "done")
     if transition is not None and transition["exit_code"] != 0:
         print(json.dumps({"ok": False, "error": "SDD_TRANSITION_FAILED", "transition": transition}, ensure_ascii=False, indent=2)); return 1
-    work["status"] = "completed"; work["completed_at"] = now(); work["execution"]["step"] = "done"; work["execution"]["next_action"] = action("none", "Work item is completed.")
-    work["resume"]["summary"] = "Work item completed and verification was fresh."
-    save_work(repo, work)
-    completed_identity = {"work_item_id": work.get("id"), "completed_at": work.get("completed_at"), "event": "task.closed"}
-    completed_key = hashlib.sha256(json.dumps(completed_identity, sort_keys=True).encode("utf-8")).hexdigest()
-    _append_lifecycle_event(repo, {"event_id": "evt-" + completed_key[:20], "idempotency_key": completed_key, "event": "task.closed", "work_item_id": work.get("id"), "source": "cao", "to_state": "closed", "occurred_at": work.get("completed_at")})
-    print(json.dumps({"ok": True, "status": "completed", "work_item": work_summary(work), "sdd_transition": transition}, ensure_ascii=False, indent=2)); return 0
+    # Native transitions can change both state and freshness. Judge again before closing.
+    with repo_transaction(repo):
+        work = load_work(repo, wid)
+        c = completion_status(repo, work)
+        if not c["ready"]:
+            return _completion_blocked(repo, work, c)
+        work["status"] = "completed"; work["completed_at"] = now(); work["execution"]["step"] = "done"; work["execution"]["next_action"] = action("none", "Work item is completed.")
+        work["resume"]["summary"] = "Work item completed and verification was fresh."
+        save_work(repo, work)
+        completed_identity = {"work_item_id": work.get("id"), "completed_at": work.get("completed_at"), "event": "task.closed"}
+        completed_key = hashlib.sha256(json.dumps(completed_identity, sort_keys=True).encode("utf-8")).hexdigest()
+        _append_lifecycle_event(repo, {"event_id": "evt-" + completed_key[:20], "idempotency_key": completed_key, "event": "task.closed", "work_item_id": work.get("id"), "source": "cao", "to_state": "closed", "occurred_at": work.get("completed_at")})
+        print(json.dumps({"ok": True, "status": "completed", "work_item": work_summary(work), "sdd_transition": transition}, ensure_ascii=False, indent=2)); return 0
 
 
 def cmd_context(args: argparse.Namespace) -> int:
@@ -4579,6 +4720,7 @@ def readonly_shell(command: str) -> bool:
     return bool(command_tokens and command_tokens[0] in safe_control_commands)
 
 
+@locked_command
 def host_event(args: argparse.Namespace) -> int:
     repo = repo_root(args.repo or os.getcwd())
     raw = json.load(sys.stdin)
