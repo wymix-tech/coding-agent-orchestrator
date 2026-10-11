@@ -1692,12 +1692,30 @@ def sync_index_for_work(repo: Path, work: dict[str, Any]) -> None:
     recover_index(repo)
 
 
+def other_active_work(repo: Path, wid: str) -> list[str]:
+    return [work["id"] for path in sorted((repo / WORK_DIR).glob("*.json"))
+            if isinstance(work := load_json(path, None), dict)
+            and work.get("status") == "active" and work["id"] != wid]
+
+
+def _activation_denied(repo: Path, wid: str) -> bool:
+    others = other_active_work(repo, wid)
+    if others:
+        print(json.dumps({"ok": False, "error": "WORK_ITEM_ALREADY_ACTIVE",
+                          "active_work_items": others,
+                          "next": "Suspend the active work first, or explicitly switch with `cao start --requirement <path> --replace`."},
+                         ensure_ascii=False, indent=2))
+    return bool(others)
+
+
 @locked_repo
 def save_work(repo: Path, work: dict[str, Any]) -> None:
     current = load_work(repo, work["id"])
     revision = int((current or {}).get("state_revision", 0))
     if int(work.get("state_revision", 0)) != revision:
         raise RuntimeError("STALE_WORK_REVISION")
+    if work.get("status") == "active" and (others := other_active_work(repo, work["id"])):
+        raise RuntimeError("WORK_ITEM_ALREADY_ACTIVE: " + ",".join(others))
     saved = {**work, "state_revision": revision + 1, "updated_at": now()}
     save_json(work_path(repo, work["id"]), saved)
     # Advance the caller only after authority commits, even if projection fails.
@@ -3698,6 +3716,8 @@ def _prepare_start(args: argparse.Namespace):
         "verification": None,
         "created_at": now(),
     }
+    if _activation_denied(repo, wid):
+        return 2
     work["status"] = "active"
     work["started_at"] = work.get("started_at") or now()
     work["requirement"] = requirement_evidence(repo, p)
@@ -4009,14 +4029,31 @@ def cmd_decision_list(args: argparse.Namespace) -> int:
 @locked_command
 def cmd_block(args: argparse.Namespace) -> int:
     repo = repo_root(args.repo); ensure_initialized(repo)
-    index = load_index(repo); wid = args.work or index.get("active_work"); work = load_work(repo, wid) if wid else None
+    repair = bool(args.work and args.suspend)
+    # An explicit suspension must remain usable even with a historical conflict.
+    if repair:
+        wid = args.work
+    else:
+        index = load_index(repo)
+        wid = args.work or index.get("active_work")
+    work = load_work(repo, wid) if wid else None
     if not work:
         print(json.dumps({"ok": False, "error": "NO_WORK_ITEM"}, ensure_ascii=False, indent=2)); return 2
     b = {"id": new_id("blocker"), "reason": args.reason, "resolution": args.resolution, "created_at": now()}
     work.setdefault("blockers", []).append(b)
     work["status"] = "suspended" if args.suspend else work.get("status", "active")
-    save_work(repo, work)
-    print(json.dumps({"ok": True, "blocker": b, "status": work["status"]}, ensure_ascii=False, indent=2)); return 0
+    try:
+        save_work(repo, work)
+    except RuntimeError as exc:
+        if not repair or not str(exc).startswith("MULTIPLE_ACTIVE_WORK_ITEMS:"):
+            raise
+        # Authority and its conflict projection committed; more explicit fixes remain.
+    out = {"ok": True, "blocker": b, "status": work["status"]}
+    remaining = other_active_work(repo, work["id"])
+    if len(remaining) > 1:
+        out["remaining_active_work_items"] = remaining
+        out["next"] = "Continue resolving the conflict with `cao block --work <id> --suspend --reason <reason>`."
+    print(json.dumps(out, ensure_ascii=False, indent=2)); return 0
 
 
 @locked_command
@@ -4031,9 +4068,13 @@ def cmd_unblock(args: argparse.Namespace) -> int:
     else:
         work["blockers"] = []
     if work.get("status") == "suspended" and not work["blockers"]:
-        work["status"] = "active"
+        if not other_active_work(repo, work["id"]):
+            work["status"] = "active"
     save_work(repo, work)
-    print(json.dumps({"ok": True, "removed": before - len(work.get("blockers") or []), "work_item": work_summary(work)}, ensure_ascii=False, indent=2)); return 0
+    out = {"ok": True, "removed": before - len(work.get("blockers") or []), "work_item": work_summary(work)}
+    if work.get("status") == "suspended" and not work["blockers"]:
+        out["next"] = f"Explicitly switch with `cao start --requirement {work['requirement']['path']} --replace`."
+    print(json.dumps(out, ensure_ascii=False, indent=2)); return 0
 
 
 def cmd_handoff_list(args: argparse.Namespace, repo: Path) -> int:
@@ -4134,6 +4175,8 @@ def cmd_resume(args: argparse.Namespace) -> int:
         print(json.dumps({"ok": False, "error": "SDD_NOT_INSTALLED", "provider": provider, "status": detected, "next": f"cao sdd install --provider {provider} --yes"}, ensure_ascii=False, indent=2))
         return 2
     if work.get("status") == "suspended" and args.reactivate:
+        if _activation_denied(repo, work["id"]):
+            return 2
         work["status"] = "active"
         save_work(repo, work)
     elif work.get("status") == "suspended" and work.get("blockers"):
@@ -4394,6 +4437,8 @@ def cmd_reopen(args: argparse.Namespace) -> int:
             ),
         }, ensure_ascii=False, indent=2)); return 2
 
+    if _activation_denied(repo, work["id"]):
+        return 2
     if reanchored:
         # Everything earned so far was earned under a standard that cannot
         # certify this work, so the clock restarts and the evidence is void.
