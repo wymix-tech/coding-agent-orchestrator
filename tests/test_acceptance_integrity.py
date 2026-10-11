@@ -1,21 +1,16 @@
-"""Acceptance-criteria integrity: the implementer must not define what counts as done.
-
-demo11 escape path: verify fails (no scripts) -> Agent runs `cao init
---verify-script "<compile>" --force` -> verify passes -> `cao done` closes a
-requirement that was never implemented. These tests replay that exact sequence.
-"""
+"""Accepted standards are content-bound, not made valid by editing timestamps."""
 import json
 import os
 import pathlib
 import subprocess
 import sys
 import tempfile
-import time
 import unittest
 
-ROOT = pathlib.Path(__file__).resolve().parents[1]
-CAO = ROOT / "scripts" / "cao.py"
+from tests.helpers import configure_verification
 
+ROOT = pathlib.Path(__file__).resolve().parents[1]
+CAO = ROOT / "scripts/cao.py"
 HOST_ENV_KEYS = (
     "CAO_HOST", "CLAUDE_CODE", "CLAUDE_CODE_SESSION_ID", "CLAUDE_SESSION_ID",
     "CODEX_THREAD_ID", "CODEX_SANDBOX", "CODEX_HOME", "PI_SESSION_ID", "PI_CODING_AGENT",
@@ -24,59 +19,51 @@ NO_HOST_ENV = {key: "" for key in HOST_ENV_KEYS}
 
 
 def run(repo, *args, stdin=None):
-    env = dict(os.environ, **NO_HOST_ENV)
-    p = subprocess.run([sys.executable, str(CAO), *args], cwd=repo, text=True,
-                       capture_output=True, env=env, timeout=60, input=stdin)
+    result = subprocess.run([sys.executable, str(CAO), *args], cwd=repo, text=True,
+                            capture_output=True, env=dict(os.environ, **NO_HOST_ENV),
+                            timeout=60, input=stdin)
     try:
-        return p.returncode, json.loads(p.stdout)
+        return result.returncode, json.loads(result.stdout)
     except json.JSONDecodeError:
-        return p.returncode, {"raw": p.stdout, "stderr": p.stderr}
+        return result.returncode, {"raw": result.stdout, "stderr": result.stderr}
 
 
-def active_work(repo: pathlib.Path) -> str:
+def active_work(repo, command=None):
     run(repo, "init", "--host", "pi")
+    configure_verification(repo, command)
     run(repo, "sdd", "select", "--provider", "bmad")
     (repo / "_bmad").mkdir(exist_ok=True)
     rc, out = run(repo, "requirement", "next-id", "--title", "login")
     req = repo / out["path"]
     req.write_text("# login\n\nJWT auth, RBAC, session management.\n", encoding="utf-8")
     rc, out = run(repo, "start", "--requirement", out["path"])
+    assert rc == 0, out
     return out["work_item"]["id"]
 
 
-def standard_path(repo: pathlib.Path, wid: str) -> None:
-    """Walk the Work Item to the point where verify/done become the only blockers."""
+def standard_path(repo, wid):
     rc, out = run(repo, "path", "assess", "--profile", "standard", "--reason", "auth system", "--work", wid)
     assert rc == 0, out
-    rc, out = run(repo, "sdd", "workflow", "select", "--name", "bmad-build", "--entrypoint", "bmad-build", "--work", wid)
-    assert rc == 0, out
-    # The artifact must live inside the provider's own output directory and must
-    # exist before `complete` records it.
-    artifact = repo / "_bmad-output" / "implementation_artifacts" / "story.md"
+    run(repo, "sdd", "workflow", "select", "--name", "bmad-build", "--entrypoint", "bmad-build", "--work", wid)
+    artifact = repo / "_bmad-output/implementation_artifacts/story.md"
     artifact.parent.mkdir(parents=True, exist_ok=True)
     artifact.write_text("# story\n", encoding="utf-8")
-    rc, out = run(repo, "sdd", "workflow", "execute", "--command", "bmad-build", "--exit-code", "0", "--work", wid)
-    assert rc == 0, out
-    rc, out = run(repo, "sdd", "workflow", "complete", "--artifact", "_bmad-output/implementation_artifacts/story.md", "--work", wid)
+    run(repo, "sdd", "workflow", "execute", "--command", "bmad-build", "--exit-code", "0", "--work", wid)
+    rc, out = run(repo, "sdd", "workflow", "complete", "--artifact",
+                  "_bmad-output/implementation_artifacts/story.md", "--work", wid)
     assert rc == 0, out
 
 
-def config_verification(repo: pathlib.Path, command: str, *, after_start: bool = False, at: int | None = None) -> None:
-    cfg = json.loads((repo / ".orchestrator" / "config.json").read_text(encoding="utf-8"))
-    cfg.setdefault("verification", {})["scripts"] = [{"name": "script-1", "command": command, "required": True}]
-    # By default the standard predates the Work Item, so tests can exercise the
-    # coverage rule (B) in isolation; `after_start=True` replays the demo11 move.
-    index = json.loads((repo / ".orchestrator" / "index.json").read_text(encoding="utf-8"))
-    work_file = next((repo / ".orchestrator" / "work").glob("*.json"), None)
-    started = json.loads(work_file.read_text(encoding="utf-8"))["started_at"] if work_file else 0
-    if at is not None:
-        cfg["verification"]["configured_at"] = at
-    # `after_start` means "configured now, while the work is already underway" —
-    # the demo11 move. It must stay a real past moment rather than a far-future
-    # one, so that re-anchoring the clock can actually precede it.
-    else:
-        cfg["verification"]["configured_at"] = started + 1 if after_start else started - 100
-    (repo / ".orchestrator" / "config.json").write_text(json.dumps(cfg), encoding="utf-8")
+def change_test_standard(repo):
+    # A real test command with a changed option; no forged configured_at.
+    path = repo / ".orchestrator/config.json"
+    cfg = json.loads(path.read_text(encoding="utf-8"))
+    cfg["verification"]["scripts"][0]["command"] += " --buffer"
+    path.write_text(json.dumps(cfg), encoding="utf-8")
+
+
+def read_work(repo, wid):
+    return json.loads((repo / f".orchestrator/work/{wid}.json").read_text(encoding="utf-8"))
 
 
 class StandardIsFixedBeforeStart(unittest.TestCase):
@@ -85,35 +72,27 @@ class StandardIsFixedBeforeStart(unittest.TestCase):
             repo = pathlib.Path(td)
             wid = active_work(repo)
             standard_path(repo, wid)
-            config_verification(repo, "true", after_start=True)  # the demo11 move
+            configure_verification(repo, "true")  # the demo11 late-standard move
             rc, out = run(repo, "verify", "--work", wid)
             self.assertEqual(rc, 2, out)
-            self.assertEqual(out["error"], "VERIFICATION_CONFIGURED_AFTER_START")
+            self.assertEqual(out["error"], "VERIFICATION_STANDARD_CHANGED")
 
     def test_standard_that_predates_the_work_is_still_accepted(self):
         with tempfile.TemporaryDirectory() as td:
             repo = pathlib.Path(td)
-            run(repo, "init", "--host", "pi", "--verify-script", "true")
-            run(repo, "sdd", "select", "--provider", "bmad")
-            (repo / "_bmad").mkdir(exist_ok=True)
-            rc, out = run(repo, "requirement", "next-id", "--title", "login")
-            req = repo / out["path"]
-            req.write_text("# login\n", encoding="utf-8")
-            rc, out = run(repo, "start", "--requirement", out["path"])
-            wid = out["work_item"]["id"]
-            # light path: no `tests` gate, so a build-only standard is allowed.
-            rc, out = run(repo, "path", "assess", "--profile", "light", "--reason", "docs change", "--work", wid)
+            wid = active_work(repo)
+            run(repo, "path", "assess", "--profile", "light", "--reason", "docs change", "--work", wid)
             rc, out = run(repo, "verify", "--work", wid)
-            self.assertNotEqual(out.get("error"), "VERIFICATION_CONFIGURED_AFTER_START", out)
+            self.assertEqual(rc, 0, out)
+            self.assertIn("Ran 1 test", out["verification"]["results"][0]["stderr_tail"])
 
 
 class StandardMustCoverRequiredGates(unittest.TestCase):
     def test_verify_refuses_build_only_standard_when_tests_gate_is_required(self):
         with tempfile.TemporaryDirectory() as td:
             repo = pathlib.Path(td)
-            wid = active_work(repo)
-            standard_path(repo, wid)  # standard profile -> `tests` gate required
-            config_verification(repo, "mvn clean compile")  # compiles, never tests
+            wid = active_work(repo, "mvn clean compile")
+            standard_path(repo, wid)
             rc, out = run(repo, "verify", "--work", wid)
             self.assertEqual(rc, 2, out)
             self.assertEqual(out["error"], "VERIFICATION_DOES_NOT_RUN_TESTS")
@@ -123,9 +102,9 @@ class StandardMustCoverRequiredGates(unittest.TestCase):
             repo = pathlib.Path(td)
             wid = active_work(repo)
             standard_path(repo, wid)
-            config_verification(repo, "python3 -m unittest --help")
             rc, out = run(repo, "verify", "--work", wid)
-            self.assertNotEqual(out.get("error"), "VERIFICATION_DOES_NOT_RUN_TESTS", out)
+            self.assertEqual(rc, 0, out)
+            self.assertIn("Ran 1 test", out["verification"]["results"][0]["stderr_tail"])
 
 
 class DoneCannotUseACliChosenStandard(unittest.TestCase):
@@ -134,23 +113,22 @@ class DoneCannotUseACliChosenStandard(unittest.TestCase):
             repo = pathlib.Path(td)
             wid = active_work(repo)
             standard_path(repo, wid)
-            config_verification(repo, "python3 -m unittest --help")
-            # sanity check with an ad-hoc command is allowed, but must not count for done
             rc, out = run(repo, "verify", "--work", wid, "--command", "true")
-            self.assertNotEqual(out.get("error"), "VERIFICATION_CONFIGURED_AFTER_START")
+            self.assertEqual(rc, 0, out)
+            self.assertEqual(out["verification"]["source"], "cli")
             rc, out = run(repo, "done", "--work", wid)
             self.assertEqual(rc, 2, out)
             self.assertEqual(out["error"], "COMPLETION_BLOCKED")
 
 
 class Reopen(unittest.TestCase):
-    def provisioned_completed(self, repo: pathlib.Path) -> str:
+    def provisioned_completed(self, repo):
         wid = active_work(repo)
         standard_path(repo, wid)
-        config_verification(repo, "python3 -m unittest --help")
-        run(repo, "verify", "--work", wid)
+        rc, out = run(repo, "verify", "--work", wid)
+        self.assertEqual(rc, 0, out)
         for gate in ("scope_review", "tests", "implementation_review"):
-            run(repo, "gate", "satisfy", "--gate", gate, "--evidence", "reviewed", "--work", wid)
+            run(repo, "gate", "satisfy", "--gate", gate, "--evidence", "observed and reviewed", "--work", wid)
         rc, out = run(repo, "done", "--work", wid)
         self.assertEqual(rc, 0, out)
         return wid
@@ -161,11 +139,11 @@ class Reopen(unittest.TestCase):
             wid = self.provisioned_completed(repo)
             rc, out = run(repo, "reopen", "--work", wid, "--reason", "only story 1.1 was implemented")
             self.assertEqual(rc, 0, out)
-            work = json.loads((repo / ".orchestrator" / "work" / f"{wid}.json").read_text(encoding="utf-8"))
+            work = read_work(repo, wid)
             self.assertEqual(work["status"], "active")
             self.assertIsNone(work.get("completed_at"))
-            self.assertEqual(work.get("gate_status"), {}, "self-satisfied gates must be re-earned")
-            self.assertEqual(work.get("verification"), {}, "stale verification must not carry over")
+            self.assertEqual(work.get("gate_status"), {})
+            self.assertEqual(work.get("verification"), {})
             self.assertIn("reopened", work["execution"]["step"])
 
     def test_reopen_refuses_work_that_is_not_completed(self):
@@ -181,7 +159,6 @@ class Reopen(unittest.TestCase):
             repo = pathlib.Path(td)
             wid = self.provisioned_completed(repo)
             run(repo, "reopen", "--work", wid, "--reason", "incomplete")
-            config_verification(repo, "python3 -m unittest --help")
             rc, out = run(repo, "verify", "--work", wid)
             self.assertEqual(rc, 0, out)
             for gate in ("scope_review", "tests", "implementation_review"):
@@ -191,34 +168,24 @@ class Reopen(unittest.TestCase):
 
 
 class Reanchor(unittest.TestCase):
-    """A Work Item whose standard was set after it started had no way out.
-
-    `cao verify` refuses a standard configured after `started_at`, and nothing
-    reset `started_at`, so such an item could never verify or close. demo11 hit
-    exactly this: an active Work Item stuck on `VERIFICATION_CONFIGURED_AFTER_START`.
-    """
-
-    def verification_stuck_work(self, repo: pathlib.Path) -> str:
-        """An active Work Item whose standard postdates its start."""
+    """Explicit acceptance of changed standards does not depend on advancing clocks."""
+    def verification_stuck_work(self, repo):
         wid = active_work(repo)
         standard_path(repo, wid)
-        config_verification(repo, "python3 -m unittest --help", after_start=True)
+        change_test_standard(repo)
         rc, out = run(repo, "verify", "--work", wid)
-        self.assertEqual(out["error"], "VERIFICATION_CONFIGURED_AFTER_START", out)
+        self.assertEqual(out["error"], "VERIFICATION_STANDARD_CHANGED", out)
         return wid
 
     def test_reanchor_lets_a_stuck_active_item_verify_again(self):
         with tempfile.TemporaryDirectory() as td:
             repo = pathlib.Path(td)
             wid = self.verification_stuck_work(repo)
-            before = json.loads((repo / ".orchestrator" / "work" / f"{wid}.json").read_text(encoding="utf-8"))["started_at"]
-            time.sleep(2.1)  # epochs are whole seconds; let the clock move past the standard
-            rc, out = run(repo, "reopen", "--work", wid, "--reason", "standard was set after start", "--reanchor")
+            before = read_work(repo, wid)["acceptance"]["config_sha256"]
+            rc, out = run(repo, "reopen", "--work", wid, "--reason", "changed standard", "--reanchor")
             self.assertEqual(rc, 0, out)
             self.assertTrue(out["reanchored"])
-            work = json.loads((repo / ".orchestrator" / "work" / f"{wid}.json").read_text(encoding="utf-8"))
-            self.assertEqual(work["status"], "active")
-            self.assertGreater(work["started_at"], before, "the clock must restart")
+            self.assertNotEqual(read_work(repo, wid)["acceptance"]["config_sha256"], before)
             rc, out = run(repo, "verify", "--work", wid)
             self.assertEqual(rc, 0, out)
             self.assertEqual(out["verification"]["status"], "passed")
@@ -228,26 +195,22 @@ class Reanchor(unittest.TestCase):
             repo = pathlib.Path(td)
             wid = active_work(repo)
             standard_path(repo, wid)
-            # Gates self-satisfied while the invalid standard was in force.
             for gate in ("scope_review", "tests", "implementation_review"):
                 run(repo, "gate", "satisfy", "--gate", gate, "--evidence", "reviewed", "--work", wid)
-            config_verification(repo, "python3 -m unittest --help", after_start=True)
+            change_test_standard(repo)
             rc, out = run(repo, "reopen", "--work", wid, "--reason", "re-anchoring", "--reanchor")
             self.assertEqual(rc, 0, out)
-            work = json.loads((repo / ".orchestrator" / "work" / f"{wid}.json").read_text(encoding="utf-8"))
-            self.assertEqual(work.get("gate_status"), {})
-            self.assertEqual(work.get("verification"), {})
+            self.assertEqual(read_work(repo, wid).get("gate_status"), {})
+            self.assertEqual(read_work(repo, wid).get("verification"), {})
 
     def test_reanchor_still_does_not_exempt_a_standard_that_never_runs_tests(self):
-        """Re-anchoring restarts the clock; it does not lower the bar."""
         with tempfile.TemporaryDirectory() as td:
             repo = pathlib.Path(td)
             wid = active_work(repo)
             standard_path(repo, wid)
-            # A standard that predates the start, so only the coverage rule (B)
-            # is in play and the result does not depend on clock timing.
-            config_verification(repo, "python3 -c 'pass'")
-            run(repo, "reopen", "--work", wid, "--reason", "re-anchoring", "--reanchor")
+            configure_verification(repo, "python3 -c 'pass'")
+            rc, out = run(repo, "reopen", "--work", wid, "--reason", "new standard", "--reanchor")
+            self.assertEqual(rc, 0, out)
             rc, out = run(repo, "verify", "--work", wid)
             self.assertEqual(rc, 2, out)
             self.assertEqual(out["error"], "VERIFICATION_DOES_NOT_RUN_TESTS")
@@ -257,28 +220,20 @@ class Reanchor(unittest.TestCase):
             repo = pathlib.Path(td)
             wid = self.verification_stuck_work(repo)
             run(repo, "reopen", "--work", wid, "--reason", "re-anchored", "--reanchor")
-            events = [json.loads(line) for line in (repo / ".orchestrator" / "lifecycle" / "events.jsonl").read_text(encoding="utf-8").splitlines()]
-            reopens = [e for e in events if e.get("event") == "task.reopened"]
-            self.assertTrue(reopens, "re-anchoring must be auditable")
+            events = [json.loads(line) for line in (repo / ".orchestrator/lifecycle/events.jsonl").read_text(encoding="utf-8").splitlines()]
+            reopens = [event for event in events if event.get("event") == "task.reopened"]
+            self.assertTrue(reopens)
             self.assertTrue(reopens[-1]["reanchored"])
 
     def test_reopen_without_reanchor_does_not_move_the_clock(self):
         with tempfile.TemporaryDirectory() as td:
             repo = pathlib.Path(td)
-            wid = active_work(repo)
-            standard_path(repo, wid)
-            config_verification(repo, "python3 -m unittest --help")
-            run(repo, "verify", "--work", wid)
-            for gate in ("scope_review", "tests", "implementation_review"):
-                run(repo, "gate", "satisfy", "--gate", gate, "--evidence", "reviewed", "--work", wid)
-            rc, out = run(repo, "done", "--work", wid)
-            self.assertEqual(rc, 0, out)
-            before = json.loads((repo / ".orchestrator" / "work" / f"{wid}.json").read_text(encoding="utf-8"))["started_at"]
+            wid = Reopen().provisioned_completed(repo)
+            before = read_work(repo, wid)["started_at"]
             rc, out = run(repo, "reopen", "--work", wid, "--reason", "incomplete")
             self.assertEqual(rc, 0, out)
             self.assertFalse(out["reanchored"])
-            work = json.loads((repo / ".orchestrator" / "work" / f"{wid}.json").read_text(encoding="utf-8"))
-            self.assertEqual(work["started_at"], before, "a plain reopen must not restart the clock")
+            self.assertEqual(read_work(repo, wid)["started_at"], before)
 
 
 if __name__ == "__main__":

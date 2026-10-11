@@ -5,7 +5,7 @@ import sys
 import tempfile
 import unittest
 
-from tests.helpers import verify_via_config
+from tests.helpers import configure_verification, verify_via_config
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 CAO = ROOT / "scripts" / "cao.py"
@@ -184,6 +184,7 @@ class CoreTests(unittest.TestCase):
         with td:
             (repo / "requirements").mkdir(); (repo / "requirements/login.md").write_text("Add login", encoding="utf-8")
             rc, _, _ = run(repo, "init"); self.assertEqual(rc, 0)
+            configure_verification(repo)
             run(repo, "sdd", "select", "--provider", "openspec")
             rc, out, _ = run(repo, "start", "--requirement", "requirements/login.md"); self.assertEqual(rc, 0); self.assertEqual(out["action"], "ASSESS_PATH")
             run(repo, "path", "assess", "--profile", "light", "--reason", "Small, clear, local change")
@@ -211,6 +212,7 @@ class CoreTests(unittest.TestCase):
             (repo / "_bmad").mkdir()
             (repo / "requirements").mkdir(); (repo / "requirements/login.md").write_text("Add login", encoding="utf-8")
             run(repo, "init"); run(repo, "sdd", "select", "--provider", "bmad")
+            configure_verification(repo)
             run(repo, "start", "--requirement", "requirements/login.md")
             rc, _, _ = run(repo, "path", "assess", "--profile", "standard", "--reason", "Feature requiring analysis and review")
             self.assertEqual(rc, 0)
@@ -257,7 +259,7 @@ class CoreTests(unittest.TestCase):
         td, repo = self.init_repo()
         with td:
             (repo / "requirements").mkdir(); (repo / "requirements/a.md").write_text("A", encoding="utf-8"); (repo / "app.py").write_text("x=1", encoding="utf-8")
-            run(repo, "init"); run(repo, "start", "--requirement", "requirements/a.md"); run(repo, "path", "assess", "--profile", "light", "--reason", "Small local change"); verify_via_config(repo, run)
+            run(repo, "init"); configure_verification(repo); run(repo, "start", "--requirement", "requirements/a.md"); run(repo, "path", "assess", "--profile", "light", "--reason", "Small local change"); verify_via_config(repo, run)
             (repo / "app.py").write_text("x=2", encoding="utf-8")
             rc, out, _ = run(repo, "done"); self.assertEqual(rc, 2); self.assertEqual(out["error"], "COMPLETION_BLOCKED")
 
@@ -265,7 +267,7 @@ class CoreTests(unittest.TestCase):
         td, repo = self.init_repo()
         with td:
             (repo / "requirements").mkdir(); p = repo / "requirements/a.md"; p.write_text("A", encoding="utf-8")
-            run(repo, "init"); run(repo, "start", "--requirement", "requirements/a.md"); run(repo, "path", "assess", "--profile", "light", "--reason", "Small local change"); verify_via_config(repo, run)
+            run(repo, "init"); configure_verification(repo); run(repo, "start", "--requirement", "requirements/a.md"); run(repo, "path", "assess", "--profile", "light", "--reason", "Small local change"); verify_via_config(repo, run)
             p.write_text("A changed", encoding="utf-8")
             rc, out, _ = run(repo, "done")
             self.assertEqual(rc, 2)
@@ -276,7 +278,7 @@ class CoreTests(unittest.TestCase):
         td, repo = self.init_repo()
         with td:
             (repo / "requirements").mkdir(); p = repo / "requirements/a.md"; p.write_text("A", encoding="utf-8")
-            run(repo, "init"); run(repo, "start", "--requirement", "requirements/a.md"); run(repo, "path", "assess", "--profile", "light", "--reason", "Small local change"); verify_via_config(repo, run)
+            run(repo, "init"); configure_verification(repo); run(repo, "start", "--requirement", "requirements/a.md"); run(repo, "path", "assess", "--profile", "light", "--reason", "Small local change"); verify_via_config(repo, run)
             p.write_text("A changed", encoding="utf-8"); rc, out, _ = run(repo, "done"); self.assertEqual(rc, 2); self.assertIn("requirement changed", out["reason"])
 
     def test_multiple_work_items_have_independent_state(self):

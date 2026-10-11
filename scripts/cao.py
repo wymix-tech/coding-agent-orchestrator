@@ -30,6 +30,10 @@ if __package__ in (None, ""):
         sys.path.insert(0, _source_root)
 
 from scripts.state_store import atomic_json, backup_once, repo_transaction
+from scripts.completion_policy import (
+    acceptance_hash, anchor_acceptance, reset_requirement, evidence_matches,
+    verification_fresh as bound_verification_fresh,
+)
 
 
 def locked_command(fn):
@@ -371,7 +375,8 @@ def gate_state(work: dict[str, Any], verification_fresh: bool) -> dict[str, Any]
         if gate_is_auto_derived(gate):
             ok = bool(verification_fresh)
         else:
-            ok = bool((status.get(gate) or {}).get("satisfied"))
+            evidence = status.get(gate) or {}
+            ok = bool(evidence.get("satisfied") and evidence_matches(work, evidence))
         (satisfied if ok else pending).append(gate)
     return {"gates": gates, "satisfied": satisfied, "pending": pending}
 
@@ -1539,9 +1544,7 @@ def code_snapshot(repo: Path, excluded: set[str] | None = None) -> str:
 
 
 def verification_snapshot(cfg: dict[str, Any]) -> str:
-    payload = verification_scripts(cfg)
-    data = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
-    return sha256_bytes(data)
+    return acceptance_hash(verification_scripts(cfg))
 
 
 def rules_snapshot(repo: Path, cfg: dict[str, Any]) -> str:
@@ -1729,7 +1732,9 @@ def _persist_work(repo: Path, work: dict[str, Any]) -> None:
     if work.get("status") == "active" and (current or {}).get("status") != "active":
         if others := other_active_work(repo, work["id"]):
             raise RuntimeError("WORK_ITEM_ALREADY_ACTIVE: " + ",".join(others))
-    if current and current.get("integrity_version") != 2:
+    if current and (current.get("integrity_version") != 2 or
+                    ((current.get("acceptance") or {}).get("version") != 2
+                     and (work.get("acceptance") or {}).get("version") == 2)):
         backup_once(repo, work_path(repo, work["id"]))
     saved = {"pending_events": [], **work, "integrity_version": 2,
              "state_revision": revision + 1, "updated_at": now()}
@@ -2342,6 +2347,9 @@ def work_summary(work: dict[str, Any]) -> dict[str, Any]:
         "blockers": work.get("blockers") or [],
         "decision_count": len(work.get("decisions") or []),
         "verification": (work.get("verification") or {}).get("status"),
+        "legacy_evidence": ((work.get("acceptance") or {}).get("version") != 2
+                            or bool(work.get("verification") and work["verification"].get("version") != 2)
+                            or bool(work.get("path_assessment") and not work["path_assessment"].get("revision"))),
         "last_agent": work.get("resume", {}).get("last_agent"),
     }
 
@@ -2429,6 +2437,8 @@ def path_assessment_state(repo: Path, work: dict[str, Any]) -> dict[str, Any]:
         return {"ready": False, "reason": "execution path has not been assessed", "assessment": None}
     if assessment.get("policy_version") != 1:
         return {"ready": False, "reason": "execution path assessment uses an unsupported policy version", "assessment": assessment}
+    if not assessment.get("revision"):
+        return {"ready": False, "reason": "legacy execution path assessment requires reassessment with `cao path assess`", "assessment": assessment}
     profile = assessment.get("profile")
     if profile not in PROFILE_RANK:
         return {"ready": False, "reason": "execution path assessment is invalid", "assessment": assessment}
@@ -2560,20 +2570,15 @@ def completion_status(repo: Path, work: dict[str, Any] | None) -> dict[str, Any]
     code_sha = code_snapshot(repo, {work["requirement"]["path"]})
     rules_sha = rules_snapshot(repo, cfg)
     verification_cfg_sha = verification_snapshot(cfg)
-    v = work.get("verification") or {}
-    # Only a config-sourced verification can close the Work Item. A one-off
-    # `cao verify --command "true"` is fine for an engineer to sanity-check, but
-    # the implementer choosing the acceptance command at done-time is exactly
-    # the demo11 escape hatch.
-    config_bound = v.get("source") == "config"
-    fresh = (
-        config_bound
-        and v.get("status") == "passed"
-        and v.get("code_snapshot") == code_sha
-        and v.get("rules_snapshot") == rules_sha
-        and v.get("requirement_sha256") == req_sha
-        and v.get("verification_config_sha256") == verification_cfg_sha
-    )
+    anchor = work.get("acceptance") or {}
+    if anchor.get("version") != 2 or anchor.get("config_sha256") != verification_cfg_sha:
+        return {"ready": False, "reason": "verification standard is missing or changed",
+                "next": f"Review the standard, then run `cao reopen --work {work['id']} --reanchor --reason \"<why>\"`."}
+    fresh = bound_verification_fresh(work, {
+        "requirement_sha256": req_sha, "code_snapshot": code_sha, "rules_snapshot": rules_sha,
+        "verification_config_sha256": verification_cfg_sha,
+        "assessment_revision": (work.get("path_assessment") or {}).get("revision"),
+    })
 
     # The native-workflow contract applies to every profile, including `light`.
     # Exempting `light` let an Agent go straight from path selection to
@@ -3760,7 +3765,21 @@ def _prepare_start(args: argparse.Namespace):
         return 2
     work["status"] = "active"
     work["started_at"] = work.get("started_at") or now()
-    work["requirement"] = requirement_evidence(repo, p)
+    changed = reset_requirement(work, requirement_evidence(repo, p))
+    if (work.get("sdd") or {}).get("provider") != provider:
+        work["path_assessment"] = None
+        work["gate_status"] = {}
+        work["verification"] = None
+        for field in ("workflow", "plan_scope", "native_state"):
+            work["sdd"].pop(field, None)
+        hint = work["sdd"].pop("native_ref", None)
+        if hint:
+            work.setdefault("resume", {})["native_ref_hint"] = hint
+        if work["sdd"].get("artifacts"):
+            work.setdefault("resume", {})["previous_sdd_artifacts"] = work["sdd"]["artifacts"]
+            work["sdd"]["artifacts"] = []
+    if is_new_work or changed:
+        anchor_acceptance(work, verification_scripts(config(repo)))
     if not isinstance(work.get("path_assessment"), dict):
         work.setdefault("execution", {})["step"] = "path-assessment"
         work.setdefault("execution", {})["next_action"] = action("agent", path_assessment_instruction(work))
@@ -3863,6 +3882,7 @@ def cmd_path_assess(args: argparse.Namespace) -> int:
         questions=args.question or [],
         assessed_by=args.assessed_by,
     )
+    assessment["revision"] = int((work.get("path_assessment") or {}).get("revision") or 0) + 1
     work["path_assessment"] = assessment
     execution = work.setdefault("execution", {})
     if "major_ambiguity" in assessment["risk_flags"]:
@@ -3922,6 +3942,9 @@ def cmd_gate(args: argparse.Namespace) -> int:
         print(json.dumps({"ok": False, "error": "PATH_ASSESSMENT_REQUIRED", "next": path_assessment_instruction(work)}, ensure_ascii=False, indent=2))
         return 2
     if args.gate_command == "satisfy":
+        if not assessment.get("revision"):
+            print(json.dumps({"ok": False, "error": "PATH_ASSESSMENT_REQUIRED",
+                              "next": f"Run `cao path assess --work {work['id']} --profile <profile> --reason \"<why>\"` to upgrade the legacy assessment."}, ensure_ascii=False)); return 2
         name = str(args.gate or "").strip()
         required = [str(gate) for gate in (assessment.get("required_gates") or [])]
         if name not in required:
@@ -3949,6 +3972,8 @@ def cmd_gate(args: argparse.Namespace) -> int:
             "evidence": evidence,
             "at": now(),
             "by": str(args.satisfied_by or "agent"),
+            "requirement_sha256": work["requirement"]["sha256"],
+            "assessment_revision": assessment.get("revision"),
         }
         save_work(repo, work)
         print(json.dumps({
@@ -4291,24 +4316,14 @@ def _prepare_verification(args: argparse.Namespace):
         }, ensure_ascii=False, indent=2)); return 2
 
     if source == "config":
-        # Acceptance criteria predate the work, or they are not acceptance
-        # criteria. A standard configured after `cao start` (demo11: the Agent
-        # ran `cao init --verify-script "<compile>" --force` right before
-        # closing) lets the implementer define what counts as done.
-        configured_at = ((cfg.get("verification") or {}).get("configured_at"))
-        started_at = work.get("started_at")
-        if configured_at and started_at and configured_at > started_at:
+        # Compare content, not seconds: legacy evidence needs an explicit anchor too.
+        anchor = work.get("acceptance") or {}
+        if anchor.get("version") != 2 or anchor.get("config_sha256") != acceptance_hash(cfg_scripts):
             print(json.dumps({
                 "ok": False,
-                "error": "VERIFICATION_CONFIGURED_AFTER_START",
-                "reason": "The verification standard was configured after this Work Item started, so it cannot certify the requirement. Acceptance criteria must exist before work begins.",
-                "next": (
-                    "Fix the standard first: `cao init --verify-script \"<real test command>\" --force` "
-                    "(it must run tests when the path requires a `tests` gate). Then re-anchor this Work Item "
-                    f"with `cao reopen --work {work.get('id', '<work id>')} --reason \"<why>\" --reanchor`, which restarts the clock, "
-                    "clears the gates and verification earned under the invalid standard, and lets `cao verify` run again. "
-                    "Starting a fresh Work Item is the other option, but it discards this item's progress."
-                ),
+                "error": "VERIFICATION_STANDARD_CHANGED",
+                "reason": "The configured verification standard is not the Work Item's accepted standard.",
+                "next": f"Review the standard, then run `cao reopen --work {work['id']} --reanchor --reason \"<why>\"`; re-earn gates and run `cao verify`.",
             }, ensure_ascii=False, indent=2)); return 2
         # A standard that never runs the tests cannot satisfy a `tests` gate:
         # compiling is not testing (demo11 satisfied `tests` with "mvnw clean
@@ -4327,14 +4342,14 @@ def _prepare_verification(args: argparse.Namespace):
         print(json.dumps({"ok": False, "error": "REQUIREMENT_FILE_MISSING"}, ensure_ascii=False, indent=2)); return 2
     req_sha = sha256_file(req); code_sha = code_snapshot(repo, {work["requirement"]["path"]}); rules_sha = rules_snapshot(repo, cfg)
     verification_cfg_sha = verification_snapshot(cfg)
-    return repo, work["id"], scripts, source, req_sha, code_sha, rules_sha, verification_cfg_sha
+    return repo, work["id"], scripts, source, req_sha, code_sha, rules_sha, verification_cfg_sha, (work.get("path_assessment") or {}).get("revision")
 
 
 def cmd_verify(args: argparse.Namespace) -> int:
     prepared = _prepare_verification(args)
     if isinstance(prepared, int):
         return prepared
-    repo, wid, scripts, source, req_sha, code_sha, rules_sha, verification_cfg_sha = prepared
+    repo, wid, scripts, source, req_sha, code_sha, rules_sha, verification_cfg_sha, assessment_revision = prepared
     started = now()
     results: list[dict[str, Any]] = []
     for item in scripts:
@@ -4364,6 +4379,8 @@ def cmd_verify(args: argparse.Namespace) -> int:
 
     status = overall_verification_status(results)
     verification = {
+        "version": 2,
+        "assessment_revision": assessment_revision,
         "status": status,
         "source": source,
         "scripts": scripts,
@@ -4461,9 +4478,7 @@ def cmd_reopen(args: argparse.Namespace) -> int:
         print(json.dumps({"ok": False, "error": "NO_WORK_ITEM"}, ensure_ascii=False, indent=2)); return 2
     reanchored = bool(getattr(args, "reanchor", False))
     status = str(work.get("status") or "")
-    # Re-anchoring resets the clock rather than reversing a completion, so it
-    # also applies to work that is already active: a Work Item whose standard
-    # was set after it started can never verify, and had no way out.
+    # Explicit standard acceptance also applies to active work, not only completed work.
     allowed = {"active", "completed"} if reanchored else {"completed"}
     if status not in allowed:
         print(json.dumps({
@@ -4480,8 +4495,11 @@ def cmd_reopen(args: argparse.Namespace) -> int:
     if _activation_denied(repo, work["id"]):
         return 2
     if reanchored:
-        # Everything earned so far was earned under a standard that cannot
-        # certify this work, so the clock restarts and the evidence is void.
+        p = repo / work["requirement"]["path"]
+        if not p.is_file():
+            print(json.dumps({"ok": False, "error": "REQUIREMENT_FILE_MISSING"}, ensure_ascii=False)); return 2
+        reset_requirement(work, requirement_evidence(repo, p))
+        anchor_acceptance(work, verification_scripts(config(repo)))
         work["started_at"] = now()
         work["reanchored_at"] = now()
     work["status"] = "active"
@@ -4491,12 +4509,12 @@ def cmd_reopen(args: argparse.Namespace) -> int:
         "agent",
         f"The Work Item was reopened: it was marked completed but the requirement is not actually satisfied."
         + (f" Reopen reason: {args.reason}." if args.reason else "")
-        + (" The verification clock was re-anchored to now, so the current standard is now the one the work is measured against."
+        + (" The current verification configuration was explicitly accepted as the new standard."
            if reanchored else "")
         + " Continue the requirement from where it truly stands. Gates and verification were cleared and must be re-earned with real evidence.",
     )
     work["resume"]["summary"] = args.reason or (
-        "Re-anchored: the verification standard now precedes this Work Item's start; everything must be re-earned."
+        "Re-anchored: the current verification standard was accepted; gates and verification must be re-earned."
         if reanchored else "Reopened after being completed without the requirement actually being satisfied."
     )
     work["gate_status"] = {}

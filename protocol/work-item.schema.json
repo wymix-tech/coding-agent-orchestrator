@@ -5,6 +5,32 @@
   "required": ["version", "id", "title", "status", "requirement", "sdd", "execution", "resume", "decisions", "blockers"],
   "properties": {
     "version": {"type": "integer"},
+    "state_revision": {"type": "integer", "minimum": 0},
+    "integrity_version": {"type": "integer", "enum": [2]},
+    "pending_events": {"type": "array", "items": {"type": "object"}},
+    "acceptance": {
+      "type": "object",
+      "properties": {
+        "version": {"type": "integer", "enum": [2]},
+        "config_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+        "anchored_at": {"type": "integer"}
+      },
+      "required": ["version", "config_sha256"],
+      "additionalProperties": true
+    },
+    "gate_status": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "properties": {
+          "satisfied": {"type": "boolean"},
+          "evidence": {"type": "string"},
+          "requirement_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+          "assessment_revision": {"type": "integer", "minimum": 1}
+        },
+        "additionalProperties": true
+      }
+    },
     "id": {"type": "string", "minLength": 1},
     "title": {"type": "string", "minLength": 1},
     "status": {"enum": ["todo", "active", "suspended", "completed"]},
@@ -15,6 +41,7 @@
       "type": ["object", "null"],
       "properties": {
         "policy_version": {"type": "integer"},
+        "revision": {"type": "integer", "minimum": 1},
         "requested_profile": {"enum": ["light", "standard", "comprehensive"]},
         "profile": {"enum": ["light", "standard", "comprehensive"]},
         "reason": {"type": "string", "minLength": 1},

@@ -13,6 +13,8 @@ import sys
 import tempfile
 import unittest
 
+from tests.helpers import configure_verification
+
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 CAO = ROOT / "scripts" / "cao.py"
 
@@ -41,17 +43,6 @@ def _write(rel_path: str, content: str):
     return writer
 
 
-def set_config_verification(repo: pathlib.Path, command: str) -> None:
-    cfg_path = repo / ".orchestrator" / "config.json"
-    cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
-    cfg.setdefault("verification", {})["scripts"] = [{"name": "s1", "command": command, "required": True}]
-    works = list((repo / ".orchestrator" / "work").glob("*.json"))
-    started = json.loads(works[0].read_text(encoding="utf-8"))["started_at"] if works else 0
-    # Predates the Work Item, so the standard itself is not what blocks here.
-    cfg["verification"]["configured_at"] = started - 100
-    cfg_path.write_text(json.dumps(cfg), encoding="utf-8")
-
-
 # `cao sdd workflow select` requires the entrypoint to name the provider, so
 # each provider gets a plausible one.
 PROVIDER_ENTRYPOINTS = {
@@ -65,6 +56,7 @@ def ready_to_close(repo: pathlib.Path, provider: str, artifact: str, profile: st
     """Drive a Work Item to the point where only `cao done` remains."""
     entrypoint = PROVIDER_ENTRYPOINTS[provider]
     run(repo, "init", "--host", "pi")
+    configure_verification(repo)
     run(repo, "sdd", "select", "--provider", provider)
     (repo / pathlib.Path(artifact).parent).mkdir(parents=True, exist_ok=True)
     pathlib.Path(repo / artifact).write_text("# artifact\n", encoding="utf-8")
@@ -85,7 +77,6 @@ def ready_to_close(repo: pathlib.Path, provider: str, artifact: str, profile: st
     run(repo, "sdd", "workflow", "complete", "--artifact", artifact, "--work", wid)
     if plan is not None:
         plan(repo)
-    set_config_verification(repo, "python3 -m unittest --help")
     rc, out = run(repo, "verify", "--work", wid)
     assert rc == 0, f"verify failed: {out}"
     for gate in ("scope_review", "tests", "implementation_review"):

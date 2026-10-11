@@ -13,7 +13,7 @@ import sys
 import tempfile
 import unittest
 
-from tests.helpers import verify_via_config
+from tests.helpers import configure_verification, verify_via_config
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 CAO = ROOT / "scripts" / "cao.py"
@@ -49,6 +49,7 @@ def init_repo(repo, provider="bmad"):
     (repo / "requirements").mkdir()
     (repo / "requirements" / "login.md").write_text("Implement login", encoding="utf-8")
     run(repo, "init")
+    configure_verification(repo)
     run(repo, "sdd", "select", "--provider", provider)
     run(repo, "start", "--requirement", "requirements/login.md")
 
