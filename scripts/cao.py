@@ -29,7 +29,7 @@ if __package__ in (None, ""):
     if _source_root not in sys.path:
         sys.path.insert(0, _source_root)
 
-from scripts.state_store import atomic_json, repo_transaction
+from scripts.state_store import atomic_json, backup_once, repo_transaction
 
 
 def locked_command(fn):
@@ -1662,6 +1662,9 @@ def recover_index(repo: Path) -> dict[str, Any]:
     """Rebuild a missing, corrupt or stale projection from authoritative Work Items."""
     works = [load_json(p, None) for p in sorted((repo / WORK_DIR).glob("*.json"))]
     works = [work for work in works if isinstance(work, dict)]
+    for work in works:
+        if work.get("pending_events"):
+            drain_events(repo, work)
     active = [work["id"] for work in works if work.get("status") == "active"]
     projection = {"version": 1, "active_work": active[0] if len(active) == 1 else None,
                   "work_items": [work_summary(work) for work in works]}
@@ -1682,9 +1685,17 @@ def save_index(repo: Path, index: dict[str, Any]) -> None:
     save_json(repo / INDEX_REL, index)
 
 
-def load_work(repo: Path, work_id: str) -> dict[str, Any] | None:
+def _read_work(repo: Path, work_id: str) -> dict[str, Any] | None:
     p = work_path(repo, work_id)
     return load_json(p, None) if p.exists() else None
+
+
+@locked_repo
+def load_work(repo: Path, work_id: str) -> dict[str, Any] | None:
+    work = _read_work(repo, work_id)
+    if work and work.get("pending_events"):
+        drain_events(repo, work)
+    return work
 
 
 def sync_index_for_work(repo: Path, work: dict[str, Any]) -> None:
@@ -1708,19 +1719,52 @@ def _activation_denied(repo: Path, wid: str) -> bool:
     return bool(others)
 
 
-@locked_repo
-def save_work(repo: Path, work: dict[str, Any]) -> None:
-    current = load_work(repo, work["id"])
+def _persist_work(repo: Path, work: dict[str, Any]) -> None:
+    """Write authority while holding the transaction, without recursively draining."""
+    current = _read_work(repo, work["id"])
     revision = int((current or {}).get("state_revision", 0))
     if int(work.get("state_revision", 0)) != revision:
         raise RuntimeError("STALE_WORK_REVISION")
-    if work.get("status") == "active" and (others := other_active_work(repo, work["id"])):
-        raise RuntimeError("WORK_ITEM_ALREADY_ACTIVE: " + ",".join(others))
-    saved = {**work, "state_revision": revision + 1, "updated_at": now()}
+    # Queue maintenance must still work for existing legacy conflicts; new activation cannot.
+    if work.get("status") == "active" and (current or {}).get("status") != "active":
+        if others := other_active_work(repo, work["id"]):
+            raise RuntimeError("WORK_ITEM_ALREADY_ACTIVE: " + ",".join(others))
+    if current and current.get("integrity_version") != 2:
+        backup_once(repo, work_path(repo, work["id"]))
+    saved = {"pending_events": [], **work, "integrity_version": 2,
+             "state_revision": revision + 1, "updated_at": now()}
     save_json(work_path(repo, work["id"]), saved)
-    # Advance the caller only after authority commits, even if projection fails.
+    # Advance the caller only after authority commits.
     work.update(saved)
+
+
+@locked_repo
+def save_work(repo: Path, work: dict[str, Any]) -> None:
+    _persist_work(repo, work)
+    if work.get("pending_events"):
+        drain_events(repo, work)
     sync_index_for_work(repo, work)
+
+
+def queue_event(work: dict, event: dict) -> None:
+    key = str(event.get("idempotency_key") or uuid.uuid4().hex)
+    work.setdefault("pending_events", []).append({**event,
+        "event_id": event.get("event_id") or "evt-" + key, "idempotency_key": key})
+
+
+@locked_repo
+def drain_events(repo: Path, work: dict) -> None:
+    fresh = _read_work(repo, work["id"])
+    if fresh is None:
+        raise RuntimeError("WORK_ITEM_NOT_FOUND")
+    pending = fresh.get("pending_events") or []
+    for event in pending:
+        _append_lifecycle_event(repo, event)
+    if pending:
+        fresh["pending_events"] = []
+        _persist_work(repo, fresh)
+    work.clear()
+    work.update(fresh)
 
 
 @locked_repo
@@ -1852,44 +1896,40 @@ def _canonical_native_state(raw: str | None) -> str | None:
     return None
 
 
+@locked_repo
 def _append_lifecycle_event(repo: Path, event: dict[str, Any]) -> bool:
-    """Append one event under an exclusive cross-process lock; return False for duplicates."""
+    """Append under the repository lock; keyless calls are independent operations."""
+    key = str(event.get("idempotency_key") or uuid.uuid4().hex)
+    event = {**event, "idempotency_key": key, "event_id": event.get("event_id") or "evt-" + key}
     path = repo / ORCH / "lifecycle" / "events.jsonl"
     path.parent.mkdir(parents=True, exist_ok=True)
-    lock_path = path.with_suffix(".lock")
-    lock_fd = None
-    deadline = time.monotonic() + 5.0
-    while lock_fd is None:
-        try:
-            lock_fd = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
-        except FileExistsError:
-            try:
-                if time.time() - lock_path.stat().st_mtime > 30:
-                    lock_path.unlink(missing_ok=True)
+    duplicate = False
+    needs_separator = False
+    if path.exists():
+        with path.open("r", encoding="utf-8") as existing:
+            for line in existing:
+                needs_separator = not line.endswith("\n")
+                try:
+                    if json.loads(line).get("idempotency_key") == key:
+                        duplicate = True
+                except (json.JSONDecodeError, AttributeError):
                     continue
-            except OSError:
-                pass
-            if time.monotonic() >= deadline:
-                raise RuntimeError("LIFECYCLE_EVENT_LOCK_TIMEOUT")
-            time.sleep(0.025)
-    try:
-        with os.fdopen(lock_fd, "w", encoding="utf-8") as lock_file:
-            lock_file.write(str(os.getpid()))
-        if path.exists():
-            with path.open("r", encoding="utf-8") as existing:
-                for line in existing:
-                    try:
-                        if json.loads(line).get("idempotency_key") == event.get("idempotency_key"):
-                            return False
-                    except (json.JSONDecodeError, AttributeError):
-                        continue
-        with path.open("a", encoding="utf-8") as stream:
+    with path.open("a", encoding="utf-8") as stream:
+        # Keep a truncated tail as history, but do not concatenate the recovered event.
+        if needs_separator:
+            stream.write("\n")
+        if not duplicate:
             stream.write(json.dumps(event, ensure_ascii=False, sort_keys=True) + "\n")
-            stream.flush()
-            os.fsync(stream.fileno())
-        return True
-    finally:
-        lock_path.unlink(missing_ok=True)
+        stream.flush()
+        # A visible duplicate may come from a failed fsync; certify durability on retries too.
+        os.fsync(stream.fileno())
+    if os.name != "nt":
+        dfd = os.open(path.parent, os.O_RDONLY)
+        try:
+            os.fsync(dfd)
+        finally:
+            os.close(dfd)
+    return not duplicate
 
 
 def list_lifecycle_events(repo: Path, work_id: str | None = None, limit: int = 100) -> list[dict[str, Any]]:
@@ -1975,19 +2015,19 @@ def reconcile_native_sdd_state(repo: Path, work: dict[str, Any]) -> bool:
             "evidence_sha256": evidence_hash, "occurred_at": new_snapshot["observed_at"],
         }
         if old_canonical != canonical:
-            _append_lifecycle_event(repo, {**base_event, "event": "sdd.native_state.changed"})
+            queue_event(work, {**base_event, "event": "sdd.native_state.changed"})
             if canonical == "ready":
-                _append_lifecycle_event(repo, {**base_event, "event": "task.ready", "idempotency_key": idem + ":ready", "event_id": "evt-" + idem[:16] + "ready"})
+                queue_event(work, {**base_event, "event": "task.ready", "idempotency_key": idem + ":ready", "event_id": "evt-" + idem[:16] + "ready"})
             elif canonical == "in_progress":
-                _append_lifecycle_event(repo, {**base_event, "event": "task.execution.started", "idempotency_key": idem + ":started", "event_id": "evt-" + idem[:16] + "started"})
+                queue_event(work, {**base_event, "event": "task.execution.started", "idempotency_key": idem + ":started", "event_id": "evt-" + idem[:16] + "started"})
             elif canonical == "completed":
-                _append_lifecycle_event(repo, {**base_event, "event": "task.execution.completed", "idempotency_key": idem + ":execution-completed", "event_id": "evt-" + idem[:16] + "complete"})
+                queue_event(work, {**base_event, "event": "task.execution.completed", "idempotency_key": idem + ":execution-completed", "event_id": "evt-" + idem[:16] + "complete"})
             elif canonical == "in_review":
-                _append_lifecycle_event(repo, {**base_event, "event": "task.review.started", "idempotency_key": idem + ":review", "event_id": "evt-" + idem[:16] + "review"})
+                queue_event(work, {**base_event, "event": "task.review.started", "idempotency_key": idem + ":review", "event_id": "evt-" + idem[:16] + "review"})
             elif canonical == "blocked":
-                _append_lifecycle_event(repo, {**base_event, "event": "task.blocked", "idempotency_key": idem + ":blocked", "event_id": "evt-" + idem[:16] + "blocked"})
+                queue_event(work, {**base_event, "event": "task.blocked", "idempotency_key": idem + ":blocked", "event_id": "evt-" + idem[:16] + "blocked"})
         elif old_native.get("evidence_sha256") != evidence_hash:
-            _append_lifecycle_event(repo, {**base_event, "event": "sdd.native_artifact.changed", "idempotency_key": idem + ":artifact", "event_id": "evt-" + idem[:16] + "artifact"})
+            queue_event(work, {**base_event, "event": "sdd.native_artifact.changed", "idempotency_key": idem + ":artifact", "event_id": "evt-" + idem[:16] + "artifact"})
         sdd["native_state"] = new_snapshot
         changed = True
         work.setdefault("resume", {})["last_native_sync_at"] = new_snapshot["observed_at"]
@@ -3271,7 +3311,7 @@ def record_workflow_unverified(repo: Path, work: dict[str, Any], provider: str, 
     """Persist an auditable trace for a documented native-workflow exception."""
     identity = {"work_item_id": work["id"], "event": "workflow.unverified_exception", "workflow": name, "reason": reason}
     key = hashlib.sha256(json.dumps(identity, sort_keys=True).encode("utf-8")).hexdigest()
-    _append_lifecycle_event(repo, {
+    queue_event(work, {
         "event_id": "evt-" + key[:20],
         "idempotency_key": key,
         "event": "workflow.unverified_exception",
@@ -3729,11 +3769,11 @@ def _prepare_start(args: argparse.Namespace):
     work["sdd"]["provider"] = provider
     if args.sdd_ref:
         work["sdd"]["native_ref"] = args.sdd_ref
-    save_work(repo, work)
     if is_new_work:
-        created_at = work.get("created_at") or now()
-        created_key = hashlib.sha256(f"{wid}:task.created:{created_at}".encode("utf-8")).hexdigest()
-        _append_lifecycle_event(repo, {"event_id": "evt-" + created_key[:20], "idempotency_key": created_key, "event": "task.created", "work_item_id": wid, "source": "cao", "native_ref": work.get("sdd", {}).get("native_ref"), "occurred_at": created_at})
+        queue_event(work, {"event": "task.created", "work_item_id": wid, "source": "cao",
+                           "native_ref": work.get("sdd", {}).get("native_ref"),
+                           "occurred_at": work.get("created_at") or now()})
+    save_work(repo, work)
     # Associate the new work and Session in the same transaction as activation.
     identity = host_session_identity(getattr(args, "host", None))
     session = register_session(repo, work, identity[1], identity[0], event="start") if identity else None
@@ -4461,8 +4501,7 @@ def cmd_reopen(args: argparse.Namespace) -> int:
     )
     work["gate_status"] = {}
     work["verification"] = {}
-    save_work(repo, work)
-    _append_lifecycle_event(repo, {
+    queue_event(work, {
         "event": "task.reopened",
         "work_item_id": work["id"],
         "source": "cao",
@@ -4471,6 +4510,7 @@ def cmd_reopen(args: argparse.Namespace) -> int:
         "reason": args.reason or "not specified",
         "reanchored": reanchored,
     })
+    save_work(repo, work)
     print(json.dumps({
         "ok": True,
         "status": "active",
@@ -4509,10 +4549,9 @@ def cmd_done(args: argparse.Namespace) -> int:
             return _completion_blocked(repo, work, c)
         work["status"] = "completed"; work["completed_at"] = now(); work["execution"]["step"] = "done"; work["execution"]["next_action"] = action("none", "Work item is completed.")
         work["resume"]["summary"] = "Work item completed and verification was fresh."
+        queue_event(work, {"event": "task.closed", "work_item_id": work.get("id"),
+                           "source": "cao", "to_state": "closed", "occurred_at": work.get("completed_at")})
         save_work(repo, work)
-        completed_identity = {"work_item_id": work.get("id"), "completed_at": work.get("completed_at"), "event": "task.closed"}
-        completed_key = hashlib.sha256(json.dumps(completed_identity, sort_keys=True).encode("utf-8")).hexdigest()
-        _append_lifecycle_event(repo, {"event_id": "evt-" + completed_key[:20], "idempotency_key": completed_key, "event": "task.closed", "work_item_id": work.get("id"), "source": "cao", "to_state": "closed", "occurred_at": work.get("completed_at")})
         print(json.dumps({"ok": True, "status": "completed", "work_item": work_summary(work), "sdd_transition": transition}, ensure_ascii=False, indent=2)); return 0
 
 

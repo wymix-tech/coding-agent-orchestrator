@@ -5,6 +5,7 @@ from __future__ import annotations
 import errno
 import json
 import os
+import shutil
 import tempfile
 import threading
 import time
@@ -107,3 +108,29 @@ def atomic_json(path: Path, value: Any) -> None:
     finally:
         if os.path.exists(name):
             os.unlink(name)
+
+
+def backup_once(repo: Path, path: Path) -> None:
+    """Preserve original bytes before the first integrity-protocol upgrade."""
+    with repo_transaction(repo):
+        target = (repo / ".orchestrator/backups/integrity-v2"
+                  / path.relative_to(repo / ".orchestrator"))
+        if not path.exists() or target.exists():
+            return
+        target.parent.mkdir(parents=True, exist_ok=True)
+        fd, name = tempfile.mkstemp(suffix=".tmp", dir=target.parent)
+        try:
+            with os.fdopen(fd, "wb") as output, path.open("rb") as source:
+                shutil.copyfileobj(source, output)
+                output.flush()
+                os.fsync(output.fileno())
+            os.replace(name, target)
+            if os.name != "nt":
+                dfd = os.open(target.parent, os.O_RDONLY)
+                try:
+                    os.fsync(dfd)
+                finally:
+                    os.close(dfd)
+        finally:
+            if os.path.exists(name):
+                os.unlink(name)
