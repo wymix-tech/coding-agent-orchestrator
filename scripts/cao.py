@@ -38,6 +38,7 @@ from scripts.completion_policy import (
     verification_fresh as bound_verification_fresh, normalize_scripts, tests_satisfied, workflow_ready, normalize_timeout,
 )
 from scripts.verification_runner import run_script
+from scripts.verification_setup import configured_scripts, setup_state, declared_scripts, prepare_config
 
 
 def locked_command(fn):
@@ -1013,14 +1014,7 @@ def config(repo: Path) -> dict[str, Any]:
 
 
 def verification_scripts(cfg: dict[str, Any]) -> list[dict[str, Any]]:
-    verification = cfg.get("verification") or {}
-    raw = verification.get("scripts")
-    if raw is None:
-        # Backward compatibility for configs created before the script model.
-        raw = verification.get("commands") or []
-        if not raw and verification.get("command"):
-            raw = [{"name": "default", "command": str(verification["command"]), "required": True}]
-    return normalize_scripts(raw)
+    return configured_scripts(cfg)
 
 
 # Compatibility alias for internal callers and older integrations.
@@ -3812,6 +3806,41 @@ def _initialize_state(args: argparse.Namespace):
     return repo, cfg_path, host
 
 
+@locked_command
+def cmd_verification_configure(args: argparse.Namespace) -> int:
+    repo = repo_root(args.repo)
+    path = repo / CONFIG_REL
+    scripts = []
+    raw = {}
+    try:
+        scripts = declared_scripts(args.verify_script or [], args.test_script or [])
+        raw = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+        candidate, changed = prepare_config(raw, scripts, args.replace, now())
+        effective = json.loads(json.dumps(DEFAULT_CONFIG))
+        deep_merge(effective, candidate)
+        wid = load_index(repo).get("active_work")
+        # Configuring verification must not upgrade or reanchor a Work record.
+        work = _read_work(repo, wid) if wid else None
+        review = bool(work and work.get("status") == "active" and
+                      (work.get("acceptance") or {}).get("config_sha256") != verification_snapshot(effective))
+    except ValueError as exc:
+        error = "VERIFICATION_CONFIG_INVALID" if isinstance(exc, json.JSONDecodeError) else str(exc).split(":", 1)[0]
+        out = {"ok": False, "error": error, "reason": str(exc)}
+        if error == "VERIFICATION_CONFIG_REPLACE_REQUIRED":
+            out.update(current=setup_state(raw), requested=scripts,
+                       next=action("human", "Review the existing and requested verification declarations; use --replace only to explicitly replace them."))
+        print(json.dumps(out, ensure_ascii=False, indent=2))
+        return 2
+    if changed:
+        save_json(path, candidate)
+    out = {"ok": True, "status": "configured" if changed else "unchanged", "config": str(path),
+           "verification_setup": setup_state(effective), "acceptance_review_required": review}
+    if review:
+        out["next"] = action("human", f'Review changed acceptance and explicitly run `cao reopen --work {wid} --reanchor --reason "Reviewed acceptance changes"`.')
+    print(json.dumps(out, ensure_ascii=False, indent=2))
+    return 0
+
+
 def cmd_init(args: argparse.Namespace) -> int:
     prepared = _initialize_state(args)
     if isinstance(prepared, int):
@@ -5057,7 +5086,7 @@ def _readonly_tokens(tokens: list[str]) -> bool:
     safe_control_commands = {
         "init", "bootstrap", "sdd", "start", "path", "list", "status", "next", "resume",
         "checkpoint", "decision", "block", "unblock", "handoff", "sessions", "verify", "done",
-        "context", "artifact", "host-event", "requirement", "language", "gate", "reopen",
+        "context", "artifact", "host-event", "requirement", "language", "gate", "reopen", "verification",
     }
     return bool(command_tokens and command_tokens[0] in safe_control_commands)
 
@@ -5336,6 +5365,12 @@ def build_parser() -> argparse.ArgumentParser:
     sessions_sub = sessions.add_subparsers(dest="sessions_command", required=True)
     sp = sessions_sub.add_parser("list"); sp.add_argument("--repo", default="."); sp.add_argument("--host", choices=["claude-code", "codex", "pi"]); sp.add_argument("--work"); sp.add_argument("--status", choices=["active", "ended"]); sp.add_argument("--stale-after-minutes", type=int, default=30); sp.set_defaults(fn=cmd_sessions_list)
     sp = sessions_sub.add_parser("show"); sp.add_argument("--repo", default="."); sp.add_argument("--id", required=True); sp.add_argument("--host", choices=["claude-code", "codex", "pi"]); sp.add_argument("--stale-after-minutes", type=int, default=30); sp.set_defaults(fn=cmd_sessions_show)
+    verification = sub.add_parser("verification", help="Configure project verification without resetting other state")
+    verification_sub = verification.add_subparsers(dest="verification_command", required=True)
+    sp = verification_sub.add_parser("configure", help="Declare required project scripts without installing or executing anything")
+    sp.add_argument("--repo", default="."); sp.add_argument("--test-script", action="append"); sp.add_argument("--verify-script", action="append")
+    sp.add_argument("--replace", action="store_true", help="Explicitly replace different existing verification declarations")
+    sp.set_defaults(fn=cmd_verification_configure)
     sp = sub.add_parser("verify"); sp.add_argument("--repo", default="."); sp.add_argument("--work"); sp.add_argument("--script", action="append", help="One-off verification script command; repeat to run multiple scripts"); sp.add_argument("--command", action="append", help=argparse.SUPPRESS); sp.set_defaults(fn=cmd_verify)
     sp = sub.add_parser("done"); sp.add_argument("--repo", default="."); sp.add_argument("--work"); sp.set_defaults(fn=cmd_done)
     sp = sub.add_parser("reopen", help="Reopen a completed Work Item that should not have been closed"); sp.add_argument("--repo", default="."); sp.add_argument("--work"); sp.add_argument("--reason", help="Why the completion was wrong, e.g. which part of the requirement is missing"); sp.add_argument("--reanchor", action="store_true", help="Explicitly accept the current verification standard and clear gates/verification; also supports active Work Items"); sp.set_defaults(fn=cmd_reopen)

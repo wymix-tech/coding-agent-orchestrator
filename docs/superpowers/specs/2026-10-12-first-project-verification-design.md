@@ -75,7 +75,8 @@ cao verification configure --replace --test-script '<reviewed replacement>'
 - 存在不同的非空配置：默认拒绝覆盖并展示差异/replace 提示；只有显式 --replace 才替换脚本列表。
   非法但非空的旧配置也不得静默覆盖，须显式 replace。
 - 参数非法：返回结构化错误和非零退出，不留下部分配置。
-- 不安装 Host、不运行外部命令、不改项目清单/脚本文件、不启动需求或修改 Work。
+- 不安装 Host、不运行项目初始化/验证/依赖命令，不改项目清单/脚本文件、不启动需求或修改 Work。
+  沿用公共仓库定位逻辑的只读 `git rev-parse` 不属于项目执行；不新增外部执行步骤。
 - 存在 active Work 且标准变化：返回显式验收复核/reanchor 提示，不自动清门禁或重锚。
   suspended Work 在恢复时仍由既有标准绑定检查发现变化；completed 历史不被重认证。
 
