@@ -182,14 +182,14 @@ class VerificationTests(RepairCase):
         import contextlib
         import io
         wid = self.start()
-        original = cao.subprocess.run
+        original = cao.run_script
         def concurrent(*args, **kwargs):
-            if kwargs.get("shell"):
-                rc, out = self.run_cli("decision", "--decision", "during verification")
-                self.assertEqual(rc, 0, out)
+            # The bounded runner replaced subprocess.run as the lock-free execution boundary.
+            rc, out = self.run_cli("decision", "--decision", "during verification")
+            self.assertEqual(rc, 0, out)
             return original(*args, **kwargs)
         args = cao.build_parser().parse_args(["verify", "--repo", str(self.repo)])
-        with mock.patch.object(cao.subprocess, "run", side_effect=concurrent), contextlib.redirect_stdout(io.StringIO()):
+        with mock.patch.object(cao, "run_script", side_effect=concurrent), contextlib.redirect_stdout(io.StringIO()):
             self.assertEqual(cao.cmd_verify(args), 0)
         self.assertEqual(self.read_work(wid)["decisions"][0]["decision"], "during verification")
 

@@ -4,6 +4,7 @@
     "user": "zh-CN"
   },
   "verification": {
+    "timeout_seconds": 300,
     "scripts": [
       {
         "name": "unit-tests",

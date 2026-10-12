@@ -33,8 +33,9 @@ from scripts.state_store import atomic_json, backup_once, repo_transaction
 from scripts.path_guard import inside, repo_file, provider_artifact, patch_targets
 from scripts.completion_policy import (
     acceptance_hash, anchor_acceptance, reset_requirement, evidence_matches,
-    verification_fresh as bound_verification_fresh, normalize_scripts, tests_satisfied, workflow_ready,
+    verification_fresh as bound_verification_fresh, normalize_scripts, tests_satisfied, workflow_ready, normalize_timeout,
 )
+from scripts.verification_runner import run_script
 
 
 def locked_command(fn):
@@ -1513,8 +1514,12 @@ def code_snapshot(repo: Path, excluded: set[str] | None = None) -> str:
     return h.hexdigest()
 
 
+def verification_timeout(cfg: dict[str, Any]) -> float:
+    return normalize_timeout((cfg.get("verification") or {}).get("timeout_seconds", 300.0))
+
+
 def verification_snapshot(cfg: dict[str, Any]) -> str:
-    return acceptance_hash(verification_scripts(cfg))
+    return acceptance_hash(verification_scripts(cfg), verification_timeout(cfg))
 
 
 def rules_snapshot(repo: Path, cfg: dict[str, Any]) -> str:
@@ -3855,7 +3860,8 @@ def _prepare_start(args: argparse.Namespace):
             work.setdefault("resume", {})["previous_sdd_artifacts"] = work["sdd"]["artifacts"]
             work["sdd"]["artifacts"] = []
     if is_new_work or changed:
-        anchor_acceptance(work, verification_scripts(config(repo)))
+        cfg = config(repo)
+        anchor_acceptance(work, verification_scripts(cfg), verification_timeout(cfg))
     if not isinstance(work.get("path_assessment"), dict):
         work.setdefault("execution", {})["step"] = "path-assessment"
         work.setdefault("execution", {})["next_action"] = action("agent", path_assessment_instruction(work))
@@ -4394,7 +4400,7 @@ def _prepare_verification(args: argparse.Namespace):
     if source == "config":
         # Compare content, not seconds: legacy evidence needs an explicit anchor too.
         anchor = work.get("acceptance") or {}
-        if anchor.get("version") != 2 or anchor.get("config_sha256") != acceptance_hash(cfg_scripts):
+        if anchor.get("version") != 2 or anchor.get("config_sha256") != verification_snapshot(cfg):
             print(json.dumps({
                 "ok": False,
                 "error": "VERIFICATION_STANDARD_CHANGED",
@@ -4412,7 +4418,7 @@ def _prepare_verification(args: argparse.Namespace):
     req = repo / work["requirement"]["path"]
     if not req.exists():
         print(json.dumps({"ok": False, "error": "REQUIREMENT_FILE_MISSING"}, ensure_ascii=False, indent=2)); return 2
-    return repo, work["id"], scripts, source, verification_inputs(repo, work, cfg)
+    return repo, work["id"], scripts, source, verification_inputs(repo, work, cfg), verification_timeout(cfg)
 
 
 def commit_verification(repo, wid, inputs, scripts, results, source, started):
@@ -4439,21 +4445,15 @@ def cmd_verify(args: argparse.Namespace) -> int:
     prepared = _prepare_verification(args)
     if isinstance(prepared, int):
         return prepared
-    repo, wid, scripts, source, inputs = prepared
+    repo, wid, scripts, source, inputs, timeout = prepared
     started = now()
     results: list[dict[str, Any]] = []
     for item in scripts:
         command = item["command"]
         command_started = now()
-        try:
-            result = subprocess.run(command, cwd=repo, shell=True, text=True, capture_output=True)
-            exit_code = result.returncode
-            stdout = result.stdout
-            stderr = result.stderr
-        except OSError as exc:
-            exit_code = 127
-            stdout = ""
-            stderr = str(exc)
+        result = run_script(command, repo, timeout=timeout)
+        exit_code = result["exit_code"]
+        stdout, stderr = result["stdout_tail"], result["stderr_tail"]
         status_for_script = verification_status_for_exit_code(exit_code)
         results.append({
             "name": item["name"],
@@ -4462,6 +4462,7 @@ def cmd_verify(args: argparse.Namespace) -> int:
             "gates": list(item["gates"]),
             "exit_code": exit_code,
             "status": status_for_script,
+            "timed_out": result["timed_out"],
             "reason": verification_reason(stdout, stderr, status_for_script),
             "started_at": command_started,
             "stdout_tail": stdout[-4000:],
@@ -4572,7 +4573,8 @@ def cmd_reopen(args: argparse.Namespace) -> int:
         if not p.is_file():
             print(json.dumps({"ok": False, "error": "REQUIREMENT_FILE_MISSING"}, ensure_ascii=False)); return 2
         reset_requirement(work, requirement_evidence(repo, p))
-        anchor_acceptance(work, verification_scripts(config(repo)))
+        cfg = config(repo)
+        anchor_acceptance(work, verification_scripts(cfg), verification_timeout(cfg))
         work["started_at"] = now()
         work["reanchored_at"] = now()
     work["status"] = "active"

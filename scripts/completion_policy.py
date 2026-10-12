@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+import math
 import time
 from pathlib import Path
 
@@ -38,14 +39,20 @@ def tests_satisfied(verification: dict) -> bool:
     return bool(results) and all(result.get("status") == "passed" for result in results)
 
 
-def acceptance_hash(scripts: list[dict]) -> str:
-    encoded = json.dumps(scripts, ensure_ascii=False, sort_keys=True,
+def normalize_timeout(value=300.0) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value <= 0:
+        raise ValueError("VERIFICATION_LIMIT_INVALID")
+    return float(value)
+
+
+def acceptance_hash(scripts: list[dict], timeout_seconds=300.0) -> str:
+    encoded = json.dumps({"scripts": scripts, "timeout_seconds": normalize_timeout(timeout_seconds)}, ensure_ascii=False, sort_keys=True,
                          separators=(",", ":")).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
 
 
-def anchor_acceptance(work: dict, scripts: list[dict]) -> None:
-    work["acceptance"] = {"version": 2, "config_sha256": acceptance_hash(scripts),
+def anchor_acceptance(work: dict, scripts: list[dict], timeout_seconds=300.0) -> None:
+    work["acceptance"] = {"version": 2, "config_sha256": acceptance_hash(scripts, timeout_seconds),
                           "anchored_at": int(time.time())}
 
 
