@@ -30,6 +30,33 @@ class AuditTests(RepairCase):
     def backup_path(self, wid):
         return self.repo / f".orchestrator/backups/integrity-v2/work/{wid}.json"
 
+    def test_entry_exception_is_idempotent_only_within_requirement_scope(self):
+        wid = self.start()
+        args = ("sdd", "workflow", "select", "--name", "fixture", "--entrypoint", "true",
+                "--allow-unverified", "--reason", "local fixture exception")
+        rc, out = self.run_cli(*args)
+        self.assertEqual(rc, 0, out)
+        requirement = self.read_work(wid)["requirement"]["path"]
+        (self.repo / requirement).write_text("Changed requirement scope\n", encoding="utf-8")
+        rc, out = self.run_cli("start", "--requirement", requirement, "--replace")
+        self.assertEqual(rc, 0, out)
+        for _ in range(2):
+            rc, out = self.run_cli(*args)
+            self.assertEqual(rc, 0, out)
+        events = self.events(wid, "workflow.unverified_exception")
+        self.assertEqual(len(events), 2, events)
+        self.assertEqual(len({event["requirement_sha256"] for event in events}), 2)
+
+    def test_entry_exception_identity_includes_provider(self):
+        wid = self.start()
+        for provider in ("bmad", "openspec", "openspec"):
+            work = cao.load_work(self.repo, wid)
+            cao.record_workflow_unverified(self.repo, work, provider, "fixture", "same exception")
+            cao.save_work(self.repo, work)
+        events = self.events(wid, "workflow.unverified_exception")
+        self.assertEqual(len(events), 2, events)
+        self.assertEqual({event["provider"] for event in events}, {"bmad", "openspec"})
+
     def test_two_reanchors_produce_two_events(self):
         wid = self.start()
         for reason in ("first", "second"):

@@ -3378,7 +3378,8 @@ def cmd_sdd_install(args: argparse.Namespace) -> int:
 
 def record_workflow_unverified(repo: Path, work: dict[str, Any], provider: str, name: str, reason: str) -> None:
     """Persist an auditable trace for a documented native-workflow exception."""
-    identity = {"work_item_id": work["id"], "event": "workflow.unverified_exception", "workflow": name, "reason": reason}
+    identity = {"work_item_id": work["id"], "event": "workflow.unverified_exception", "workflow": name,
+                "provider": provider, "requirement_sha256": work["requirement"]["sha256"], "reason": reason}
     key = hashlib.sha256(json.dumps(identity, sort_keys=True).encode("utf-8")).hexdigest()
     queue_event(work, {
         "event_id": "evt-" + key[:20],
@@ -3387,6 +3388,7 @@ def record_workflow_unverified(repo: Path, work: dict[str, Any], provider: str, 
         "work_item_id": work["id"],
         "source": "cao",
         "provider": provider,
+        "requirement_sha256": identity["requirement_sha256"],
         "workflow": name,
         "reason": reason,
         "occurred_at": now(),
