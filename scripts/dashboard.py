@@ -40,7 +40,7 @@ def timestamp_label(value: Any) -> str | None:
     return datetime.fromtimestamp(stamp, tz=timezone.utc).isoformat(timespec="seconds")
 
 
-def _verification_view(work: dict[str, Any]) -> dict[str, Any] | None:
+def _verification_view(work: dict[str, Any], fresh: bool | None = None) -> dict[str, Any] | None:
     raw = work.get("verification")
     if not isinstance(raw, dict):
         return None
@@ -58,12 +58,14 @@ def _verification_view(work: dict[str, Any]) -> dict[str, Any] | None:
             "started_at": timestamp_label(row.get("started_at")),
         })
     return {
-        "status": raw.get("status") or "unknown",
+        "status": "stale" if raw.get("status") == "passed" and fresh is False else raw.get("status") or "unknown",
+        "run_status": raw.get("run_status") or raw.get("status") or "unknown",
+        "fresh": fresh,
         "source": raw.get("source") or "unknown",
         "at": timestamp_label(raw.get("at")),
         "results": results,
-        # Dashboard intentionally avoids an expensive full-repository snapshot on every poll.
-        "freshness_note": "最终快照新鲜度由 cao done 重新检查",
+        "freshness_note": ("当前验证证据新鲜" if fresh else "验证证据缺失或已过期；请执行 cao verify")
+        if fresh is not None else "历史记录未重新认证",
     }
 
 
@@ -424,8 +426,12 @@ def infer_execution_phase(work: dict[str, Any], artifact_catalog: list[dict[str,
     """
     execution = work.get("execution") if isinstance(work.get("execution"), dict) else {}
     step = str(execution.get("step") or "").lower()
-    if work.get("status") == "completed" or re.search(r"done|complete|closed", step):
+    if work.get("status") == "completed":
         return {"id": "done", "source": "cao-state"}
+    native_phases = {"native-sdd-workflow-selected": "planning", "native-sdd-workflow-executed": "implementation",
+                     "native-sdd-workflow-completed": "review"}
+    if step in native_phases:
+        return {"id": native_phases[step], "source": "cao-state"}
     if re.search(r"verif|test", step):
         return {"id": "verification", "source": "cao-state"}
     if re.search(r"review|audit", step):
@@ -439,7 +445,9 @@ def infer_execution_phase(work: dict[str, Any], artifact_catalog: list[dict[str,
         if item.get("exists") and item.get("status") in {"generated", "confirmed"}
     }
     workflow = ((work.get("sdd") or {}).get("workflow") or {})
-    if generated_roles.intersection({"tasks", "story"}) or workflow.get("status") == "completed":
+    if workflow.get("status") == "completed":
+        return {"id": "review", "source": "native-sdd-workflow"}
+    if generated_roles.intersection({"tasks", "story"}):
         return {"id": "implementation", "source": "native-sdd-artifacts"}
     if not work.get("path_assessment"):
         return {"id": "path", "source": "cao-state"}
@@ -455,6 +463,11 @@ def build_dashboard_overview(repo: Path, stale_after_minutes: int = 30) -> dict[
         WORK_DIR,
         SDD_CATALOG,
         config,
+        completion_status,
+        completion_next_instruction,
+        bound_verification_fresh,
+        gate_state,
+        verification_inputs,
         detect_sdd,
         empty_index,
         list_handoff_records,
@@ -512,6 +525,21 @@ def build_dashboard_overview(repo: Path, stale_after_minutes: int = 30) -> dict[
         resume = work.get("resume") or {}
         artifact_catalog = build_sdd_artifact_catalog(repo, work)
         current_phase = infer_execution_phase(work, artifact_catalog)
+        try:
+            completion = completion_status(repo, work)
+            if not completion["ready"]:
+                completion.setdefault("next", completion_next_instruction(repo, work, completion))
+        except (OSError, ValueError, KeyError, RuntimeError) as exc:
+            completion = {"ready": False, "reason": str(exc), "next": "Repair the evidence source, then run `cao verify`."}
+        fresh = None
+        if work.get("status") in {"active", "suspended"}:
+            try:
+                fresh = bound_verification_fresh(work, verification_inputs(repo, work, cfg)) if work.get("verification") else False
+            except (OSError, ValueError, KeyError, RuntimeError):
+                fresh = False
+        workflow = sdd.get("workflow") or {}
+        exceptions = {key: workflow[field] for key, field in (("entry", "unverified"), ("execution_failure", "failure_exception"))
+                      if workflow.get(field) and (field == "failure_exception" or workflow[field].get("allowed"))}
         work_items.append({
             "id": work["id"],
             "title": work.get("title") or work["id"],
@@ -520,7 +548,11 @@ def build_dashboard_overview(repo: Path, stale_after_minutes: int = 30) -> dict[
             "updated_at": timestamp_label(work.get("updated_at")),
             "started_at": timestamp_label(work.get("started_at")),
             "requirement": {"path": requirement.get("path"), "sha256": requirement.get("sha256")},
-            "sdd": {"provider": sdd.get("provider") or "none", "native_ref": sdd.get("native_ref"), "artifacts": sdd.get("artifacts") or []},
+            "sdd": {"provider": sdd.get("provider") or "none", "native_ref": sdd.get("native_ref"), "artifacts": sdd.get("artifacts") or [], "workflow": workflow},
+            "completion": completion,
+            "gates": gate_state(work, bool(fresh)),
+            "legacy_evidence": summary["legacy_evidence"],
+            "workflow_exception": exceptions or None,
             "execution": {
                 "step": execution.get("step") or "not recorded",
                 "next_action": execution.get("next_action") or {},
@@ -531,7 +563,7 @@ def build_dashboard_overview(repo: Path, stale_after_minutes: int = 30) -> dict[
             "path_state": assessment_state,
             "blockers": work.get("blockers") or [],
             "decisions": (work.get("decisions") or [])[-8:][::-1],
-            "verification": _verification_view(work),
+            "verification": _verification_view(work, fresh),
             "resume": {
                 "summary": resume.get("summary") or "暂无进度摘要",
                 "completed": resume.get("completed") or [],
