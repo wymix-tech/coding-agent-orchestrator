@@ -124,7 +124,7 @@ Task 1 验证：初始15项RED均明确缺模块；额外聚合非法输入7个�
 - `report_hashes(repo: Path, results: list[dict], outputs: list[str]) -> dict[str,str]`：证据/输出必须是真实仓库文件，hash 全字节。
 - `read_json(path: Path) -> dict`：最多 1 MiB UTF-8，非法/超限/非对象报结构错误，不部分读取当成功。
 
-- [ ] 写 RED：同 SPEC 来源有效、只标题拒绝、不强制其他工件；外部/链接别名/目录/输入冒充报告拒绝；新输出在 `<provider-dir>/cao-acceptance/<work-id>/` 下，仅 md/json/txt，未登记变化不能被排除；首次既有文件拒绝，旧已拥有报告允许。
+- [x] 写 RED：同 SPEC 来源有效、只标题拒绝、不强制其他工件；外部/链接别名/目录/输入冒充报告拒绝；新输出在 `<provider-dir>/cao-acceptance/<work-id>/` 下，仅 md/json/txt，未登记变化不能被排除；首次既有文件拒绝，旧已拥有报告允许。
 ```python
 with self.assertRaisesRegex(ValueError, 'SDD_ACCEPTANCE_OUTPUT_INVALID'):
     output_paths(repo, {**d, 'outputs':[d['spec']]}, ['_bmad-output/'], wid, {})
@@ -133,8 +133,8 @@ before = source_hashes(repo, d, ['_bmad-output/'])
 with self.assertRaisesRegex(ValueError, 'SDD_ACCEPTANCE_SOURCE_INVALID'):
     source_hashes(repo, d, ['_bmad-output/'])
 ```
-- [ ] 跑 `python3.11 -m unittest discover -s tests -p test_sdd_acceptance_files.py -v` RED。
-- [ ] 用 provider_artifact 检查来源/输出、repo_file 检查证据；拒输出 resolve 后与来源/其他输入相同，拒 symlink 输出，已有输出 byte hash 不匹配拒，全部 lexical 相对路径保留。正文检查只去 BOM/frontmatter/空白/Markdown 标题后至少有正文，不能把长度/标题当作语义验收证明。
+- [x] 跑 `python3.11 -m unittest discover -s tests -p test_sdd_acceptance_files.py -v` RED。
+- [x] 用 provider_artifact 检查来源/输出、repo_file 检查证据；拒输出 resolve 后与来源/其他输入相同，拒 symlink 输出，已有输出 byte hash 不匹配拒，全部 lexical 相对路径保留。正文检查只去 BOM/frontmatter/空白/Markdown 标题后至少有正文，不能把长度/标题当作语义验收证明。
 ```python
 MAX_REPORT_BYTES = 1024 * 1024
 
@@ -148,7 +148,9 @@ def read_json(path):
         raise ValueError('SDD_ACCEPTANCE_RESULT_INVALID')
     return value
 ```
-- [ ] 定向/全量与路径老回归 GREEN；提交 `feat: bind SDD acceptance sources and safe report outputs`。
+- [x] 定向/全量与路径老回归 GREEN；提交 `feat: bind SDD acceptance sources and safe report outputs`。
+
+Task 2 验证：14项初始RED均缺文件模块，另补大文件证据hash回归RED→GREEN。源正文/JSON读取最多1MiB，证据/原生报告hash按64KiB块覆盖完整字节，不误用JSON长度上限。15项文件定向、31项组合、497项Python/134.128秒、13 Node无失败/跳过、严格TS/compileall/Shell/diff通过。日志 `/tmp/cao-sdd-acceptance-2-*.log`。
 
 ## Task 3: Work 运行状态、输入绑定与显式重锚
 
@@ -291,4 +293,4 @@ git diff --check
 - 设计1—4：Tasks 5/6；5：Tasks 1/2/3；6：Tasks 1/3/4；7：Tasks 2/3/4；8：Tasks 3/5/6；9—11：所有Task与出口记录。
 - 所有新增函数在接口中定义；D/R/I/Work字段在固定接口定义；现有函数以当前源码为准，若接口差异先更新计划再实现。
 - 命令JSON/报告长度、无执行/当前run提交、未知ID、精确输出边界、no-plan与旧证据迁移均有对应RED。
-- 已开始执行：Task 1 纯策略已验证；Tasks 2—6 待完成，不能将现有通过结果当作完整新门禁已实现。
+- 已开始执行：Tasks 1/2 纯策略与文件边界已验证；Tasks 3—6 待完成，不能将现有通过结果当作完整新门禁已实现。
