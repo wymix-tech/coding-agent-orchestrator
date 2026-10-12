@@ -117,7 +117,7 @@ class SessionModelTests(unittest.TestCase):
             self.assertEqual(out["sessions"][0]["activity"], "stale")
             self.assertEqual(out["sessions"][0]["status"], "active")
 
-    def test_primary_stop_creates_handoff_then_ends_session(self):
+    def test_primary_stop_creates_handoff_and_keeps_session_active(self):
         with tempfile.TemporaryDirectory() as td:
             repo = pathlib.Path(td)
             init_repo(repo, with_work=True)
@@ -125,9 +125,9 @@ class SessionModelTests(unittest.TestCase):
             rc, _, _ = run(repo, "host-event", "--host", "claude-code", payload={"event": "stop", "session_id": "main-session", "last_assistant_message": "Continuing later"})
             self.assertEqual(rc, 0)
             session = next(s for s in sessions_in(repo) if s["host_session_id"] == "main-session")
-            self.assertEqual(session["status"], "ended")
+            self.assertEqual(session["status"], "active")
             self.assertEqual(session["last_event"], "stop")
-            self.assertEqual(session["end_reason"], "stop")
+            self.assertIsNone(session["end_reason"])
             self.assertIsNotNone(session["last_handoff_id"])
             handoff_file = next((repo / ".orchestrator" / "handoffs").rglob("*.json"))
             handoff = json.loads(handoff_file.read_text(encoding="utf-8"))
@@ -164,26 +164,28 @@ class SessionModelTests(unittest.TestCase):
             session = next(s for s in sessions_in(repo) if s["host_session_id"] == "manual-session")
             self.assertEqual(session["status"], "ended")
 
-    def test_blocked_primary_stop_does_not_end_session_or_create_handoff(self):
+    def test_completion_claim_reminds_without_ending_session(self):
         with tempfile.TemporaryDirectory() as td:
             repo = pathlib.Path(td)
             init_repo(repo, with_work=True)
             run(repo, "host-event", "--host", "codex", payload={"event": "session_start", "session_id": "guarded-session"})
             rc, out, _ = run(repo, "host-event", "--host", "codex", payload={"event": "stop", "session_id": "guarded-session", "last_assistant_message": "Done, login is implemented"})
             self.assertEqual(rc, 0)
-            self.assertEqual(out.get("decision"), "block")
+            self.assertNotEqual(out.get("decision"), "block")
+            self.assertIn("cao", out["hookSpecificOutput"]["additionalContext"])
             session = next(s for s in sessions_in(repo) if s["host_session_id"] == "guarded-session")
             self.assertEqual(session["status"], "active")
-            self.assertEqual(session["last_event"], "stop_blocked")
-            handoffs = list((repo / ".orchestrator" / "handoffs").rglob("*.json")) if (repo / ".orchestrator" / "handoffs").exists() else []
-            self.assertEqual(handoffs, [])
+            self.assertEqual(session["last_event"], "stop")
+            self.assertIsNotNone(session["last_handoff_id"])
+            rc, _, _ = run(repo, "done")
+            self.assertEqual(rc, 2)
 
     def test_resuming_ended_native_session_reactivates_same_internal_session(self):
         with tempfile.TemporaryDirectory() as td:
             repo = pathlib.Path(td)
             init_repo(repo, with_work=True)
             run(repo, "host-event", "--host", "codex", payload={"event": "session_start", "session_id": "reused-session"})
-            run(repo, "host-event", "--host", "codex", payload={"event": "stop", "session_id": "reused-session", "last_assistant_message": "Pausing work"})
+            run(repo, "host-event", "--host", "codex", payload={"event": "session_end", "session_id": "reused-session", "reason": "quit"})
             before = next(s for s in sessions_in(repo) if s["host_session_id"] == "reused-session")
             rc, _, _ = run(repo, "resume", "--host", "codex", "--session", "reused-session")
             self.assertEqual(rc, 0)

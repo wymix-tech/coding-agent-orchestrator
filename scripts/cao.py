@@ -592,6 +592,9 @@ def host_adapter_status(repo: Path, host: str, root: Path | None = None) -> dict
     meta = HOST_ADAPTER_META.get(host)
     if not meta:
         return {"host": host, "installed": False, "reason": "unsupported host"}
+    info = {"host": host, "session_end_supported": host != "codex"}
+    if host == "codex":
+        info["limitations"] = ["No verified native SessionEnd hook; Stop records turn end only. Use `cao handoff --end-session` on actual exit."]
     root = root or package_root_dir()
     if meta.get("install") == "pi-cli":
         target = repo / meta["target"]
@@ -601,25 +604,25 @@ def host_adapter_status(repo: Path, host: str, root: Path | None = None) -> dict
             settings = {}
         packages = [str(p) for p in (settings.get("packages") or [])]
         installed = any("coding-agent-orchestrator" in p for p in packages)
-        return {"host": host, "installed": installed, "target": meta["target"], "packages": packages}
+        return {**info, "installed": installed, "target": meta["target"], "packages": packages}
     if root is None:
-        return {"host": host, "installed": False, "target": meta["target"], "reason": "adapter files unavailable"}
+        return {**info, "installed": False, "target": meta["target"], "reason": "adapter files unavailable"}
     fragment_path = root / meta["fragment"]
     if not fragment_path.is_file():
-        return {"host": host, "installed": False, "target": meta["target"], "reason": "fragment missing"}
+        return {**info, "installed": False, "target": meta["target"], "reason": "fragment missing"}
     target = repo / meta["target"]
     try:
         fragment = render_host_fragment(json.loads(fragment_path.read_text(encoding="utf-8")), root)
     except (OSError, ValueError) as exc:
-        return {"host": host, "installed": False, "target": meta["target"], "reason": str(exc)}
+        return {**info, "installed": False, "target": meta["target"], "reason": str(exc)}
     if not target.is_file():
-        return {"host": host, "installed": False, "target": str(target), "reason": "host settings file missing"}
+        return {**info, "installed": False, "target": str(target), "reason": "host settings file missing"}
     try:
         existing = json.loads(target.read_text(encoding="utf-8"))
     except (OSError, ValueError) as exc:
-        return {"host": host, "installed": False, "target": str(target), "reason": str(exc)}
+        return {**info, "installed": False, "target": str(target), "reason": str(exc)}
     _, changed = merge_hook_config(existing, fragment)
-    return {"host": host, "installed": not changed, "target": str(target)}
+    return {**info, "installed": not changed, "target": str(target)}
 
 
 def install_host_adapter(repo: Path, host: str) -> dict[str, Any]:
@@ -2189,7 +2192,7 @@ def update_session_event(
     if host and host != "unknown":
         session["host"] = host
     session["work_item_id"] = work.get("id") if work else session.get("work_item_id")
-    if session.get("status") != "ended" and event not in {"stop", "session_end", "subagent_stop"}:
+    if session.get("status") != "ended" and event not in {"session_end", "subagent_stop"}:
         session["status"] = "active"
     session["last_event"] = event
     session["last_event_at"] = now()
@@ -2218,7 +2221,7 @@ def touch_session(repo: Path, session_ref: str, event: str, work: dict[str, Any]
 
 
 @locked_repo
-def end_session(repo: Path, session_ref: str, host: str | None, reason: str, event: str = "stop") -> dict[str, Any] | None:
+def end_session(repo: Path, session_ref: str, host: str | None, reason: str, event: str = "session_end") -> dict[str, Any] | None:
     session = load_session(repo, session_ref, host=host)
     if not session:
         return None
@@ -4944,49 +4947,61 @@ def host_event(args: argparse.Namespace) -> int:
     event = str(raw.get("event") or raw.get("hook_event_name") or raw.get("event_name") or "").lower()
     mapping = {
         "sessionstart": "session_start", "session_start": "session_start",
-        "sessionend": "stop", "session_end": "stop",
+        "sessionend": "session_end", "session_end": "session_end",
         "userpromptsubmit": "prompt_submit", "before_agent_start": "prompt_submit",
         "pretooluse": "pre_tool", "tool_call": "pre_tool",
         "posttooluse": "post_tool", "tool_result": "post_tool",
         "subagentstart": "subagent_start", "subagentstop": "subagent_stop",
-        "agent_end": "stop",
+        "agent_end": "turn_end",
     }
     event = mapping.get(event, event)
     index = load_index(repo) if (repo / CONFIG_REL).exists() else empty_index()
     wid = index.get("active_work")
     work = load_work(repo, wid) if wid else None
-    if event in {"subagent_start", "subagent_stop"}:
-        native_session_value = raw.get("subagent_id") or raw.get("agent_id") or raw.get("session_id") or raw.get("sessionId") or raw.get("thread_id")
-    else:
-        native_session_value = raw.get("session_id") or raw.get("sessionId") or raw.get("thread_id") or raw.get("agent_id") or raw.get("subagent_id")
-    host_session_id = str(native_session_value or f"{args.host}-default")
     kind = "subagent" if event in {"subagent_start", "subagent_stop"} else "primary"
-    parent_native = raw.get("parent_session_id") or raw.get("parentSessionId") or raw.get("parent_session")
-    parent_id = stable_session_id(args.host, str(parent_native)) if parent_native else None
-
-    if event in {"session_start", "subagent_start"}:
-        session = register_session(repo, work, host_session_id, args.host, event=event, kind=kind, parent_session_id=parent_id)
+    if kind == "subagent":
+        host_session_id = _event_key(raw, "subagent_id", "agent_id")
+        if not host_session_id:
+            candidate = _event_key(raw, "session_id", "sessionId", "thread_id")
+            known = load_session(repo, candidate, host=args.host) if candidate else None
+            host_session_id = candidate if known and known.get("kind") == "subagent" else ""
+        existing = load_session(repo, host_session_id, host=args.host) if host_session_id else None
+        if existing and existing.get("kind") != "subagent":
+            host_session_id = ""  # Never reinterpret a primary ID as a child shutdown.
     else:
-        session = update_session_event(repo, host_session_id, args.host, event, work, kind=kind, parent_session_id=parent_id)
+        host_session_id = _event_key(raw, "session_id", "sessionId", "thread_id")
+    parent_native = _event_key(raw, "parent_session_id", "parentSessionId", "parent_session")
+    if kind == "subagent" and not parent_native:
+        parent_native = _event_key(raw, "session_id", "sessionId")
+    parent_id = stable_session_id(args.host, parent_native) if parent_native and parent_native != host_session_id else None
+
+    def respond(result: dict[str, Any]) -> int:
+        if not host_session_id:
+            result["diagnostic"] = "CAO_SESSION_ID_MISSING: no distinct native session ID; lifecycle tracking skipped"
+            if args.host != "pi":
+                print(result["diagnostic"], file=sys.stderr)
+        print(json.dumps(native_hook_output(args.host, event, result), ensure_ascii=False))
+        return 0
+
+    session = None
+    if host_session_id:
+        if event in {"session_start", "subagent_start"}:
+            session = register_session(repo, work, host_session_id, args.host, event=event, kind=kind, parent_session_id=parent_id)
+        else:
+            session = update_session_event(repo, host_session_id, args.host, event, work, kind=kind, parent_session_id=parent_id)
 
     if event in {"session_start", "subagent_start"}:
         context = render_context(repo, work, session_id=host_session_id, host=args.host) if work else "No active CAO work item. Use `cao start --requirement <path>` when a requirement is selected."
-        result = {"decision": "allow", "additional_context": context, "session_id": host_session_id}
-        print(json.dumps(native_hook_output(args.host, event, result), ensure_ascii=False))
-        return 0
+        result = {"decision": "allow", "additional_context": context}
+        if host_session_id:
+            result["session_id"] = host_session_id
+        return respond(result)
 
     if event == "prompt_submit":
-        result = {"decision": "allow", "additional_context": render_context(repo, work, session_id=host_session_id, host=args.host)}
-        print(json.dumps(native_hook_output(args.host, event, result), ensure_ascii=False))
-        return 0
+        return respond({"decision": "allow", "additional_context": render_context(repo, work, session_id=host_session_id, host=args.host)})
 
     if event == "pre_tool":
-        # The gate never blocks: it deadlocked intake (a requirement file had to
-        # exist before `cao start`, but writing it was denied) and host adapters
-        # fail closed, so a broken hook denied everything including `cao
-        # bootstrap`. It still speaks, though: writing product code before the
-        # selected native SDD workflow has actually run means `cao done` will
-        # refuse to close the Work Item, so every such write carries a reminder.
+        # Product writes receive reminders; hand edits to managed state are denied.
         result: dict[str, Any] = {"decision": "allow"}
         # CAO's own state narrow enough that it can never deadlock intake:
         # `requirements/` stays writable (the Agent authors those), and CAO
@@ -5000,24 +5015,26 @@ def host_event(args: argparse.Namespace) -> int:
                     f"{protected_state_advice(protected)}"
                 ),
             }
-            print(json.dumps(native_hook_output(args.host, event, result), ensure_ascii=False))
-            return 0
-        if (
-            work and work.get("status") == "active"
-            and tool_is_mutating(raw)
-            and not write_targets_native_sdd_output(repo, raw)
-        ):
-            workflow = ((work.get("sdd") or {}).get("workflow") or {})
-            unverified = workflow.get("unverified") or {}
-            execution = workflow.get("execution") or {}
-            if not execution.get("executed_at") and not unverified.get("allowed"):
-                name = workflow.get("name") or "<native workflow>"
-                result["additional_context"] = (
-                    f"CAO reminder: native SDD workflow `{name}` is selected but has NOT been executed. "
-                    f"Do not implement product code yourself instead of running it - `cao done` refuses "
-                    f"completion until the workflow has run and its artifacts are recorded. "
-                    f"Run the workflow now, then record it with `cao sdd workflow execute --work {work['id']} --command \"<command actually run>\"`."
-                )
+            return respond(result)
+        if tool_is_mutating(raw) and not write_targets_native_sdd_output(repo, raw):
+            if not work or work.get("status") != "active":
+                result["additional_context"] = "CAO reminder: no active work item. Select a requirement with `cao start --requirement <path>`."
+            else:
+                path_state = path_assessment_state(repo, work)
+                if not path_state["ready"]:
+                    next_step = path_assessment_instruction(work)
+                    if path_state["reason"] == "requirement changed since work started":
+                        next_step = completion_next_instruction(repo, work, path_state) + " " + next_step
+                    result["additional_context"] = f"CAO reminder: {path_state['reason']}. {next_step} Clarify open questions before reassessment."
+                else:
+                    workflow = ((work.get("sdd") or {}).get("workflow") or {})
+                    if not (workflow.get("execution") or {}).get("executed_at") and not (workflow.get("unverified") or {}).get("allowed"):
+                        name = workflow.get("name") or "<native workflow>"
+                        result["additional_context"] = (
+                            f"CAO reminder: native SDD workflow `{name}` is selected but has NOT been executed. "
+                            f"`cao done` requires native workflow evidence. Run it, then record it with "
+                            f"`cao sdd workflow execute --work {work['id']} --command \"<command actually run>\"`."
+                        )
         commands = _collect_values_for_keys(raw, {"command", "cmd"})
         payload = raw.get("tool_input") or raw.get("input") or raw.get("arguments")
         if isinstance(payload, str) and _event_key(raw, "tool_name", "toolname", "tool", "name").lower() in SHELL_TOOLS:
@@ -5032,71 +5049,53 @@ def host_event(args: argparse.Namespace) -> int:
             if dynamic:
                 result["additional_context"] = (result.get("additional_context", "") + "\nCAO risk reminder: dynamic or unparseable Shell targets cannot be reliably checked; this guard is not a Shell sandbox.").strip()
                 break
-        print(json.dumps(native_hook_output(args.host, event, result), ensure_ascii=False))
-        return 0
+        return respond(result)
 
     if event in {"post_tool", "file_changed"}:
         if work and tool_is_mutating(raw):
             if work.get("verification", {}).get("status") == "passed":
                 work.setdefault("resume", {})["summary"] = "Code changed after the last verification; verification is now stale."
             save_work(repo, work)
-        print(json.dumps(native_hook_output(args.host, event, {"decision": "allow"}), ensure_ascii=False))
-        return 0
+        return respond({"decision": "allow"})
 
-    if event == "subagent_stop":
-        end_session(repo, host_session_id, args.host, reason="subagent stopped", event="subagent_stop")
-        print(json.dumps(native_hook_output(args.host, event, {"decision": "allow"}), ensure_ascii=False))
-        return 0
+    if event in {"session_end", "subagent_stop"}:
+        if session and session.get("status") != "ended":
+            if work and session.get("kind") != "subagent":
+                create_handoff(repo, work, host_session_id, args.host, reason=event)
+            end_session(repo, host_session_id, args.host, reason=_event_key(raw, "reason") or event, event=event)
+        return respond({"decision": "allow"})
 
-    if event == "stop":
-        # Hosts name this field differently. Accept the common variants so the
-        # completion gate is not silently skipped when a host omits one key.
-        stop_message = ""
-        for key in ("last_assistant_message", "lastAssistantMessage", "final_message", "message"):
-            value = raw.get(key)
-            if isinstance(value, dict):
-                value = value.get("text")
-            candidate = str(value or "").strip()
-            if candidate:
-                stop_message = candidate
-                break
-        should_gate = bool(work and work.get("status") == "active" and stop_message)
-        if should_gate and re.search(r"(?i)\b(done|finished|completed|ready to merge)\b|已完成|完成|可以合并", stop_message):
-            completion = completion_status(repo, work)
-            if not completion["ready"]:
-                # The host denied the stop, so the Session remains active.
-                touch_session(repo, host_session_id, "stop_blocked", work, host=args.host)
-                result = {"decision": "deny", "reason": f"Completion is blocked: {completion['reason']}. Next: {completion_next_instruction(repo, work, completion)}"}
-                print(json.dumps(native_hook_output(args.host, event, result), ensure_ascii=False))
-                return 0
-        if work and session.get("kind") != "subagent":
+    if event in {"stop", "turn_end", "before_settle"}:
+        if event != "before_settle" and work and session and session.get("kind") != "subagent":
             create_handoff(repo, work, host_session_id, args.host, reason=event)
-        end_session(repo, host_session_id, args.host, reason=event, event="stop")
-        print(json.dumps(native_hook_output(args.host, event, {"decision": "allow"}), ensure_ascii=False))
-        return 0
+        completion = completion_status(repo, work)
+        result = {"decision": "allow"}
+        if work and work.get("status") == "active":
+            result["additional_context"] = (
+                f"CAO completion reminder: {completion['reason']}. Next: {completion_next_instruction(repo, work, completion)}"
+                if not completion["ready"] else "CAO acceptance is ready; close the work explicitly with `cao done`."
+            )
+        return respond(result)
 
-    print(json.dumps(native_hook_output(args.host, event, {"decision": "allow"}), ensure_ascii=False))
-    return 0
+    return respond({"decision": "allow"})
 
 
 def native_hook_output(host: str, event: str, result: dict[str, Any]) -> dict[str, Any]:
     if host == "pi":
         return result
-    hook_name = {"session_start": "SessionStart", "prompt_submit": "UserPromptSubmit", "pre_tool": "PreToolUse", "post_tool": "PostToolUse", "subagent_start": "SubagentStart", "subagent_stop": "SubagentStop", "stop": "Stop"}.get(event, event)
+    hook_name = {"session_start": "SessionStart", "session_end": "SessionEnd", "prompt_submit": "UserPromptSubmit", "pre_tool": "PreToolUse", "post_tool": "PostToolUse", "subagent_start": "SubagentStart", "subagent_stop": "SubagentStop", "stop": "Stop", "turn_end": "Stop"}.get(event, event)
     out: dict[str, Any] = {}
     context = result.get("additional_context")
     if context:
         out["hookSpecificOutput"] = {"hookEventName": hook_name, "additionalContext": context}
-    if event == "pre_tool" and result.get("decision") != "deny":
-        # State the decision explicitly rather than staying silent, so hosts and
-        # tests can rely on a `permissionDecision` for every PreToolUse event.
-        out["hookSpecificOutput"] = {"hookEventName": hook_name, "permissionDecision": "allow"}
+    if event == "pre_tool":
+        specific = out.setdefault("hookSpecificOutput", {"hookEventName": hook_name})
+        specific["permissionDecision"] = "deny" if result.get("decision") == "deny" else "allow"
+        if result.get("decision") == "deny":
+            specific["permissionDecisionReason"] = result.get("reason") or "Blocked by CAO"
         return out
     if result.get("decision") == "deny":
-        if event == "pre_tool":
-            out["hookSpecificOutput"] = {"hookEventName": hook_name, "permissionDecision": "deny", "permissionDecisionReason": result.get("reason") or "Blocked by CAO"}
-        else:
-            out["decision"] = "block"; out["reason"] = result.get("reason") or "Blocked by CAO"
+        out["decision"] = "block"; out["reason"] = result.get("reason") or "Blocked by CAO"
     return out
 
 

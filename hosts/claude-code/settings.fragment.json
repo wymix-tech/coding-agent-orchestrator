@@ -42,6 +42,16 @@
         ]
       }
     ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "CAO_REPO=\"${CLAUDE_PROJECT_DIR}\" sh /PATH/TO/coding-agent-orchestrator/hooks/host-event.sh --host claude-code"
+          }
+        ]
+      }
+    ],
     "Stop": [
       {
         "hooks": [
