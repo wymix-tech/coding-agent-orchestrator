@@ -66,6 +66,40 @@ class CliEntryTests(unittest.TestCase):
         self.assertNotIn("ModuleNotFoundError", result.stderr)
         self.assertIn("Repository directory does not exist", result.stdout)
 
+    def test_repair_modules_and_parameters_are_available(self):
+        from scripts import completion_policy, path_guard, state_store, verification_runner, windows_supervisor
+        self.assertTrue(callable(verification_runner.run_script))
+        self.assertTrue(callable(state_store.repo_transaction))
+        self.assertTrue(callable(completion_policy.acceptance_hash))
+        self.assertTrue(callable(path_guard.repo_file))
+        self.assertTrue(callable(windows_supervisor.run_windows_command))
+        for command, flags in ((["init"], ["--test-script"]),
+                               (["sdd", "workflow", "complete"], ["--plan", "--plan-item", "--no-plan"]),
+                               (["reopen"], ["--reanchor"])):
+            result = subprocess.run([sys.executable, str(ROOT / "scripts/cao.py"), *command, "--help"],
+                                    capture_output=True, text=True, timeout=10)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            for flag in flags:
+                self.assertIn(flag, result.stdout)
+
+    def test_user_docs_describe_reminders_and_bound_completion(self):
+        stale_claims = ("Host Hooks deny code mutation", "Missing or stale assessments block mutating Host events",
+                        "CAO blocks code-mutating", "main-session stop events create a Handoff and then close that Session",
+                        "Full repository code snapshots are not recalculated on every browser refresh")
+        for name in ("README.md", "DESIGN.md", "SKILL.md"):
+            text = (ROOT / name).read_text(encoding="utf-8")
+            with self.subTest(document=name):
+                for claim in stale_claims:
+                    self.assertNotIn(claim, text)
+                for term in ("--test-script", "--plan-item", "--no-plan", "--reanchor", "timeout_seconds"):
+                    self.assertIn(term, text)
+
+    def test_pi_metadata_only_claims_verified_host_api(self):
+        import json
+        package = json.loads((ROOT / "package.json").read_text(encoding="utf-8"))
+        self.assertEqual(package["peerDependencies"]["@earendil-works/pi-coding-agent"], "1.1.0")
+        self.assertEqual(package["engines"]["node"], ">=22.18.0")
+
     def test_hooks_use_shared_runner(self):
         claude = (ROOT / "hosts/claude-code/settings.fragment.json").read_text()
         codex = (ROOT / "hosts/codex/hooks.json").read_text()

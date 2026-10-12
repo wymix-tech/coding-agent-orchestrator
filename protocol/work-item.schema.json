@@ -87,7 +87,38 @@
     "resume": {"type": "object"},
     "decisions": {"type": "array", "items": {"type": "object"}},
     "blockers": {"type": "array", "items": {"type": "object"}},
-    "verification": {"type": ["object", "null"]}
+    "verification": {
+      "type": ["object", "null"],
+      "description": "Optional legacy records remain readable; only bound, fresh config evidence can satisfy completion.",
+      "properties": {
+        "status": {"type": "string"},
+        "run_status": {"type": "string", "description": "Execution outcome retained when concurrent input changes mark status stale."},
+        "requirement_sha256": {"type": "string"},
+        "code_snapshot": {"type": "string"},
+        "rules_snapshot": {"type": "string"},
+        "verification_config_sha256": {"type": "string", "description": "Normalized scripts, required/tests capabilities, and timeout_seconds."},
+        "assessment_revision": {"type": ["integer", "null"], "minimum": 1},
+        "results": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {"type": "string"},
+              "command": {"type": "string"},
+              "required": {"type": "boolean"},
+              "gates": {"type": "array", "items": {"enum": ["tests"]}, "uniqueItems": true},
+              "exit_code": {"type": "integer"},
+              "timed_out": {"type": "boolean"},
+              "status": {"type": "string"},
+              "stdout_tail": {"type": "string"},
+              "stderr_tail": {"type": "string"}
+            },
+            "additionalProperties": true
+          }
+        }
+      },
+      "additionalProperties": true
+    }
   },
   "additionalProperties": true
 }

@@ -112,10 +112,9 @@ CAO does not need to own or persist the host's complete chat transcript.
 
 A requirement stated inline in conversation has no file, and `cao start` requires one. CAO owns the
 location (`.orchestrator/requirements/`) and the numbering (`NNN-requirement-<slug>-<YYYY-MM-DD>.md`);
-the Agent owns the content. `cao requirement next-id` allocates the next path from the highest existing
-number and creates it with a skeleton; the Agent edits the file, so requirement text is never squeezed
-through a CLI argument. CAO creates it because a mutating tool call is gated until a Work Item exists —
-an Agent that must create the requirement file itself is blocked before `cao start` can ever run.
+the Agent owns the content. `cao requirement next-id` allocates the next path and creates a skeleton;
+the Agent edits it rather than squeezing the text through a CLI argument. Intake remains writable without
+an active Work Item; product writes also remain allowed, with governance reminders.
 `requirement_files()` always includes `.orchestrator/requirements/**/*.md`, so requirement discovery
 works in projects initialized before the glob existed in the default config.
 
@@ -201,10 +200,9 @@ cross-system work, and major requirement ambiguity require at least `comprehensi
 multi-module changes, and compatibility risks require at least `standard`. The effective profile and
 required gates are persisted under `work.path_assessment` with the current requirement hash.
 
-`major_ambiguity` pauses code mutation until the user clarifies the behavior and the Agent records a
-new assessment without that flag. Missing or stale assessments block mutating Host events and prevent
-`cao done`. If the requirement changes, the Work Item must follow the established re-anchor procedure
-before an assessment can be refreshed.
+`major_ambiguity` requests clarification and reassessment. Missing/stale assessment or ambiguity causes
+Host reminders, never denied product writes; it still prevents `cao done`. Direct state edits stay denied.
+Intentional requirement changes use `cao start --requirement <path> --replace` before reassessment.
 
 Each built-in SDD Provider contains lightweight `path_guidance` for `light`, `standard`, and
 `comprehensive`. These are provider-specific native-workflow instructions, not a second lifecycle
@@ -260,12 +258,18 @@ overall verification result
 ```
 
 Verification scripts live in `.orchestrator/config.json` as an ordered list. Each entry has a
-`name`, `command`, and optional `required` flag (default `true`). CAO executes the scripts sequentially
+`name`, `command`, optional `required` (default `true`) and explicit `gates: ["tests"]` capability.
+`cao init --test-script` declares required tests; `--verify-script` declares general checks. CAO executes scripts sequentially
 and records every result. Project-specific verification logic, thresholds, and report parsing stay
 inside the scripts. The script exit-code protocol is `0=pass`, `1=fail`, `2=blocked`, `>=3=error`.
 The overall verification passes only when all required scripts return `0`.
 
-`cao done` recomputes the live values. There is no dirty flag to repair and no evidence graph.
+`cao done` recomputes live values. Assessment revision and normalized scripts/required/gates plus `timeout_seconds` are acceptance inputs, not timestamp guesses.
+Required successful config-bound tests alone supply the tests gate; manual claims and CLI overrides cannot. Execution runs outside the repository transaction;
+commit re-reads current inputs and preserves concurrent decisions, marking changed inputs stale. Each script defaults to 300 seconds, bounded output and process-tree cleanup.
+POSIX uses its own process group; Windows supervisor enters a kill-on-close Job before spawning. Job setup failure cannot fall back to direct execution. This is not a sandbox.
+Changing standards needs explicit `cao reopen --work <id> --reanchor --reason "Reviewed acceptance changes"`, not silent anchor replacement.
+Snapshots prune ignored directories, skip directory links, and hash internal file links by lexical path. External file links/read failures invalidate certification; no snapshot cache.
 
 ## SDD installation gate
 
@@ -322,7 +326,10 @@ tasks. CAO only needs enough references to know which native work item the execu
 ## Host adapters
 
 Adapters translate native lifecycle events into `host-event` calls. They do not implement Work Item,
-Verification, Decision, or Completion rules themselves.
+Verification, Decision, or Completion rules themselves. Stop/turn_end (Pi agent_end) keep Sessions active; before_settle is a reminder boundary.
+Only session_end or a distinct subagent_stop ends it with the original reason. Missing/colliding IDs diagnose and skip lifecycle changes, never create default identity.
+Claude Code uses SessionEnd; Pi 1.1.0 uses session_shutdown with bounded async transport. Codex has no verified native SessionEnd; actual exit uses `cao handoff --end-session`.
+Adapter failures fail open with diagnostics; managed-state edits remain the hard write restriction.
 
 ## Agent loading and authority
 
@@ -391,8 +398,10 @@ verification automatically.
 
 `.orchestrator/work/<id>.json` is the Work Item source of truth. `index.json` is a projection used for
 active-work lookup and fast listing. Every Work Item mutation goes through `save_work()`, which persists
-the Work Item and immediately refreshes its index projection. The index can therefore be rebuilt from the
-Work Item files if needed.
+the Work Item under a repository transaction with revision CAS, then refreshes its index projection. Missing/damaged/stale indexes rebuild from Work Items.
+Multiple historical active items are reported, never arbitrarily selected; explicit suspension repairs conflicts. Atomic JSON uses same-directory replace and fsync.
+Pending audit events live in committed Work Items, drain to the fsynced log and recover on reads. First upgrade backs up exact bytes once
+under `.orchestrator/backups/integrity-v2/work/<id>.json`; failure prevents upgrade. Legacy active evidence needs explicit re-anchoring; completed history is not recertified.
 
 ## BMad non-interactive installation
 
@@ -419,8 +428,8 @@ SDD detection, Handoff history, and provider-native artifacts. Artifact status i
 or `confirmed`; confirmation stores the current artifact hash and review metadata in the CAO Work Item without
 editing the SDD-owned file. Markdown and other bounded text files can be previewed directly. Artifact confirmation
 is restricted to a loopback-bound dashboard; remote binding requires `--allow-remote` and disables confirmation.
-Full repository code snapshots are not recalculated on every browser refresh; `cao done` remains authoritative
-for Verification freshness.
+Active/suspended freshness is recomputed from live inputs on overview. Only Work Item `completed` projects done; ready/native completion/step keywords cannot close it.
+Entry and failure exceptions, legacy evidence, pending gates and stale results remain distinct. `cao done` is still authoritative.
 
 ## User language policy
 
@@ -429,7 +438,8 @@ CAO stores one project-level preference at `language.user` (default `zh-CN`). Us
 
 ## Native SDD workflow completion contract
 
-For **every** profile (`light`, `standard`, `comprehensive`) on a Work Item using an installed SDD Provider, a successful code/test verification is not sufficient to complete the Work Item. The Agent records the provider-native workflow name and entrypoint with `cao sdd workflow select`, records that it actually ran the workflow with `cao sdd workflow execute --command ...`, and records existing repository-relative output files with `cao sdd workflow complete --artifact ...`. `cao done` blocks unless the workflow is selected, executed, and completed with every referenced output file present. This is provider-neutral orchestration metadata, not a replacement SDD workflow; native artifacts remain owned by the provider. Verification should run after native artifacts have stabilized so snapshot freshness remains valid.
+For **every** profile (`light`, `standard`, `comprehensive`) on a Work Item using an installed SDD Provider, a successful code/test verification is not sufficient to complete the Work Item. The Agent records the provider-native workflow name and entrypoint with `cao sdd workflow select`, records that it actually ran the workflow with `cao sdd workflow execute --command ...`, and records existing repository-relative output files with `cao sdd workflow complete --artifact ...`. `cao done` requires a requirement/provider-bound run, acceptable exit code and matching artifact bytes/real paths. Plans are Work Item-bound:
+repeat `--plan` for related changes, `--plan-item '<path>#<id>'` for shared sprint stories, or audit `--no-plan`. Unresolved/missing scope cannot certify completion. This is provider-neutral orchestration metadata, not a replacement SDD workflow; native artifacts remain owned by the provider. Verification should run after native artifacts have stabilized so snapshot freshness remains valid.
 
 The contract is verifiable, not self-certifying. CAO refuses:
 
@@ -437,17 +447,18 @@ The contract is verifiable, not self-certifying. CAO refuses:
 - an entrypoint that does not reference the selected provider (matched against `SDD_CATALOG[provider].workflow_hints`);
 - output files outside the provider's own directories (`output_dirs`: BMAD `_bmad-output/`, OpenSpec `openspec/`, Spec Kit `specs/` and `.specify/`) — product source files are not SDD artifacts.
 
-A provider that genuinely cannot satisfy the contract is handled by an explicit, auditable exception: `--allow-unverified --reason "<why>"`. The exception is stored in `sdd.workflow.unverified` and appended to `.orchestrator/lifecycle/events.jsonl` as `workflow.unverified_exception`. It is never a silent bypass.
+A provider that genuinely cannot satisfy the contract is handled by an explicit, auditable exception: `--allow-unverified --reason "<why>"`. The exception is stored in `sdd.workflow.unverified` and appended to `.orchestrator/lifecycle/events.jsonl` as `workflow.unverified_exception`. It is never an ownership exemption. Nonzero execution needs a new reason in `workflow.failure_exception`, audited separately; re-execution clears completion hashes/exceptions and done rechecks paths/bytes.
 
 ## Execution gates
 
-`path_assessment.required_gates` is enforced, not decorative. Verification-flavoured gates (`verification`, `targeted_verification`, any `*_verification`) are derived from CAO's own verification snapshot freshness. Every other gate can only be observed by the Agent and must be marked with `cao gate satisfy --gate <name> --evidence "<what was done>"`, which writes `work["gate_status"]`. `cao done` blocks while any required gate is pending and returns `pending_gates`.
+`path_assessment.required_gates` is enforced at done. Verification-flavoured gates and `tests` derive from fresh config-bound evidence; tests needs explicit required test capability.
+Other gates use `cao gate satisfy --gate <name> --evidence "<what was done>"`, bound to requirement hash and assessment revision.
+Reassessment invalidates old claims. Done returns pending gates and an actionable next instruction.
 
 ### Intake exemption in the PreToolUse gate
 
-The PreToolUse gate denies code mutation while no active Work Item exists. Taken alone that deadlocks
-intake: a one-sentence requirement has no requirement file yet, `cao start` needs one to create the Work
-Item, and the hook denied writing it. Writes inside a provider-owned SDD output directory
+PreToolUse reminds on product writes without current assessment; it denies direct edits to managed state.
+Writes inside requirement intake or a provider-owned SDD output directory
 (`SDD_CATALOG[*].output_dirs`: `_bmad-output/`, `openspec/`, `specs/`, `.specify/`) are therefore exempt
 for every mutating branch of the gate — with or without a Work Item. Requirement, PRD, and spec
 artifacts are prerequisites of the lifecycle, not product code, and the same directories are the only

@@ -8,6 +8,32 @@ from scripts import cao
 
 
 class HostLifecycleTests(RepairCase):
+    def test_host_schema_covers_canonical_lifecycle_and_exit_reason(self):
+        schema = json.loads((ROOT / "protocol/host-event.schema.json").read_text(encoding="utf-8"))
+        expected = {"session_start", "prompt_submit", "pre_tool", "post_tool", "subagent_start",
+                    "subagent_stop", "stop", "turn_end", "before_settle", "session_end", "file_changed"}
+        self.assertEqual(set(schema["properties"]["event"]["enum"]), expected)
+        self.assertEqual(schema["properties"]["reason"]["type"], "string")
+        self.assertIn("turn", schema["properties"]["event"]["description"])
+
+    def test_work_schema_preserves_optional_legacy_and_verification_evidence(self):
+        schema = json.loads((ROOT / "protocol/work-item.schema.json").read_text(encoding="utf-8"))
+        self.assertNotIn("acceptance", schema["required"])
+        verification = schema["properties"]["verification"]
+        self.assertIn("null", verification["type"])
+        result = verification["properties"]["results"]["items"]["properties"]
+        self.assertEqual(result["timed_out"]["type"], "boolean")
+        self.assertEqual(result["gates"]["items"]["enum"], ["tests"])
+        wid = self.start()
+        work = cao.load_work(self.repo, wid)
+        work["path_assessment"] = None
+        cao.save_work(self.repo, work)
+        rc, out = self.run_cli("verify", "--script", self.test_command)
+        self.assertEqual(rc, 0, out)
+        self.assertIsNone(out["verification"]["assessment_revision"])
+        self.assertIn("null", verification["properties"]["assessment_revision"]["type"])
+        self.assertEqual(self.run_cli("done")[0], 2)
+
     def event(self, event, host="pi", session="A", **fields):
         raw = {"event": event, **fields}
         if session is not None:

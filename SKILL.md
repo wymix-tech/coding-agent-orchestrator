@@ -23,9 +23,9 @@ cao bootstrap
 Host hooks (SessionStart, PreToolUse, Stop) are process-startup integrations and are wired by
 `cao init --host <claude-code|codex|pi>`, not by `cao bootstrap` — a bootstrap-time install would miss
 the current session's own `SessionStart`. If `cao bootstrap` reports `host_adapter.installed: false`, run
-`cao host install --host <host>`; it takes effect from the next session. Until then, the completion gate
-and Session/Handoff events are not enforced by hooks, so you must still run `cao resume`, `cao checkpoint`,
-and `cao handoff` yourself.
+`cao host install --host <host>`; it takes effect from the next session. Hooks only remind about completion;
+`cao done` is the hard gate even without hooks. Run `cao resume`, `cao checkpoint`, and `cao handoff`
+yourself when lifecycle events cannot be observed.
 
 ### Landing a one-sentence requirement
 
@@ -38,8 +38,8 @@ cao requirement next-id --title "<short title>"
 
 creates the numbered file and returns its `path` (for example
 `.orchestrator/requirements/001-requirement-用户登录-2026-10-10.md`). CAO creates it with a skeleton
-because a mutating tool call is gated until a Work Item exists — an Agent that has to create the file
-itself can be blocked before `cao start` is ever reachable. Edit that file with the requirement content,
+to allocate a stable intake path. Intake and product writes are not blocked by missing assessment;
+product writes receive reminders. Edit that file with the requirement content,
 then `cao start --requirement <path>`. Do not create the file yourself and do not place requirement
 documents anywhere else — CAO allocates numbers from existing files so they never collide, and
 `cao requirement list` shows what already exists.
@@ -48,9 +48,9 @@ documents anywhere else — CAO allocates numbers from existing files so they ne
 
 The first requirement usually does not exist as a file yet. Writes inside a provider's native output
 directory (`_bmad-output/`, `openspec/`, `specs/`, `.specify/`) are allowed **without** an active Work
-Item, so create the requirement/PRD there and then run `cao start --requirement <path>`. Writes anywhere
-else still require an active Work Item; do not move product code into a native output directory to dodge
-the gate — `cao done` only accepts native artifacts recorded from a provider workflow that actually ran.
+Item, so create the requirement/PRD there and then run `cao start --requirement <path>`. Product writes
+elsewhere remain allowed with reminders; direct managed-state edits remain denied. Do not move product
+code into native output directories to fake evidence — `cao done` still enforces native artifact ownership.
 `cao start` reports `REQUIREMENT_FILE_MISSING` when an explicit requirement path does not exist yet:
 create the file first, do not guess another path.
 
@@ -139,10 +139,9 @@ Supported risk flags (repeat `--risk-flag` as needed): `security`, `data-migrati
 compatibility risks require at least `standard`. The saved assessment reports both the requested and
 effective profile and adds the relevant gates.
 
-`major-ambiguity` is a pause, not just a label: ask the user to clarify the material behavior, then
-rerun `cao path assess` without that flag after the answer is incorporated. CAO blocks code-mutating
-Host events until a current assessment exists and material ambiguity is cleared. If the requirement
-file changes, re-anchor it using the normal requirement-change procedure before reassessing.
+`major-ambiguity` asks for user clarification, then a fresh `cao path assess` after incorporating the answer.
+Missing/stale assessment and ambiguity yield reminders, not blocked product writes; `cao done` remains
+blocked. If the requirement changes, explicitly re-anchor before reassessment. Never hand-edit CAO state.
 
 The selected SDD Provider supplies profile-specific native-workflow guidance. Follow BMAD, OpenSpec,
 Spec Kit, or another provider's own commands, artifacts, and mandatory preconditions; CAO does not
@@ -163,7 +162,9 @@ After actually executing the workflow, record the run itself:
 cao sdd workflow execute --command "<command actually run>" --exit-code <code> [--output "<tail>"]
 ```
 
-Then record its existing, repository-relative output files (repeat `--artifact` for each file):
+Then record existing provider-owned outputs and every related plan: repeat `--artifact` and `--plan <path>`;
+shared sprint stories require `--plan-item '<path>#<id>'`. Use audited `--no-plan` only when no plan applies;
+unresolved scope blocks done and deleting a binding cannot silently shrink the scope.
 
 ```bash
 cao sdd workflow complete --artifact <repo-relative-file>
@@ -183,7 +184,9 @@ CAO rejects workflow records it can verify as fake:
 Do not fabricate artifact paths, do not record a command you did not run, and do not mark a workflow
 completed before running it. If a provider-native workflow genuinely cannot satisfy this contract, do not
 bypass the gate silently: pass `--allow-unverified --reason "<why>"`. That exception is recorded in the
-Work Item and appended to the lifecycle event log for audit.
+Work Item and appended to the lifecycle event log for audit. A nonzero execution needs a separate, new
+`--allow-unverified --reason` when completing; an entry exception does not waive failed execution.
+Completion binds requirement/provider and output bytes; later changes invalidate that evidence.
 
 After the workflow, satisfy the gates only the Agent can observe:
 
@@ -192,9 +195,9 @@ cao gate satisfy --gate <gate> --evidence "<what was done>"
 cao gate show
 ```
 
-Verification-flavoured gates (`verification`, `targeted_verification`, `*_verification`) are derived from
-CAO's own verification freshness; run `cao verify` instead of marking them. `cao done` blocks until every
-required gate is satisfied.
+Verification-flavoured gates and `tests` are automatic: run config-bound `cao verify`, never mark them
+manually. Tests additionally requires a successful required script with `gates: ["tests"]`; command names
+are not proof. Human gate evidence binds requirement hash and assessment revision. Done requires every gate.
 
 ## State ownership
 
@@ -259,7 +262,11 @@ verification stale automatically. Do not fake a new verification record merely t
 If `cao done` reports that the requirement changed, do not blindly rerun `cao verify`. Review the
 requirement change; when the change is intentional, re-anchor the Work Item with
 `cao start --requirement <path> --replace`. The `--replace` action changes the active
-execution anchor; it does not mean that the original requirement was superseded.
+execution anchor; it does not mean that the original requirement was superseded. Old requirement-scoped
+assessment, gate, verification and workflow evidence must be refreshed. Changed acceptance scripts/capabilities
+or `timeout_seconds` require `cao reopen --work <id> --reanchor --reason "Reviewed acceptance changes"`.
+Legacy completed history remains readable, not automatically recertified; legacy active work needs explicit
+re-anchoring. First integrity upgrade backs up exact bytes in `.orchestrator/backups/integrity-v2/work/<id>.json`.
 
 ## Session inspection
 
@@ -273,8 +280,10 @@ are absent, CAO records nothing rather than inventing an `unknown` Session. Pref
 
 ## Session handoff
 
-When a session ends, the Host Adapter may call `host-event` and CAO records a Handoff automatically.
-For an intentional transfer, create an explicit handoff first:
+Stop/turn_end may save a Handoff but do not end a Session; before_settle only reminds. Actual session_end
+(or distinct subagent_stop) ends it. Claude Code uses SessionEnd and Pi 1.1.0 uses session_shutdown;
+Codex has no verified native exit hook. Missing native IDs report diagnostics, never a shared default Session.
+For an intentional transfer, create an explicit handoff; on actual exit add `--end-session` if needed:
 
 ```bash
 cao handoff --session <id> --host <host> --reason "transfer to another agent"
@@ -343,8 +352,9 @@ verification logic in user-owned scripts and configure their commands in `.orche
 ```json
 {
   "verification": {
+    "timeout_seconds": 300,
     "scripts": [
-      {"name": "unit-tests", "command": "./scripts/verify-unit-tests.sh", "required": true},
+      {"name": "unit-tests", "command": "./scripts/verify-unit-tests.sh", "required": true, "gates": ["tests"]},
       {"name": "coverage", "command": "./scripts/verify-coverage.sh", "required": true},
       {"name": "security", "command": "./scripts/verify-security.sh", "required": true}
     ]
@@ -366,8 +376,12 @@ the exit code and command output. Verification passes only when every required s
 Thresholds such as 100% test success, 80% line coverage, 80% branch coverage, or mutation kill rate
 are implemented by the project script itself.
 
-`cao init --verify-script` may be repeated to configure multiple scripts. `cao verify --script` may be
-used for a one-off override without changing the project configuration.
+Repeat `cao init --test-script` for required test capability, or `--verify-script` for general checks.
+`cao verify --script` is a one-off engineering check and cannot satisfy completion evidence. Scripts are
+trusted, not sandboxed; each has a finite positive `timeout_seconds` (default 300), process-tree cleanup,
+4000-byte output tails and a `timed_out` result (124/error on timeout). Input changes during execution
+mark the saved result stale. Snapshots prune ignored directories; internal file links use lexical names,
+directory links are not followed, and external file links/read failures cannot certify freshness.
 
 ## Work Item titles
 
@@ -382,7 +396,8 @@ as `未生成`, `已生成`, or `已确认`, and permits previewing supported te
 
 ## Orchestration visualization
 
-For a visual overview of Work Items, execution paths, Sessions, Verification summaries, Handoff history, and provider-native SDD artifacts, run `cao dashboard --open`. The dashboard can preview bounded text/Markdown artifacts and confirm an artifact by recording its current hash in CAO metadata; it never edits the SDD-owned source file. Artifact confirmation is enabled only on a loopback-bound dashboard. `cao done` remains responsible for authoritative Verification freshness checks.
+For a visual overview of Work Items, execution paths, Sessions, Verification summaries, Handoff history, and provider-native SDD artifacts, run `cao dashboard --open`. The dashboard can preview bounded text/Markdown artifacts and confirm an artifact by recording its current hash in CAO metadata; it never edits the SDD-owned source file. Artifact confirmation is enabled only on a loopback-bound dashboard. Only authoritative Work Item `completed` is done, not
+ready/review or a step-name keyword. `cao done` remains responsible for authoritative Verification freshness checks.
 
 ## User language policy
 

@@ -4,7 +4,11 @@
   "type": "object",
   "required": ["event"],
   "properties": {
-    "event": {"enum": ["session_start", "prompt_submit", "pre_tool", "post_tool", "subagent_start", "subagent_stop", "stop", "file_changed"]},
+    "event": {
+      "enum": ["session_start", "prompt_submit", "pre_tool", "post_tool", "subagent_start", "subagent_stop", "stop", "turn_end", "before_settle", "session_end", "file_changed"],
+      "description": "Canonical events: stop/turn_end/before_settle do not end a session; session_end and subagent_stop do. Native aliases are normalized by the CLI."
+    },
+    "reason": {"type": "string", "description": "Original host shutdown reason, retained on session_end."},
     "tool_name": {"type": "string"},
     "tool_input": {},
     "last_assistant_message": {"type": "string"},

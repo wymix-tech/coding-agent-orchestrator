@@ -148,7 +148,11 @@ cao sessions list --stale-after-minutes 30
 cao sessions show --id <session-id> --host codex
 ```
 
-`recent` and `stale` are calculated from `last_event_at`; stale means "no recent event observed", not "the Agent has ended". Only an explicit end event closes a Session. Creating a Handoff alone does not end a Session; main-session stop events create a Handoff and then close that Session, while subagent stop events close only the subagent Session.
+`recent` and `stale` describe observed activity, not process liveness. Stop/turn_end (including Pi agent_end)
+may create a Handoff but keep the Session active. Only session_end or a distinct subagent_stop ends it;
+before_settle only reminds. Missing IDs produce diagnostics, never a shared default Session. Claude Code
+uses SessionEnd; Pi 1.1.0 uses session_shutdown. Codex has no verified native SessionEnd integration:
+use `cao handoff --host codex --session <id> --end-session` on actual exit, not each turn.
 
 Host adapters register Sessions through `host-event`, which only happens when the adapter is installed. As a
 fallback, `cao bootstrap` and `cao start` attach the runtime Session whenever the host and its native session
@@ -197,16 +201,15 @@ Risk flags are intentionally few and deterministic. `security`, `data-migration`
 `multi-module`, and `compatibility` require at least `standard`. CAO upgrades a lower requested profile
 when needed and records the reason, required gates, requirement hash, and selected provider guidance.
 
-`major-ambiguity` pauses implementation until the user clarifies the material behavior and the Agent
-reassesses without that flag. Host Hooks deny code mutation while an assessment is missing/stale or a
-material ambiguity remains. A requirement-file change must follow CAO's re-anchor procedure before a
-new assessment. Provider-specific mapping remains guidance: BMAD, OpenSpec, and Spec Kit keep their
-native workflow and mandatory preconditions. Profiles do not waive configured Verification scripts.
+`major-ambiguity` asks the Agent to clarify behavior and reassess. Missing/stale assessments and material
+ambiguity cause **reminders, not blocked product writes**. Direct state edits and `cao done` remain hard
+constraints. Requirement changes need explicit re-anchoring before reassessment. Provider guidance does
+not replace native prerequisites or waive configured Verification scripts.
 
 Intake is exempt from this gate: writes inside a provider's native output directory
 (`_bmad-output/`, `openspec/`, `specs/`, `.specify/`) are allowed without an active Work Item, because a
 requirement/PRD must exist before `cao start` can create one — blocking those writes deadlocks intake.
-Product code everywhere else still requires an active, assessed Work Item.
+Product writes elsewhere are allowed with reminders when an active, assessed Work Item is missing.
 
 ### Handoff history and inspection
 
@@ -301,8 +304,8 @@ are visible, which covers that first session. The two mechanisms are complementa
 
 ## Why the core is intentionally small
 
-There is no Fact Resolver, evidence provenance graph, independent state-manager module, or provider-
-specific governance engine. The core state is plain JSON, and SDD compatibility is reference-driven.
+There is no Fact Resolver, evidence provenance graph, second state store, or provider-specific governance
+engine. `state_store.py` provides atomic JSON and repository transactions; SDD compatibility is reference-driven.
 The execution-path selector follows the same constraint: a short Agent assessment, a three-profile
 policy, a small hard-risk map, and Provider guidance. It does not add semantic scoring or evidence
 infrastructure.
@@ -374,8 +377,9 @@ Example:
 ```json
 {
   "verification": {
+    "timeout_seconds": 300,
     "scripts": [
-      {"name": "unit-tests", "command": "./scripts/verify-unit-tests.sh", "required": true},
+      {"name": "unit-tests", "command": "./scripts/verify-unit-tests.sh", "required": true, "gates": ["tests"]},
       {"name": "coverage", "command": "./scripts/verify-coverage.sh", "required": true},
       {"name": "security", "command": "./scripts/verify-security.sh", "required": true}
     ]
@@ -415,17 +419,18 @@ echo "Blocked: Redis is not running"
 exit 2
 ```
 
-CAO runs required scripts sequentially. Verification passes only when every required script returns
-`0`. Each result records the exit code, normalized status, reason, stdout tail, and stderr tail.
-Optional scripts (`required: false`) are still executed and recorded but do not fail the overall
-verification.
+CAO runs all scripts sequentially; all required scripts must pass. `gates: ["tests"]` explicitly declares
+test capability: command keywords, optional checks and manual `gate satisfy --gate tests` cannot supply it.
+Each script defaults to a 300-second deadline (`timeout_seconds`, finite and positive); timeout returns
+124/error and reclaims its process tree. Each output tail is bounded to 4000 UTF-8 bytes. These trusted
+commands are not sandboxed. Results also record `timed_out`; optional failures do not fail the overall run.
 
-Fresh projects start with an empty `verification.scripts` list. Use `--verify-script` repeatedly when
-initializing a project:
+Fresh projects have no verification scripts. Repeat `--test-script` for required tests, or `--verify-script`
+for general checks without test capability:
 
 ```bash
 cao init --force \
-  --verify-script "./scripts/verify-unit-tests.sh" \
+  --test-script "./scripts/verify-unit-tests.sh" \
   --verify-script "./scripts/verify-coverage.sh"
 ```
 
@@ -434,6 +439,22 @@ For a one-off verification run without changing project configuration:
 ```bash
 cao verify --script "./scripts/verify-unit-tests.sh"
 ```
+
+CLI overrides are engineering checks, not config-bound completion evidence. Run `cao verify` from the
+anchored config after stabilizing native artifacts. Changing scripts, required/tests capabilities or timeout
+requires `cao reopen --work <id> --reanchor --reason "Reviewed acceptance changes"`, then fresh assessment,
+workflow/gates as needed, and verification. Requirement changes use `cao start --requirement <path> --replace`;
+old evidence is invalidated, not copied forward. Legacy completed records remain historical, not recertified.
+First integrity upgrade preserves exact bytes under `.orchestrator/backups/integrity-v2/work/<id>.json`.
+
+Native completion checks execution exit code and artifact bytes/ownership. A nonzero run needs a **new**
+`--allow-unverified --reason` at complete; entry exceptions do not waive failed execution. Bind every related
+plan with repeatable `--plan <path>`; shared sprint stories need `--plan-item '<path>#<id>'`. Explicit
+`--no-plan` is audited; unresolved scope blocks done. Plans cannot silently narrow by deleting a binding.
+
+Code snapshots prune ignored trees before traversal, follow only repository-contained file links (hashed
+under lexical names), and never follow directory links. Read failures or external file links prevent freshness
+certification. Dashboard ready/review is not done: only the authoritative completed Work Item is closed.
 
 ### Work Item titles and SDD artifacts
 
@@ -467,4 +488,9 @@ make check
 make test
 ```
 
-The GitHub Actions workflow runs the unittest suite on Python 3.10 through 3.13. Generated bytecode, caches, and `.orchestrator/` runtime state are excluded from Git. The project-level `.orchestrator/config.json` remains trackable so teams can share verification and SDD settings.
+CI defines Ubuntu Python 3.10–3.13, three-platform state/runner checks, wheel smoke, and Pi contract/type
+checks on Node 22.18.0. Pi metadata is restricted to API 1.1.0; Node/TypeScript are development/host dependencies,
+not Python-core requirements. Run `npm ci --ignore-scripts`, `npm run check:pi`, and `npm run test:pi`.
+Configured CI is not proof of a successful remote run. See [repair validation](docs/repair-validation.md) for
+executed commands, compatibility steps and unverified real-host/browser/platform coverage. Generated bytecode,
+caches and runtime state are ignored; project `.orchestrator/config.json` remains trackable.
