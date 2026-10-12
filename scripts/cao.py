@@ -10,6 +10,7 @@ import json
 import os
 import re
 import shlex
+import stat
 import subprocess
 import sys
 import sysconfig
@@ -1497,19 +1498,30 @@ def requirement_files(repo: Path, cfg: dict[str, Any]) -> list[Path]:
 
 
 def code_snapshot(repo: Path, excluded: set[str] | None = None) -> str:
+    """Prune ignored directories; hash internal file links by their lexical names.
+
+    Directory links are not followed. Unreadable or external file inputs cannot certify freshness.
+    """
     excluded = excluded or set()
     h = hashlib.sha256()
-    for p in sorted(repo.rglob("*")):
-        if not p.is_file():
+    files = []
+    def walk_error(exc):
+        raise RuntimeError("SNAPSHOT_READ_FAILED: " + str(exc.filename or repo)) from exc
+    for base, dirs, names in os.walk(repo, topdown=True, followlinks=False, onerror=walk_error):
+        dirs[:] = sorted(directory for directory in dirs if directory not in SNAPSHOT_IGNORE_DIRS)
+        files.extend(Path(base) / name for name in names if name not in SNAPSHOT_IGNORE_DIRS)
+    for p in sorted(files):
+        rp = p.relative_to(repo).as_posix()
+        if rp in excluded:
             continue
-        rp = rel(p, repo)
-        parts = Path(rp).parts
-        if any(part in SNAPSHOT_IGNORE_DIRS for part in parts) or rp in excluded:
-            continue
+        if not p.resolve().is_relative_to(repo.resolve()):
+            raise RuntimeError("SNAPSHOT_EXTERNAL_SYMLINK: " + rp)
         try:
+            if not stat.S_ISREG(p.stat().st_mode):
+                continue
             data = p.read_bytes()
-        except OSError:
-            continue
+        except OSError as exc:
+            raise RuntimeError("SNAPSHOT_READ_FAILED: " + rp) from exc
         h.update(rp.encode()); h.update(b"\0"); h.update(hashlib.sha256(data).digest()); h.update(b"\0")
     return h.hexdigest()
 
@@ -1527,12 +1539,21 @@ def rules_snapshot(repo: Path, cfg: dict[str, Any]) -> str:
     for pattern in (cfg.get("rules") or {}).get("files") or []:
         for item in glob.glob(str(repo / pattern), recursive=True):
             p = Path(item)
-            if p.is_file():
-                files.add(p.resolve())
+            if not p.resolve().is_relative_to(repo.resolve()):
+                raise RuntimeError("SNAPSHOT_EXTERNAL_SYMLINK: " + str(p))
+            try:
+                if stat.S_ISREG(p.stat().st_mode):
+                    files.add(p.resolve())
+            except OSError as exc:
+                raise RuntimeError("SNAPSHOT_READ_FAILED: " + str(p)) from exc
     h = hashlib.sha256()
     for p in sorted(files):
         rp = rel(p, repo)
-        h.update(rp.encode()); h.update(b"\0"); h.update(sha256_file(p).encode()); h.update(b"\0")
+        try:
+            digest = sha256_file(p)
+        except OSError as exc:
+            raise RuntimeError("SNAPSHOT_READ_FAILED: " + rp) from exc
+        h.update(rp.encode()); h.update(b"\0"); h.update(digest.encode()); h.update(b"\0")
     return h.hexdigest()
 
 
