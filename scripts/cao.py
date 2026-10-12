@@ -32,7 +32,7 @@ if __package__ in (None, ""):
 from scripts.state_store import atomic_json, backup_once, repo_transaction
 from scripts.completion_policy import (
     acceptance_hash, anchor_acceptance, reset_requirement, evidence_matches,
-    verification_fresh as bound_verification_fresh, normalize_scripts, tests_satisfied,
+    verification_fresh as bound_verification_fresh, normalize_scripts, tests_satisfied, workflow_ready,
 )
 
 
@@ -2561,10 +2561,11 @@ def completion_status(repo: Path, work: dict[str, Any] | None) -> dict[str, Any]
     profile = str(assessment.get("profile") or "light")
     if provider in SDD_CATALOG and profile in PROFILE_RANK:
         workflow = sdd.get("workflow") or {}
-        if workflow.get("status") != "completed":
+        workflow_ok, workflow_reason = workflow_ready(work, repo)
+        if not workflow_ok:
             return {
                 "ready": False,
-                "reason": "native SDD workflow is not recorded as completed",
+                "reason": workflow_reason,
                 "workflow": workflow or None,
                 "provider": provider,
                 "profile": profile,
@@ -2572,12 +2573,6 @@ def completion_status(repo: Path, work: dict[str, Any] | None) -> dict[str, Any]
             }
         if not str(workflow.get("name") or "").strip() or not str(workflow.get("entrypoint") or "").strip():
             return {"ready": False, "reason": "native SDD workflow record is incomplete", "workflow": workflow}
-        artifact_paths = workflow.get("artifacts") or []
-        if not artifact_paths:
-            return {"ready": False, "reason": "native SDD workflow has no recorded output artifacts", "workflow": workflow}
-        missing_artifacts = [path for path in artifact_paths if not (repo / str(path)).is_file()]
-        if missing_artifacts:
-            return {"ready": False, "reason": "native SDD workflow output artifacts are missing", "missing_artifacts": missing_artifacts, "workflow": workflow}
         # Running the workflow once is not the same as finishing the plan it
         # produced. A single Work Item can span many stories/specs, and without
         # this check an Agent closes the requirement after the first one.
@@ -2591,14 +2586,6 @@ def completion_status(repo: Path, work: dict[str, Any] | None) -> dict[str, Any]
                 "pending_plan_items": pending_items,
                 "provider": provider,
                 "next": f"Finish the remaining items in the provider's own plan ({shown}{more}), or get the user to confirm the reduced scope, then run `cao verify` and `cao done` again.",
-            }
-        if not workflow.get("execution") and not (workflow.get("unverified") or {}).get("allowed"):
-            return {
-                "ready": False,
-                "reason": "native SDD workflow has no recorded execution",
-                "workflow": workflow,
-                "provider": provider,
-                "next": f"Record the execution with `cao sdd workflow execute --command \"<command actually run>\" --exit-code <code> --work {work['id']}`.",
             }
 
     gates = gate_state(work, fresh)
@@ -3336,6 +3323,8 @@ def cmd_sdd_workflow(args: argparse.Namespace) -> int:
             "entrypoint": entrypoint,
             "status": "selected",
             "selected_at": now(),
+            "requirement_sha256": work["requirement"]["sha256"],
+            "provider": provider,
             "artifacts": [],
             "execution": None,
             "unverified": {"allowed": True, "reason": unverified_reason, "at": now(), "by": str(getattr(args, "assessed_by", "agent") or "agent")} if allow_unverified else None,
@@ -3362,6 +3351,13 @@ def cmd_sdd_workflow(args: argparse.Namespace) -> int:
                     "provider": provider,
                     "next": f"Record the command that actually ran the `{workflow.get('name')}` workflow, or pass `--allow-unverified --reason \"<why>\"`.",
                 }, ensure_ascii=False, indent=2)); return 2
+        # A new run requires a new completion and a separately accepted failure exception.
+        workflow["status"] = "executed"
+        workflow["requirement_sha256"] = work["requirement"]["sha256"]
+        workflow["provider"] = provider
+        workflow["artifacts"] = []
+        for key in ("completed_at", "artifact_hashes", "failure_exception"):
+            workflow.pop(key, None)
         workflow["execution"] = {
             "command": command,
             "exit_code": int(getattr(args, "exit_code", 0) or 0),
@@ -3382,6 +3378,15 @@ def cmd_sdd_workflow(args: argparse.Namespace) -> int:
                 "reason": f"`{workflow.get('name')}` has no recorded execution. Run the workflow, then record it with `cao sdd workflow execute --command \"<command actually run>\" --exit-code <code> --work {work['id']}`.",
                 "workflow": workflow,
             }, ensure_ascii=False, indent=2)); return 2
+        execution = workflow.get("execution") or {}
+        if execution and (workflow.get("requirement_sha256") != work["requirement"]["sha256"]
+                          or workflow.get("provider") != provider):
+            print(json.dumps({"ok": False, "error": "NATIVE_WORKFLOW_EVIDENCE_STALE",
+                              "next": f"Select and execute the workflow for this requirement with `cao sdd workflow select` and `cao sdd workflow execute --work {work['id']}`."}, ensure_ascii=False)); return 2
+        if execution and execution.get("exit_code") != 0 and not allow_unverified:
+            print(json.dumps({"ok": False, "error": "NATIVE_WORKFLOW_EXECUTION_FAILED",
+                              "exit_code": execution.get("exit_code"),
+                              "next": "Rerun the native workflow successfully; accepting its failed run requires complete --allow-unverified --reason \"<why>\"."}, ensure_ascii=False)); return 2
         paths = list(args.artifact or [])
         if not paths:
             print(json.dumps({"ok": False, "error": "NATIVE_WORKFLOW_ARTIFACT_REQUIRED", "reason": "At least one actual output file must be recorded."}, ensure_ascii=False, indent=2)); return 2
@@ -3408,13 +3413,24 @@ def cmd_sdd_workflow(args: argparse.Namespace) -> int:
             artifacts[:] = [item for item in artifacts if item.get("path") != ref["path"]]
             artifacts.append(ref)
         workflow["artifacts"] = [ref["path"] for ref in refs]
+        workflow["artifact_hashes"] = {ref["path"]: ref["sha256"] for ref in refs}
+        workflow["requirement_sha256"] = work["requirement"]["sha256"]
+        workflow["provider"] = provider
+        workflow.pop("failure_exception", None)
+        if execution and execution.get("exit_code") != 0:
+            workflow["failure_exception"] = {"reason": unverified_reason, "at": now(),
+                                              "exit_code": execution["exit_code"]}
+            queue_event(work, {"event": "workflow.execution_failure_exception", "work_item_id": work["id"],
+                               "source": "cao", "provider": provider, "workflow": workflow["name"],
+                               "requirement_sha256": work["requirement"]["sha256"],
+                               "reason": unverified_reason, "exit_code": execution["exit_code"], "occurred_at": now()})
         workflow["status"] = "completed"
         workflow["completed_at"] = now()
-        if allow_unverified:
+        if allow_unverified and not (execution and execution.get("exit_code") != 0):
             workflow["unverified"] = {"allowed": True, "reason": unverified_reason, "at": now(), "by": "agent"}
             record_workflow_unverified(repo, work, provider, str(workflow.get("name") or ""), unverified_reason)
         work["execution"]["step"] = "native-sdd-workflow-completed"
-        work["execution"]["next_action"] = action("agent", "Continue implementation/review/verification according to the selected path; satisfy every required gate with `cao gate satisfy`, record additional native workflow outputs if produced, then run `cao verify` and `cao done`.")
+        work["execution"]["next_action"] = action("agent", "Continue implementation/review/verification according to the selected path; record manual reviews with `cao gate satisfy`, record additional native workflow outputs if produced, then run configured `cao verify` for derived gates and `cao done`.")
     save_work(repo, work)
     print(json.dumps({"ok": True, "work_item": work_summary(work), "workflow": sdd.get("workflow")}, ensure_ascii=False, indent=2)); return 0
 

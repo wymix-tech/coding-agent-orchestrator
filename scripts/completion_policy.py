@@ -3,6 +3,7 @@
 import hashlib
 import json
 import time
+from pathlib import Path
 
 SNAPSHOT_KEYS = ("requirement_sha256", "code_snapshot", "rules_snapshot",
                  "verification_config_sha256", "assessment_revision")
@@ -78,6 +79,39 @@ def evidence_matches(work: dict, evidence: dict) -> bool:
     return bool(evidence and requirement_sha and evidence.get("requirement_sha256") == requirement_sha
                 and evidence.get("assessment_revision") == assessment.get("revision")
                 and assessment.get("revision") is not None)
+
+
+def workflow_ready(work: dict, repo: Path) -> tuple[bool, str | None]:
+    sdd = work.get("sdd") or {}
+    workflow = sdd.get("workflow") or {}
+    if workflow.get("status") != "completed":
+        return False, "native SDD workflow is not recorded as completed"
+    if (workflow.get("requirement_sha256") != (work.get("requirement") or {}).get("sha256")
+            or workflow.get("provider") != sdd.get("provider")):
+        return False, "native SDD workflow evidence is stale"
+    execution = workflow.get("execution") or {}
+    if not execution and not (workflow.get("unverified") or {}).get("allowed"):
+        return False, "native SDD workflow has no recorded execution"
+    exception = workflow.get("failure_exception") or {}
+    if execution and execution.get("exit_code") != 0:
+        if not str(exception.get("reason") or "").strip() or exception.get("exit_code") != execution.get("exit_code"):
+            return False, "native SDD workflow execution failed"
+    paths = workflow.get("artifacts") or []
+    hashes = workflow.get("artifact_hashes") or {}
+    if not paths:
+        return False, "native SDD workflow has no recorded output artifacts"
+    missing, changed = [], []
+    for relative in paths:
+        path = (repo / relative).resolve()
+        if not path.is_relative_to(repo.resolve()) or not path.is_file():
+            missing.append(relative)
+        elif hashes.get(relative) != hashlib.sha256(path.read_bytes()).hexdigest():
+            changed.append(relative)
+    if missing:
+        return False, "native SDD workflow output artifacts are missing: " + ", ".join(missing)
+    if changed:
+        return False, "native SDD workflow output artifacts changed: " + ", ".join(changed)
+    return True, None
 
 
 def verification_fresh(work: dict, current: dict) -> bool:
