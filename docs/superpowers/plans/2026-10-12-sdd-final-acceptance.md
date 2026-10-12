@@ -60,7 +60,7 @@ Work `A = work.sdd.acceptance`：version=1、declaration、declaration_sha256、
 - `result_state(results: list[dict], exit_code: int) -> str`：passed/failed/blocked/error，非零执行不可被 all passed 抹掉。
 - `is_fresh(run: dict | None, inputs: dict, hashes: dict[str, str]) -> bool`：检查 run passed、输入 hash、记录/当前证据和输出 hash 全等。
 
-- [ ] 写 unittest RED，使用 deepcopy 基线声明，覆盖 invalid root/text/path/kind/mode/timeout、空/重复 ID、source/output 重合；报告空/漏/重复/未知 ID、旧身份、空理由、缺证据，且 raw 字节意义不被规范化函数修改。
+- [x] 写 unittest RED，使用 deepcopy 基线声明，覆盖 invalid root/text/path/kind/mode/timeout、空/重复 ID、source/output 重合；报告空/漏/重复/未知 ID、旧身份、空理由、缺证据，且 raw 字节意义不被规范化函数修改。
 ```python
 class PolicyTests(unittest.TestCase):
     def setUp(self):
@@ -80,14 +80,18 @@ class PolicyTests(unittest.TestCase):
         self.assertEqual(result_state([{'status':'passed'}], 1), 'failed')
         self.assertEqual(result_state([{'status':'blocked'}], 0), 'blocked')
 ```
-- [ ] `python3.11 -m unittest discover -s tests -p test_sdd_acceptance_policy.py -v`，确认缺模块/函数导致 RED，再实现。
-- [ ] 使用 canonical digest、集合精确覆盖和声明顺序输出；errors 为 `SDD_ACCEPTANCE_DECLARATION_INVALID`、`SDD_ACCEPTANCE_RESULT_INVALID`、`SDD_ACCEPTANCE_RESULT_IDENTITY`、`SDD_ACCEPTANCE_RESULT_COVERAGE`。
+- [x] `python3.11 -m unittest discover -s tests -p test_sdd_acceptance_policy.py -v`，确认缺模块/函数导致 RED，再实现。
+- [x] 使用 canonical digest、集合精确覆盖和声明顺序输出；errors 为 `SDD_ACCEPTANCE_DECLARATION_INVALID`、`SDD_ACCEPTANCE_RESULT_INVALID`、`SDD_ACCEPTANCE_RESULT_IDENTITY`、`SDD_ACCEPTANCE_RESULT_COVERAGE`。
 ```python
 def digest(value):
     payload = json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(',', ':'))
     return hashlib.sha256(payload.encode('utf-8')).hexdigest()
 
 def result_state(results, exit_code):
+    if (isinstance(exit_code, bool) or not isinstance(exit_code, int) or not isinstance(results, list)
+            or any(not isinstance(item, dict) or not isinstance(item.get('status'), str)
+                   or item['status'] not in {'passed', 'failed', 'blocked'} for item in results)):
+        raise ValueError('SDD_ACCEPTANCE_RESULT_INVALID')
     if exit_code >= 3 or exit_code < 0:
         return 'error'
     if exit_code == 2:
@@ -105,7 +109,9 @@ def is_fresh(run, inputs, hashes):
                 and {**run.get('evidence_hashes', {}), **run.get('output_hashes', {})} == hashes)
 ```
 规范化逐字段校验，不 str() 接受布尔/数字；使用 PurePosixPath，拒绝绝对、反斜线、`.`/`..` 部件。正文含 ID/来源只是机械接口，不解析自然语言含义。未知总体 claim 不具有授权作用。
-- [ ] 定向 GREEN + 全量 Python/Node/TS/compileall/diff，提交 `feat: define independent SDD acceptance declarations and result policy`。
+- [x] 定向 GREEN + 全量 Python/Node/TS/compileall/diff，提交 `feat: define independent SDD acceptance declarations and result policy`。
+
+Task 1 验证：初始15项RED均明确缺模块；额外聚合非法输入7个子例RED。16项定向、482项Python/131.079秒、13 Node无失败/跳过、严格TS、compileall/Shell/diff通过。日志 `/tmp/cao-sdd-acceptance-1-*.log`。目前仅完成纯策略，硬门禁尚未接入。
 
 ## Task 2: 来源、正文与精确报告边界
 
@@ -285,4 +291,4 @@ git diff --check
 - 设计1—4：Tasks 5/6；5：Tasks 1/2/3；6：Tasks 1/3/4；7：Tasks 2/3/4；8：Tasks 3/5/6；9—11：所有Task与出口记录。
 - 所有新增函数在接口中定义；D/R/I/Work字段在固定接口定义；现有函数以当前源码为准，若接口差异先更新计划再实现。
 - 命令JSON/报告长度、无执行/当前run提交、未知ID、精确输出边界、no-plan与旧证据迁移均有对应RED。
-- 当前为已批准设计后的实施计划；尚无新实现或新功能通过证据。
+- 已开始执行：Task 1 纯策略已验证；Tasks 2—6 待完成，不能将现有通过结果当作完整新门禁已实现。
