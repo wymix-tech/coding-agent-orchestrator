@@ -154,14 +154,14 @@ class RequirementWriteIsNotBlocked(unittest.TestCase):
             {"event": "pre_tool", "toolName": "edit", "params": {"file_path": target, "new_string": "x"}},
         ]
         for raw in shapes:
-            self.assertTrue(cao.write_targets_native_sdd_output(raw), f"not exempt: {raw}")
+            self.assertTrue(cao.write_targets_native_sdd_output(pathlib.Path("."), raw), f"not exempt: {raw}")
 
     def test_other_orchestrator_state_is_still_protected(self):
         """Only the requirements directory is exempt; CAO state is not."""
         raw = {"event": "pre_tool", "tool_name": "write", "tool_input": {"path": ".orchestrator/work/x.json", "content": "{}"}}
-        self.assertFalse(cao.write_targets_native_sdd_output(raw))
+        self.assertFalse(cao.write_targets_native_sdd_output(pathlib.Path("."), raw))
         raw = {"event": "pre_tool", "tool_name": "write", "tool_input": {"path": ".orchestrator/config.json", "content": "{}"}}
-        self.assertFalse(cao.write_targets_native_sdd_output(raw))
+        self.assertFalse(cao.write_targets_native_sdd_output(pathlib.Path("."), raw))
 
     def test_round_trip_from_one_sentence_requirement(self):
         with tempfile.TemporaryDirectory() as td:

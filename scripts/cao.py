@@ -30,6 +30,7 @@ if __package__ in (None, ""):
         sys.path.insert(0, _source_root)
 
 from scripts.state_store import atomic_json, backup_once, repo_transaction
+from scripts.path_guard import inside, repo_file, provider_artifact, patch_targets
 from scripts.completion_policy import (
     acceptance_hash, anchor_acceptance, reset_requirement, evidence_matches,
     verification_fresh as bound_verification_fresh, normalize_scripts, tests_satisfied, workflow_ready,
@@ -333,17 +334,16 @@ def validate_workflow_entrypoint(provider: str, name: str, entrypoint: str) -> d
     return {"ok": True, "reason": None}
 
 
-def validate_workflow_artifacts(provider: str, paths: list[str]) -> dict[str, Any]:
+def validate_workflow_artifacts(repo: Path, provider: str, paths: list[str]) -> dict[str, Any]:
     """Require native workflow outputs to live inside the provider's own directories."""
     dirs = provider_output_dirs(provider)
     if not dirs:
         return {"ok": True, "offending": [], "reason": None}
     offending: list[str] = []
     for value in paths:
-        normalized = str(value).replace("\\", "/")
-        if normalized.startswith("./"):
-            normalized = normalized[2:]
-        if not any(normalized == d.rstrip("/") or normalized.startswith(d) for d in dirs):
+        try:
+            provider_artifact(repo, str(value), dirs)
+        except ValueError:
             offending.append(str(value))
     if offending:
         return {
@@ -2531,7 +2531,11 @@ def bind_plan_scope(repo: Path, work: dict, plan_paths: list[str],
     plans = []
     for value in sorted(paths):
         path, relative = resolve_artifact_path(repo, value)
-        if not path.is_file() or not any(path.is_relative_to(root) for root in roots):
+        try:
+            provider_artifact(repo, relative, provider_output_dirs(sdd.get("provider")))
+        except ValueError as exc:
+            raise ValueError("PLAN_SOURCE_INVALID: " + relative) from exc
+        if not path.is_file():
             raise ValueError("PLAN_SOURCE_INVALID: " + relative)
         ids = sorted(set(normalized.get(value, [])))
         if path.name == "sprint-status.yaml":
@@ -2555,6 +2559,10 @@ def provider_pending_plan_items(repo: Path, work: dict) -> list[str]:
     pending = []
     for plan in scope["plans"]:
         path, relative = resolve_artifact_path(repo, plan["path"])
+        try:
+            provider_artifact(repo, relative, provider_output_dirs((work.get("sdd") or {}).get("provider")))
+        except ValueError as exc:
+            raise ValueError("PLAN_SOURCE_INVALID: " + plan["path"]) from exc
         if not path.is_file():
             raise ValueError("PLAN_SOURCE_MISSING: " + relative)
         if any(marker in f"/{relative}" for marker in PLAN_ARCHIVE_MARKERS):
@@ -2620,6 +2628,11 @@ def completion_status(repo: Path, work: dict[str, Any] | None) -> dict[str, Any]
     profile = str(assessment.get("profile") or "light")
     if provider in SDD_CATALOG and profile in PROFILE_RANK:
         workflow = sdd.get("workflow") or {}
+        if workflow.get("status") == "completed":
+            ownership = validate_workflow_artifacts(repo, provider, workflow.get("artifacts") or [])
+            if not ownership["ok"]:
+                return {"ready": False, "reason": "native workflow artifacts are outside provider output directories: " + ", ".join(ownership["offending"]),
+                        "next": "Rerun the native workflow and complete it with files in its declared output directories."}
         workflow_ok, workflow_reason = workflow_ready(work, repo)
         if not workflow_ok:
             return {
@@ -3453,17 +3466,16 @@ def cmd_sdd_workflow(args: argparse.Namespace) -> int:
         paths = list(args.artifact or [])
         if not paths:
             print(json.dumps({"ok": False, "error": "NATIVE_WORKFLOW_ARTIFACT_REQUIRED", "reason": "At least one actual output file must be recorded."}, ensure_ascii=False, indent=2)); return 2
-        if not allow_unverified:
-            dir_check = validate_workflow_artifacts(provider, paths)
-            if not dir_check["ok"]:
-                print(json.dumps({
-                    "ok": False,
-                    "error": "NATIVE_WORKFLOW_ARTIFACT_OUTSIDE_PROVIDER_DIRS",
-                    "reason": dir_check["reason"],
-                    "provider": provider,
-                    "offending": dir_check["offending"],
-                    "next": f"Record only files the native workflow produced under {', '.join(provider_output_dirs(provider)) or 'the provider directory'}; product source files are not SDD artifacts.",
-                }, ensure_ascii=False, indent=2)); return 2
+        dir_check = validate_workflow_artifacts(repo, provider, paths)
+        if not dir_check["ok"]:
+            print(json.dumps({
+                "ok": False,
+                "error": "NATIVE_WORKFLOW_ARTIFACT_OUTSIDE_PROVIDER_DIRS",
+                "reason": dir_check["reason"],
+                "provider": provider,
+                "offending": dir_check["offending"],
+                "next": f"Record only files the native workflow produced under {', '.join(provider_output_dirs(provider)) or 'the provider directory'}; product source files are not SDD artifacts.",
+            }, ensure_ascii=False, indent=2)); return 2
         refs = []
         try:
             for value in paths:
@@ -3526,14 +3538,8 @@ def resolve_work(repo: Path, work_id: str | None = None) -> dict[str, Any] | Non
 
 
 def resolve_artifact_path(repo: Path, value: str) -> tuple[Path, str]:
-    p = Path(value)
-    absolute = p if p.is_absolute() else repo / p
-    resolved = absolute.resolve()
-    try:
-        relative = resolved.relative_to(repo.resolve())
-    except ValueError as exc:
-        raise ValueError("Artifact path must be inside the repository") from exc
-    return resolved, relative.as_posix()
+    resolved = repo_file(repo, value)
+    return resolved, resolved.relative_to(repo.resolve()).as_posix()
 
 
 def artifact_reference(repo: Path, value: str, role: str | None = None, native_type: str | None = None, native_ref: str | None = None) -> dict[str, Any]:
@@ -4604,7 +4610,7 @@ def cmd_reopen(args: argparse.Namespace) -> int:
 def _completion_blocked(repo: Path, work: dict[str, Any] | None, c: dict[str, Any]) -> int:
     blocked: dict[str, Any] = {"ok": False, "error": "COMPLETION_BLOCKED", "reason": c["reason"]}
     # Report concrete items, not just an unfinished category.
-    for key in ("pending_plan_items", "missing_artifacts", "unmet_gates", "workflow"):
+    for key in ("pending_plan_items", "missing_artifacts", "unmet_gates", "pending_gates", "gates", "workflow"):
         if c.get(key):
             blocked[key] = c[key]
     blocked["next"] = c.get("next") or completion_next_instruction(repo, work, c)
@@ -4676,8 +4682,6 @@ def _collect_path_strings(node: Any, depth: int = 0) -> list[str]:
     level silently disabled the intake exemption in Pi, whose event shape does
     not match any single-level guess, and that reproduced the intake deadlock.
     """
-    if depth > 5:
-        return []
     found: list[str] = []
     if isinstance(node, dict):
         for key, value in node.items():
@@ -4688,28 +4692,28 @@ def _collect_path_strings(node: Any, depth: int = 0) -> list[str]:
             elif isinstance(value, (dict, list)):
                 found.extend(_collect_path_strings(value, depth + 1))
     elif isinstance(node, list):
-        for item in node[:25]:
+        for item in node:
             found.extend(_collect_path_strings(item, depth + 1))
     return found
 
 
-def orch_agent_writable_dir() -> str:
-    """The only part of `.orchestrator` an Agent may write directly.
-
-    Everything else under `.orchestrator` is CAO-derived state: it is computed
-    from commands and files the Agent already controls, so a hand edit is always
-    either wrong (it will be overwritten) or a way to fake orchestration state.
-    """
-    return f"{ORCH.as_posix()}/requirements"
-
-
-def write_targets_protected_state(raw: dict[str, Any]) -> list[str]:
-    """Targets under `.orchestrator` that CAO derives and the Agent must not edit."""
-    orch = ORCH.as_posix()
-    writable = orch_agent_writable_dir()
-    hits: list[str] = []
+def write_targets_protected_state(repo: Path, raw: dict[str, Any]) -> list[str]:
+    """Protect both the lexical state link and its resolved destination."""
+    repo = repo.resolve()
+    state, requirements = repo / ORCH, repo / REQUIREMENT_DIR
+    hits = []
     for target in tool_write_targets(raw):
-        if orch in target and writable not in target and target not in hits:
+        value = Path(target)
+        lexical = Path(os.path.abspath(value if value.is_absolute() else repo / value))
+        resolved = lexical.resolve()
+        # Resolve repository aliases (e.g. macOS /var) without dereferencing a state link.
+        lexical_state = next((ancestor for ancestor in (lexical, *lexical.parents)
+                              if ancestor.name == ORCH.name and ancestor.parent.resolve() == repo), None)
+        state_target = lexical_state is not None or inside(resolved, state)
+        writable = (inside(resolved, repo) and inside(resolved, requirements)
+                    and inside(resolved, state)
+                    and (lexical_state is None or lexical.is_relative_to(lexical_state / "requirements")))
+        if state_target and not writable and target not in hits:
             hits.append(target)
     return hits
 
@@ -4754,21 +4758,45 @@ def _event_key(raw: Any, *keys: str) -> str:
 def tool_write_targets(raw: dict[str, Any]) -> list[str]:
     """Best-effort file targets of a mutating tool call, at any nesting depth."""
     tool = _event_key(raw, "tool_name", "toolname", "tool", "name").lower()
+    if not tool:
+        tool = next(iter(_collect_values_for_keys(raw, TOOL_NAME_KEYS)), "").lower()
     payload = raw.get("tool_input") or raw.get("input") or raw.get("arguments") or raw
-    targets: list[str] = []
-    if isinstance(payload, dict):
-        targets.extend(_collect_path_strings(payload))
-    elif isinstance(payload, str):
-        targets.append(payload)
-    if payload is not raw:
-        targets.extend(_collect_path_strings(raw))
+    targets = _collect_path_strings(raw)
+    patches = _collect_values_for_keys(raw, {"patch", "patch_text", "input"})
+    if isinstance(payload, str):
+        if tool in SHELL_TOOLS:
+            patches = []
+        elif tool in {"apply_patch", "patch"}:
+            patches.append(payload)
+        else:
+            targets.append(payload)
+    for text in patches:
+        targets.extend(patch_targets(text))
     if tool in SHELL_TOOLS:
-        # A shell tool carries its target inside the command string, and hosts
-        # nest it differently (`params.command`, `tool_input.command`, ...), so
-        # read it from the whole event rather than one guessed level. Missing it
-        # let `rm -rf .orchestrator` through the guard.
-        targets.extend(str(value) for value in _collect_values_for_keys(raw, ("command", "cmd")))
-    return [t for t in targets if t]
+        commands = _collect_values_for_keys(raw, {"command", "cmd"})
+        if isinstance(payload, str):
+            commands.append(payload)
+        for command in commands:
+            try:
+                segments = _shell_segments(command)
+            except ValueError:
+                continue  # Unparseable commands get a risk reminder, not a sandbox guarantee.
+            cwd = Path(".")
+            for tokens in segments:
+                if tokens[0] == "cd" and len(tokens) == 2 and not any(char in tokens[1] for char in "$`"):
+                    directory = Path(tokens[1])
+                    cwd = directory if directory.is_absolute() else cwd / directory
+                elif not _readonly_tokens(tokens):
+                    output_only = tokens[0] in {"echo", "printf", "cat", "head", "tail", "ls", "grep", "rg"}
+                    outputs = {i + 1 for i, token in enumerate(tokens) if token in {">", ">>", "&>"}}
+                    for i, token in enumerate(tokens[1:], 1):
+                        if output_only and i not in outputs:
+                            continue
+                        if token.startswith("-") or token in {">", ">>", "<", "<<", "2", "&"}:
+                            continue
+                        path = Path(token)
+                        targets.append(str(path if path.is_absolute() else cwd / path))
+    return list(dict.fromkeys(target for target in targets if target))
 
 
 def intake_writable_dirs() -> list[str]:
@@ -4786,12 +4814,19 @@ def intake_writable_dirs() -> list[str]:
     return native_output_dirs() + [f"{REQUIREMENT_DIR.as_posix()}/"]
 
 
-def write_targets_native_sdd_output(raw: dict[str, Any]) -> bool:
-    """True when the write lands in an intake-writable directory."""
+def write_targets_native_sdd_output(repo: Path, raw: dict[str, Any]) -> bool:
+    """Only an all-native write is exempt from product reminders."""
     targets = tool_write_targets(raw)
     if not targets:
         return False
-    return any(out_dir in target for out_dir in intake_writable_dirs() for target in targets)
+    for target in targets:
+        try:
+            path = repo_file(repo, target)
+        except ValueError:
+            return False
+        if not any(inside(path, repo / directory) for directory in intake_writable_dirs()):
+            return False
+    return True
 
 
 MUTATING_TOOLS = {"write", "edit", "apply_patch", "str_replace", "strreplace", "insert", "delete", "mv", "move", "write_file", "create_file", "patch"}
@@ -4803,9 +4838,7 @@ TOOL_NAME_KEYS = {"tool_name", "toolname", "tool", "name"}
 
 
 def _collect_values_for_keys(node: Any, keys: frozenset[str] | set[str], depth: int = 0) -> list[str]:
-    """Collect string values stored under `keys`, at any nesting depth."""
-    if depth > 5:
-        return []
+    """Collect string values stored under `keys`, without silently truncating targets."""
     found: list[str] = []
     if isinstance(node, dict):
         for key, value in node.items():
@@ -4816,7 +4849,7 @@ def _collect_values_for_keys(node: Any, keys: frozenset[str] | set[str], depth: 
             elif isinstance(value, (dict, list)):
                 found.extend(_collect_values_for_keys(value, keys, depth + 1))
     elif isinstance(node, list):
-        for item in node[:25]:
+        for item in node:
             found.extend(_collect_values_for_keys(item, keys, depth + 1))
     return found
 
@@ -4841,31 +4874,49 @@ def tool_is_mutating(raw: dict[str, Any]) -> bool:
         return True
     if tool in {"bash", "shell", "exec", "command"}:
         commands = _collect_values_for_keys(payload if payload is not raw else raw, {"command", "cmd"})
-        cmd = commands[0] if commands else ""
-        return bool(cmd) and not readonly_shell(cmd)
+        if isinstance(payload, str):
+            commands.append(payload)
+        return any(not readonly_shell(command) for command in commands)
     return False
 
 
+def _shell_segments(command: str) -> list[list[str]]:
+    lexer = shlex.shlex(command, posix=True, punctuation_chars=";&|<>()\n")
+    lexer.whitespace_split = True
+    lexer.whitespace = " \t\r"  # Preserve unquoted newlines as command boundaries.
+    segments = [[]]
+    for token in lexer:
+        if token and all(char in ";&|\n" for char in token):
+            if segments[-1]:
+                segments.append([])
+        else:
+            segments[-1].append(token)
+    return [tokens for tokens in segments if tokens]
+
+
 def readonly_shell(command: str) -> bool:
-    low = command.strip().lower()
-    if not low:
-        return True
-    prefixes = ("git status", "git diff", "git log", "git show", "git branch", "ls", "dir", "cat ", "type ", "pwd", "find ", "grep ", "rg ", "head ", "tail ", "pytest", "python -m unittest", "mvn test", "gradle test", "npm test")
-    if low.startswith(prefixes):
-        return True
-    # `sed` alone only prints, but `sed -i` rewrites the file in place, so it is
-    # a write. Treating it as read-only let an Agent edit CAO state via shell.
-    if low.startswith("sed "):
-        return not re.search(r"(^|\s)-i(\s|$)", low)
-    # CAO governance commands mutate CAO state, not product code. Permit these
-    # single commands through the code-mutation hook so an unassessed Work Item
-    # can run `cao path assess` and other required orchestration actions.
     try:
-        tokens = shlex.split(command)
+        return all(_readonly_tokens(tokens) for tokens in _shell_segments(command))
     except ValueError:
         return False
-    if not tokens or any(token in {";", "&&", "||", "|", ">", ">>", "<"} for token in tokens):
+
+
+def _readonly_tokens(tokens: list[str]) -> bool:
+    operators = {">", ">>", "<", "<<", "<>", ">|", "&>", ">&", "<&", ";", "&", "|", "&&", "||", "(", ")", "$", "`"}
+    if not tokens or any(token in operators for token in tokens):
         return False
+    name = tokens[0].lower()
+    if name in {"ls", "dir", "cat", "type", "pwd", "find", "grep", "rg", "head", "tail", "echo", "printf", "cd"}:
+        return True
+    if name == "git" and len(tokens) > 1 and tokens[1] in {"status", "diff", "log", "show", "branch"}:
+        return True
+    if name == "sed":
+        return not any(token.startswith("-i") or token.startswith("--in-place") for token in tokens[1:])
+    if name == "pytest" or tokens[:3] in (["python", "-m", "unittest"],):
+        return True
+    if tokens[:2] in (["mvn", "test"], ["gradle", "test"], ["npm", "test"]):
+        return True
+    # Standalone CAO commands own their state mutations; their arguments are not hand edits.
     command_tokens = tokens
     if tokens[0] == "python" or re.fullmatch(r"python3(?:\.\d+)?", tokens[0]):
         script_index = next((i for i, token in enumerate(tokens[1:], 1) if Path(token).as_posix().endswith("scripts/cao.py")), None)
@@ -4881,7 +4932,7 @@ def readonly_shell(command: str) -> bool:
     safe_control_commands = {
         "init", "bootstrap", "sdd", "start", "path", "list", "status", "next", "resume",
         "checkpoint", "decision", "block", "unblock", "handoff", "sessions", "verify", "done",
-        "context", "artifact", "host-event", "requirement",
+        "context", "artifact", "host-event", "requirement", "language", "gate", "reopen",
     }
     return bool(command_tokens and command_tokens[0] in safe_control_commands)
 
@@ -4940,7 +4991,7 @@ def host_event(args: argparse.Namespace) -> int:
         # CAO's own state narrow enough that it can never deadlock intake:
         # `requirements/` stays writable (the Agent authors those), and CAO
         # itself writes state through commands, not through this hook.
-        protected = write_targets_protected_state(raw)
+        protected = write_targets_protected_state(repo, raw)
         if protected and tool_is_mutating(raw):
             result = {
                 "decision": "deny",
@@ -4954,7 +5005,7 @@ def host_event(args: argparse.Namespace) -> int:
         if (
             work and work.get("status") == "active"
             and tool_is_mutating(raw)
-            and not write_targets_native_sdd_output(raw)
+            and not write_targets_native_sdd_output(repo, raw)
         ):
             workflow = ((work.get("sdd") or {}).get("workflow") or {})
             unverified = workflow.get("unverified") or {}
@@ -4967,6 +5018,20 @@ def host_event(args: argparse.Namespace) -> int:
                     f"completion until the workflow has run and its artifacts are recorded. "
                     f"Run the workflow now, then record it with `cao sdd workflow execute --work {work['id']} --command \"<command actually run>\"`."
                 )
+        commands = _collect_values_for_keys(raw, {"command", "cmd"})
+        payload = raw.get("tool_input") or raw.get("input") or raw.get("arguments")
+        if isinstance(payload, str) and _event_key(raw, "tool_name", "toolname", "tool", "name").lower() in SHELL_TOOLS:
+            commands.append(payload)
+        for command in commands:
+            dynamic = any(char in command for char in "$`")
+            try:
+                segments = _shell_segments(command)
+                dynamic = dynamic or any(tokens[0] in {"eval", "source", "."} or "-c" in tokens for tokens in segments)
+            except ValueError:
+                dynamic = True
+            if dynamic:
+                result["additional_context"] = (result.get("additional_context", "") + "\nCAO risk reminder: dynamic or unparseable Shell targets cannot be reliably checked; this guard is not a Shell sandbox.").strip()
+                break
         print(json.dumps(native_hook_output(args.host, event, result), ensure_ascii=False))
         return 0
 
@@ -5097,8 +5162,8 @@ def build_parser() -> argparse.ArgumentParser:
     plan.add_argument("--plan", action="append", help="Associated plan path; repeat for related changes/features")
     plan.add_argument("--no-plan", action="store_true", help="Explicitly declare that this workflow produces no plan")
     sp.add_argument("--plan-item", action="append", help="Shared plan path#story-id; repeat for every associated story")
-    sp.add_argument("--allow-unverified", action="store_true", help="Record a documented exception when outputs fall outside the provider directory; requires --reason")
-    sp.add_argument("--reason", default=None, help="Why these outputs cannot be verified; required with --allow-unverified")
+    sp.add_argument("--allow-unverified", action="store_true", help="Record a documented native-entrypoint or failed-execution exception; output ownership is still required")
+    sp.add_argument("--reason", default=None, help="Why this completion needs an exception; required with --allow-unverified")
     sp.set_defaults(fn=cmd_sdd_workflow)
     lifecycle = sub.add_parser("lifecycle", help="Inspect persisted CAO lifecycle events")
     lifecycle_sub = lifecycle.add_subparsers(dest="lifecycle_command", required=True)

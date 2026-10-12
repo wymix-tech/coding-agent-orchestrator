@@ -69,15 +69,15 @@ class NativeOutputDirExemption(unittest.TestCase):
     def test_prd_write_is_exempt_even_without_a_work_item(self):
         raw = write_tool("/tmp/demo7/_bmad-output/planning-artifacts/prds/prd-2026-10-10/prd.md")
         self.assertTrue(cao.tool_is_mutating(raw))
-        self.assertTrue(cao.write_targets_native_sdd_output(raw))
+        self.assertTrue(cao.write_targets_native_sdd_output(pathlib.Path("/tmp/demo7"), raw))
 
     def test_product_code_is_not_exempt(self):
         for path in ("/tmp/demo7/src/main/java/App.java", "/tmp/demo7/README.md", "/tmp/demo7/pom.xml"):
-            self.assertFalse(cao.write_targets_native_sdd_output(write_tool(path)), path)
+            self.assertFalse(cao.write_targets_native_sdd_output(pathlib.Path("/tmp/demo7"), write_tool(path)), path)
 
     def test_mutating_bash_touching_native_dirs_is_exempt(self):
-        self.assertTrue(cao.write_targets_native_sdd_output(bash_tool("mkdir -p _bmad-output/planning-artifacts")))
-        self.assertTrue(cao.write_targets_native_sdd_output(bash_tool("echo x > openspec/changes/add-login/spec.md")))
+        self.assertTrue(cao.write_targets_native_sdd_output(pathlib.Path("/tmp/demo7"), bash_tool("mkdir -p _bmad-output/planning-artifacts")))
+        self.assertTrue(cao.write_targets_native_sdd_output(pathlib.Path("/tmp/demo7"), bash_tool("echo x > openspec/changes/add-login/spec.md")))
 
     def test_every_provider_has_an_output_dir(self):
         for provider, meta in cao.SDD_CATALOG.items():

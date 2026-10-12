@@ -15,6 +15,18 @@ CAO keeps a durable state for every requirement so work can survive:
 CAO does **not** replace the project's SDD. BMAD, OpenSpec, and other SDDs keep their own artifacts.
 CAO stores references to those artifacts and owns only execution continuity.
 
+### Path protection limits
+
+Direct edits to CAO-derived `.orchestrator/` state are denied; actual requirement documents remain writable.
+Targets are resolved, including `..`, symlinks, structured patch moves, Shell redirects and simple compound commands.
+Native workflow outputs must stay in the current provider's real output directories, even with `--allow-unverified`.
+That flag documents an entrypoint or failed-execution exception; it does not turn product files into SDD artifacts.
+Product writes remain allowed with governance reminders.
+
+This is **not a Shell sandbox**. Dynamic variables, command substitution, evaluated/nested scripts and unparseable
+commands cannot be reliably mapped to file targets; detectable cases receive a risk reminder, not a claim of isolation.
+Verification and installation commands are trusted project code and may have side effects.
+
 ## Installation
 
 CAO exposes a standard `cao` command through its Python package metadata. Python 3.10 or newer is required.
