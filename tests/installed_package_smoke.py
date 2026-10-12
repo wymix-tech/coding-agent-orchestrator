@@ -24,13 +24,14 @@ def main():
     records = []
     with tempfile.TemporaryDirectory(prefix="cao-installed-smoke-") as td:
         base = Path(td)
-        modules = ("from scripts import cao, state_store, completion_policy, path_guard, verification_runner, windows_supervisor, dashboard; "
+        modules = ("import json; from scripts import cao, state_store, completion_policy, path_guard, verification_runner, verification_setup, windows_supervisor, dashboard; "
                    "root=cao.package_root_dir(); "
                    "assert all((root/p).is_file() for p in ['hosts/pi/coding-orchestrator.ts','hooks/host-event.sh','hosts/claude-code/settings.fragment.json','hosts/codex/hooks.json','SKILL.md']); "
-                   "assert dashboard.dashboard_html_path().is_file(); print(verification_runner.__file__)")
+                   "assert dashboard.dashboard_html_path().is_file(); print(json.dumps({'runner':verification_runner.__file__,'invocation':cao.cao_invocation()}))")
         imported = subprocess.run([args.python, "-c", modules], cwd=base, env=env,
                                   text=True, capture_output=True, timeout=10)
         assert imported.returncode == 0, imported.stderr
+        installation = json.loads(imported.stdout)
         for provider, marker, artifact in (("bmad", "_bmad", "_bmad-output/review.md"),
                                            ("openspec", "openspec", "openspec/changes/review.md"),
                                            ("speckit", ".specify", "specs/review.md")):
@@ -54,8 +55,20 @@ def main():
                 tests = repo / "acceptance-tests"
                 tests.mkdir()
                 (tests / "test_acceptance.py").write_text("import unittest\nclass Acceptance(unittest.TestCase):\n    def test_pass(self): self.assertEqual(2+2,4)\n", encoding="utf-8")
-                cli("init", "--host", "codex", "--sdd", provider, "--test-script",
-                    shell([args.python, "-m", "unittest", "discover", "-s", "acceptance-tests"]))
+                cli("init", "--host", "codex", "--sdd", provider)
+                assert cli("bootstrap")["mode"] == "verification_setup"
+                setup_context = event("prompt_submit")
+                context = setup_context.get("additional_context") or setup_context.get("hookSpecificOutput", {}).get("additionalContext", "")
+                assert "CAO verification setup" in context, setup_context
+                configured = cli("verification", "configure", "--test-script",
+                                 shell([args.python, "-m", "unittest", "discover", "-s", "acceptance-tests"]))
+                assert configured["verification_setup"]["ready"], configured
+                assert cli("bootstrap")["mode"] == "select"
+                # Test the command advertised to the Agent, including wheel `sh` fallback;
+                # an explicit console outside PATH is not the discovered invocation.
+                readonly = event("pre_tool", tool_name="bash", tool_input={"command": installation["invocation"]["command"] + " status"})
+                assert decision(readonly) == "allow", readonly
+                assert not readonly.get("additional_context") and not readonly.get("hookSpecificOutput", {}).get("additionalContext"), readonly
                 allocated = cli("requirement", "next-id", "--title", "Installed fixture")
                 (repo / allocated["path"]).write_text("# Local fixture acceptance\n", encoding="utf-8")
                 wid = cli("start", "--requirement", allocated["path"])["work_item"]["id"]
@@ -84,7 +97,8 @@ def main():
                 work = json.loads((repo / f".orchestrator/work/{wid}.json").read_text(encoding="utf-8"))
                 assert work["status"] == "completed"
                 records.append({"provider_fixture": provider, "simulated_host": host, "status": work["status"]})
-        print(json.dumps({"installed_runner": imported.stdout.strip(), "fixture_cases": records}, indent=2))
+        print(json.dumps({"installed_runner": installation["runner"], "resolved_invocation": installation["invocation"],
+                          "fixture_cases": records}, indent=2))
 
 
 if __name__ == "__main__":

@@ -162,11 +162,43 @@ Codex 无已验证原生 SessionEnd hook：status 明确标注限制，真实退
 本机真实 SDD 在线安装未执行，须另获授权。用户提供的异机日志记录了经其明确选择后的 BMAD
 6.12.2 安装，但该会话没有真正执行 BMAD Skill；不把安装成功或目录夹具当作原生流程验收通过。
 
+## 首次项目验证引导（2026-10-12，本机验收）
+
+用户已确认 Agent 分析/询问技术栈并生成项目脚本，CAO 只引导、配置和记录证据。
+新增 `cao verification configure`：配置事务保留语言/SDD/timeout/未知字段；同声明
+unchanged 不写，不同非空或非法声明需显式 replace；不安装 Host/依赖、不运行验证、不改 Work。
+已有锚变化提示 acceptance_review_required 和显式 reanchor，重试 unchanged 仍提示未解决变化。
+bootstrap 在 SDD 授权后、Work select/resume 前检查空/非法/optional-only 配置；有效配置保持原流程。
+Session/prompt 提示进入模型；产品写仅提醒，状态 deny 优先，读取/控制命令/intake 仍放行。
+直接 start 保留兼容，仅警告；已有决策/执行状态保留。模板不覆盖项目现有说明。
+
+- Task 1 `969139c`：14 定向、449 Python/125.126 秒、12 Node 与严格 TS 通过。
+- Task 2 `23bce48`：12 定向、461 Python/127.808 秒、12 Node 与严格 TS 通过。
+- Task 3：5 指导/运行回归、**466 Python/128.842 秒**、**13 Node 无失败/跳过**、严格 TS、
+  compileall、Shell 语法和 diff 检查通过。提交前验证组合另跑 **62 项/13.689 秒** 通过，
+  Node/类型再次通过。文档 RED 为 5 个明确缺少指导的断言失败。
+- 新增项目包装器正式运行用例：配置 ready，但收集零测试时包装器非零退出，verify failed/done
+  仍失败；这不是核心解析第三方报告。Java/Jupiter 的 Surefire/零测试配置由 Agent/项目负责。
+- 新的 Pi 模拟桥调用真实核心：指导在 before_agent_start/steer 中出现且 triggerTurn:false，
+  产品 allow/状态 deny，配置前后 Work 字节不变，原锚直到显式 reanchor 才变。Host 事件仍可
+  正常登记 last_agent/revision，不把这些合法变动误报为 configure 副作用。
+- 离线缓存 wheel 构建和临时安装、editable 临时安装均通过 checkout 外 **各 9 个**
+  Provider 本地目录夹具 × Host 模拟事件组合；额外验证 setup→configure→select 和实际广告的
+  canonical launcher readonly 分类。本次两个入口均有执行位；不冒称本次实测 wheel 无执行位。
+  包环境 `/tmp/cao-first-project-package.c4jYGk`；日志 `/tmp/cao-setup-3-{build,install,wheel,editable}.log`。
+- 定向/全量/Node/类型日志 `/tmp/cao-setup-{1,2,3}-*.log`。先前旧夹具与整份 Work 快照时机、
+  非 PATH console 发现差异均已定位并校准用例；未放宽任意同名 launcher 或状态保护。
+
+这些证明 CLI/指令契约、实际项目包装器和本机安装，不证明任意模型按指导生成正确工程、
+真实 Pi 重测、Java 登录业务测试、真实 SDD 执行、完整浏览器或跨平台通过。未新增模型压力
+测试（用户选择不用子代理）。#32 延期验收不变；本轮本地提交未推送、合并或发布。
+
 ## 兼容与操作步骤
 
 1. 产品写入采用提醒模式；没有评估/有重大歧义也不由 Hook 阻断。不要误解为已经满足完成条件。
    `.orchestrator/` 派生状态禁止手改；需求 intake 可写；`cao done` 是硬完成权威。
-2. required/tests 能力显式配置 `gates: ["tests"]`，或通过 `cao init --test-script` 声明。
+2. required/tests 能力显式配置 `gates: ["tests"]`，或通过 `cao verification configure --test-script`
+   安全声明（首次 init 仍支持 --test-script，但更新配置不要使用 init --force）。
    老字符串脚本、一般 `--verify-script`、命令关键词、人工 tests 声明和 CLI override 不补造能力。
 3. scripts/required/gates/`timeout_seconds` 变化需先审阅，再显式
    `cao reopen --work <id> --reanchor --reason "Reviewed acceptance changes"`。
@@ -190,7 +222,7 @@ Codex 无已验证原生 SessionEnd hook：status 明确标注限制，真实退
 ## 修改边界与后续
 
 新增核心职责限定在 `state_store.py`、`completion_policy.py`、`path_guard.py`、
-`verification_runner.py`、`windows_supervisor.py`；CLI 保留原有路由和 JSON 存储。
+`verification_runner.py`、`windows_supervisor.py`、`verification_setup.py`；CLI 保留原有路由和 JSON 存储。
 相关修改涉及 Host TS/Hook/fragment、Dashboard 投影/页面、正式回归、协议及开发/CI 元数据。
 新增代码文件均小于 500 行，没有全面重写大型既有 CLI。
 

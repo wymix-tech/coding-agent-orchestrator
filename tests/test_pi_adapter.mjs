@@ -49,29 +49,35 @@ print(json.dumps(reply))
     }};
 }
 
-test('real Python core handles Pi tool_result with null verification', posix, async () => {
+function realCoreFixture() {
   const f = fixture();
+  const python = process.env.CAO_TEST_PYTHON || 'python3';
+  const core = path.resolve(import.meta.dirname, '../scripts/cao.py');
+  const env = {...process.env};
+  for (const key of ['CAO_HOST', 'CLAUDE_CODE', 'CLAUDE_CODE_SESSION_ID', 'CLAUDE_SESSION_ID',
+    'CODEX_THREAD_ID', 'CODEX_SANDBOX', 'CODEX_HOME', 'PI_SESSION_ID', 'PI_CODING_AGENT']) delete env[key];
+  function cli(...args) {
+    const result = spawnSync(python, [core, ...args, '--repo', f.dir],
+      {cwd: f.dir, env, encoding: 'utf8', timeout: 20000});
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    return JSON.parse(result.stdout);
+  }
+  // Only a launcher: every reply comes from the real Python core.
+  writeFileSync(path.join(f.dir, 'cao'), '#!/bin/sh\nexec "${CAO_TEST_PYTHON:-python3}" ' +
+    JSON.stringify(core) + ' "$@"\n', {mode: 0o755});
+  return {...f, python, cli};
+}
+
+test('real Python core handles Pi tool_result with null verification', posix, async () => {
+  const f = realCoreFixture();
   try {
-    const python = process.env.CAO_TEST_PYTHON || 'python3';
-    const core = path.resolve(import.meta.dirname, '../scripts/cao.py');
-    const env = {...process.env};
-    for (const key of ['CAO_HOST', 'CLAUDE_CODE', 'CLAUDE_CODE_SESSION_ID', 'CLAUDE_SESSION_ID',
-      'CODEX_THREAD_ID', 'CODEX_SANDBOX', 'CODEX_HOME', 'PI_SESSION_ID', 'PI_CODING_AGENT']) delete env[key];
-    function cli(...args) {
-      const result = spawnSync(python, [core, ...args, '--repo', f.dir],
-        {cwd: f.dir, env, encoding: 'utf8', timeout: 20000});
-      assert.equal(result.status, 0, result.stderr || result.stdout);
-      return JSON.parse(result.stdout);
-    }
+    const {cli} = f;
     mkdirSync(path.join(f.dir, '_bmad'));
     writeFileSync(path.join(f.dir, 'requirement.md'), '# Real core fixture');
     cli('init', '--host', 'codex', '--sdd', 'bmad');
     const wid = cli('start', '--requirement', 'requirement.md').work_item.id;
     const workFile = path.join(f.dir, '.orchestrator/work', wid + '.json');
     assert.equal(JSON.parse(readFileSync(workFile, 'utf8')).verification, null);
-    // The shell entry is only a launcher: replies come from the real core, not fake.py.
-    writeFileSync(path.join(f.dir, 'cao'), '#!/bin/sh\nexec "${CAO_TEST_PYTHON:-python3}" ' +
-      JSON.stringify(core) + ' "$@"\n', {mode: 0o755});
     const event = {type: 'tool_result', toolName: 'write', input: {path: 'src.py', content: 'x'},
       content: [{type: 'text', text: 'Written'}], details: {bytes: 1}, structuredContent: {ok: true}};
     const original = JSON.parse(JSON.stringify(event));
@@ -80,6 +86,51 @@ test('real Python core handles Pi tool_result with null verification', posix, as
     assert.deepEqual(event, original, 'real-core guidance must not change tool result data');
     assert.equal(f.notices.length, 0, JSON.stringify(f.notices));
     assert.equal(JSON.parse(readFileSync(workFile, 'utf8')).verification, null);
+  } finally {f.close();}
+});
+
+test('real core setup reaches Pi model without blocking product writes or resetting Work', posix, async () => {
+  const f = realCoreFixture();
+  try {
+    const {cli} = f;
+    mkdirSync(path.join(f.dir, '_bmad'));
+    writeFileSync(path.join(f.dir, 'requirement.md'), '# Project baseline fixture');
+    cli('init', '--host', 'codex', '--sdd', 'bmad');
+    const wid = cli('start', '--requirement', 'requirement.md').work_item.id;
+    const workFile = path.join(f.dir, '.orchestrator/work', wid + '.json');
+    const originalAnchor = JSON.parse(readFileSync(workFile, 'utf8')).acceptance;
+    const ctx = f.context('setup-pi');
+    const guidance = await f.handlers.get('before_agent_start')({type: 'before_agent_start', prompt: 'continue'}, ctx);
+    assert.match(guidance.message.content, /CAO verification setup/);
+    assert.match(guidance.message.content, /tech stack/);
+    assert.equal(await f.handlers.get('tool_call')({type: 'tool_call', toolName: 'write',
+      input: {path: 'product.py', content: 'pass'}}, ctx), undefined);
+    assert.ok(f.sent.some(([message]) => message.content.includes('CAO verification setup')));
+    for (const [, options] of f.sent) {
+      assert.equal(options.triggerTurn, false);
+      assert.equal(options.deliverAs, 'steer');
+    }
+    const denied = await f.handlers.get('tool_call')({type: 'tool_call', toolName: 'write',
+      input: {path: '.orchestrator/index.json', content: '{}'}}, ctx);
+    assert.equal(denied.block, true);
+    mkdirSync(path.join(f.dir, 'acceptance-tests'));
+    writeFileSync(path.join(f.dir, 'acceptance-tests/test_project.py'),
+      'import unittest\nclass Project(unittest.TestCase):\n    def test_pass(self): self.assertEqual(2+2,4)\n');
+    // Host events may update last_agent/revision; configuration itself must not touch Work.
+    const before = readFileSync(workFile, 'utf8');
+    assert.deepEqual(JSON.parse(before).acceptance, originalAnchor);
+    const configured = cli('verification', 'configure', '--test-script',
+      JSON.stringify(f.python) + ' -m unittest discover -s acceptance-tests');
+    assert.equal(configured.verification_setup.ready, true);
+    assert.equal(configured.acceptance_review_required, true);
+    assert.equal(readFileSync(workFile, 'utf8'), before, 'configure cannot reanchor Work');
+    assert.equal(cli('bootstrap').mode, 'resume');
+    const after = await f.handlers.get('before_agent_start')({type: 'before_agent_start', prompt: 'continue'}, ctx);
+    assert.doesNotMatch(after.message.content, /CAO verification setup/);
+    assert.equal(f.notices.length, 0, JSON.stringify(f.notices));
+    cli('reopen', '--work', wid, '--reanchor', '--reason', 'Reviewed acceptance baseline');
+    assert.notEqual(JSON.parse(readFileSync(workFile, 'utf8')).acceptance.config_sha256,
+      originalAnchor.config_sha256);
   } finally {f.close();}
 });
 

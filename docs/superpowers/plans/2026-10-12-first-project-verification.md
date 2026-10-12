@@ -32,7 +32,7 @@
 - `prepare_config(raw: dict, scripts: list[dict], replace: bool, timestamp: int) -> tuple[dict, bool]` creates a candidate without mutation; identical declarations return unchanged; different nonempty or invalid old declarations require explicit replace.
 - `cmd_verification_configure(args) -> int` emits configured/unchanged JSON, inspection, and acceptance_review_required; no Work mutation.
 
-- [ ] Write RED CLI tests. RepairCase starts with a valid configured suite, so replacement requires --replace. Create separate uninitialized temp repositories for first configure.
+- [x] Write RED CLI tests. RepairCase starts with a valid configured suite, so replacement requires --replace. Create separate uninitialized temp repositories for first configure.
 
 ```python
 rc, out = self.run_cli('verification', 'configure', '--replace', '--test-script', self.test_command)
@@ -46,8 +46,8 @@ self.assertEqual((self.repo / '.orchestrator/config.json').read_bytes(), before)
 
 Cover config preservation (language/SDD/timeout/unknown values), missing/blank parameters, changed declarations without replace, invalid old declarations, first configure without creating Work/Host files, and active acceptance anchors remaining byte-identical. Add no-external-call mocks at the CLI handler boundary and a concurrent language/configure CLI test. Invalid arguments must fail before atomic write; persistence fault injection must retain old bytes.
 
-- [ ] Run `python3.11 -m unittest discover -s tests -p test_verification_setup.py -v`; expect missing command/feature failures.
-- [ ] Implement pure helpers with the following complete state/config algorithm (no file I/O in this module):
+- [x] Run `python3.11 -m unittest discover -s tests -p test_verification_setup.py -v`; expect missing command/feature failures.
+- [x] Implement pure helpers with the following complete state/config algorithm (no file I/O in this module):
 
 ```python
 from copy import deepcopy
@@ -106,7 +106,7 @@ def prepare_config(raw, scripts, replace, timestamp):
 
 Keep the existing config(repo) migration behavior before inspection. The CLI reads actual raw JSON for persistence, rejects malformed whole JSON/root types, and never writes the merged defaults back into unrelated config. On replace errors include current and requested state plus the explicit --replace next step.
 
-- [ ] Add `verification configure` parser with repeatable --test-script/--verify-script, --replace and --repo; keep existing verify unchanged. Add verification to safe standalone CAO commands. The locked handler uses:
+- [x] Add `verification configure` parser with repeatable --test-script/--verify-script, --replace and --repo; keep existing verify unchanged. Add verification to safe standalone CAO commands. The locked handler uses:
 
 ```python
 repo = repo_root(args.repo)
@@ -133,7 +133,7 @@ return 0
 
 Wrap pre-write parsing/normalization errors into exit=2 JSON; do not catch/relabel storage failures as success. Always report anchor mismatch for an existing active Work, including unchanged declarations following an earlier config change; read the active index on every invocation, not only changed writes.
 
-- [ ] Run targeted/full Python + Node/TS/compileall/diff; commit `feat: configure project verification without resetting orchestration state`.
+- [x] Run targeted/full Python + Node/TS/compileall/diff; commit `feat: configure project verification without resetting orchestration state`.
 
 ## Task 2: Bootstrap and model-visible preflight
 
@@ -141,7 +141,7 @@ Wrap pre-write parsing/normalization errors into exit=2 JSON; do not catch/relab
 
 **Interfaces:** `setup_instruction(command: str) -> str` supplies one shared Agent instruction. setup_state from Task 1 determines readiness. New bootstrap mode verification_setup retains applicable context/session/host/language/SDD fields.
 
-- [ ] Write real CLI RED tests: empty/optional/invalid setup takes priority after SDD authorization, valid setup retains select/resume; no Work automatically created; active work/decisions/step preserved; scripts unchanged; product write allowed with setup reminder; state write denied even with invalid config. Confirm start remains allowed with an explicit setup warning, then later configure reports reanchor, not silent acceptance.
+- [x] Write real CLI RED tests: empty/optional/invalid setup takes priority after SDD authorization, valid setup retains select/resume; no Work automatically created; active work/decisions/step preserved; scripts unchanged; product write allowed with setup reminder; state write denied even with invalid config. Confirm start remains allowed with an explicit setup warning, then later configure reports reanchor, not silent acceptance.
 
 ```python
 cfg = cao.config(self.repo)
@@ -154,8 +154,8 @@ self.assertIn('tech stack', out['next']['instruction'])
 self.assertIsNone(out['work_item'])
 ```
 
-- [ ] Run targeted tests RED.
-- [ ] Add the shared instruction, naming the actual resolved command:
+- [x] Run targeted tests RED.
+- [x] Add the shared instruction, naming the actual resolved command:
 
 ```python
 def setup_instruction(command):
@@ -172,7 +172,7 @@ def setup_instruction(command):
     )
 ```
 
-- [ ] Before the existing work/select branch, compute inspection; use verification_setup for non-ready, otherwise retain old branches. Shared output tail adds inspection/session/host/language/templates. For invalid declarations never call completion calculations; preserve Work continuity through summary plus execution/resume/decisions/blockers rather than certifying completion.
+- [x] Before the existing work/select branch, compute inspection; use verification_setup for non-ready, otherwise retain old branches. Shared output tail adds inspection/session/host/language/templates. For invalid declarations never call completion calculations; preserve Work continuity through summary plus execution/resume/decisions/blockers rather than certifying completion.
 
 ```python
 inspection = setup_state(cfg)
@@ -196,9 +196,9 @@ def verification_setup_context(work):
             'execution', 'resume', 'decisions', 'blockers')}
 ```
 
-- [ ] render_context inspects first; non-ready returns setup instruction plus JSON snapshot and native Session id, avoiding malformed config completion errors; ready uses the existing rendering unchanged. Session_start always calls render_context. pre_tool appends setup instruction only to mutating non-intake product calls after protected-state checks. start adds an advisory and inspection without blocking/rewriting its anchor.
-- [ ] Preserve old fixture intent: tests asserting valid select/resume must explicitly configure their original verification baseline. Tests exercising empty initialization should assert new setup mode, not disable new behavior.
-- [ ] Run targeted/full Python + Node/TS/compileall/diff; commit `feat: guide verification setup before selecting project work`.
+- [x] render_context inspects first; non-ready returns setup instruction plus JSON snapshot and native Session id, avoiding malformed config completion errors; ready uses the existing rendering unchanged. Session_start always calls render_context. pre_tool appends setup instruction only to mutating non-intake product calls after protected-state checks. start adds an advisory and inspection without blocking/rewriting its anchor.
+- [x] Preserve old fixture intent: tests asserting valid select/resume must explicitly configure their original verification baseline. Tests exercising empty initialization should assert new setup mode, not disable new behavior.
+- [x] Run targeted/full Python + Node/TS/compileall/diff; commit `feat: guide verification setup before selecting project work`.
 
 ## Task 3: Agent instructions and real-core adapter contract
 
@@ -206,17 +206,26 @@ def verification_setup_context(work):
 
 **Interfaces:** No SDK/Host transport changes. Reuse Pi additional_context with steer/triggerTurn:false and the real-core fixture added for prior null-verification repair.
 
-- [ ] Add RED instruction assertions and a real-core Node case: before_agent_start without scripts receives setup guidance; tool_call to product code remains unblocked; configuring a real suite removes setup mode/guidance; active Work stays untouched until explicit reanchor. Preserve content/details and no second turn.
-- [ ] Guide the Agent in both templates and Skill before start:
+- [x] Add RED instruction assertions and a real-core Node case: before_agent_start without scripts receives setup guidance; tool_call to product code remains unblocked; configuring a real suite removes setup mode/guidance; configure leaves Work untouched, with the acceptance anchor unchanged until explicit reanchor. Host events may still update Session/last_agent metadata. Preserve content/details and no second turn.
+- [x] Guide the Agent in both templates and Skill before start:
 
 ```text
 If bootstrap reports verification_setup: analyze existing product manifests/tests/CI and reuse verified commands. For a new product, use the user's explicit stack or ask before choosing. Create real project-owned wrappers that fail/block on zero tests or missing tools; declare required/tests through verification configure. Never hand-edit config, use init --force for this step, auto-install dependencies, or silently reanchor. Rerun bootstrap before starting feature work; configuration readiness is not a passing test result.
 ```
 
-- [ ] Update README/DESIGN with exact new CLI, configuration-vs-pass distinction, explicit replace and reanchor behavior. Do not overwrite previously generated project templates.
-- [ ] Extend installed smoke import to verification_setup; explicitly test first-project configure and canonical launcher classification from outside checkout. Label all Provider/runtime and Host fixtures simulated. No online SDD installation.
-- [ ] Run complete Python, Node/TS, compileall/Shell/diff; offline wheel build and temporary installed smoke if cached environment remains available. Record actual outcomes and deferred real-host/platform limitations in repair-validation.
-- [ ] Inline diff/spec coverage review; commit `docs: establish first-project verification guidance and integration contracts`.
+- [x] Update README/DESIGN with exact new CLI, configuration-vs-pass distinction, explicit replace and reanchor behavior. Do not overwrite previously generated project templates.
+- [x] Extend installed smoke import to verification_setup; explicitly test first-project configure and canonical launcher classification from outside checkout. Label all Provider/runtime and Host fixtures simulated. No online SDD installation.
+- [x] Run complete Python, Node/TS, compileall/Shell/diff; offline wheel build and temporary installed smoke if cached environment remains available. Record actual outcomes and deferred real-host/platform limitations in repair-validation.
+- [x] Inline diff/spec coverage review; commit `docs: establish first-project verification guidance and integration contracts`.
+
+## Execution evidence
+
+- Task 1: `969139c`, 14 targeted / 449 full Python, 12 Node and strict TS passed.
+- Task 2: `23bce48`, 12 targeted / 461 full Python, 12 Node and strict TS passed. Nine empty-baseline fixtures were migrated without weakening their original assertions.
+- Task 3: 5 guidance/runtime / 466 full Python (128.842s), 13 Node without skips and strict TS passed. Docs RED had 5 missing-instruction failures. A project-owned zero-test wrapper fails verify/done despite configured readiness.
+- Offline wheel/editable installations passed 9 local Provider × simulated Host combinations each outside checkout. Smoke uses the actual advertised invocation, not a guessed non-PATH console. Both actual launchers had executable bits; no fresh claim for wheel no-exec fallback.
+- Pi integration uses real Python core with simulated callbacks, not a real host launch. Fresh-model pressure tests, real hosts, browser, platform and Java business validation remain deferred; no automatic push/merge/release.
+- Logs: `/tmp/cao-setup-{1,2,3}-*.log`; packages: `/tmp/cao-first-project-package.c4jYGk`.
 
 ## Verification
 

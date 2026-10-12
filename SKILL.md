@@ -27,6 +27,35 @@ the current session's own `SessionStart`. If `cao bootstrap` reports `host_adapt
 `cao done` is the hard gate even without hooks. Run `cao resume`, `cao checkpoint`, and `cao handoff`
 yourself when lifecycle events cannot be observed.
 
+### First-project verification baseline
+
+After honoring SDD selection/install authorization, `mode: verification_setup` means the verification
+configuration is empty, invalid or optional-only. Before feature development:
+
+1. Existing project: analyze product manifests, source, tests and CI; reuse meaningful checks. Host assets,
+   `.orchestrator` derived state, `.agents`, `.pi`, SDD tools/outputs and caches do not identify the product
+   stack; current requirements remain relevant, including intake documents.
+2. New project: use the user's explicit stack; otherwise ask the user for language/framework/build/test
+   choices and wait. Do not guess a stack when the channel cannot ask.
+3. Generate project-owned wrappers or reuse existing scripts. Zero tests, missing tools or missing
+   dependencies must fail/block, never produce a fake `echo`/`true` pass. Java/Jupiter requires
+   JUnit5-capable Surefire and failure on zero tests. Do not overwrite scripts or install dependencies automatically.
+4. Declare only applicable scripts through the safe command:
+
+   ```bash
+   cao verification configure --test-script "<actual project test wrapper>" --verify-script "<actual general check>"
+   ```
+
+   Different nonempty/invalid declarations need explicit `--replace`. Identical declarations are unchanged.
+   Never hand-edit derived config or use `init --force` to configure verification.
+5. Rerun bootstrap before selecting/resuming feature work. Configuration readiness is not verification success:
+   initial scaffolding and tests may be written before tests pass. Product writes receive reminders, not a setup deny.
+   Existing Work keeps its acceptance anchor; review any changed standard and explicitly reanchor with
+   `cao reopen --work <id> --reanchor --reason "Reviewed acceptance changes"`. Do not replace the Work or its decisions.
+
+CAO does not call an LLM, generate stack-specific templates, parse test reports or detect zero tests;
+those checks belong to the project's wrappers. `--verify-script` does not automatically declare tests.
+
 ### Landing a one-sentence requirement
 
 A requirement stated inline has no file yet, and `cao start` needs one. CAO owns the location and
@@ -54,7 +83,7 @@ code into native output directories to fake evidence — `cao done` still enforc
 `cao start` reports `REQUIREMENT_FILE_MISSING` when an explicit requirement path does not exist yet:
 create the file first, do not guess another path.
 
-Bootstrap initializes CAO state when needed, verifies that a project SDD is installed, reports the active/resumable Work Item, and returns the next action.
+Bootstrap initializes CAO state when needed, verifies that a project SDD is installed, guides verification configuration, then reports the active/resumable Work Item and next action.
 It never creates a Work Item and never reruns requirement intake because an Agent or session changed.
 If no SDD is installed, bootstrap stops before coding. If `cao bootstrap` reports `mode: sdd_select`, this is a hard authorization boundary, not a recommendation. You MUST ask the user directly which provider they want and wait for an explicit answer before running any `cao sdd install` or `cao sdd select` command. Never choose a provider yourself based on a recommendation label, popularity, task type, installed global CLI, or personal preference. Do not treat `auto` as a user choice. If the current interface cannot ask the user, stop and report `SDD_SELECTION_REQUIRED`; do not install anything or begin coding. A recommendation is informational only and is never the default or authorization. After the user explicitly chooses, install only that provider and rerun bootstrap.
 

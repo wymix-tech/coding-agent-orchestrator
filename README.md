@@ -387,11 +387,12 @@ Example:
 }
 ```
 
-A unit-test script can enforce 100% success itself:
+A unit-test script can delegate to the project's strict build configuration. For Java/Jupiter, configure
+JUnit5-capable Surefire first; require failure on zero tests rather than treating an empty run as success:
 
 ```bash
 #!/usr/bin/env bash
-mvn -q test
+mvn -q -DfailIfNoTests=true test
 if [ $? -eq 0 ]; then
   echo "Unit tests passed: 100% success"
   exit 0
@@ -425,14 +426,33 @@ Each script defaults to a 300-second deadline (`timeout_seconds`, finite and pos
 124/error and reclaims its process tree. Each output tail is bounded to 4000 UTF-8 bytes. These trusted
 commands are not sandboxed. Results also record `timed_out`; optional failures do not fail the overall run.
 
-Fresh projects have no verification scripts. Repeat `--test-script` for required tests, or `--verify-script`
-for general checks without test capability:
+### First-project verification setup
+
+Fresh projects have no verification scripts. After the SDD authorization checks, bootstrap returns
+`mode: verification_setup` when declarations are empty, invalid or optional-only. The Agent analyzes
+existing product manifests/source/tests/CI and reuses meaningful checks. For a new product it uses the
+user's specified stack or asks first, never inferring it from host/SDD tooling or caches. The Agent, not
+CAO, generates project-owned wrappers that fail/block on zero tests or missing tools/dependencies.
+Initial scaffolding and test creation are allowed; product writes receive reminders, not a setup deny.
+
+Configure safely without resetting language, SDD, timeout, Host settings or Work:
 
 ```bash
-cao init --force \
+cao verification configure \
   --test-script "./scripts/verify-unit-tests.sh" \
   --verify-script "./scripts/verify-coverage.sh"
+cao bootstrap
 ```
+
+Repeat flags for multiple scripts; `--test-script` declares required tests, while `--verify-script`
+declares general checks without test capability. At least one valid required script makes configuration
+ready. Configuration readiness is not verification success: no scripts run during configuration.
+Identical normalized declarations return `unchanged` without rewriting. Different nonempty or invalid
+existing declarations require explicit `--replace`; malformed whole config files are not overwritten.
+Do not hand-edit derived config, use `init --force`, auto-install dependencies or overwrite project scripts.
+Existing Work is never automatically reanchored; `acceptance_review_required` instructs explicit review
+and `cao reopen --work <id> --reanchor --reason "Reviewed acceptance changes"` before fresh evidence.
+Previously generated project instructions are preserved; current Skill/Host context supplies the guidance.
 
 For a one-off verification run without changing project configuration:
 

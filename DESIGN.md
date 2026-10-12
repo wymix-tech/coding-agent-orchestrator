@@ -291,7 +291,13 @@ project SDD detected?
    │                              ↓
    └─ yes ←──────────────── bootstrap again
           ↓
-   Work Item selection / resume
+   required verification declarations ready?
+   ├─ no → `verification_setup` → Agent analyzes/asks product stack
+   │                              ↓
+   │                     project wrappers + safe configure
+   │                              ↓
+   │                         bootstrap again
+   └─ yes → Work Item selection / resume
 ```
 
 The built-in installation catalog currently provides OpenSpec, BMad Method, and GitHub Spec Kit. The installer owns
@@ -393,6 +399,22 @@ owns the scripts and their quality rules. Each script returns `0=pass`, `1=fail`
 `>=3=error` and writes a concise reason to stdout/stderr. CAO records the result but does not parse
 project-specific metrics. Changing a config-bound verification script set invalidates the previous
 verification automatically.
+
+After SDD authorization, bootstrap reports `verification_setup` for empty, invalid or optional-only
+scripts. The Agent analyzes product manifests/source/tests/CI, reuses existing checks, or uses the user's
+explicit stack for new products; otherwise it asks and waits. Host/SDD assets and caches are not product
+stack evidence. CAO does not call an LLM or maintain framework templates. Project wrappers must fail/block
+on zero tests or missing tools/dependencies; core never parses test reports. Configuration readiness is
+not verification success. Scaffolding/test creation remains allowed and product writes are only reminded.
+
+`cao verification configure --test-script "<tests>" --verify-script "<general check>"` performs a locked
+atomic config-only update. Required tests are explicit; general checks do not gain tests capability.
+It preserves language, SDD, timeout and unrelated raw fields. Equivalent declarations return `unchanged`
+without a write; different nonempty/invalid old declarations require `--replace`. Whole malformed config
+is rejected. It never installs adapters/dependencies, executes scripts, creates Work or changes its anchor.
+Do not use `init --force` here. Active acceptance changes request explicit review/reanchor, including on
+an unchanged retry; suspended/completed Work is not silently recertified. Setup context preserves existing
+identity, execution, decisions and blockers without evaluating malformed completion configuration.
 
 ## Index consistency
 
