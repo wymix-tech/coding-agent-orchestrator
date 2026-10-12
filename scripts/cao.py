@@ -211,10 +211,12 @@ SDD_CATALOG: dict[str, dict[str, Any]] = {
 }
 
 
-# Commands that can never be a provider-native workflow entrypoint. They satisfy
-# every structural check while executing nothing, which is exactly how the native
-# workflow contract was previously bypassed.
-PLACEHOLDER_ENTRYPOINT_COMMANDS = {"echo", "true", "false", ":", "printf", "cat", "sleep", "test", "touch"}
+# Generic output/setup utilities do not invoke provider-native workflows, even
+# when their arguments or parent directories mention the provider.
+PLACEHOLDER_ENTRYPOINT_COMMANDS = {
+    "echo", "true", "false", ":", "printf", "cat", "sleep", "test", "touch",
+    "mkdir", "cp", "mv", "tee", "cd", "rm", "rmdir", "install",
+}
 
 # Gates CAO can derive from its own state. Everything else must be marked
 # explicitly with `cao gate satisfy` because only the Agent can observe it.
@@ -231,6 +233,81 @@ def workflow_entrypoint_tokens(entrypoint: str) -> list[str]:
         return shlex.split(entrypoint)
     except ValueError:
         return str(entrypoint).split()
+
+
+def workflow_command_identities(entrypoint: str, depth: int = 0) -> list[str]:
+    """Extract command/module/script positions, never output paths or prose.
+
+    Literal shell wrappers are bounded; unknown/dynamic forms need an explicit
+    unverified exception rather than a provider word somewhere in their data.
+    """
+    if depth >= 8:
+        return []
+    try:
+        segments = _shell_segments(entrypoint)
+    except ValueError:
+        return []
+    identities: list[str] = []
+    for tokens in segments:
+        redirect = next((i for i, token in enumerate(tokens) if token and all(c in "<>&|" for c in token)), len(tokens))
+        tokens = tokens[:redirect]
+        for _ in range(8):
+            while tokens and re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", tokens[0]):
+                tokens = tokens[1:]
+            if not tokens:
+                break
+            head = tokens[0].replace("\\", "/").rsplit("/", 1)[-1].lower().removesuffix(".exe").removesuffix(".cmd")
+            if head == "invoke" and tokens[1:2] == ["skill"]:
+                tokens = tokens[2:3]  # Agent-native invocation notation, not arbitrary prose.
+            elif head in {"env", "exec"}:
+                tokens = tokens[1:]
+            elif head in {"sh", "bash"}:
+                if len(tokens) > 2 and tokens[1] in {"-c", "-lc"}:
+                    identities.extend(workflow_command_identities(tokens[2], depth + 1))
+                    tokens = []
+                    break
+                tokens = tokens[1:]
+            elif re.fullmatch(r"python(?:3(?:\.\d+)?)?", head):
+                tokens = tokens[1:]
+                while tokens and tokens[0] in {"-u", "-B", "-S"}:
+                    tokens = tokens[1:]
+                if tokens and tokens[0] == "-m":
+                    tokens = tokens[1:2]
+                elif tokens and tokens[0].startswith("-"):
+                    tokens = []  # In particular, Python -c data is not a native identity.
+            elif head in {"npx", "uvx", "uv"}:
+                tokens = tokens[1:]
+                if head == "uv":
+                    if tokens[:2] == ["tool", "run"]:
+                        tokens = tokens[2:]
+                    elif tokens[:1] == ["run"]:
+                        tokens = tokens[1:]
+                    else:
+                        tokens = []
+                flags = {"-y", "--yes", "--no-install"} if head == "npx" else {"-q", "--quiet", "--offline", "--no-sync"}
+                valued = {"-p", "--package"} if head == "npx" else {"--from", "--project", "--python", "--with"}
+                index = 0
+                while index < len(tokens) and tokens[index].startswith("-"):
+                    option, separator, _value = tokens[index].partition("=")
+                    if option == "--":
+                        index += 1
+                        break
+                    if option in flags:
+                        index += 1
+                    elif option in valued:
+                        index += 1 if separator else 2
+                    else:
+                        index = len(tokens)
+                tokens = tokens[index:]
+            else:
+                break
+        else:
+            tokens = []
+        if tokens:
+            head = tokens[0].replace("\\", "/").rsplit("/", 1)[-1].lower().removesuffix(".exe").removesuffix(".cmd")
+            if head not in PLACEHOLDER_ENTRYPOINT_COMMANDS and not tokens[0].startswith("-") and not any(c in tokens[0] for c in "$`()"):
+                identities.append(tokens[0])
+    return identities
 
 
 # Where hosts install agent skills inside a project. BMad v6, for example,
@@ -309,12 +386,6 @@ def validate_workflow_entrypoint(provider: str, name: str, entrypoint: str) -> d
     tokens = workflow_entrypoint_tokens(entrypoint)
     if not tokens:
         return {"ok": False, "reason": "workflow entrypoint is empty"}
-    head = tokens[0].rsplit("/", 1)[-1].lower()
-    if head in PLACEHOLDER_ENTRYPOINT_COMMANDS:
-        return {
-            "ok": False,
-            "reason": f"workflow entrypoint `{tokens[0]}` is a placeholder command, not a native {provider} workflow",
-        }
     meta = SDD_CATALOG.get(provider) or {}
     declared = meta.get("workflows") or {}
     known: list[str] = []
@@ -327,9 +398,18 @@ def validate_workflow_entrypoint(provider: str, name: str, entrypoint: str) -> d
                 "ok": False,
                 "reason": f"workflow name `{name}` is not one of the native {provider} workflows declared by this CAO version",
             }
-        return {"ok": True, "reason": None}
     hints = [str(hint).strip().lower() for hint in (meta.get("workflow_hints") or [provider])]
-    if not any(hint in str(entrypoint).lower() for hint in hints):
+    identities = workflow_command_identities(entrypoint)
+    # A provider in an unrelated executable's parent directory is not its identity.
+    markers = [str(marker).strip("/") for marker in (meta.get("project_markers") or [])]
+    referenced = False
+    for identity in identities:
+        path = identity.replace("\\", "/").lower()
+        native_script = any(f"/{marker}/scripts/" in "/" + path for marker in markers)
+        if any(hint in path.rsplit("/", 1)[-1] for hint in hints) or native_script:
+            referenced = True
+            break
+    if not referenced:
         return {
             "ok": False,
             "reason": f"workflow entrypoint does not reference the {provider} provider; expected one of: {', '.join(hints)}",

@@ -5,7 +5,8 @@
 本机验证日期：2026-10-12。实施分支：`fix/cao-integrity-repair`，隔离目录：
 `.worktrees/cao-integrity-repair`。A1—C5 已独立提交；C6 的文档、协议、CI 配置与本机安装验收
 已实现，但真实宿主、完整浏览器和跨平台出口尚未完成，**不得视为全平台集成或发布验收通过**。
-没有自动合并、推送、发布或在线安装 SDD。
+首次交付已按用户授权正常推送修复分支；本轮跟进修复尚未再次推送，未合并或发布。
+本机未新增在线 SDD 安装；另附用户提供的异机真实 BMAD 安装日志，不与本机夹具混淆。
 
 环境：macOS arm64、Python 3.11.15、Node 26.10.0；Pi 类型/开发依赖固定 1.1.0、TypeScript 5.9.3。
 Node 22.18.0 是声明的最低版本和新增 CI 目标，不是本机实际执行版本。
@@ -44,7 +45,8 @@ C6 出口复核还复现了入口例外审计键缺少需求版本/Provider 的�
 
 ## 本机实际执行
 
-以下为 C6 当前代码的新鲜结果；完整日志保存在本机 `/tmp/`，不是跨平台证据。
+以下为首次 C6 交付的历史结果；后续三项修复的新鲜结果见下一节。完整日志保存在本机
+`/tmp/`，不是跨平台证据；旧 wheel/editable 结果不充当后续代码的重新安装验收。
 
 | 验证 | 实际结果 | 日志/证据 |
 |---|---|---|
@@ -88,6 +90,41 @@ python3.11 tests/installed_package_smoke.py --cao <venv>/bin/cao --python <venv>
 仍被阻止；新增 schema 未用非空 revision 限制误拒这种历史/工程检查记录。
 旧 A5 安装包对新模块导入失败作为安装对照，未误用旧 wheel 作为修复后的通过证据。
 
+## 异机 Pi 会话发现与三项跟进修复
+
+用户提供的真实会话 `2026-10-12T05-47-50-702Z_01a12ea7-2e2e-75d6-81eb-59184064b245.jsonl`
+共 151 条，解析无错误。真实观察到 CAO 启动/提示上下文、对应 Native Session ID、显式选择后的
+BMAD `6.12.2` 安装，以及门禁/标准变更/产物变更/计划作用域检查。该会话同时暴露后端崩溃和
+伪原生入口，不能判端到端通过。18 条 CAO 消息成 9 对重复；用户确认全局和项目各安装一次，
+本轮明确不处理重复加载。
+
+三项均在 `41b0d3c` 复现并转为正式失败回归后修复：
+
+| 修复 | 结果与边界 |
+|---|---|
+| nullable verification（`e594cc6`） | post_tool/file_changed 支持 null/缺失；passed 仍标记 stale。Node 适配器测试通过实际 Python 核心，保留工具结果且不再产生截图警告；仍是模拟事件，不是重启真实 Pi |
+| 绝对路径治理命令（`1ba1668`） | 认可所属 package launcher、sh fallback、canonical alias 和 PATH console；不按任意 basename=cao 豁免；混合 Shell/重定向状态写继续 deny |
+| 复合占位入口（本节同一提交） | mkdir/echo 输出路径不再证明原生调用；仅检查 CLI/Skill/模块/脚本位置。真实命令/Skill、常见 runner 和合法前置组合保留；未知/动态入口不能靠 Provider 字符串认证，显式理由例外仍审计 |
+
+正式路径：`tests/test_pi_session_repairs.py`（19 项）和 `tests/test_pi_adapter.mjs` 的真实核心桥回归。
+全量首次发现 2 个兼容失败：旧用例以描述性文字充当入口，已改为实际 native 命令；合法
+`invoke skill bmad-build` 记法按 Skill 名位置解析，不放宽任意参数。两者均重新验证。
+静态入口检查只拒绝可确定的占位/无关形式，不证明任意脚本语义，也不替代真实 Skill 流程验收。
+
+最新本机结果：**435 项 Python，124.345 秒，OK；12 项 Node，0 失败/跳过；严格 TS、compileall、
+Shell 语法及 diff 检查通过**。日志 `/tmp/cao-pi-fix3-full.log`、`-node.log`、`-types.log`、
+`-targeted.log`；失败证据为 `/tmp/cao-pi-fix1-red.log`、`-fix1-node-red.log`、`-fix2-red.log`、
+`-fix3-red.log`、`-fix3-utility-red.log`、`-fix3-skill-red.log`（后几项共同前缀 `/tmp/cao-pi`）。
+
+异机 Maven 日志 L126/L148 为 `Tests run: 0`：旧 Surefire 2.17 使用 JUnit3 provider，未执行
+Jupiter 测试。脚本退出 0 能满足显式声明的结构门禁，不等于业务验证通过；该项目应升级
+Surefire、启用零测试失败及实际功能测试，不把 Maven 报告解析硬编码到通用核心。
+本轮没有改异机应用、复跑其 Maven 或让零测试被重新认证为业务成功。
+
+首次项目技术栈识别及验证基线引导另记任务 #34，**尚未实现**：已有工程优先分析并复用有效
+配置；全新工程先询问技术栈，再生成项目拥有的真实验证脚本。先配置验收基线，不要求空工程
+在写首组测试前就验证通过；不自动安装依赖、覆盖配置或重锚活动 Work。
+
 ## Chrome 实际渲染尝试：有限证据，不判通过
 
 本机 Google Chrome `152.0.7977.82` 以独立临时 profile 访问 loopback Dashboard，实际执行
@@ -114,14 +151,16 @@ python3.11 tests/installed_package_smoke.py --cao <venv>/bin/cao --python <venv>
 这些是**已配置但尚未远端执行**的 jobs。Python 3.10/3.12/3.13、Linux/Windows、
 Windows 文件锁和 kill-on-close Job 没有本轮实机/远端成功结果。本地 macOS 结果不能替代。
 
-本机只找到 Pi 启动器，没有 Claude Code/Codex CLI。Pi 真实多轮加载适配器、提醒送入模型、
-会话切换和退出尚未验证；仅声明经类型/模拟契约检查的 Pi API **1.1.0**，不声明整个 1.x。
+本机只找到 Pi 启动器，没有 Claude Code/Codex CLI。异机日志补充了真实 Pi 加载和提醒送入模型
+的部分证据，但缺修后实机重测、对应 Session 文件和会话切换/退出验收。异机 Pi/Node 版本及两份
+CAO Git SHA 未直接核对；仅声明经类型/模拟契约检查的 Pi API **1.1.0**，不声明整个 1.x。
 Codex 无已验证原生 SessionEnd hook：status 明确标注限制，真实退出使用
 `cao handoff --host codex --session <id> --end-session`，不能在每次 Stop 调用。
 
 发布前仍需三类真实宿主分别执行：启动 → 需求录入 → 未评估产品写提醒 → 状态写拒绝 →
 两轮仍 active → 切换/退出 ended → 原生流程输出 → verify/done。不得借用模拟事件结果签字。
-真实 SDD 在线安装未执行，须另获授权并记录具体版本；没有把目录夹具当作已安装运行时。
+本机真实 SDD 在线安装未执行，须另获授权。用户提供的异机日志记录了经其明确选择后的 BMAD
+6.12.2 安装，但该会话没有真正执行 BMAD Skill；不把安装成功或目录夹具当作原生流程验收通过。
 
 ## 兼容与操作步骤
 

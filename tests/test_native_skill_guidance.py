@@ -166,7 +166,8 @@ class PreToolReminder(SelectGuidance):
             bmad_project(repo)
             install_skill(repo, "bmad-build")
             self._reached_workflow_select(repo)
-            run(repo, "sdd", "workflow", "execute", "--command", "invoke skill bmad-build", "--exit-code", "0", env_extra=NO_HOST_ENV)
+            rc, out, _ = run(repo, "sdd", "workflow", "execute", "--command", "invoke skill bmad-build", "--exit-code", "0", env_extra=NO_HOST_ENV)
+            self.assertEqual(rc, 0, out)
             raw = {"event": "pre_tool", "toolName": "write", "params": {"path": "src/App.java", "content": "x"}}
             rc, out, _ = run(repo, "host-event", "--repo", ".", "--host", "pi", env_extra=NO_HOST_ENV, stdin=json.dumps(raw))
             self.assertEqual(out["decision"], "allow")

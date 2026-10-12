@@ -219,8 +219,8 @@ class CoreTests(unittest.TestCase):
             rc, out, _ = run(repo, "done")
             self.assertEqual(rc, 2)
             self.assertEqual(out["reason"], "native SDD workflow is not recorded as completed")
-            rc, out, _ = run(repo, "sdd", "workflow", "select", "--name", "BMAD Specify Requirements", "--entrypoint", "project-local BMAD workflow/skill")
-            self.assertEqual(rc, 0)
+            rc, out, _ = run(repo, "sdd", "workflow", "select", "--name", "BMAD Specify Requirements", "--entrypoint", "bmad workflow specify-requirements")
+            self.assertEqual(rc, 0, out)
             (repo / "_bmad-output").mkdir(); (repo / "_bmad-output/requirements.md").write_text("Requirements", encoding="utf-8")
             # Completion is denied until the workflow run itself is recorded.
             rc, out, _ = run(repo, "sdd", "workflow", "complete", "--artifact", "_bmad-output/requirements.md")
