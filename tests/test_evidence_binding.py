@@ -21,7 +21,7 @@ class EvidenceTests(RepairCase):
         artifact.parent.mkdir(exist_ok=True)
         artifact.write_text("# story\n", encoding="utf-8")
         rc, out = self.run_cli("sdd", "workflow", "complete", "--work", wid,
-                               "--artifact", "_bmad-output/story.md")
+                               "--artifact", "_bmad-output/story.md", "--no-plan")
         self.assertEqual(rc, 0, out)
 
     def change_standard(self):

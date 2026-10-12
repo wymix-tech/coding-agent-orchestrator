@@ -2460,24 +2460,6 @@ SPRINT_IGNORED_NAMES = ("epic-", "-retrospective")
 TASK_PENDING_LINE = re.compile(r"^\s*[-*]\s*\[\s\]\s*(?P<task>\S.*?)\s*$")
 
 
-def _pending_sprint_status(path: Path) -> list[str]:
-    """Unfinished BMAD epics/stories, from their own status file."""
-    pending: list[str] = []
-    for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
-        match = SPRINT_STATUS_LINE.match(line)
-        if not match:
-            continue
-        name = match.group("name").strip().strip("\"'")
-        state = match.group("state").strip()
-        if state in SPRINT_DONE_STATES or state.startswith("optional"):
-            continue
-        lowered = name.lower()
-        if any(marker in lowered for marker in SPRINT_IGNORED_NAMES):
-            continue
-        pending.append(f"{name} ({state})")
-    return pending
-
-
 def _pending_checkbox_tasks(path: Path) -> list[str]:
     """Unchecked tasks, as OpenSpec and Spec Kit write them."""
     pending: list[str] = []
@@ -2490,30 +2472,107 @@ def _pending_checkbox_tasks(path: Path) -> list[str]:
     return pending
 
 
-def provider_pending_plan_items(repo: Path, provider: str | None) -> list[str]:
-    """Unfinished items in the provider's own plan, for any supported provider.
+def _sprint_states(path: Path) -> dict[str, str]:
+    states = {}
+    for line in path.read_text(encoding="utf-8").splitlines():
+        match = SPRINT_STATUS_LINE.match(line)
+        if match:
+            states[match.group("name").strip().strip("\"'")] = match.group("state").strip()
+    return states
 
-    Only the provider's declared output directories are scanned, so a `tasks.md`
-    in product code is never mistaken for an SDD plan. Formats are detected by
-    file, so a provider that does not write one of these is simply not checked.
-    """
-    meta = SDD_CATALOG.get(provider or "") or {}
-    pending: list[str] = []
-    for out in meta.get("output_dirs") or []:
-        root = repo / out
-        if not root.exists():
+
+def bind_plan_scope(repo: Path, work: dict, plan_paths: list[str],
+                    selections: dict[str, list[str]], no_plan: bool) -> dict:
+    repo = repo.resolve()
+    sdd = work.get("sdd") or {}
+    roots = [(repo / directory).resolve() for directory in provider_output_dirs(sdd.get("provider"))]
+    paths = {resolve_artifact_path(repo, value)[1] for value in plan_paths}
+    normalized = {}
+    for value, ids in selections.items():
+        relative = resolve_artifact_path(repo, value)[1]
+        normalized.setdefault(relative, []).extend(ids)
+    paths.update(normalized)
+    anchors = set()
+    if sdd.get("native_ref"):
+        path, _ = resolve_artifact_path(repo, sdd["native_ref"])
+        if path.exists():
+            anchors.add(path if path.is_dir() else path.parent)
+    for value in (sdd.get("workflow") or {}).get("artifacts", []):
+        path, _ = resolve_artifact_path(repo, value)
+        anchors.add(path.parent)
+    discovered = set()
+    ambiguous = False
+    public_roots = set(roots) | {(repo / "openspec/changes").resolve(), (repo / "specs").resolve()}
+    for anchor in anchors:
+        for name in ("tasks.md", "sprint-status.yaml"):
+            path = anchor / name
+            if path.is_file():
+                discovered.add(path.relative_to(repo).as_posix())
+                if anchor in public_roots:
+                    ambiguous = True
+    old = sdd.get("plan_scope") or {}
+    if no_plan:
+        if paths or discovered or old.get("mode") == "bound":
+            raise ValueError("PLAN_SCOPE_REMOVAL_REQUIRES_REANCHOR")
+        return {"version": 1, "mode": "none", "plans": []}
+    if not paths and old.get("mode") == "bound":
+        # Keep prior associations and add newly produced specific changes, never a public root.
+        paths.update(value for value in discovered if (repo / value).parent not in public_roots)
+        for plan in old.get("plans", []):
+            paths.add(plan["path"])
+            normalized[plan["path"]] = list(plan.get("item_ids") or [])
+    if not paths and any(Path(value).name == "sprint-status.yaml" for value in discovered):
+        raise ValueError("SHARED_PLAN_ITEM_BINDING_REQUIRED: " + ", ".join(sorted(discovered)))
+    if not paths and ambiguous:
+        return {"version": 1, "mode": "unresolved", "plans": []}
+    paths = paths or discovered
+    if not paths:
+        return {"version": 1, "mode": "unresolved", "plans": []}
+    plans = []
+    for value in sorted(paths):
+        path, relative = resolve_artifact_path(repo, value)
+        if not path.is_file() or not any(path.is_relative_to(root) for root in roots):
+            raise ValueError("PLAN_SOURCE_INVALID: " + relative)
+        ids = sorted(set(normalized.get(value, [])))
+        if path.name == "sprint-status.yaml":
+            states = _sprint_states(path)
+            if not ids:
+                raise ValueError("SHARED_PLAN_ITEM_BINDING_REQUIRED: " + relative)
+            if any(item not in states or any(marker in item.lower() for marker in SPRINT_IGNORED_NAMES) for item in ids):
+                raise ValueError("PLAN_ITEM_INVALID: " + relative)
+        elif path.name != "tasks.md" or ids:
+            raise ValueError("PLAN_FORMAT_UNSUPPORTED: " + relative)
+        plans.append({"path": relative, "item_ids": ids})
+    return {"version": 1, "mode": "bound", "plans": plans}
+
+
+def provider_pending_plan_items(repo: Path, work: dict) -> list[str]:
+    scope = (work.get("sdd") or {}).get("plan_scope") or {}
+    if scope.get("mode") == "none":
+        return []
+    if scope.get("mode") != "bound" or not scope.get("plans"):
+        raise ValueError("PLAN_SCOPE_UNRESOLVED")
+    pending = []
+    for plan in scope["plans"]:
+        path, relative = resolve_artifact_path(repo, plan["path"])
+        if not path.is_file():
+            raise ValueError("PLAN_SOURCE_MISSING: " + relative)
+        if any(marker in f"/{relative}" for marker in PLAN_ARCHIVE_MARKERS):
             continue
-        for path in sorted(root.rglob("*")):
-            if not path.is_file():
-                continue
-            rel = path.relative_to(repo).as_posix()
-            if any(marker in f"/{rel}" for marker in PLAN_ARCHIVE_MARKERS):
-                continue  # archived changes are finished by definition
-            name = path.name.lower()
-            if name == "sprint-status.yaml":
-                pending.extend(_pending_sprint_status(path))
-            elif name == "tasks.md":
-                pending.extend(_pending_checkbox_tasks(path))
+        if path.name == "sprint-status.yaml":
+            ids = plan.get("item_ids") or []
+            if not ids:
+                raise ValueError("SHARED_PLAN_ITEM_BINDING_REQUIRED: " + relative)
+            states = _sprint_states(path)
+            missing = [item for item in ids if item not in states]
+            if missing:
+                raise ValueError("PLAN_ITEM_MISSING: " + relative + "#" + ",".join(missing))
+            pending.extend(f"{relative}#{item} ({states[item]})" for item in ids
+                           if states[item] not in SPRINT_DONE_STATES and not states[item].startswith("optional"))
+        elif path.name == "tasks.md":
+            pending.extend(f"{relative}: {item}" for item in _pending_checkbox_tasks(path))
+        else:
+            raise ValueError("PLAN_FORMAT_UNSUPPORTED: " + relative)
     return pending
 
 
@@ -2576,7 +2635,11 @@ def completion_status(repo: Path, work: dict[str, Any] | None) -> dict[str, Any]
         # Running the workflow once is not the same as finishing the plan it
         # produced. A single Work Item can span many stories/specs, and without
         # this check an Agent closes the requirement after the first one.
-        pending_items = provider_pending_plan_items(repo, provider)
+        try:
+            pending_items = provider_pending_plan_items(repo, work)
+        except ValueError as exc:
+            return {"ready": False, "reason": str(exc),
+                    "next": f"Bind this requirement's plans with `cao sdd workflow complete --work {work['id']} --artifact <output> --plan <tasks.md>` or `--plan-item <sprint-status.yaml>#<story-id>`; use `--no-plan` only when this workflow produces no plan."}
         if pending_items:
             shown = ", ".join(pending_items[:5])
             more = f" (+{len(pending_items) - 5} more)" if len(pending_items) > 5 else ""
@@ -3424,6 +3487,23 @@ def cmd_sdd_workflow(args: argparse.Namespace) -> int:
                                "source": "cao", "provider": provider, "workflow": workflow["name"],
                                "requirement_sha256": work["requirement"]["sha256"],
                                "reason": unverified_reason, "exit_code": execution["exit_code"], "occurred_at": now()})
+        selections = {}
+        try:
+            for value in getattr(args, "plan_item", None) or []:
+                path, item = value.rsplit("#", 1)
+                if not path or not item:
+                    raise ValueError("PLAN_ITEM_INVALID")
+                selections.setdefault(path, []).append(item)
+            scope = bind_plan_scope(repo, work, getattr(args, "plan", None) or [],
+                                    selections, bool(getattr(args, "no_plan", False)))
+        except ValueError as exc:
+            print(json.dumps({"ok": False, "error": str(exc).split(":", 1)[0], "reason": str(exc),
+                              "next": "Supply associated --plan <path> and shared --plan-item <path>#<story-id>; --no-plan cannot remove an existing valid plan scope."}, ensure_ascii=False)); return 2
+        sdd["plan_scope"] = scope
+        if scope["mode"] == "none":
+            queue_event(work, {"event": "workflow.no_plan_declared", "work_item_id": work["id"],
+                               "source": "cao", "provider": provider, "workflow": workflow["name"],
+                               "requirement_sha256": work["requirement"]["sha256"], "occurred_at": now()})
         workflow["status"] = "completed"
         workflow["completed_at"] = now()
         if allow_unverified and not (execution and execution.get("exit_code") != 0):
@@ -4527,7 +4607,7 @@ def _completion_blocked(repo: Path, work: dict[str, Any] | None, c: dict[str, An
     for key in ("pending_plan_items", "missing_artifacts", "unmet_gates", "workflow"):
         if c.get(key):
             blocked[key] = c[key]
-    blocked["next"] = completion_next_instruction(repo, work, c)
+    blocked["next"] = c.get("next") or completion_next_instruction(repo, work, c)
     print(json.dumps(blocked, ensure_ascii=False, indent=2)); return 2
 
 
@@ -5013,6 +5093,10 @@ def build_parser() -> argparse.ArgumentParser:
     sp.set_defaults(fn=cmd_sdd_workflow)
     sp = workflow_sub.add_parser("complete", help="Record native workflow completion and actual output files")
     sp.add_argument("--repo", default="."); sp.add_argument("--work"); sp.add_argument("--artifact", action="append", required=True, help="Existing repository-relative output file; repeat for each file")
+    plan = sp.add_mutually_exclusive_group()
+    plan.add_argument("--plan", action="append", help="Associated plan path; repeat for related changes/features")
+    plan.add_argument("--no-plan", action="store_true", help="Explicitly declare that this workflow produces no plan")
+    sp.add_argument("--plan-item", action="append", help="Shared plan path#story-id; repeat for every associated story")
     sp.add_argument("--allow-unverified", action="store_true", help="Record a documented exception when outputs fall outside the provider directory; requires --reason")
     sp.add_argument("--reason", default=None, help="Why these outputs cannot be verified; required with --allow-unverified")
     sp.set_defaults(fn=cmd_sdd_workflow)

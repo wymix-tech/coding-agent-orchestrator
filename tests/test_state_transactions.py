@@ -300,7 +300,7 @@ class TransactionsTests(RepairCase):
         artifact.parent.mkdir()
         artifact.write_text("# Output\n", encoding="utf-8")
         rc, out = self.run_cli("sdd", "workflow", "complete", "--work", wid,
-                               "--artifact", artifact.relative_to(self.repo))
+                               "--artifact", artifact.relative_to(self.repo), "--no-plan")
         self.assertEqual(rc, 0, out)
         rc, out = self.run_cli("verify", "--work", wid)
         self.assertEqual(rc, 0, out)

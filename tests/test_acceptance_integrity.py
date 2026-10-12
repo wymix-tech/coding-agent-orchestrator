@@ -50,7 +50,7 @@ def standard_path(repo, wid):
     artifact.write_text("# story\n", encoding="utf-8")
     run(repo, "sdd", "workflow", "execute", "--command", "bmad-build", "--exit-code", "0", "--work", wid)
     rc, out = run(repo, "sdd", "workflow", "complete", "--artifact",
-                  "_bmad-output/implementation_artifacts/story.md", "--work", wid)
+                  "_bmad-output/implementation_artifacts/story.md", "--work", wid, "--no-plan")
     assert rc == 0, out
 
 

@@ -74,9 +74,24 @@ def ready_to_close(repo: pathlib.Path, provider: str, artifact: str, profile: st
     run(repo, "path", "assess", "--profile", profile, "--reason", "auth system", "--work", wid)
     run(repo, "sdd", "workflow", "select", "--name", entrypoint, "--entrypoint", entrypoint, "--work", wid)
     run(repo, "sdd", "workflow", "execute", "--command", entrypoint, "--exit-code", "0", "--work", wid)
-    run(repo, "sdd", "workflow", "complete", "--artifact", artifact, "--work", wid)
     if plan is not None:
         plan(repo)
+    plan_args = []
+    directory = (repo / artifact).parent
+    for name in ("tasks.md", "sprint-status.yaml"):
+        source = directory / name
+        if source.is_file():
+            relative = source.relative_to(repo).as_posix()
+            plan_args += ["--plan", relative]
+            if name == "sprint-status.yaml":
+                # This fixture owns every numeric story in the written requirement plan.
+                for line in source.read_text(encoding="utf-8").splitlines():
+                    story = line.strip().split(":", 1)[0]
+                    if story and story[0].isdigit():
+                        plan_args += ["--plan-item", relative + "#" + story]
+    rc, out = run(repo, "sdd", "workflow", "complete", "--artifact", artifact, "--work", wid,
+                  *(plan_args or ["--no-plan"]))
+    assert rc == 0, f"workflow completion failed: {out}"
     rc, out = run(repo, "verify", "--work", wid)
     assert rc == 0, f"verify failed: {out}"
     for gate in ("scope_review", "implementation_review"):

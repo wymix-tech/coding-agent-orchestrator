@@ -35,7 +35,33 @@
     "title": {"type": "string", "minLength": 1},
     "status": {"enum": ["todo", "active", "suspended", "completed"]},
     "requirement": {"$ref": "./artifact-reference.schema.json"},
-    "sdd": {"type": "object"},
+    "sdd": {
+      "type": "object",
+      "properties": {
+        "plan_scope": {
+          "type": "object",
+          "properties": {
+            "version": {"type": "integer", "enum": [1]},
+            "mode": {"enum": ["bound", "none", "unresolved"]},
+            "plans": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "path": {"type": "string", "minLength": 1},
+                  "item_ids": {"type": "array", "items": {"type": "string", "minLength": 1}, "uniqueItems": true}
+                },
+                "required": ["path", "item_ids"],
+                "additionalProperties": false
+              }
+            }
+          },
+          "required": ["version", "mode", "plans"],
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": true
+    },
     "execution": {"type": "object"},
     "path_assessment": {
       "type": ["object", "null"],

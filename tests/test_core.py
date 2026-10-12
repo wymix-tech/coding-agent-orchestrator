@@ -194,7 +194,7 @@ class CoreTests(unittest.TestCase):
             (repo / "openspec/changes/demo.md").write_text("# change", encoding="utf-8")
             rc, _, _ = run(repo, "sdd", "workflow", "execute", "--command", "openspec new change demo")
             self.assertEqual(rc, 0)
-            rc, _, _ = run(repo, "sdd", "workflow", "complete", "--artifact", "openspec/changes/demo.md")
+            rc, _, _ = run(repo, "sdd", "workflow", "complete", "--artifact", "openspec/changes/demo.md", "--no-plan")
             self.assertEqual(rc, 0)
             rc, _, _ = run(repo, "checkpoint", "--step", "implement-login-api", "--next", "run integration tests", "--summary", "JWT API implemented", "--completed", "JWT API")
             self.assertEqual(rc, 0)
@@ -228,7 +228,7 @@ class CoreTests(unittest.TestCase):
             self.assertEqual(out["error"], "NATIVE_WORKFLOW_EXECUTION_REQUIRED")
             rc, out, _ = run(repo, "sdd", "workflow", "execute", "--command", "bmad workflow specify-requirements")
             self.assertEqual(rc, 0)
-            rc, out, _ = run(repo, "sdd", "workflow", "complete", "--artifact", "_bmad-output/requirements.md")
+            rc, out, _ = run(repo, "sdd", "workflow", "complete", "--artifact", "_bmad-output/requirements.md", "--no-plan")
             self.assertEqual(rc, 0)
             verify_via_config(repo, run)
             # The observed gates must be satisfied before `cao done`.

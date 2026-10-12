@@ -22,7 +22,7 @@ class WorkflowExecutionTests(RepairCase):
         return wid
 
     def complete(self, *args):
-        return self.run_cli("sdd", "workflow", "complete", "--artifact", "_bmad-output/story.md", *args)
+        return self.run_cli("sdd", "workflow", "complete", "--artifact", "_bmad-output/story.md", "--no-plan", *args)
 
     def ready(self, work):
         self.assertTrue(callable(getattr(policy, "workflow_ready", None)), "workflow_ready is missing")

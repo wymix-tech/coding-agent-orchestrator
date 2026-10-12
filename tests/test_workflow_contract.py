@@ -152,7 +152,7 @@ class LightPathContractTests(unittest.TestCase):
             run(repo, "sdd", "workflow", "execute", "--command", "bmad quick-fix")
             (repo / "_bmad-output").mkdir()
             (repo / "_bmad-output" / "fix.md").write_text("# fix", encoding="utf-8")
-            run(repo, "sdd", "workflow", "complete", "--artifact", "_bmad-output/fix.md")
+            run(repo, "sdd", "workflow", "complete", "--artifact", "_bmad-output/fix.md", "--no-plan")
             verify_via_config(repo, run)
             rc, out, _ = run(repo, "done")
             self.assertEqual(rc, 0, out)
