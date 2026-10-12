@@ -1,6 +1,12 @@
 {
   "name": "coding-agent-orchestrator",
   "version": "0.1.0",
+  "type": "module",
+  "engines": {"node": ">=22.18.0"},
+  "scripts": {
+    "test:pi": "node --test tests/test_pi_adapter.mjs",
+    "check:pi": "tsc --noEmit -p tsconfig.pi.json"
+  },
   "description": "Agent-neutral lightweight coding workflow control plane",
   "keywords": ["pi-package"],
   "pi": {
@@ -8,6 +14,11 @@
     "skills": ["./SKILL.md"]
   },
   "peerDependencies": {
-    "@earendil-works/pi-coding-agent": "*"
+    "@earendil-works/pi-coding-agent": ">=1.1.0 <2.0.0"
+  },
+  "devDependencies": {
+    "@earendil-works/pi-coding-agent": "1.1.0",
+    "typescript": "5.9.3",
+    "@types/node": "^22.0.0"
   }
 }

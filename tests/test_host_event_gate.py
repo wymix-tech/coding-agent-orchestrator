@@ -97,7 +97,8 @@ class HostAdapterFailsOpen(unittest.TestCase):
 
     def test_pi_adapter_never_denies_on_failure(self):
         source = (ROOT / "hosts" / "pi" / "coding-orchestrator.ts").read_text(encoding="utf-8")
-        self.assertIn("Fail open", source)
+        # Real timeout, ENOENT and invalid-response behavior is tested in test_pi_adapter.mjs.
+        self.assertIn('return { diagnostic: result.error || "CAO_UNAVAILABLE" }', source)
         # The old fail-closed branches must be gone.
         self.assertNotIn('decision: "deny", reason: r.stderr', source)
         self.assertNotIn('decision: "deny", reason: "Invalid CAO response"', source)

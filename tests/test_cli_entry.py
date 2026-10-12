@@ -72,8 +72,10 @@ class CliEntryTests(unittest.TestCase):
         pi = (ROOT / "hosts/pi/coding-orchestrator.ts").read_text()
         self.assertIn("hooks/host-event.sh", claude)
         self.assertIn("hooks/host-event.sh", codex)
-        self.assertIn('spawnSync("cao", args', pi)
-        self.assertIn('spawnSync("sh", [CAO_FALLBACK, ...args]', pi)
+        # Invocation behavior is exercised by test_pi_adapter.mjs, not a synchronous spelling.
+        self.assertIn('invoke("cao", args', pi)
+        self.assertIn('invoke("sh", [path.join(ROOT, "cao"), ...args]', pi)
+        self.assertIn('["host-event", "--repo", cwd, "--host", "pi"]', pi)
 
 
 if __name__ == "__main__":

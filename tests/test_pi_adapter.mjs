@@ -1,0 +1,209 @@
+import {test} from 'node:test';
+import assert from 'node:assert/strict';
+import {mkdtempSync, writeFileSync, readFileSync, rmSync} from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import install from '../hosts/pi/coding-orchestrator.ts';
+
+const posix = {skip: process.platform === 'win32'};
+
+function fixture() {
+  const dir = mkdtempSync(path.join(os.tmpdir(), 'cao-contract-'));
+  const keys = ['PATH', 'CAO_CAPTURE', 'CAO_FAKE_MODE'];
+  const old = Object.fromEntries(keys.map(key => [key, process.env[key]]));
+  process.env.CAO_CAPTURE = path.join(dir, 'events.jsonl');
+  process.env.PATH = dir + path.delimiter + process.env.PATH;
+  process.env.CAO_FAKE_MODE = 'allow';
+  writeFileSync(path.join(dir, 'fake.py'), `import json,os,sys,time,subprocess
+r=json.load(sys.stdin)
+with open(os.environ['CAO_CAPTURE'],'a',encoding='utf-8') as f: f.write(json.dumps(r)+'\\n')
+mode=os.environ.get('CAO_FAKE_MODE','allow')
+if mode=='delay': time.sleep(.15)
+if mode=='timeout': time.sleep(10)
+if mode=='pipe-child': subprocess.Popen([sys.executable,'-c','import time; time.sleep(10)'])
+if mode=='exit': print('backend failed',file=sys.stderr); sys.exit(2)
+if mode=='bad-json': print('not-json'); sys.exit(0)
+if mode=='invalid': print(json.dumps({'decision':'unknown'})); sys.exit(0)
+reply={'decision':'allow'}
+if mode in ('deny','settle-deny'): reply={'decision':'deny','reason':'protected state'}
+if mode=='context': reply['additional_context']='review scope'
+if mode=='bad-fields': reply['additional_context']={'not':'text'}
+if mode=='large': reply['additional_context']='x'*300000
+print(json.dumps(reply))
+`);
+  writeFileSync(path.join(dir, 'cao'), '#!/bin/sh\nexec "${CAO_TEST_PYTHON:-python3}" ' +
+    JSON.stringify(path.join(dir, 'fake.py')) + '\n', {mode: 0o755});
+  const handlers = new Map(), sent = [], notices = [];
+  install({on: (key, fn) => {handlers.set(key, fn); return () => handlers.delete(key);},
+    sendMessage: (...args) => sent.push(args)});
+  const context = (id, hasUI = false) => ({cwd: dir, hasUI, mode: hasUI ? 'tui' : 'print',
+    sessionManager: {getSessionId: () => id}, ui: {notify: (...args) => notices.push(args)}});
+  return {dir, handlers, sent, notices, context,
+    rows: () => readFileSync(process.env.CAO_CAPTURE, 'utf8').trim().split('\n').map(JSON.parse),
+    close: () => {
+      for (const key of keys) {
+        if (old[key] === undefined) delete process.env[key]; else process.env[key] = old[key];
+      }
+      rmSync(dir, {recursive: true, force: true});
+    }};
+}
+
+const settle = canContinue => ({type: 'agent_before_settle', context: {canContinue},
+  entries: [], continue: false, outcome: 'completed'});
+const toolCall = {type: 'tool_call', toolName: 'write', input: {path: 'src.py', content: 'x'}};
+
+test('Pi native session and assistant payloads', posix, async () => {
+  const f = fixture();
+  try {
+    await f.handlers.get('session_start')({type: 'session_start', reason: 'startup'}, f.context('A'));
+    await f.handlers.get('session_start')({type: 'session_start', reason: 'new'}, f.context('B'));
+    await f.handlers.get('agent_end')({type: 'agent_end', messages: [
+      {role: 'assistant', content: [{type: 'text', text: 'old reply'}]},
+      {role: 'toolResult', content: [{type: 'text', text: 'ignore tool reply'}]},
+      {role: 'assistant', content: [{type: 'thinking', thinking: 'private'},
+        {type: 'text', text: '尚未完成'}, {type: 'text', text: '需要确认'}]},
+    ]}, f.context('B'));
+    assert.ok(f.handlers.has('session_shutdown'));
+    await f.handlers.get('session_shutdown')({type: 'session_shutdown', reason: 'quit'}, f.context('B'));
+    const rows = f.rows();
+    assert.equal(rows[0].session_id, 'A');
+    assert.equal(rows[1].session_id, 'B');
+    assert.equal(rows[2].event, 'turn_end');
+    assert.equal(rows[2].last_assistant_message, '尚未完成\n需要确认');
+    assert.equal(rows[3].event, 'session_end');
+    assert.equal(rows[3].reason, 'quit');
+  } finally {f.close();}
+});
+
+test('CLI bridge does not block Pi event loop', posix, async () => {
+  const f = fixture();
+  let ticks = 0;
+  const timer = setInterval(() => ticks++, 10);
+  try {
+    process.env.CAO_FAKE_MODE = 'delay';
+    await f.handlers.get('session_start')({type: 'session_start'}, f.context('A'));
+    assert.ok(ticks > 2, 'spawnSync blocked the event loop');
+  } finally {clearInterval(timer); f.close();}
+});
+
+test('allow guidance reaches model once without triggering another turn', posix, async () => {
+  const f = fixture();
+  try {
+    process.env.CAO_FAKE_MODE = 'context';
+    assert.equal(await f.handlers.get('tool_call')(toolCall, f.context('A')), undefined);
+    await f.handlers.get('tool_call')(toolCall, f.context('A'));
+    assert.equal(f.notices.length, 0, 'no UI must not notify');
+    assert.equal(f.sent.length, 1);
+    assert.equal(f.sent[0][0].content, 'review scope');
+    assert.deepEqual(f.sent[0][1], {triggerTurn: false, deliverAs: 'steer'});
+    await f.handlers.get('tool_call')(toolCall, f.context('B'));
+    assert.equal(f.sent.length, 2, 'distinct sessions must not share reminder deduplication');
+  } finally {f.close();}
+});
+
+test('tool deny blocks while bridge failures fail open and diagnose once', posix, async () => {
+  const f = fixture();
+  try {
+    process.env.CAO_FAKE_MODE = 'deny';
+    assert.deepEqual(await f.handlers.get('tool_call')(toolCall, f.context('A')), {block: true, reason: 'protected state'});
+    for (const mode of ['bad-json', 'invalid', 'bad-fields', 'exit']) {
+      process.env.CAO_FAKE_MODE = mode;
+      assert.equal(await f.handlers.get('tool_call')(toolCall, f.context(mode, true)), undefined);
+      await f.handlers.get('tool_call')(toolCall, f.context(mode, true));
+    }
+    assert.equal(f.notices.length, 4);
+    assert.ok(f.notices.every(([, level]) => level === 'warning'));
+  } finally {f.close();}
+});
+
+test('prompt context and tool result data follow native result contracts', posix, async () => {
+  const f = fixture();
+  try {
+    process.env.CAO_FAKE_MODE = 'context';
+    const prompt = await f.handlers.get('before_agent_start')({type: 'before_agent_start', prompt: 'work'}, f.context('A'));
+    assert.equal(prompt.message.content, 'review scope');
+    const content = [{type: 'text', text: 'original'}], structuredContent = {answer: 42};
+    const result = await f.handlers.get('tool_result')({type: 'tool_result', toolName: 'read',
+      input: {}, content, structuredContent, details: {}}, f.context('A'));
+    assert.equal(result, undefined, 'tool_result guidance must not replace or drop tool data');
+    assert.deepEqual(content, [{type: 'text', text: 'original'}]);
+    assert.deepEqual(structuredContent, {answer: 42});
+  } finally {f.close();}
+});
+
+test('settle correction continues once, respects capability, resets for next user turn', posix, async () => {
+  const f = fixture();
+  try {
+    assert.ok(f.handlers.has('agent_before_settle'));
+    process.env.CAO_FAKE_MODE = 'settle-deny';
+    const first = await f.handlers.get('agent_before_settle')(settle(true), f.context('A'));
+    assert.equal(first.continue, true);
+    assert.equal(first.entries[0].type, 'custom_message');
+    assert.equal(first.entries[0].content, 'protected state');
+    assert.equal(await f.handlers.get('agent_before_settle')(settle(true), f.context('A')), undefined);
+    assert.equal(await f.handlers.get('agent_before_settle')(settle(false), f.context('B')), undefined);
+    await f.handlers.get('before_agent_start')({type: 'before_agent_start', prompt: 'next'}, f.context('A'));
+    assert.equal((await f.handlers.get('agent_before_settle')(settle(true), f.context('A'))).continue, true);
+  } finally {f.close();}
+});
+
+test('oversized bridge output is rejected instead of injected into context', posix, async () => {
+  const f = fixture();
+  try {
+    process.env.CAO_FAKE_MODE = 'large';
+    assert.equal(await f.handlers.get('before_agent_start')({type: 'before_agent_start', prompt: 'work'}, f.context('A', true)), undefined);
+    assert.equal(f.notices.length, 1);
+    assert.match(f.notices[0][0], /CAO_OUTPUT_LIMIT/);
+  } finally {f.close();}
+});
+
+test('missing console CLI uses checkout fallback', posix, async () => {
+  const f = fixture();
+  try {
+    rmSync(path.join(f.dir, 'cao'));
+    writeFileSync(path.join(f.dir, 'sh'), '#!/bin/sh\nexec "${CAO_TEST_PYTHON:-python3}" ' +
+      JSON.stringify(path.join(f.dir, 'fake.py')) + '\n', {mode: 0o755});
+    process.env.PATH = f.dir;
+    await f.handlers.get('session_start')({type: 'session_start'}, f.context('A', true));
+    assert.equal(f.rows()[0].session_id, 'A');
+    assert.equal(f.notices.length, 0);
+  } finally {f.close();}
+});
+
+test('missing bridge diagnoses on stderr without requiring a UI', posix, async () => {
+  const f = fixture();
+  const write = process.stderr.write;
+  const diagnostics = [];
+  process.stderr.write = chunk => {diagnostics.push(String(chunk)); return true;};
+  try {
+    rmSync(path.join(f.dir, 'cao'));
+    process.env.PATH = f.dir;
+    assert.equal(await f.handlers.get('tool_call')(toolCall, f.context('A')), undefined);
+    await f.handlers.get('tool_call')(toolCall, f.context('A'));
+    assert.equal(f.notices.length, 0);
+    assert.equal(diagnostics.length, 1);
+    assert.match(diagnostics[0], /CAO/);
+  } finally {process.stderr.write = write; f.close();}
+});
+
+test('inherited output pipes cannot postpone bridge timeout', {...posix, timeout: 15000}, async () => {
+  const f = fixture();
+  try {
+    process.env.CAO_FAKE_MODE = 'pipe-child';
+    const start = Date.now();
+    assert.equal(await f.handlers.get('tool_call')(toolCall, f.context('A', true)), undefined);
+    assert.ok(Date.now() - start < 8000);
+    assert.match(f.notices[0][0], /CAO_TIMEOUT/);
+  } finally {f.close();}
+});
+
+test('bridge timeout is bounded and fail-open', {...posix, timeout: 12000}, async () => {
+  const f = fixture();
+  try {
+    process.env.CAO_FAKE_MODE = 'timeout';
+    const start = Date.now();
+    assert.equal(await f.handlers.get('tool_call')(toolCall, f.context('A', true)), undefined);
+    assert.ok(Date.now() - start < 8000);
+    assert.match(f.notices[0][0], /CAO_TIMEOUT/);
+  } finally {f.close();}
+});
