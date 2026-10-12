@@ -171,4 +171,5 @@ class PreToolReminder(SelectGuidance):
             raw = {"event": "pre_tool", "toolName": "write", "params": {"path": "src/App.java", "content": "x"}}
             rc, out, _ = run(repo, "host-event", "--repo", ".", "--host", "pi", env_extra=NO_HOST_ENV, stdin=json.dumps(raw))
             self.assertEqual(out["decision"], "allow")
-            self.assertNotIn("additional_context", out)
+            self.assertNotIn("has NOT been executed", out.get("additional_context", ""))
+            self.assertIn("verification setup", out["additional_context"].lower())

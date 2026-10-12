@@ -6,6 +6,8 @@ import sys
 import tempfile
 import unittest
 
+from tests.helpers import configure_verification
+
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 CAO = ROOT / "scripts" / "cao.py"
 
@@ -84,6 +86,7 @@ class BootstrapTests(unittest.TestCase):
             (repo / "openspec").mkdir()
             (repo / "openspec/config.yaml").write_text("context: test\n", encoding="utf-8")
             run(repo, "init")
+            configure_verification(repo)
             run(repo, "start", "--requirement", "requirements/login.md")
             run(repo, "path", "assess", "--profile", "light", "--reason", "Small local change")
             run(repo, "checkpoint", "--step", "implement-login", "--next", "run tests", "--summary", "API implemented")

@@ -38,7 +38,9 @@ from scripts.completion_policy import (
     verification_fresh as bound_verification_fresh, normalize_scripts, tests_satisfied, workflow_ready, normalize_timeout,
 )
 from scripts.verification_runner import run_script
-from scripts.verification_setup import configured_scripts, setup_state, declared_scripts, prepare_config
+from scripts.verification_setup import (
+    configured_scripts, setup_state, declared_scripts, prepare_config, setup_instruction, verification_setup_context,
+)
 
 
 def locked_command(fn):
@@ -2812,6 +2814,15 @@ def resume_payload(repo: Path, work: dict[str, Any], session_id: str | None = No
 
 
 def render_context(repo: Path, work: dict[str, Any] | None, *, session_id: str | None = None, host: str | None = None) -> str:
+    inspection = setup_state(config(repo))
+    if not inspection["ready"]:
+        # Preserve continuity without calculating completion from invalid declarations.
+        return "\n".join([
+            "# Coding Agent Orchestrator Verification Setup",
+            setup_instruction(cao_invocation()["command"]),
+            json.dumps({"verification_setup": inspection, "work": verification_setup_context(work),
+                        "session_id": session_id, "host": host}, ensure_ascii=False),
+        ])
     if not work:
         return "# Coding Agent Orchestrator\nNo active work item. Run `cao start --requirement <path>` after selecting a requirement."
     p = resume_payload(repo, work, session_id=session_id, host=host)
@@ -3143,7 +3154,15 @@ def cmd_bootstrap(args: argparse.Namespace) -> int:
         print(json.dumps(next_out, ensure_ascii=False, indent=2))
         return 0
 
-    if work:
+    inspection = setup_state(cfg)
+    if not inspection["ready"]:
+        next_out = {
+            "ok": True, "mode": "verification_setup",
+            "work_item": work_summary(work) if work else None,
+            "sdd": sdd_status(repo), "context": verification_setup_context(work),
+            "next": action("agent", setup_instruction(cao_invocation()["command"])),
+        }
+    elif work:
         next_out = {
             "ok": True,
             "mode": "resume",
@@ -3184,6 +3203,7 @@ def cmd_bootstrap(args: argparse.Namespace) -> int:
             "context": None,
             "next": action("agent", "Select a requirement and run `cao start --requirement <path>`. Do not invent a new requirement while resuming."),
         }
+    next_out["verification_setup"] = inspection
     if bootstrap_session:
         next_out["session"] = bootstrap_session
     if bootstrap_adapter is not None:
@@ -4027,6 +4047,9 @@ def cmd_start(args: argparse.Namespace) -> int:
         out = {"ok": True, "action": "ASSESS_PATH", "work_item": work_summary(work), "next_action": work.get("execution", {}).get("next_action"), "sdd": native}
         if session:
             out["session"] = load_session(repo, session["id"]) or session
+        out["verification_setup"] = setup_state(config(repo))
+        if not out["verification_setup"]["ready"]:
+            out["warning"] = setup_instruction(cao_invocation()["command"])
         print(json.dumps(out, ensure_ascii=False, indent=2)); return 0
 
 
@@ -5142,7 +5165,7 @@ def host_event(args: argparse.Namespace) -> int:
             session = update_session_event(repo, host_session_id, args.host, event, work, kind=kind, parent_session_id=parent_id)
 
     if event in {"session_start", "subagent_start"}:
-        context = render_context(repo, work, session_id=host_session_id, host=args.host) if work else "No active CAO work item. Use `cao start --requirement <path>` when a requirement is selected."
+        context = render_context(repo, work, session_id=host_session_id, host=args.host)
         result = {"decision": "allow", "additional_context": context}
         if host_session_id:
             result["session_id"] = host_session_id
@@ -5186,6 +5209,8 @@ def host_event(args: argparse.Namespace) -> int:
                             f"`cao done` requires native workflow evidence. Run it, then record it with "
                             f"`cao sdd workflow execute --work {work['id']} --command \"<command actually run>\"`."
                         )
+        if tool_is_mutating(raw) and not write_targets_native_sdd_output(repo, raw) and not setup_state(config(repo))["ready"]:
+            result["additional_context"] = (result.get("additional_context", "") + "\n" + setup_instruction(cao_invocation()["command"])).strip()
         commands = _collect_values_for_keys(raw, {"command", "cmd"})
         payload = raw.get("tool_input") or raw.get("input") or raw.get("arguments")
         if isinstance(payload, str) and _event_key(raw, "tool_name", "toolname", "tool", "name").lower() in SHELL_TOOLS:

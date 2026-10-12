@@ -47,7 +47,8 @@ def provisioned_repo(repo):
     run(repo, "sdd", "select", "--provider", "bmad")
     (repo / "_bmad").mkdir(exist_ok=True)  # BMAD's project marker
     rc, out, _ = run(repo, "bootstrap", env_extra=NO_HOST_ENV)
-    assert out.get("mode") == "select", f"bootstrap did not reach selection: {out}"
+    assert out.get("mode") == "verification_setup", f"bootstrap did not reach verification setup: {out}"
+    assert out.get("work_item") is None
 
 
 def write_tool(path: str) -> dict:

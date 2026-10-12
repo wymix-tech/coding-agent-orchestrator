@@ -78,6 +78,7 @@ class CoreTests(unittest.TestCase):
             (repo / "requirements/spring-boot-auth-login.md").write_text("Implement login", encoding="utf-8")
             (repo / "_bmad").mkdir()
             run(repo, "init"); run(repo, "sdd", "select", "--provider", "bmad")
+            configure_verification(repo)
             run(repo, "start", "--requirement", "requirements/spring-boot-auth-login.md")
             run(repo, "path", "assess", "--profile", "standard", "--reason", "Feature with planning")
             run(repo, "checkpoint", "--step", "path-selected", "--next", "Run BMAD planning")

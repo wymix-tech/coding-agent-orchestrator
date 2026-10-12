@@ -41,6 +41,27 @@ def declared_scripts(general: list[str], tests: list[str]) -> list[dict[str, Any
     return normalize_scripts(items)
 
 
+def setup_instruction(command: str) -> str:
+    return (
+        "CAO verification setup: establish a configured acceptance baseline before feature development. "
+        "Run bootstrap first and honor explicit SDD selection/install authorization. "
+        "For an existing project, analyze product manifests, source, tests and CI; reuse meaningful verification. "
+        "Do not infer the product tech stack from .orchestrator derived state, .agents, .pi, host assets, SDD tools/outputs or caches; current user requirements remain relevant. "
+        "For a new project, use the tech stack already specified by the user; otherwise ask the user for language/framework/build/test choices and wait. Do not guess a stack if unable to ask. "
+        "Generate project-owned verification scripts or reuse suitable existing scripts. Zero tests, missing tools or missing dependencies must fail/block, not echo/true a pass. For Java/Jupiter use JUnit5-capable Surefire and fail on zero tests. "
+        f'Configure through `{command} verification configure --test-script "<actual project test wrapper>" --verify-script "<actual general check>"` using only applicable scripts; do not hand-edit config or use init --force. '
+        "Do not overwrite existing scripts or install dependencies automatically. Configuration readiness is not verification success: initial scaffolding/tests may be written before tests pass. "
+        "Rerun bootstrap after configuration; if an active Work already has an acceptance anchor, review and explicitly reanchor instead of silently changing it."
+    )
+
+
+def verification_setup_context(work: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not work:
+        return None
+    return {key: work.get(key) for key in ("id", "title", "status", "requirement", "sdd",
+            "execution", "resume", "decisions", "blockers")}
+
+
 def prepare_config(raw: dict[str, Any], scripts: list[dict[str, Any]], replace: bool,
                    timestamp: int) -> tuple[dict[str, Any], bool]:
     if not isinstance(raw, dict):
