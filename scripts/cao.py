@@ -10,6 +10,7 @@ import json
 import os
 import re
 import shlex
+import shutil
 import stat
 import subprocess
 import sys
@@ -4956,7 +4957,23 @@ def _readonly_tokens(tokens: list[str]) -> bool:
     elif tokens[0] == "cao":
         command_tokens = tokens[1:]
     else:
-        return False
+        # Templates and the Pi fallback use this package's absolute launcher.
+        # A matching basename alone must not exempt an unrelated script.
+        index = 1 if tokens[0] == "sh" else 0
+        if len(tokens) <= index or not Path(tokens[index]).is_absolute():
+            return False
+        root = package_root_dir()
+        launchers = {str((root / "cao").resolve())} if root else set()
+        console = shutil.which("cao")
+        if console:
+            launchers.add(str(Path(console).resolve()))
+        try:
+            target = str(Path(tokens[index]).resolve())
+        except (OSError, RuntimeError):
+            return False
+        if target not in launchers:
+            return False
+        command_tokens = tokens[index + 1:]
     safe_control_commands = {
         "init", "bootstrap", "sdd", "start", "path", "list", "status", "next", "resume",
         "checkpoint", "decision", "block", "unblock", "handoff", "sessions", "verify", "done",
