@@ -1,6 +1,7 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {mkdtempSync, writeFileSync, readFileSync, rmSync} from 'node:fs';
+import {mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync} from 'node:fs';
+import {spawnSync} from 'node:child_process';
 import os from 'node:os';
 import path from 'node:path';
 import install from '../hosts/pi/coding-orchestrator.ts';
@@ -47,6 +48,40 @@ print(json.dumps(reply))
       rmSync(dir, {recursive: true, force: true});
     }};
 }
+
+test('real Python core handles Pi tool_result with null verification', posix, async () => {
+  const f = fixture();
+  try {
+    const python = process.env.CAO_TEST_PYTHON || 'python3';
+    const core = path.resolve(import.meta.dirname, '../scripts/cao.py');
+    const env = {...process.env};
+    for (const key of ['CAO_HOST', 'CLAUDE_CODE', 'CLAUDE_CODE_SESSION_ID', 'CLAUDE_SESSION_ID',
+      'CODEX_THREAD_ID', 'CODEX_SANDBOX', 'CODEX_HOME', 'PI_SESSION_ID', 'PI_CODING_AGENT']) delete env[key];
+    function cli(...args) {
+      const result = spawnSync(python, [core, ...args, '--repo', f.dir],
+        {cwd: f.dir, env, encoding: 'utf8', timeout: 20000});
+      assert.equal(result.status, 0, result.stderr || result.stdout);
+      return JSON.parse(result.stdout);
+    }
+    mkdirSync(path.join(f.dir, '_bmad'));
+    writeFileSync(path.join(f.dir, 'requirement.md'), '# Real core fixture');
+    cli('init', '--host', 'codex', '--sdd', 'bmad');
+    const wid = cli('start', '--requirement', 'requirement.md').work_item.id;
+    const workFile = path.join(f.dir, '.orchestrator/work', wid + '.json');
+    assert.equal(JSON.parse(readFileSync(workFile, 'utf8')).verification, null);
+    // The shell entry is only a launcher: replies come from the real core, not fake.py.
+    writeFileSync(path.join(f.dir, 'cao'), '#!/bin/sh\nexec "${CAO_TEST_PYTHON:-python3}" ' +
+      JSON.stringify(core) + ' "$@"\n', {mode: 0o755});
+    const event = {type: 'tool_result', toolName: 'write', input: {path: 'src.py', content: 'x'},
+      content: [{type: 'text', text: 'Written'}], details: {bytes: 1}, structuredContent: {ok: true}};
+    const original = JSON.parse(JSON.stringify(event));
+    writeFileSync(path.join(f.dir, 'src.py'), 'x');
+    assert.equal(await f.handlers.get('tool_result')(event, f.context('native-pi', true)), undefined);
+    assert.deepEqual(event, original, 'real-core guidance must not change tool result data');
+    assert.equal(f.notices.length, 0, JSON.stringify(f.notices));
+    assert.equal(JSON.parse(readFileSync(workFile, 'utf8')).verification, null);
+  } finally {f.close();}
+});
 
 const settle = canContinue => ({type: 'agent_before_settle', context: {canContinue},
   entries: [], continue: false, outcome: 'completed'});

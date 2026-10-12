@@ -5078,7 +5078,7 @@ def host_event(args: argparse.Namespace) -> int:
 
     if event in {"post_tool", "file_changed"}:
         if work and tool_is_mutating(raw):
-            if work.get("verification", {}).get("status") == "passed":
+            if (work.get("verification") or {}).get("status") == "passed":
                 work.setdefault("resume", {})["summary"] = "Code changed after the last verification; verification is now stale."
             save_work(repo, work)
         return respond({"decision": "allow"})
