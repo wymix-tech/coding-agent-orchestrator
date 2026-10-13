@@ -378,3 +378,36 @@ Provider/宿主仍为本地夹具，没有声明真实异机模型或在线 BMAD
 
 第一轮分片测试从 stdin 启动导致 multiprocessing spawn 找不到 `<stdin>`，改为有 main guard 的文件入口；
 原 BMAD 负向夹具假定 pending 计划仍能先 verify，已改为断言 verify 和 done 都拒绝。安装新增夹具最初缺少 `_bmad` marker，补齐本地模拟安装标记后六个场景通过。
+
+## 2026-10-13：OpenSpec / Spec Kit 同类缺口核验与修复
+
+用户要求查询权威资料，验证两种 Provider 是否同样可能在一个 Work 只完成部分原生执行项后进入 CAO verify。
+已核对并克隆 upstream 原生源码：OpenSpec `9111a7654d7800391459431fff4eaf66e33a3d2e`，
+Spec Kit `6c62e10d5ab1d676c557eb2d0cee86be52c893d2`。完整来源和边界见
+[provider-plan-verification.md](provider-plan-verification.md)。
+
+OpenSpec 按 change 及 schema 实际跟踪文件记录执行任务，Spec Kit 在 feature 的 tasks.md 中记录共享任务和多个 user story。
+它们不是 BMAD 的项目级共享 sprint 表，但 CAO 原 verify 入口只调用 BMAD 门禁，因此也会提前验证；light 完成检查还可能绕过现有原生计划。
+原生 OpenSpec 支持编号/plus/嵌套/未知单字符 checkbox 等格式，旧 CAO 解析器存在漏算。
+
+- 引入 provider-wide verify/完成门禁：当前 Work 的全部关联任务文件全勾选后放行，既有 BMAD 行为保留。
+- 从 Work-bound SPEC/native_ref/workflow/artifact 派生 change/feature 的默认 tasks.md，并持久保存关联；不读取项目全局当前 feature 来猜测，也不扫描无关需求。
+- `cao sdd plan bind --plan <native-task-file>` 可重复添加所有拆分计划；OpenSpec 自定义 schema 显式绑定实际 tracked Markdown 文件或引号保护的 scope 内 glob，动态包含新增分片。
+- 原生聚合状态优先于单个完成计划，绑定/宿主/CLI/Dashboard 边界修复游标。Spec Kit 质量 checklist 不作为实现完成证明。
+- 保存已观察的原生任务 ID/最小任务数与任务文件；删除、重复 ID、缺失、空/不可识别来源或业务软链接均不能制造全部完成。
+- scope/任务状态参与 freshness；执行途中新增关联或回退状态使验证结果 stale。CAO/SDD 写入和直接开发测试继续可用，无原生计划的 light 路径保留。
+- Skill/宿主模板/README/DESIGN 同步。对自定义 schema 不声称自动解析任意 YAML 方言，实际跟踪输出由 Agent 按原生命令返回的结果显式登记。
+
+新增 `tests/test_task_provider_verify.py` **17 项**，覆盖两种 Provider、所有 story/shared task、多个关联 feature/change、后续新增任务与删除文件/任务、普通/CLI 脚本、原生 marker 边界、自定义 glob、无关 checklist 以及聚合 Dashboard。
+对照 upstream OpenSpec 实际正则在 Node 中执行，**3 组差分输入完全一致**，包括完整 Spec Kit 模板中的 **35 个任务**。
+
+固定源码全量 **607 项通过**，按文件互斥四组为 131/165/147/164，日志 `/tmp/cao-task-provider-shard-{0,1,2,3}.log`。
+定向 **70 项通过**，日志 `/tmp/cao-task-provider-final-target.log`。
+Pi **15 项零失败/跳过**与 TypeScript 通过；Skill 校验、compileall、Shell 语法及 diff 检查通过。
+最新 wheel 在 checkout 外通过 **36 个安装场景**：21 个既有组合、6 个 BMAD tracker 组合，以及
+9 个新的 OpenSpec/Spec Kit 组合（两种 Provider × 三类模拟 host，另有三个 OpenSpec 自定义分片场景）。
+实际已安装 CLI 执行 fixture unittest，验证 partial 拒绝、all complete 放行、拆分 scope/新增分片/删除文件再拒绝；日志 `/tmp/cao-task-provider-installed-{baseline,bmad,native}.log`。
+没有声称运行真实在线 Provider Agent 或异机模型，Dashboard 检查仍是实际打包 JS/本地 DOM 夹具。
+
+初始定向回归确认提前 verify/缺少通用 plan CLI 的失败；测试矩阵首次在同一临时 repo 重复 start 被既有活动 Work 门禁正确拒绝，改为在同一夹具中切换 Provider。
+两个历史负向夹具假定 pending 的 OpenSpec/Spec Kit 计划仍能先 verify，现明确断言 verify 与 done 都拒绝，未删除原失败条件。

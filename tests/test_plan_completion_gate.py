@@ -94,7 +94,7 @@ def ready_to_close(repo: pathlib.Path, provider: str, artifact: str, profile: st
     assert rc == 0, f"workflow completion failed: {out}"
     rc, out = run(repo, "verify", "--work", wid)
     if expect_verify_blocked:
-        assert rc == 2 and out["error"] == "BMAD_PLAN_NOT_DONE", out
+        assert rc == 2 and out["error"] == ("BMAD_PLAN_NOT_DONE" if provider == "bmad" else "SDD_PLAN_NOT_DONE"), out
         return wid
     assert rc == 0, f"verify failed: {out}"
     for gate in ("scope_review", "implementation_review"):
@@ -145,10 +145,11 @@ class OpenSpecPlan(unittest.TestCase):
     def test_done_refuses_while_tasks_are_unchecked(self):
         with tempfile.TemporaryDirectory() as td:
             repo = pathlib.Path(td)
-            wid = ready_to_close(repo, "openspec", "openspec/changes/login/proposal.md", plan=_write(
+            wid = ready_to_close(repo, "openspec", "openspec/changes/login/proposal.md", expect_verify_blocked=True, plan=_write(
                 "openspec/changes/login/tasks.md", 
                 "# Tasks\n\n- [x] 1.1 created project\n- [ ] 1.2 configure yml\n- [ ] 2.1 jwt service\n"))
-            complete_acceptance(repo, run, wid)
+            rc, out = run(repo, "verify", "--work", wid)
+            self.assertEqual((rc, out["error"]), (2, "SDD_PLAN_NOT_DONE"))
             rc, out = run(repo, "done", "--work", wid)
             self.assertEqual(rc, 2, out)
             self.assertEqual(len(out["pending_plan_items"]), 2, out["pending_plan_items"])
@@ -182,12 +183,13 @@ class SpecKitPlan(unittest.TestCase):
     def test_done_refuses_while_spec_kit_tasks_are_unchecked(self):
         with tempfile.TemporaryDirectory() as td:
             repo = pathlib.Path(td)
-            wid = ready_to_close(repo, "speckit", "specs/login/plan.md", plan=_write(
+            wid = ready_to_close(repo, "speckit", "specs/login/plan.md", expect_verify_blocked=True, plan=_write(
                 "specs/login/tasks.md", "- [ ] 1.1 create project\n- [ ] 1.2 add jwt\n"))
-            complete_acceptance(repo, run, wid)
+            rc, out = run(repo, "verify", "--work", wid)
+            self.assertEqual((rc, out["error"]), (2, "SDD_PLAN_NOT_DONE"))
             rc, out = run(repo, "done", "--work", wid)
             self.assertEqual(rc, 2, out)
-            self.assertIn("unfinished item", out["reason"])
+            self.assertEqual(out["reason"], "SDD_PLAN_NOT_DONE")
 
 
 class NoFalsePositives(unittest.TestCase):

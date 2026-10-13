@@ -161,7 +161,7 @@ standard       ordinary feature/fix requiring some analysis/design, tests and re
 comprehensive  major uncertainty, cross-system or high-risk change; explicit planning and stronger gates
 ```
 
-`light` uses a minimal native SPEC with explicit criteria (or recognized BMAD oneshot Intent) plus fresh project verification. It does not require workflow registration, plans/no-plan or independent final acceptance. Standard/comprehensive retain the full native workflow and independent acceptance contract.
+`light` uses a minimal native SPEC with explicit criteria (or recognized BMAD oneshot Intent) plus fresh project verification. It does not require manufacturing workflow records, plans/no-plan or independent final acceptance. Finish every task in native plans that actually exist before CAO verification, including on light. Standard/comprehensive retain the full native workflow and independent acceptance contract.
 
 Record the assessment in the Work Item:
 
@@ -200,15 +200,15 @@ cao sdd workflow execute --command "<command actually run>" --exit-code <code> [
 ```
 
 Then record existing provider-owned outputs and every related plan: repeat `--artifact` and `--plan <path>`;
-shared sprint stories require `--plan-item '<path>#<id>'`. Use audited `--no-plan` only when no plan applies;
-unresolved scope blocks done and deleting a binding cannot silently shrink the scope.
+shared BMAD sprint work requires `--plan-item '<path>#<story-id-or-epic-N>'`. Use audited `--no-plan` only when no plan applies;
+Unresolved execution scope cannot certify completion; preserve prior associations when recording later outputs.
 
 ```bash
 cao sdd workflow complete --artifact <repo-relative-file>
 ```
 
 CAO blocks `cao done` until the workflow is selected, executed, and completed with existing output files.
-This workflow registration/plan contract applies to standard/comprehensive across providers. For light, bind the native SPEC and explicit criteria with `cao sdd spec bind --spec <provider-spec.md> --criteria-section "<heading>"`, then verify; do not manufacture a plan or no-plan declaration.
+This workflow registration/plan contract applies to standard/comprehensive across providers. For light, bind the native SPEC and explicit criteria with `cao sdd spec bind --spec <provider-spec.md> --criteria-section "<heading>"`, finish all native execution tasks, then verify; do not manufacture a plan or no-plan declaration.
 
 CAO rejects workflow records it can verify as fake:
 
@@ -457,3 +457,10 @@ Spec Kit: existing-behavior bugs may use `speckit-bug-assess` → `speckit-bug-f
 ## Native stage synchronization
 
 Once a SPEC is bound to the current Work, use its native status/task progress as the lifecycle source; the requirement title and native filename need not share a language or spelling. Host events and CAO/Dashboard reads synchronize implementation and review automatically. Inspect `native_sync` diagnostics when no phase can be observed; associate the actual source instead of guessing another file, restarting intake or inventing a checkpoint. Source synchronization does not refresh acceptance hashes: review changed SPEC/criteria, explicitly rebind when needed, and rerun verification. Native done means ready for review; close Work only through `cao done`. Preserve the installed provider's route, including BMAD oneshot, and its native prerequisites.
+
+
+## Requirement-wide execution before verification
+
+Associate ALL native execution units belonging to the current Work; never treat one completed story/change as the whole requirement. For BMAD, use `cao sdd plan bind --plan-item <sprint-status.yaml-or-yml>#<story-id-or-epic-N>` for every associated story or entire epic. For OpenSpec/Spec Kit, default task files beside the Work's associated change/feature are captured automatically; add split changes/features with repeated `cao sdd plan bind --plan <native-task-file>`. For OpenSpec custom schemas, use actual tracked outputs from native apply instructions, optionally a quoted tracked-file glob to include new shards. Do not use a global change/feature list or Spec Kit quality checklists as completion evidence.
+
+Finish ALL associated native tasks before `cao verify`; a CLI script override cannot skip this check. Preserve known task IDs/files and existing associations; restore removed work or handle a confirmed requirement revision instead of shrinking scope, marking unrelated work done, or inventing no-plan. New tasks, files or status regressions invalidate earlier verification. Continue direct development tests and CAO/SDD artifact writes while native implementation is unfinished. Native light/oneshot without an execution plan remains available; final close still requires `cao done`.
