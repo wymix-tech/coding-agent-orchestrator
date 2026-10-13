@@ -327,3 +327,28 @@ Pi **14 项零失败/跳过**、严格 TypeScript、Skill 校验、compileall、
 最新 wheel 在 checkout 外通过 **21 个本地夹具组合**，包括三类 Provider/Host、light、standard 和 BMAD oneshot。
 安装验证走 select → numbered requirement → start → configure/reanchor → native workflow → verify/done，覆盖无 Work deny 和原生产物 allow。
 Provider、宿主事件及辅助脚本仍为本地夹具；没有声称重跑用户异机的真实模型会话或真实在线 SDD 安装。
+
+## 2026-10-13：绑定 SPEC 的原生阶段同步
+
+依据用户提供的异机 `/tmp/demo2` 完整 Pi 会话
+`2026-10-13T05-41-41-527Z_01a133c7-e816-76fa-a2b6-a8b39dbfa60d.jsonl`：
+L74 已成功绑定 `_bmad-output/implementation-artifacts/spec-001-login-system.md`，
+L77–78 将状态改为 `in-progress`；L174 改为 `in-review`，但 L183 重锚后
+`native_ref` 仍为 null。中文需求名与英文 SPEC 名无法通过原有文件名匹配建立关联，
+同步器又未使用已存在的 `spec_binding`。该会话是 BMAD dispatch 路径，并非 oneshot。
+
+- 当前 Work 的有效显式 SPEC 绑定优先于旧 native_ref 和文件名推断，兼容中文需求与英文文件名。
+- SPEC 的可变原生状态可被读取，但不自动更新验收摘要；改动后的旧绑定仍由完成门禁要求复核、重绑和重验。
+- 绑定、宿主写入后、下一次提示/工具前及 Dashboard 读取均修复活动 Work 的阶段；`in-progress` 推进实现，`in-review`/原生完成推进评审，关闭仍要求显式 `cao done`。
+- 已进入验证、评审等后续检查点不被较早原生状态覆盖；已完成 Work 不重新认证。
+- 缺失、跨 Provider、需求不匹配、越界或软链接到业务目录的绑定不猜测其他文件；重复/畸形状态不推进阶段。
+- OpenSpec 嵌套 SPEC 从所属 change 的 tasks.md 读取，Spec Kit 从所属 feature 读取，避免跨任务状态串扰。
+- Dashboard 显示原生同步来源与无法同步的原因；仅生成 tasks/story 产物不再代表已开始实现。
+- 无 Work 业务写入门禁、CAO/SDD 产物写入许可、light/oneshot/full 完成门禁保持有效。
+
+新增 `tests/test_native_sync_binding.py` 的 **15 项回归**及真实 Pi 桥的绑定状态转换检查。
+固定源码全量 **575 项 Python 通过**，四组互斥文件分片为 120/235/198/22，日志
+`/tmp/cao-sync-shard-{0,1,2,3}.log`；定向 **76 项通过**。
+Pi **15 项零失败/跳过**、严格 TypeScript、Skill 校验、compileall、Shell 语法与 diff 检查通过。
+最新 wheel 在 checkout 外通过 **21 个本地夹具安装场景**，日志 `/tmp/cao-sync-installed.log`。
+原生 Provider 与宿主事件仍为本地夹具；没有声称重跑用户异机 Pi 模型会话或真实在线 SDD。

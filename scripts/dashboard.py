@@ -418,20 +418,13 @@ def preview_artifact(repo: Path, work_id: str, artifact_path: str) -> dict[str, 
     return {"ok": True, "work_item_id": work_id, "path": relative, "title": item.get("title"), "role": item.get("role"), "content": content, "size": size, "sha256": item.get("sha256"), "status": item.get("status")}
 
 def infer_execution_phase(work: dict[str, Any], artifact_catalog: list[dict[str, Any]]) -> dict[str, str]:
-    """Infer a dashboard phase from common CAO signals and native SDD artifact roles.
-
-    Explicit later CAO checkpoints win. If the stored step is stale at planning,
-    the presence of native task/story artifacts is a cross-provider signal that the
-    native workflow has reached implementation.
-    """
+    """Project CAO checkpoints and explicit native status; file existence is not progress."""
     execution = work.get("execution") if isinstance(work.get("execution"), dict) else {}
     step = str(execution.get("step") or "").lower()
     if work.get("status") == "completed":
         return {"id": "done", "source": "cao-state"}
     native_phases = {"native-sdd-workflow-selected": "planning", "native-sdd-workflow-executed": "implementation",
                      "native-sdd-workflow-completed": "review"}
-    if step in native_phases:
-        return {"id": native_phases[step], "source": "cao-state"}
     if re.search(r"verif|test", step):
         return {"id": "verification", "source": "cao-state"}
     if re.search(r"review|audit", step):
@@ -439,16 +432,16 @@ def infer_execution_phase(work: dict[str, Any], artifact_catalog: list[dict[str,
     if re.search(r"implement|code|build|bugfix", step):
         return {"id": "implementation", "source": "cao-state"}
 
-    generated_roles = {
-        str(item.get("role") or "").lower()
-        for item in artifact_catalog
-        if item.get("exists") and item.get("status") in {"generated", "confirmed"}
-    }
+    native = (work.get("sdd") or {}).get("native_state") or {}
+    canonical = native.get("canonical")
+    if canonical in {"ready", "in_progress", "in_review", "completed"}:
+        return {"id": {"ready": "planning", "in_progress": "implementation", "in_review": "review", "completed": "review"}[canonical],
+                "source": "native-sdd-state"}
+    if step in native_phases:
+        return {"id": native_phases[step], "source": "cao-state"}
     workflow = ((work.get("sdd") or {}).get("workflow") or {})
     if workflow.get("status") == "completed":
         return {"id": "review", "source": "native-sdd-workflow"}
-    if generated_roles.intersection({"tasks", "story"}):
-        return {"id": "implementation", "source": "native-sdd-artifacts"}
     if not work.get("path_assessment"):
         return {"id": "path", "source": "cao-state"}
     return {"id": "planning", "source": "cao-state"}
@@ -479,6 +472,7 @@ def build_dashboard_overview(repo: Path, stale_after_minutes: int = 30) -> dict[
         load_json,
         path_assessment_state,
         reconcile_native_sdd_state,
+        native_sync_state,
         rel,
         session_activity,
         work_summary,
@@ -559,6 +553,7 @@ def build_dashboard_overview(repo: Path, stale_after_minutes: int = 30) -> dict[
                     "spec_binding": sdd.get("spec_binding"), "acceptance": sdd.get("acceptance")},
             "light_spec": spec_state,
             "sdd_acceptance": independent,
+            "native_sync": native_sync_state(repo, work),
             "completion": completion,
             "gates": gate_state(work, bool(fresh), independent["ready"]),
             "legacy_evidence": summary["legacy_evidence"],

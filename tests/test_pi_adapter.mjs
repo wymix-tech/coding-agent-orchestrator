@@ -115,6 +115,33 @@ test('real Python core handles Pi tool_result with null verification', posix, as
   } finally {f.close();}
 });
 
+test('real Pi tool_result synchronizes a bound BMAD SPEC with a Chinese Work title', posix, async () => {
+  const f = realCoreFixture();
+  try {
+    mkdirSync(path.join(f.dir, '_bmad'));
+    f.cli('init', '--host', 'codex', '--sdd', 'bmad');
+    const req = f.cli('requirement', 'next-id', '--title', '登录系统开发').path;
+    writeFileSync(path.join(f.dir, req), '# 登录系统开发\n用户配置在 users.yml，使用 session。');
+    const wid = f.cli('start', '--requirement', req).work_item.id;
+    f.cli('path', 'assess', '--profile', 'light', '--reason', 'bounded fixture');
+    const spec = '_bmad-output/implementation-artifacts/spec-001-login-system.md';
+    mkdirSync(path.dirname(path.join(f.dir, spec)), {recursive: true});
+    const body = "---\nstatus: 'ready-for-dev'\n---\n## Intent\nSession login\n## Acceptance\n- Read users.yml\n";
+    writeFileSync(path.join(f.dir, spec), body);
+    f.cli('sdd', 'spec', 'bind', '--spec', spec, '--criteria-section', 'Acceptance');
+    writeFileSync(path.join(f.dir, spec), body.replace('ready-for-dev', 'in-progress'));
+    const event = {toolName: 'edit', input: {path: spec, edits: [{oldText: 'ready-for-dev', newText: 'in-progress'}]},
+      content: [{type: 'text', text: 'Successfully replaced one block'}], details: {ok: true}};
+    const before = JSON.parse(JSON.stringify(event));
+    assert.equal(await f.handlers.get('tool_result')(event, f.context('remote-pi')), undefined);
+    assert.deepEqual(event, before);
+    const work = JSON.parse(readFileSync(path.join(f.dir, '.orchestrator/work', wid + '.json'), 'utf8'));
+    assert.equal(work.execution.step, 'implementation');
+    assert.equal(work.sdd.native_state.canonical, 'in_progress');
+    assert.equal(work.status, 'active');
+  } finally {f.close();}
+});
+
 test('real core setup reaches Pi model without blocking product writes or resetting Work', posix, async () => {
   const f = realCoreFixture();
   try {

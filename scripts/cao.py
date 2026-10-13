@@ -1926,39 +1926,77 @@ def _slug(value: str) -> str:
     return re.sub(r"[^a-z0-9]+", "-", value.lower()).strip("-")
 
 
+def _native_md_files(repo: Path, provider: str, root: Path, *, recursive: bool = True) -> list[Path]:
+    dirs = [directory for directory in provider_output_dirs(provider)
+            if (repo.resolve() / directory).resolve() == repo.resolve() / directory]
+    files = []
+    for path in (root.rglob("*.md") if recursive else root.glob("*.md")):
+        try:
+            owned = provider_artifact(repo, str(path), dirs)
+        except (ValueError, OSError, RuntimeError):
+            continue
+        if owned.is_file() and owned not in files:
+            files.append(owned)
+    return sorted(files)
+
+
 def _native_candidates(repo: Path, provider: str, work: dict[str, Any], native_ref: str) -> tuple[list[Path], Path | None]:
     """Return candidate artifact paths scoped to this Work Item, never the whole SDD tree by default."""
-    requirement_path = str((work.get("requirement") or {}).get("path") or "")
-    title = str(work.get("title") or "")
-    slugs = [_slug(Path(requirement_path).stem), _slug(title)]
-    slugs = [value for value in dict.fromkeys(slugs) if value]
-    ref_path = (repo / native_ref).resolve() if native_ref else None
-    try:
-        ref_path.relative_to(repo.resolve())
-    except (ValueError, AttributeError):
-        ref_path = None
-    if ref_path and ref_path.exists():
+    sdd = work.get("sdd") or {}
+    binding = sdd.get("spec_binding")
+    if binding is not None:
+        # The explicit Work-bound SPEC is authority even when its mutable native
+        # status makes acceptance hashes stale. Never silently rebind those hashes.
+        if (not isinstance(binding, dict) or binding.get("provider") != provider
+                or binding.get("requirement_sha256") != (work.get("requirement") or {}).get("sha256")):
+            return [], None
+        spec_ref = binding.get("spec")
+        if not isinstance(spec_ref, dict):
+            return [], None
+        native_ref = str(spec_ref.get("path") or "")
+        if not native_ref:
+            return [], None
+    if native_ref:
+        try:
+            dirs = [directory for directory in provider_output_dirs(provider)
+                    if (repo.resolve() / directory).resolve() == repo.resolve() / directory]
+            ref_path = provider_artifact(repo, native_ref, dirs)
+        except (ValueError, OSError, RuntimeError):
+            return [], None
         if ref_path.is_file():
-            if provider == "bmad":
+            if provider == "bmad" or ref_path.name.lower() == "tasks.md":
                 return [ref_path], ref_path
             parent = ref_path.parent
-            return sorted(p for p in parent.rglob("*.md") if p.is_file()), parent
+            feature_root = repo.resolve() / ("openspec/changes" if provider == "openspec" else "specs")
+            if ref_path.is_relative_to(feature_root):
+                parts = ref_path.relative_to(feature_root).parts
+                if len(parts) >= 2:
+                    parent = feature_root / parts[0]
+            return _native_md_files(repo, provider, parent, recursive=False), parent
         if ref_path.is_dir():
-            return sorted(p for p in ref_path.rglob("*.md") if p.is_file()), ref_path
+            return _native_md_files(repo, provider, ref_path), ref_path
+        return [], None  # A broken explicit association must not adopt another file.
+    requirement_path = str((work.get("requirement") or {}).get("path") or "")
+    title = str(work.get("title") or "")
+    identity_slug = lambda value: re.sub(r"[^\w]+", "-", value.casefold(), flags=re.UNICODE).replace("_", "-").strip("-")
+    slugs = [identity_slug(Path(requirement_path).stem), identity_slug(title)]
+    slugs = [value for value in dict.fromkeys(slugs) if value]
 
     if provider == "bmad":
         root = repo / "_bmad-output/implementation-artifacts"
         if not root.is_dir():
             return [], None
-        all_specs = sorted((p for p in root.glob("spec-*.md") if p.is_file()), key=lambda p: p.stat().st_mtime, reverse=True)
+        all_specs = sorted((p for p in _native_md_files(repo, provider, root, recursive=False)
+                            if p.parent == root.resolve() and p.name.startswith("spec-")),
+                           key=lambda p: p.stat().st_mtime, reverse=True)
         def bmad_matches(path: Path) -> bool:
-            file_slug = _slug(path.stem.removeprefix("spec-"))
+            file_slug = identity_slug(path.stem.removeprefix("spec-"))
             return bool(file_slug and any(file_slug == wanted or file_slug in wanted or wanted in file_slug for wanted in slugs))
         selected = [p for p in all_specs if bmad_matches(p)]
         # Prefer an exact identity match before considering partial slug matches.
         # When more than one candidate remains, fail closed: none of them may
         # drive lifecycle state until the current Work Item is unambiguously bound.
-        exact = [p for p in selected if _slug(p.stem.removeprefix("spec-")) in slugs]
+        exact = [p for p in selected if identity_slug(p.stem.removeprefix("spec-")) in slugs]
         if len(exact) == 1:
             return exact, exact[0].parent
         if exact:
@@ -1971,19 +2009,20 @@ def _native_candidates(repo: Path, provider: str, work: dict[str, Any], native_r
     if not root.is_dir():
         return [], None
     dirs = [p for p in root.iterdir() if p.is_dir() and not p.name.startswith(".") and p.name != "archive"]
-    matching = [p for p in dirs if any(_slug(p.name) == wanted or _slug(p.name) in wanted or wanted in _slug(p.name) for wanted in slugs)]
-    exact = [p for p in matching if _slug(p.name) in slugs]
+    matching = [p for p in dirs if any(identity_slug(p.name) == wanted or identity_slug(p.name) in wanted or wanted in identity_slug(p.name) for wanted in slugs)]
+    exact = [p for p in matching if identity_slug(p.name) in slugs]
     if len(exact) == 1:
         matching = exact
     elif exact or len(matching) != 1:
         return [], None
     feature_dir = matching[0]
-    return sorted(p for p in feature_dir.rglob("*.md") if p.is_file()), feature_dir
+    return _native_md_files(repo, provider, feature_dir, recursive=False), feature_dir
 
 
 def _read_native_status(provider: str, candidates: list[Path]) -> tuple[str | None, str | None, str | None, dict[str, Any] | None]:
     """Extract only explicit machine status or task-checkbox evidence from work-specific files."""
     if provider == "bmad":
+        states = []
         for path in candidates:
             try:
                 content = path.read_text(encoding="utf-8-sig")[:65536]
@@ -1995,15 +2034,19 @@ def _read_native_status(provider: str, candidates: list[Path]) -> tuple[str | No
             if end < 0:
                 continue
             frontmatter = content[3:end]
-            match = re.search(r"(?im)^\s*status\s*:\s*['\"]?([a-z_-]+)", frontmatter)
+            entries = re.findall(r"(?im)^[ \t]*status[ \t]*:[ \t]*(.*)$", frontmatter)
+            if len(entries) != 1:
+                continue
+            match = re.fullmatch(r"(?:'([a-z_-]+)'|\"([a-z_-]+)\"|([a-z_-]+))[ \t]*(?:#.*)?", entries[0], re.I)
             if match:
-                raw = match.group(1).lower().replace("-", "_")
-                return raw, path.name, hashlib.sha256(content.encode("utf-8")).hexdigest(), None
-        return None, None, None, None
+                raw = next(value for value in match.groups() if value is not None).lower().replace("-", "_")
+                states.append((raw, path.name, hashlib.sha256(content.encode("utf-8")).hexdigest(), None))
+        return states[0] if len(states) == 1 else (None, None, None, None)
 
-    tasks = next((p for p in candidates if p.name.lower() == "tasks.md"), None)
-    if not tasks:
+    task_files = [p for p in candidates if p.name.lower() == "tasks.md"]
+    if len(task_files) != 1:
         return None, None, None, None
+    tasks = task_files[0]
     try:
         content = tasks.read_text(encoding="utf-8-sig")
     except (OSError, UnicodeError):
@@ -2030,6 +2073,25 @@ def _canonical_native_state(raw: str | None) -> str | None:
     if value in {"blocked", "failed", "cancelled", "canceled"}:
         return value
     return None
+
+
+def native_sync_state(repo: Path, work: dict[str, Any]) -> dict[str, Any]:
+    """Read-only source/observation diagnostics, separate from acceptance readiness."""
+    sdd = work.get("sdd") or {}
+    provider = str(sdd.get("provider") or "").lower()
+    if provider not in SDD_CATALOG or work.get("status") == "completed":
+        return {"state": "not_applicable"}
+    candidates, anchor = _native_candidates(repo, provider, work, str(sdd.get("native_ref") or ""))
+    if not candidates:
+        explicit = sdd.get("spec_binding") is not None or bool(sdd.get("native_ref"))
+        return {"state": "source_unavailable" if explicit else "unbound", "source": None,
+                "next": "Review the Work's native source path and provider. For light, bind its actual SPEC with `cao sdd spec bind`; for other profiles, use the current Work's native reference. Do not guess another file or restart intake."}
+    raw, source, _hash, _counts = _read_native_status(provider, candidates)
+    canonical = _canonical_native_state(raw)
+    path = next((p.relative_to(repo).as_posix() for p in candidates if p.name == source), None)
+    return {"state": "observed" if canonical else "status_unavailable", "source": path,
+            "raw": raw, "canonical": canonical,
+            "next": None if canonical else "Follow the installed provider's native status/task conventions; do not infer execution from file existence."}
 
 
 @locked_repo
@@ -2100,6 +2162,11 @@ def reconcile_native_sdd_state(repo: Path, work: dict[str, Any]) -> bool:
     changed = False
     native_ref = str(sdd.get("native_ref") or "").strip()
     candidates, anchor = _native_candidates(repo, provider, work, native_ref)
+    if isinstance(sdd.get("spec_binding"), dict) and anchor and candidates:
+        bound = str(sdd["spec_binding"]["spec"]["path"])
+        if native_ref != bound:
+            sdd["native_ref"] = native_ref = bound
+            changed = True
     if not native_ref and anchor and candidates:
         preferred_names = {
             "bmad": ("spec-",),
@@ -2133,7 +2200,7 @@ def reconcile_native_sdd_state(repo: Path, work: dict[str, Any]) -> bool:
         "evidence_sha256": evidence_hash,
         "task_counts": task_counts,
     }
-    if canonical is not None and (old_native.get("canonical") != canonical or old_native.get("raw") != raw_state or old_native.get("evidence_sha256") != evidence_hash):
+    if canonical is not None and (old_native.get("canonical") != canonical or old_native.get("raw") != raw_state or old_native.get("evidence_sha256") != evidence_hash or old_native.get("source") != status_source):
         revision = int(old_native.get("revision") or 0) + 1
         new_snapshot["revision"] = revision
         new_snapshot["observed_at"] = now()
@@ -2162,7 +2229,7 @@ def reconcile_native_sdd_state(repo: Path, work: dict[str, Any]) -> bool:
                 queue_event(work, {**base_event, "event": "task.review.started", "idempotency_key": idem + ":review", "event_id": "evt-" + idem[:16] + "review"})
             elif canonical == "blocked":
                 queue_event(work, {**base_event, "event": "task.blocked", "idempotency_key": idem + ":blocked", "event_id": "evt-" + idem[:16] + "blocked"})
-        elif old_native.get("evidence_sha256") != evidence_hash:
+        elif old_native.get("evidence_sha256") != evidence_hash or old_native.get("source") != status_source:
             queue_event(work, {**base_event, "event": "sdd.native_artifact.changed", "idempotency_key": idem + ":artifact", "event_id": "evt-" + idem[:16] + "artifact"})
         sdd["native_state"] = new_snapshot
         changed = True
@@ -2173,17 +2240,18 @@ def reconcile_native_sdd_state(repo: Path, work: dict[str, Any]) -> bool:
     if canonical is not None:
         execution = work.setdefault("execution", {})
         current_step = str(execution.get("step") or "").lower()
-        if canonical == "ready" and current_step in {"path-selected", "planning", "plan-selected", "sdd-planning"}:
+        later_checkpoint = bool(re.search(r"verif|test|review|audit|release", current_step)) or current_step == "done"
+        if canonical == "ready" and current_step in {"path-selected", "planning", "plan-selected", "sdd-planning", "native-sdd-workflow-selected"}:
             execution["step"] = "ready-for-dev"
             execution["next_action"] = action("agent", f"Native {provider} work is ready; begin implementation using the bound native work item.")
             work.setdefault("resume", {})["summary"] = f"Native SDD reports ready for implementation ({provider})."
             changed = True
-        elif canonical == "in_progress" and current_step not in {"implementation", "review", "verification", "release", "done"}:
+        elif canonical == "in_progress" and current_step != "implementation" and not later_checkpoint:
             execution["step"] = "implementation"
             execution["next_action"] = action("agent", f"Continue implementation using the native {provider} work item; phase synchronized from explicit native status/task progress.")
             work.setdefault("resume", {})["summary"] = f"Native SDD reports implementation in progress ({provider}); CAO phase reconciled."
             changed = True
-        elif canonical in {"completed", "in_review"} and current_step in {"path-selected", "planning", "plan-selected", "sdd-planning", "ready-for-dev", "implementation"}:
+        elif canonical in {"completed", "in_review"} and not later_checkpoint:
             execution["step"] = "review"
             execution["next_action"] = action("agent", "Native implementation is ready for review; complete implementation review and CAO verification before closing the Work Item.")
             work.setdefault("resume", {})["summary"] = f"Native SDD reports review/implementation completion ({provider}); CAO moved to review, not closed."
@@ -2938,6 +3006,7 @@ def resume_payload(repo: Path, work: dict[str, Any], session_id: str | None = No
         "execution": work.get("execution"),
         "path_assessment": work.get("path_assessment"),
         "path_assessment_state": path_assessment_state(repo, work),
+        "native_sync": native_sync_state(repo, work),
         "resume": work.get("resume"),
         "decisions": work.get("decisions") or [],
         "blockers": work.get("blockers") or [],
@@ -3835,7 +3904,8 @@ def cmd_sdd_spec(args: argparse.Namespace) -> int:
                                provider_output_dirs(work["sdd"]["provider"]))
         previous = work["sdd"].get("spec_binding")
         if previous == binding:
-            print(json.dumps({"ok": True, "status": "unchanged", "binding": binding}, ensure_ascii=False)); return 0
+            reconcile_native_sdd_state(repo, work)
+            print(json.dumps({"ok": True, "status": "unchanged", "binding": binding, "native_sync": native_sync_state(repo, work)}, ensure_ascii=False)); return 0
         if previous and not args.replace:
             raise ValueError("LIGHT_SPEC_REPLACE_REQUIRED")
     except ValueError as exc:
@@ -3849,8 +3919,10 @@ def cmd_sdd_spec(args: argparse.Namespace) -> int:
                        "provider": binding["provider"], "requirement_sha256": binding["requirement_sha256"],
                        "binding_sha256": binding_digest(binding), "occurred_at": now()})
     save_work(repo, work)
+    reconcile_native_sdd_state(repo, work)
     print(json.dumps({"ok": True, "status": "bound", "binding": binding,
-                      "next": "Run configured `cao verify`, then `cao done`."}, ensure_ascii=False)); return 0
+                      "native_sync": native_sync_state(repo, work),
+                      "next": "Follow the native implementation/review workflow. After reviewing any SPEC changes, rebind if needed, run configured `cao verify`, then `cao done`."}, ensure_ascii=False)); return 0
 
 
 def cmd_sdd_acceptance(args: argparse.Namespace) -> int:
@@ -5497,6 +5569,10 @@ def host_event(args: argparse.Namespace) -> int:
     wid = index.get("active_work")
     work = load_work(repo, wid) if wid else None
     kind = "subagent" if event in {"subagent_start", "subagent_stop"} else "primary"
+    if work and event in {"session_start", "subagent_start", "prompt_submit", "pre_tool", "stop", "turn_end", "before_settle"}:
+        # Refresh before exposing context or writing a handoff, including edits
+        # performed outside this host. Derived observations never reanchor input hashes.
+        reconcile_native_sdd_state(repo, work)
     if kind == "subagent":
         host_session_id = _event_key(raw, "subagent_id", "agent_id")
         if not host_session_id:
@@ -5604,6 +5680,8 @@ def host_event(args: argparse.Namespace) -> int:
             if (work.get("verification") or {}).get("status") == "passed":
                 work.setdefault("resume", {})["summary"] = "Code changed after the last verification; verification is now stale."
             save_work(repo, work)
+        if work:
+            reconcile_native_sdd_state(repo, work)
         return respond({"decision": "allow"})
 
     if event in {"session_end", "subagent_stop"}:

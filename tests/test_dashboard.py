@@ -139,8 +139,9 @@ class DashboardTests(unittest.TestCase):
         self.assertIn("openspec/changes/new-auth-flow/tasks.md", paths)
         data = build_dashboard_overview(self.repo)
         item = data["work_items"][0]
-        self.assertEqual(item["execution"]["current_phase"], "implementation")
-        self.assertEqual(item["execution"]["phase_source"], "native-sdd-artifacts")
+        self.assertEqual(item["execution"]["current_phase"], "planning")
+        self.assertEqual(item["execution"]["phase_source"], "cao-state")
+        self.assertEqual(item["native_sync"]["state"], "unbound")
 
     def test_speckit_discovers_tasks_without_native_ref(self):
         self.work["sdd"] = {"provider": "speckit", "native_ref": "", "artifacts": []}

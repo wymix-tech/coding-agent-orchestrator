@@ -210,6 +210,12 @@ Intake is exempt from this gate: writes inside a provider's native output direct
 requirement/PRD must exist before `cao start` can create one — blocking those writes deadlocks intake.
 Product writes elsewhere are denied without an active Work Item. Missing/stale assessments within an active Work still produce reminders. Mixed native/product writes are denied without Work; copying a read-only input to a native output remains allowed.
 
+### Native state synchronization
+
+A current Work-bound `sdd spec bind` source takes precedence over filename matching and older native references. Chinese requirement titles and English SPEC names do not need to match. Native file status changes synchronize on host tool results and before context/handoff events; CLI and Dashboard reads repair older bound Work records. Source paths must remain provider-owned, missing or ambiguous sources are not replaced with another file, and plain artifact existence does not prove implementation.
+
+Dashboard task details show native synchronization separately: observed state/source, missing association, unavailable source, or unrecognized status. BMAD `in-progress` projects to implementation and `in-review`/`done` to review. OpenSpec/Spec Kit use the associated change/feature's actual tasks. Later verification checkpoints are retained; only explicit `cao done` closes Work. Synchronization does not refresh SPEC/criteria hashes, reanchor requirements, satisfy reviews or certify verification. Changed native input still requires explicit review/rebinding and fresh checks.
+
 ### Handoff history and inspection
 
 Every Handoff is stored as an immutable record at `.orchestrator/handoffs/<work-id>/<handoff-id>.json`. The newest record is derived from the history directory. This directory layout is the only supported Handoff storage format; older flat-file Handoff records are not loaded or migrated.
