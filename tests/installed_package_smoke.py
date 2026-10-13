@@ -123,6 +123,20 @@ def main():
                 assert "sdd_acceptance" in cli("gate", "show")["gates"]["satisfied"]
                 cli("done")
                 records.append({"provider_fixture": provider, "simulated_host": host, "profile": "standard", "status": "completed", "work": full_id})
+                if provider == "bmad":
+                    req = cli("requirement", "next-id", "--title", "Installed oneshot fixture")
+                    (repo / req["path"]).write_text("# Fixture intent\nThe existing fixture check passes.\n", encoding="utf-8")
+                    native_id = cli("start", "--requirement", req["path"])["work_item"]["id"]
+                    cli("path", "assess", "--profile", "light", "--reason", "bounded native oneshot")
+                    oneshot = repo / "_bmad-output/spec-oneshot.md"
+                    oneshot.write_text("---\nroute: 'oneshot'\nstatus: 'done'\n---\n## Intent\nThe explicit fixture test passes.\n## Implementation Notes\nFixture execution.\n", encoding="utf-8")
+                    before = oneshot.read_bytes()
+                    bound = cli("sdd", "spec", "bind", "--spec", "_bmad-output/spec-oneshot.md")
+                    assert bound["binding"]["mode"] == "bmad_oneshot", bound
+                    cli("verify")
+                    cli("done")
+                    assert oneshot.read_bytes() == before
+                    records.append({"provider_fixture": provider, "simulated_host": host, "profile": "light-oneshot", "status": "completed", "work": native_id})
         print(json.dumps({"installed_runner": installation["runner"], "resolved_invocation": installation["invocation"],
                           "fixture_cases": records}, indent=2))
 

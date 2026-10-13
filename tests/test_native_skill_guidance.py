@@ -92,16 +92,16 @@ class SkillDiscovery(unittest.TestCase):
             self.assertIn(".claude/skills/bmad-build/SKILL.md", guidance)
             self.assertNotIn(".agents/skills/bmad-build", guidance)
 
-    def test_cli_driven_providers_get_cli_guidance(self):
+    def test_cli_setup_is_distinct_from_agent_workflow_guidance(self):
         """No installed skills: say how the provider actually runs workflows."""
         with tempfile.TemporaryDirectory() as td:
             repo = pathlib.Path(td)
             openspec = cao.skill_invocation_guidance(repo, "openspec", "openspec-ff")
             speckit = cao.skill_invocation_guidance(repo, "speckit", "specify")
-            self.assertIn("own CLI (`openspec`)", openspec)
-            self.assertIn("own CLI (`specify`)", speckit)
+            self.assertIn("CLI (`openspec`)", openspec)
+            self.assertIn("CLI (`specify`)", speckit)
             for provider in ("openspec", "speckit"):
-                self.assertNotIn("agent skill", cao.skill_invocation_guidance(repo, provider, "x"))
+                self.assertIn("agent", cao.skill_invocation_guidance(repo, provider, "x"))
 
     def test_an_unlisted_entrypoint_lists_the_installed_skills(self):
         with tempfile.TemporaryDirectory() as td:

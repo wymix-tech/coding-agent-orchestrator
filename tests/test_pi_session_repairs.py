@@ -48,8 +48,8 @@ class CompoundEntrypointTests(RepairCase):
                      "python3 -m bmad.workflow", "uv run --project app python bmad-fixture.py",
                      "uvx --from bmad-method bmad workflow implement", "env NODE_ENV=test bmad-build",
                      "sh -c 'mkdir -p _bmad-output && bmad-build'", "sh _bmad/scripts/native.sh"),
-            "openspec": ("openspec apply", "npx --yes @fission-ai/openspec@latest apply",
-                         "mkdir -p openspec/changes && openspec apply", "python openspec-fixture.py"),
+            "openspec": ("openspec-apply", "npx --yes @fission-ai/openspec@latest instructions apply",
+                         "mkdir -p openspec/changes && openspec-apply", "python openspec-fixture.py"),
             "speckit": ("/speckit.specify", "specify init --here", "uvx --from specify-cli specify init",
                         "python speckit-fixture.py", "sh .specify/scripts/bash/create-new-feature.sh"),
         }

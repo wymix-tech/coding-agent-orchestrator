@@ -137,6 +137,11 @@ for(const step of ['native-sdd-workflow-completed','done','complete','closed']) 
  assert.notEqual(vm.runInContext('currentFlowIndex('+JSON.stringify(active)+')',context),6);
 }
 assert.equal(vm.runInContext('currentFlowIndex({status:"completed"})',context),6);
+const oneshot={...work,sdd:{...work.sdd,spec_binding:{mode:'bmad_oneshot'}},light_spec:{ready:true,state:'valid',note:'Native intent only'}};
+const native=vm.runInContext('renderAcceptance('+JSON.stringify(oneshot)+')',context);
+assert.ok(native.includes('原生 oneshot 意图'));assert.ok(native.includes('Native intent only'));
+assert.ok(!native.includes('原生规范 / 验收标准'));
+
 '''
         result = subprocess.run([shutil.which("node"), "-e", script, str(ROOT / "scripts/dashboard.html"), json.dumps(item)],
                                 text=True, capture_output=True, timeout=10)

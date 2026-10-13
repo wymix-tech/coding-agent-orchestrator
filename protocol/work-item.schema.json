@@ -56,7 +56,8 @@
               "required": ["path", "sha256"],
               "additionalProperties": true
             },
-            "criteria_section": {"type": ["string", "null"]}
+            "criteria_section": {"type": ["string", "null"]},
+            "mode": {"enum": ["bmad_oneshot"], "description": "BMAD light binds native oneshot Intent; no separate acceptance checklist is asserted."}
           },
           "required": ["version", "requirement_sha256", "provider", "spec", "criteria", "criteria_section"],
           "additionalProperties": false

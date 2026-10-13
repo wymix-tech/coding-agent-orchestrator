@@ -270,3 +270,40 @@ Pi 的 missing-console 测试在将 PATH 隐藏后需显式设置绝对 `CAO_TES
 全量通过后补充一个窄兼容修复：显式降为 light 后，技术标准重锚不读取可选的旧独立验收来源；相同场景已扩展到正式降级回归。最后50项兼容检查全部通过，覆盖独立验收、light、技术标准重锚与证据绑定，结果见 `/tmp/cao-final-compatibility.log`。最终 wheel 已重新构建并复验。
 
 本轮在当前分支形成一个本地集成提交；未推送、合并或发布。
+
+## BMAD oneshot 与三种 Provider 的 light 适配（2026-10-13）
+
+用户授权 CAO 适配 BMAD 原生 oneshot，而非要求 BMAD 恢复被删除的 Tasks & Acceptance。
+当前实现只在 BMAD/light、未显式提供 criteria selector 时识别独立且字面有效的
+`route: oneshot`、原生状态及唯一 Intent/Implementation Notes 标题，并绑定非空 Intent。
+状态保存 `spec_binding.mode=bmad_oneshot`、当前需求和文档字节摘要；不修改 SPEC、补造
+标准文档或流程/计划记录。它证明原生实现意图结构有效及项目验证新鲜，不声明存在独立
+验收清单或已语义覆盖全部约束。显式标准绑定优先，其他 Provider/profile 没有此 fallback。
+
+OpenSpec 指导改为已安装 Agent `/opsx:propose` / `/opsx:apply`，保留 schema 对 tasks
+与上游产物的要求；ff 是产物生成捷径，减产物需要显式配置/验证的 schema。
+Spec Kit 区分已安装 bug 扩展的 assess/fix/test 与新功能 specify/plan/tasks/implement；
+后者保留原生 plan.md/tasks.md，并按安装版本执行 converge。没有自动安装扩展。
+
+入口发现支持 opsx Skill 名，指导区分 CLI setup/status 与 Agent 实现。已知错误
+`bmad quick-fix`、`openspec apply`、`specify implement` 等及常见字面 runner 包装
+不能默认作为原生执行入口；有理由的自定义集成仍遵循已有例外审计边界。
+仅 BMAD Skill 被指导执行其专用 renderer，不把该约定强加给其他 Provider。
+协议、Dashboard、宿主模板与 README/DESIGN/SKILL 同步，UI 区分原生 oneshot 意图。
+
+正式回归：`tests/test_provider_light_adaptation.py`（11 项），覆盖不补造产物的
+原生成功对照、错误/缺失/重复路由、空/重复 Intent、不同 Provider/profile、显式标准优先、
+改动后重绑/重验、需求变化、真实测试失败、CLI/Agent 混淆与安装资产。
+原计划完成门禁的本地夹具改用 Agent 调用名，继续保留原负向检查，未把不存在的 CLI
+作为成功对照。Dashboard 用实际页面 JavaScript 的 DOM 夹具，并非完整浏览器视觉验收。
+
+定向87项、最后路径指导/oneshot的22项、Pi桥13项及TypeScript检查均通过。
+wheel/editable各21个安装组合通过，其中3个新增BMAD oneshot组合覆盖三类模拟宿主。
+这些是checkout外的真实包和真实fixture unittest验证，Provider和Host仍为本地模拟，
+没有声称在用户异机Pi或真实在线SDD上完成端到端测试。
+首轮544项全量只有1项旧提示断言失败（OpenSpec指导漏Provider名称），已补回名称；
+最终全量结果记录于后续完成条目。
+
+最终固定源码全量：**544项通过，257.090秒，OK**，日志
+`/tmp/cao-oneshot-final-full.log`。Pi的13项零跳过、TypeScript、wheel/editable各21个
+安装组合、compileall、Shell语法、diff空白均通过。本轮形成本地提交，未推送、合并或发布。

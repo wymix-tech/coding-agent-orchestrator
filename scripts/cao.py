@@ -145,7 +145,7 @@ SDD_CATALOG: dict[str, dict[str, Any]] = {
             "project_command": ["openspec", "init", "--tools", "{tools}"],
         },
         "path_guidance": {
-            "light": "Use the smallest native OpenSpec change workflow supported by the installed version. Do not create unrelated planning artifacts; preserve required native preconditions.",
+            "light": "For a clear small OpenSpec change, invoke the installed /opsx:propose then /opsx:apply agent commands (host syntax varies), and sync/archive after checks. Expanded /opsx:ff is available only if installed/enabled and creates artifacts, not a skip. Follow the active schema: default apply requires tasks and upstream artifacts; keep them concise rather than deleting them. A smaller custom schema must be explicitly configured and validated. CAO light adds no workflow/plan registration requirement.",
             "standard": "Create or update the relevant OpenSpec proposal/spec/tasks as needed, apply the change, and verify the affected behavior.",
             "comprehensive": "Use a complete OpenSpec change with explicit proposal, affected specs, design/tasks where supported, staged implementation, and verification. Split independent changes when that reduces risk.",
         },
@@ -153,7 +153,7 @@ SDD_CATALOG: dict[str, dict[str, Any]] = {
         # ordinary product source files cannot be recorded as SDD artifacts.
         "output_dirs": ["openspec/"],
         # Tokens that identify this provider's own CLI/skill entrypoints.
-        "workflow_hints": ["openspec"],
+        "workflow_hints": ["openspec", "opsx"],
         # Optional native workflow name allow-list. Left empty on purpose: provider
         # versions differ, so an incomplete list would reject valid workflows. When
         # empty, entrypoint validation falls back to the provider-identity check.
@@ -183,7 +183,7 @@ SDD_CATALOG: dict[str, dict[str, Any]] = {
             ],
         },
         "path_guidance": {
-            "light": "Use the smallest build Skill actually installed by this BMAD version; read its complete SKILL.md and exact renderer. Bind a minimal SPEC and explicit acceptance criteria for light; do not guess a quick-fix CLI command. Do not generate full PRD, architecture, epics, or stories unless the task's risk or uncertainty requires them.",
+            "light": "Invoke the installed bmad-build Skill and its exact renderer; bmad quick-fix is not an official CLI command. Let Build choose oneshot for clear small low-risk work; do not force the route or bypass its reviewers. A oneshot SPEC intentionally omits Tasks & Acceptance: bind it with cao sdd spec bind --spec <native-spec.md> without criteria selectors; CAO recognizes its native Intent and current requirement. Explicit criteria can still be bound. Do not restore deleted sections or create PRD/architecture/stories just for CAO.",
             "standard": "Use relevant BMAD analysis/specification or build workflows and create only the native artifacts needed to clarify scope, implement, review, and verify the change.",
             "comprehensive": "Use the applicable full BMAD planning path, including requirements, architecture, epics/stories when warranted, then implement in stages with explicit review and verification.",
         },
@@ -207,7 +207,7 @@ SDD_CATALOG: dict[str, dict[str, Any]] = {
             "project_command": ["specify", "init", "--here", "--force", "--non-interactive", "--integration", "codex", "--ignore-agent-tools"],
         },
         "path_guidance": {
-            "light": "Use the minimal Spec Kit-native implementation path while preserving any required Specify/spec artifact. Omit optional clarification, checklist, or analysis steps when they add no safety value.",
+            "light": "For an existing-behavior bug, use speckit-bug-assess -> speckit-bug-fix -> speckit-bug-test only when the bug extension is installed; its assessment.md can serve as scoped repair intent with explicit expected behavior. Do not assume the extension exists or auto-install it. For a small new feature use the installed specify -> plan -> tasks -> implement skills and converge where supported: native implement requires plan.md and tasks.md. Keep documents short; optional clarify/analyze/checklist steps need not be added. These are agent invocations, not specify implement CLI commands. CAO light does not waive native preconditions.",
             "standard": "Use the relevant Spec Kit Specify/Plan/Tasks/Implement steps needed for the change; create only the specifications and plans justified by the scope.",
             "comprehensive": "Use a full Spec Kit specification, planning, task decomposition, and staged implementation flow. Apply clarification and analysis steps where uncertainty or integration risk warrants them.",
         },
@@ -328,8 +328,8 @@ def provider_native_skills(repo: Path, provider: str) -> list[dict[str, str]]:
 
     Providers differ in how they ship workflows, so this scans every known skill
     root rather than assuming one. BMad installs them as `.agents/skills/bmad-<workflow>/`
-    skills; OpenSpec and Spec Kit are primarily CLI-driven and usually install
-    none. Each result carries the real repo-relative path, so guidance can never
+    skills; OpenSpec and Spec Kit expose their implementation commands as agent
+    skills or host prompt assets too. Each result carries the real repo-relative path, so guidance can never
     point at a plausible-looking but wrong location.
     """
     hints = [str(hint).strip().lower() for hint in (SDD_CATALOG.get(provider, {}).get("workflow_hints") or [provider])]
@@ -365,21 +365,20 @@ def skill_invocation_guidance(repo: Path, provider: str, entrypoint: str) -> str
                 f" This provider exposes this workflow as an agent skill, not a shell command: invoke the "
                 f"`{matched['name']}` skill (read `{matched['rel_path']}` and follow it, including its native "
                 f"preconditions). Do not substitute your own implementation for running it."
-                " Read the complete SKILL.md and run its exact project-root renderer; do not guess a skill/scripts location. Renderer success loads instructions, it is not workflow completion. Preserve the configured user language."
+                + (" Read the complete SKILL.md and run its exact project-root renderer; do not guess a skill/scripts location. Renderer success loads instructions, it is not workflow completion. Preserve the configured user language."
+                   if provider == "bmad" else " Read the complete installed Skill and follow its native prerequisites. CLI setup/status does not execute the implementation Skill. Preserve the configured user language.")
             )
         listed = ", ".join(f"`{s['name']}`" for s in skills)
         return (
             f" This provider's installed agent skills are: {listed}. Invoke the one matching this workflow "
             f"(read its SKILL.md and follow it). Do not substitute your own implementation."
         )
-    cli = str((SDD_CATALOG.get(provider) or {}).get("cli") or "").strip()
-    if cli:
-        return (
-            f" This provider runs its workflows through its own CLI (`{cli}`), not by writing code directly; "
-            f"run the native workflow with that CLI and record the exact command you ran. "
-            f"Do not substitute your own implementation."
-        )
+    if provider == "openspec":
+        return (" OpenSpec uses its CLI (`openspec`) for setup/status/instructions; implementation is an agent command or Skill. Invoke the installed /opsx:propose and /opsx:apply using the host's syntax, follow the active schema, and record the actual invocation. Do not run an invented `openspec apply` CLI subcommand.")
+    if provider == "speckit":
+        return (" Spec Kit uses its CLI (`specify`) for setup/extensions; specify/plan/tasks/implement are agent commands or Skills, not terminal subcommands. Read the installed integration's instructions and use its invocation syntax. Feature implement requires plan.md and tasks.md; use the separate bug-assess/fix/test path only if its extension is installed.")
     return ""
+
 
 
 def workflow_skill_identity(repo: Path, provider: str, entrypoint: str) -> str | None:
@@ -402,6 +401,36 @@ def workflow_skill_identity(repo: Path, provider: str, entrypoint: str) -> str |
     return None
 
 
+def mistaken_terminal_workflow(provider: str, entrypoint: str, depth: int = 0) -> bool:
+    """Specific verified CLI/agent confusion, including bounded literal runners."""
+    if depth >= 8:
+        return False
+    cli_name, commands = {"bmad": ("bmad", {"quick-fix"}),
+                          "openspec": ("openspec", {"apply", "propose", "ff"}),
+                          "speckit": ("specify", {"specify", "plan", "tasks", "implement", "converge"})}.get(provider, ("", set()))
+    if not cli_name:
+        return False
+    identities = workflow_command_identities(entrypoint)
+    try:
+        segments = _shell_segments(entrypoint)
+    except ValueError:
+        return False
+    for tokens in segments:
+        head = tokens[0].replace("\\", "/").rsplit("/", 1)[-1].lower() if tokens else ""
+        if head in {"sh", "bash"} and len(tokens) > 2 and tokens[1] in {"-c", "-lc"}:
+            if mistaken_terminal_workflow(provider, tokens[2], depth + 1):
+                return True
+        for identity in identities:
+            base = identity.replace("\\", "/").rsplit("/", 1)[-1].lower().removesuffix(".exe").removesuffix(".cmd")
+            native = (base == cli_name or (provider == "openspec" and
+                      (identity == "@fission-ai/openspec" or identity.startswith("@fission-ai/openspec@"))))
+            if native and identity in tokens:
+                index = tokens.index(identity)
+                if index + 1 < len(tokens) and tokens[index + 1] in commands:
+                    return True
+    return False
+
+
 def validate_workflow_entrypoint(provider: str, name: str, entrypoint: str) -> dict[str, Any]:
     """Reject placeholder entrypoints and entrypoints unrelated to the provider.
 
@@ -414,6 +443,8 @@ def validate_workflow_entrypoint(provider: str, name: str, entrypoint: str) -> d
     tokens = workflow_entrypoint_tokens(entrypoint)
     if not tokens:
         return {"ok": False, "reason": "workflow entrypoint is empty"}
+    if mistaken_terminal_workflow(provider, entrypoint):
+        return {"ok": False, "reason": "This is not a supported terminal workflow entrypoint. Invoke the installed provider agent Skill/command using its host syntax."}
     meta = SDD_CATALOG.get(provider) or {}
     declared = meta.get("workflows") or {}
     known: list[str] = []
@@ -4293,7 +4324,8 @@ def cmd_path_assess(args: argparse.Namespace) -> int:
         execution["next_action"] = action(
             "agent",
             f"Apply the {assessment['profile']} path using {provider}'s native workflow. {assessment['provider_guidance']} "
-            + (f'Bind the native SPEC and explicit criteria with `cao sdd spec bind --spec <provider-spec.md> --criteria-section "<heading>" --work {work["id"]}`. Light does not require workflow/plan/independent acceptance registration. '
+            + ((f'Bind a BMAD oneshot SPEC with `cao sdd spec bind --spec <native-spec.md> --work {work["id"]}` without criteria selectors. For ordinary SPECs select explicit criteria with --criteria/--criteria-section. Light does not require workflow/plan/independent acceptance registration. '
+                if provider == "bmad" else f'Bind the native SPEC and explicit criteria with `cao sdd spec bind --spec <provider-spec.md> --criteria-section "<heading>" --work {work["id"]}`. Light does not require workflow/plan/independent acceptance registration. ')
                if assessment["profile"] == "light" else
                f"Before implementation, select and record the native workflow with `cao sdd workflow select --name \"<native workflow name>\" --entrypoint \"<native workflow command or skill>\" --work {work['id']}`. Then execute it and record the run with `cao sdd workflow execute --command \"<command actually run>\" --exit-code <code> --work {work['id']}`. Finally record its real output files with `cao sdd workflow complete --work {work['id']} --artifact <repo-relative-file>` (repeat --artifact for each produced native artifact). Outputs must live under the provider's own directory; product source files are not SDD artifacts. `cao done` blocks until this contract is satisfied. " if provider in SDD_CATALOG else "")
             + f"Required gates: {gate_text}. Record observed manual reviews with `cao gate satisfy --gate <gate> --evidence \"<what was done>\"`; verification and tests gates come from fresh configured scripts, not manual claims. `cao done` blocks until all are satisfied. Reassess only if the scope, risk, or requirement materially changes.",

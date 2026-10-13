@@ -47,8 +47,8 @@ def _write(rel_path: str, content: str):
 # each provider gets a plausible one.
 PROVIDER_ENTRYPOINTS = {
     "bmad": "bmad-build",
-    "openspec": "openspec apply",
-    "speckit": "specify implement",
+    "openspec": "openspec-apply",
+    "speckit": "speckit-implement",
 }
 
 

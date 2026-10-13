@@ -154,7 +154,7 @@ standard       ordinary feature/fix requiring some analysis/design, tests and re
 comprehensive  major uncertainty, cross-system or high-risk change; explicit planning and stronger gates
 ```
 
-`light` uses a minimal native SPEC with explicit criteria plus fresh project verification. It does not require workflow registration, plans/no-plan or independent final acceptance. Standard/comprehensive retain the full native workflow and independent acceptance contract.
+`light` uses a minimal native SPEC with explicit criteria (or recognized BMAD oneshot Intent) plus fresh project verification. It does not require workflow registration, plans/no-plan or independent final acceptance. Standard/comprehensive retain the full native workflow and independent acceptance contract.
 
 Record the assessment in the Work Item:
 
@@ -438,3 +438,11 @@ Use `cao language show` to inspect the setting, `cao language set --language <lo
 If the user expresses an ongoing language preference that differs from `language.user`, update the project setting with `cao language set --language <locale>` before producing further SDD artifacts; do not change the preference merely for a one-off explicitly requested artifact.
 
 Preserve user-selected language/framework/test runner and delivery shape through specification, implementation and acceptance. Missing dependencies block the selected checks; do not silently substitute main programs for JUnit 5 or install system dependencies. Configure wrappers before feature work; the initial skeleton may fail. Register a combined tests/general wrapper once. Read installed native Skills completely, including their exact renderer; a render exit 0 only loads instructions. Re-select when the workflow changes.
+
+## Provider-specific light execution
+
+BMAD: use installed `bmad-build`; it selects `oneshot` for suitable small work. Follow its exact renderer and reviewers, not an invented `bmad quick-fix`. A recognized oneshot SPEC intentionally has only metadata, Intent and Implementation Notes. Bind with `cao sdd spec bind --spec <native-spec.md>` without criteria selectors: CAO binds native Intent and the current requirement, preserves the file unchanged and does not claim an explicit acceptance checklist. Normal SPECs or explicitly selected criteria keep the existing structural standard checks. Rebind changed bytes and re-verify; no separate workflow/plan/final-acceptance record is required for light.
+
+OpenSpec: use installed `/opsx:propose` and `/opsx:apply` Agent commands; preserve active schema prerequisites (default apply requires tasks and upstream artifacts). `/opsx:ff` generates those artifacts and requires the expanded commands installed. Reduce process only through an explicitly configured/validated custom schema, not by deleting prerequisites. CLI setup/status is not agent implementation.
+
+Spec Kit: existing-behavior bugs may use `speckit-bug-assess` → `speckit-bug-fix` → `speckit-bug-test` only if the extension is installed. Bind assessment scope and explicit expected behavior; do not auto-install. New features use installed specify/plan/tasks/implement Skills, keeping required `plan.md` and `tasks.md` concise, and converge where supported. `specify implement` is not a terminal workflow command. Native prerequisites still apply even when CAO light has no plan-registration gate.

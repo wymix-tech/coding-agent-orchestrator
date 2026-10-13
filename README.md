@@ -184,7 +184,7 @@ and how the change can be verified. CAO does not use numeric scoring or a fact/e
 | `standard` | Ordinary feature or bug fix with limited design work | Scope/design as needed, tests, implementation review, verification |
 | `comprehensive` | High-risk, broad, materially ambiguous, or hard-to-reverse change | Requirements and design review, staged implementation, stronger verification |
 
-`light` needs a current provider-native SPEC, explicit nonempty acceptance criteria and fresh configured project verification. It does not require workflow select/execute/complete, plans/no-plan or independent SDD acceptance. Standard/comprehensive retain native workflow and related plan/review gates and also require independent final SDD acceptance. Declared risks still upgrade the profile.
+`light` needs a current provider-native SPEC, explicit nonempty acceptance criteria (or recognized BMAD oneshot Intent) and fresh configured project verification. It does not require workflow select/execute/complete, plans/no-plan or independent SDD acceptance. Standard/comprehensive retain native workflow and related plan/review gates and also require independent final SDD acceptance. Declared risks still upgrade the profile.
 
 CAO rejects placeholder workflow entrypoints and output paths outside the provider's directory. When installed agent Skills exist, use their actual SKILL.md and renderer instead of guessing CLI subcommands. Re-select after changing workflows. Explicit `--allow-unverified --reason "<why>"` exceptions are audited for select, execute and complete; they do not replace final SDD acceptance.
 
@@ -562,3 +562,28 @@ For installed Skill executors, configure `mode: "skill"` and the real Skill name
 Declare exact new report paths under `<provider-output>/cao-acceptance/<work-id>/` in `outputs` before verification. Only those validated Work-owned paths are excluded from technical and SDD snapshots; creating an unregistered report changes inputs and yields stale. Existing inputs, source files, directory-wide exclusions and symlinked reports cannot be used as report outputs. Source/declaration changes require explicit reanchor and fresh checks. New failures never reuse old success. Inspect current state with `cao sdd acceptance show`.
 
 Historical completed work is not reopened or recertified. Existing active light work binds its SPEC/criteria and re-verifies; full profiles configure and execute current final acceptance. The Dashboard displays project verification and independent acceptance separately, with light acceptance marked not applicable. Only Work status `completed` means closed.
+
+## Native light paths and BMAD oneshot
+
+| Provider | Native light process | CAO binding |
+|---|---|---|
+| BMAD | Installed `bmad-build`; let it select `oneshot` when suitable and follow native reviewers | Recognized oneshot SPEC binds native Intent automatically; normal SPEC binds explicit criteria |
+| OpenSpec | Installed `/opsx:propose` → `/opsx:apply` → sync/archive after checks | Bind actual native spec/scenarios; active schema prerequisites still apply |
+| Spec Kit bug | Installed `speckit-bug-assess` → `speckit-bug-fix` → `speckit-bug-test` extension | Bind scoped assessment/expected behavior; no feature workflow required first |
+| Spec Kit new feature | Installed specify → plan → tasks → implement (converge where supported) | Keep native `plan.md` and `tasks.md`; CAO does not add plan-registration gates for light |
+
+BMAD oneshot deliberately deletes Tasks & Acceptance. CAO recognizes literal unique frontmatter `route: oneshot`, native execution status (`in-progress`, `in-review`, `done`), one nonempty `## Intent` and one `## Implementation Notes`. Only BMAD **light** with no explicit criteria selector uses this fallback:
+
+```bash
+cao sdd spec bind --spec _bmad-output/implementation-artifacts/spec-fix.md
+cao verify
+cao done
+```
+
+The binding stores `mode: bmad_oneshot`, Intent's source/section, current requirement hash and native file hash. CAO neither edits the SPEC nor creates a replacement acceptance document, workflow run or plan. It checks native build intent structurally and project verification, not an explicit checklist or semantic coverage of every requirement. Explicit `--criteria` / `--criteria-section` takes precedence. A source/route/requirement change invalidates evidence and needs review/rebinding and fresh verification; the ordinary binding behavior is unchanged.
+
+OpenSpec's default schema uses tasks and upstream artifacts before apply. `/opsx:ff` reduces interaction, not artifacts, and may require expanded commands to be enabled. A smaller workflow requires an explicitly selected, validated custom schema; do not delete default prerequisites to satisfy CAO light. Bind real scenarios/criteria; do not invent behavior changes for pure refactoring.
+
+Spec Kit feature implementation explicitly reads `plan.md` and `tasks.md`; keep them concise instead of skipping them. Bug fixing is a separate opt-in extension with assessment/fix/test reports in `.specify/bugs/<slug>/`. Check installation before invoking its skills, and preserve explicit expected behavior in the assessment. Do not install an extension automatically or use the bug route for a new feature. `openspec` / `specify` CLI setup, status and instruction retrieval are distinct from implementation Agent commands; discover the installed host syntax and assets rather than guessing terminal subcommands.
+
+Source contracts verified on 2026-10-13: [BMAD stable oneshot routing](https://github.com/bmad-code-org/BMAD-METHOD/blob/V6.12/src/bmm-skills/ship/bmad-build/step-02-plan.md), [OpenSpec workflow](https://github.com/Fission-AI/OpenSpec/blob/main/docs/workflows.md), [OpenSpec schema](https://github.com/Fission-AI/OpenSpec/blob/main/schemas/spec-driven/schema.yaml), [Spec Kit bug guide](https://github.github.com/spec-kit/guides/bugfix.html), [Spec Kit implement](https://github.com/github/spec-kit/blob/main/templates/commands/implement.md). Installed version instructions remain authoritative.
