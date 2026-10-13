@@ -352,3 +352,29 @@ L77–78 将状态改为 `in-progress`；L174 改为 `in-review`，但 L183 重�
 Pi **15 项零失败/跳过**、严格 TypeScript、Skill 校验、compileall、Shell 语法与 diff 检查通过。
 最新 wheel 在 checkout 外通过 **21 个本地夹具安装场景**，日志 `/tmp/cao-sync-installed.log`。
 原生 Provider 与宿主事件仍为本地夹具；没有声称重跑用户异机 Pi 模型会话或真实在线 SDD。
+
+## 2026-10-13：BMAD 需求整体完成后才进入 verify
+
+用户要求当前需求在 BMAD 共享 sprint 状态表中的全部执行项为 done 后才能进入 CAO verify。
+原契约只在 full 路径的 done 检查关联计划，且只识别 `.yaml`，不能阻止提前运行验证脚本。
+
+- `.yaml`/`.yml` 均支持；`cao sdd plan bind --plan-item <path>#<story-id-or-epic-N>` 在 Work 内保存明确关联，不修改原生文件或验收锚。
+- 整个 epic 的选择动态包含新增 story，并保留绑定时的 story 身份；显式重复 workflow complete 或 plan bind 都不能将原需求范围缩成最后一个 story。
+- 只检查当前需求的关联 story；其他需求、epic 汇总状态和 optional retrospective 不重复计入。story 本身必须恰好为 done，optional/未知状态不能绕过。
+- verify 在配置/CLI 脚本执行之前检查；light、standard、comprehensive 均适用。没有 sprint tracker 的原生 oneshot/light 保持可用。
+- 共享表存在但关联缺失、删除文件/已关联 story、重复或畸形状态、跨 Provider/越界/业务软链接来源均不放行；no-plan 不能跳过已存在的 sprint tracker。
+- done 同样检查聚合状态；关联范围和选中状态参与验证新鲜度，执行期间的新增 story/状态回退使结果 stale。
+- 原生阶段按整个关联范围聚合：全未启动仍为 ready；部分已开始/完成为 in_progress；全 done 才到 review。旧的单 SPEC review 游标在整体未完成时可修复，后续验证检查点仍保留并报告门禁。
+- CAO/SDD 写入及直接开发测试没有新增拦截；两类宿主模板与 README/DESIGN 同步指导 Agent 建立完整需求关联。
+
+新增 **15 项** `tests/test_bmad_verify_plan.py` 回归。全量 **590 项通过**，文件互斥四组为
+136/157/147/150，日志 `/tmp/cao-bmad-plan-final-shard-{0,1,2,3}.log`。
+全量之后补充单 SPEC review 游标的窄修复，最终相关 **72 项通过**，日志 `/tmp/cao-bmad-plan-final-compat.log`。
+Pi **15 项零失败/跳过**、TypeScript、compileall、Shell 语法、diff 检查通过。
+最新 wheel 在 checkout 外通过既有 **21 个安装夹具组合**，以及新增
+**6 个 BMAD tracker 场景**（三种 host 配置 × 两种后缀），实际安装 CLI 验证部分完成拒绝、全部完成执行测试、新增 story 再拒绝。
+日志 `/tmp/cao-bmad-plan-installed-final.log` 和 `/tmp/cao-bmad-plan-installed-sprint.log`。
+Provider/宿主仍为本地夹具，没有声明真实异机模型或在线 BMAD 端到端实测。
+
+第一轮分片测试从 stdin 启动导致 multiprocessing spawn 找不到 `<stdin>`，改为有 main guard 的文件入口；
+原 BMAD 负向夹具假定 pending 计划仍能先 verify，已改为断言 verify 和 done 都拒绝。安装新增夹具最初缺少 `_bmad` marker，补齐本地模拟安装标记后六个场景通过。

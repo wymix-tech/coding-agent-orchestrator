@@ -593,3 +593,14 @@ OpenSpec's default schema uses tasks and upstream artifacts before apply. `/opsx
 Spec Kit feature implementation explicitly reads `plan.md` and `tasks.md`; keep them concise instead of skipping them. Bug fixing is a separate opt-in extension with assessment/fix/test reports in `.specify/bugs/<slug>/`. Check installation before invoking its skills, and preserve explicit expected behavior in the assessment. Do not install an extension automatically or use the bug route for a new feature. `openspec` / `specify` CLI setup, status and instruction retrieval are distinct from implementation Agent commands; discover the installed host syntax and assets rather than guessing terminal subcommands.
 
 Source contracts verified on 2026-10-13: [BMAD stable oneshot routing](https://github.com/bmad-code-org/BMAD-METHOD/blob/V6.12/src/bmm-skills/ship/bmad-build/step-02-plan.md), [OpenSpec workflow](https://github.com/Fission-AI/OpenSpec/blob/main/docs/workflows.md), [OpenSpec schema](https://github.com/Fission-AI/OpenSpec/blob/main/schemas/spec-driven/schema.yaml), [Spec Kit bug guide](https://github.github.com/spec-kit/guides/bugfix.html), [Spec Kit implement](https://github.com/github/spec-kit/blob/main/templates/commands/implement.md). Installed version instructions remain authoritative.
+
+
+BMAD requirement-wide verification: when a `sprint-status.yaml` or `.yml` exists, associate ALL stories belonging to the current requirement before `cao verify`:
+
+```sh
+cao sdd plan bind --plan-item _bmad-output/implementation-artifacts/sprint-status.yaml#epic-1 --plan-item _bmad-output/implementation-artifacts/sprint-status.yaml#epic-2
+```
+
+Repeat `--plan-item <path>#<story-id>` instead when an epic contains multiple requirements. A whole-epic selector includes future stories and retains the identities already bound, so deleting a bound story or completing just one story cannot reduce the scope. Only associated stories must be exactly `done`; unrelated epics and optional retrospectives do not block. Epic summary status itself is derived and is not counted twice. `in_process`, `in-progress`, `review`, backlog and unknown story states remain unfinished. Binding adds to prior scope without changing acceptance anchors or native files. `sdd workflow complete --plan-item` supports the same selectors and preserves prior associations.
+
+This check runs before either configured or CLI verification scripts, on light as well as full paths; an unresolved/missing/malformed source blocks rather than guessing all project items. It also applies at `cao done` and contributes selected plan states to verification freshness, so scope additions/regressions require a new successful verification. Aggregate sprint progress takes precedence over a single completed SPEC in native phase projection. Native oneshot/light without a sprint tracker needs no sprint binding. Direct developer tests and CAO/SDD artifact writes remain available while the plan is unfinished.

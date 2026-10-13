@@ -97,7 +97,7 @@ class PlanScopeTests(RepairCase):
         work = self.read_work(self.start())
         path = "_bmad-output/implementation-artifacts/sprint-status.yaml"
         self.write_plan(path, "development_status:\n  epic-1: done\n  1-1-story: done\n")
-        for ids in ([], ["missing"], ["epic-1"]):
+        for ids in ([], ["missing"], ["epic-1-retrospective"]):
             with self.subTest(ids=ids):
                 self.assertTrue(callable(getattr(cao, "bind_plan_scope", None)), "bind_plan_scope is missing")
                 with self.assertRaisesRegex(ValueError, "SHARED_PLAN_ITEM_BINDING_REQUIRED|PLAN_ITEM_INVALID"):

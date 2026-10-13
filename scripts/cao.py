@@ -2081,6 +2081,13 @@ def native_sync_state(repo: Path, work: dict[str, Any]) -> dict[str, Any]:
     provider = str(sdd.get("provider") or "").lower()
     if provider not in SDD_CATALOG or work.get("status") == "completed":
         return {"state": "not_applicable"}
+    plan = bmad_verification_plan_state(repo, work)
+    if plan["state"] != "not_applicable":
+        if plan["state"] == "blocked":
+            return {"state": "source_unavailable", "source": None, "next": plan["next"], "verification_plan": plan}
+        return {"state": "observed" if plan["canonical"] else "status_unavailable", "source": ", ".join(plan["observations"]),
+                "raw": plan["raw"], "canonical": plan["canonical"],
+                "next": plan.get("next"), "verification_plan": plan}
     candidates, anchor = _native_candidates(repo, provider, work, str(sdd.get("native_ref") or ""))
     if not candidates:
         explicit = sdd.get("spec_binding") is not None or bool(sdd.get("native_ref"))
@@ -2190,6 +2197,18 @@ def reconcile_native_sdd_state(repo: Path, work: dict[str, Any]) -> bool:
         if source_path:
             status_source = source_path.relative_to(repo).as_posix()
     canonical = _canonical_native_state(raw_state)
+    plan = bmad_verification_plan_state(repo, work)
+    if plan["state"] != "not_applicable":
+        if plan["state"] == "blocked":
+            raw_state = canonical = status_source = evidence_hash = task_counts = None
+        else:
+            raw_state = plan["raw"]
+            canonical = plan["canonical"]
+            status_source = ", ".join(plan["observations"])
+            evidence_hash = binding_digest(plan["observations"])
+            total = sum(len(item["states"]) for item in plan["observations"].values())
+            task_counts = {"total": total, "checked": total - len(plan["pending_plan_items"]),
+                           "unchecked": len(plan["pending_plan_items"])}
     old_native = sdd.get("native_state") if isinstance(sdd.get("native_state"), dict) else {}
     old_raw = old_native.get("raw")
     old_canonical = old_native.get("canonical")
@@ -2241,7 +2260,10 @@ def reconcile_native_sdd_state(repo: Path, work: dict[str, Any]) -> bool:
         execution = work.setdefault("execution", {})
         current_step = str(execution.get("step") or "").lower()
         later_checkpoint = bool(re.search(r"verif|test|review|audit|release", current_step)) or current_step == "done"
-        if canonical == "ready" and current_step in {"path-selected", "planning", "plan-selected", "sdd-planning", "native-sdd-workflow-selected"}:
+        aggregate_pending_review = plan["state"] == "pending" and current_step == "review"
+        if aggregate_pending_review:
+            later_checkpoint = False  # A single completed SPEC cannot finish the whole requirement.
+        if canonical == "ready" and (current_step in {"path-selected", "planning", "plan-selected", "sdd-planning", "native-sdd-workflow-selected"} or aggregate_pending_review):
             execution["step"] = "ready-for-dev"
             execution["next_action"] = action("agent", f"Native {provider} work is ready; begin implementation using the bound native work item.")
             work.setdefault("resume", {})["summary"] = f"Native SDD reports ready for implementation ({provider})."
@@ -2681,13 +2703,8 @@ def path_assessment_instruction(work: dict[str, Any] | None = None) -> str:
 # the requirement as complete (demo11 did exactly that).
 PLAN_ARCHIVE_MARKERS = ("/archive/",)
 
-# `sprint-status.yaml` line: an indented `name: state` pair whose value is a bare
-# state word (so metadata like `generated: 10-10-2026 23:30` does not match).
-SPRINT_STATUS_LINE = re.compile(r"^\s+(?P<name>[^#\s][^:]*?):\s*(?P<state>[a-z][a-z-]*)\s*$")
 SPRINT_DONE_STATES = frozenset({"done"})
-# Retrospectives are optional by definition, and an epic's state is derived from
-# its stories, so counting both would double-report the same work.
-SPRINT_IGNORED_NAMES = ("epic-", "-retrospective")
+SPRINT_STATUS_NAMES = ("sprint-status.yaml", "sprint-status.yml")
 
 TASK_PENDING_LINE = re.compile(r"^\s*[-*]\s*\[\s\]\s*(?P<task>\S.*?)\s*$")
 
@@ -2706,11 +2723,54 @@ def _pending_checkbox_tasks(path: Path) -> list[str]:
 
 def _sprint_states(path: Path) -> dict[str, str]:
     states = {}
+    in_status = False
+    seen_section = False
     for line in path.read_text(encoding="utf-8").splitlines():
-        match = SPRINT_STATUS_LINE.match(line)
-        if match:
-            states[match.group("name").strip().strip("\"'")] = match.group("state").strip()
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        if re.fullmatch(r"development_status:\s*(?:#.*)?", line):
+            if seen_section:
+                raise ValueError("PLAN_STATUS_INVALID: duplicate development_status")
+            seen_section = in_status = True
+            continue
+        if not line[0].isspace():
+            in_status = False
+            continue
+        if not in_status:
+            continue
+        match = re.fullmatch(r"[ \t]+(?P<name>[^#\s][^:]*?):[ \t]*(?:'(?P<single>[a-z][a-z_-]*)'|\"(?P<double>[a-z][a-z_-]*)\"|(?P<bare>[a-z][a-z_-]*))[ \t]*(?:#.*)?", line)
+        if not match:
+            raise ValueError("PLAN_STATUS_INVALID: " + path.name)
+        name = match.group("name").strip().strip("\"'")
+        if name in states:
+            raise ValueError("PLAN_STATUS_INVALID: duplicate " + name)
+        states[name] = next(match.group(key) for key in ("single", "double", "bare") if match.group(key))
+    if not seen_section:
+        raise ValueError("PLAN_STATUS_INVALID: missing/empty development_status")
     return states
+
+
+def _sprint_selected_states(path: Path, ids: list[str]) -> dict[str, str]:
+    """Epic selectors include their current and future stories, never another epic."""
+    states = _sprint_states(path)
+    selected = {}
+    for item in ids:
+        if item not in states:
+            raise ValueError("PLAN_ITEM_MISSING: " + path.name + "#" + item)
+        if re.fullmatch(r"epic-\d+", item):
+            prefix = item.removeprefix("epic-") + "-"
+            stories = {key: value for key, value in states.items()
+                       if re.match(r"^" + re.escape(prefix) + r"\d+-", key)}
+            if not stories:
+                raise ValueError("PLAN_ITEM_INVALID: empty " + item)
+            selected.update(stories)
+        elif item.startswith("epic-") or item.endswith("-retrospective"):
+            raise ValueError("PLAN_ITEM_INVALID: " + item)
+        else:
+            selected[item] = states[item]
+    if not selected:
+        raise ValueError("SHARED_PLAN_ITEM_BINDING_REQUIRED: " + path.name)
+    return selected
 
 
 def bind_plan_scope(repo: Path, work: dict, plan_paths: list[str],
@@ -2736,7 +2796,7 @@ def bind_plan_scope(repo: Path, work: dict, plan_paths: list[str],
     ambiguous = False
     public_roots = set(roots) | {(repo / "openspec/changes").resolve(), (repo / "specs").resolve()}
     for anchor in anchors:
-        for name in ("tasks.md", "sprint-status.yaml"):
+        for name in ("tasks.md", *SPRINT_STATUS_NAMES):
             path = anchor / name
             if path.is_file():
                 discovered.add(path.relative_to(repo).as_posix())
@@ -2747,13 +2807,15 @@ def bind_plan_scope(repo: Path, work: dict, plan_paths: list[str],
         if paths or discovered or old.get("mode") == "bound":
             raise ValueError("PLAN_SCOPE_REMOVAL_REQUIRES_REANCHOR")
         return {"version": 1, "mode": "none", "plans": []}
-    if not paths and old.get("mode") == "bound":
-        # Keep prior associations and add newly produced specific changes, never a public root.
-        paths.update(value for value in discovered if (repo / value).parent not in public_roots)
+    if old.get("mode") == "bound":
+        # Keep prior associations even on explicit repeat; a later native story
+        # completion must not replace the requirement-wide scope with one story.
+        if not paths:
+            paths.update(value for value in discovered if (repo / value).parent not in public_roots)
         for plan in old.get("plans", []):
             paths.add(plan["path"])
-            normalized[plan["path"]] = list(plan.get("item_ids") or [])
-    if not paths and any(Path(value).name == "sprint-status.yaml" for value in discovered):
+            normalized.setdefault(plan["path"], []).extend(plan.get("item_ids") or [])
+    if not paths and any(Path(value).name in SPRINT_STATUS_NAMES for value in discovered):
         raise ValueError("SHARED_PLAN_ITEM_BINDING_REQUIRED: " + ", ".join(sorted(discovered)))
     if not paths and ambiguous:
         return {"version": 1, "mode": "unresolved", "plans": []}
@@ -2770,12 +2832,16 @@ def bind_plan_scope(repo: Path, work: dict, plan_paths: list[str],
         if not path.is_file():
             raise ValueError("PLAN_SOURCE_INVALID: " + relative)
         ids = sorted(set(normalized.get(value, [])))
-        if path.name == "sprint-status.yaml":
-            states = _sprint_states(path)
+        if path.name in SPRINT_STATUS_NAMES:
             if not ids:
                 raise ValueError("SHARED_PLAN_ITEM_BINDING_REQUIRED: " + relative)
-            if any(item not in states or any(marker in item.lower() for marker in SPRINT_IGNORED_NAMES) for item in ids):
-                raise ValueError("PLAN_ITEM_INVALID: " + relative)
+            try:
+                selected = _sprint_selected_states(path, ids)
+                # Retain today's story identities as well as dynamic epic selectors:
+                # deleting a previously associated story must not shrink the scope.
+                ids = sorted(set(ids) | set(selected))
+            except ValueError as exc:
+                raise ValueError("PLAN_ITEM_INVALID: " + relative + ": " + str(exc)) from exc
         elif path.name != "tasks.md" or ids:
             raise ValueError("PLAN_FORMAT_UNSUPPORTED: " + relative)
         plans.append({"path": relative, "item_ids": ids})
@@ -2799,21 +2865,97 @@ def provider_pending_plan_items(repo: Path, work: dict) -> list[str]:
             raise ValueError("PLAN_SOURCE_MISSING: " + relative)
         if any(marker in f"/{relative}" for marker in PLAN_ARCHIVE_MARKERS):
             continue
-        if path.name == "sprint-status.yaml":
+        if path.name in SPRINT_STATUS_NAMES:
             ids = plan.get("item_ids") or []
             if not ids:
                 raise ValueError("SHARED_PLAN_ITEM_BINDING_REQUIRED: " + relative)
-            states = _sprint_states(path)
-            missing = [item for item in ids if item not in states]
-            if missing:
-                raise ValueError("PLAN_ITEM_MISSING: " + relative + "#" + ",".join(missing))
-            pending.extend(f"{relative}#{item} ({states[item]})" for item in ids
-                           if states[item] not in SPRINT_DONE_STATES and not states[item].startswith("optional"))
+            states = _sprint_selected_states(path, ids)
+            pending.extend(f"{relative}#{item} ({state})" for item, state in states.items()
+                           if state not in SPRINT_DONE_STATES)
         elif path.name == "tasks.md":
             pending.extend(f"{relative}: {item}" for item in _pending_checkbox_tasks(path))
         else:
             raise ValueError("PLAN_FORMAT_UNSUPPORTED: " + relative)
     return pending
+
+
+def bmad_verification_plan_state(repo: Path, work: dict) -> dict:
+    """Current requirement's aggregate BMAD execution gate, independent of SPEC status."""
+    sdd = work.get("sdd") or {}
+    if sdd.get("provider") != "bmad":
+        return {"ready": True, "state": "not_applicable"}
+    scope = sdd.get("plan_scope") or {}
+    plans = [plan for plan in scope.get("plans", []) if Path(plan.get("path", "")).name in SPRINT_STATUS_NAMES]
+    candidates = {repo / "_bmad-output" / name for name in SPRINT_STATUS_NAMES}
+    candidates.update(repo / "_bmad-output/implementation-artifacts" / name for name in SPRINT_STATUS_NAMES)
+    for ref in [sdd.get("native_ref"), ((sdd.get("spec_binding") or {}).get("spec") or {}).get("path"),
+                *((sdd.get("workflow") or {}).get("artifacts") or [])]:
+        if ref:
+            candidates.update((repo / str(ref)).parent / name for name in SPRINT_STATUS_NAMES)
+    if not plans and not any(path.exists() for path in candidates):
+        return {"ready": True, "state": "not_applicable"}
+    next_step = (f"Bind ALL stories or whole epics belonging to this requirement with `cao sdd plan bind --work {work['id']} "
+                 "--plan-item <sprint-status.yaml-or-yml>#<story-id-or-epic-N>` (repeat for all associated items). "
+                 "Continue the native workflow until every associated story is done, then run `cao verify`.")
+    try:
+        if scope.get("mode") != "bound" or not plans:
+            raise ValueError("BMAD_PLAN_SCOPE_REQUIRED")
+        if scope.get("requirement_sha256") not in {None, (work.get("requirement") or {}).get("sha256")}:
+            raise ValueError("PLAN_SCOPE_REQUIREMENT_CHANGED")
+        observations = {}
+        pending = []
+        for plan in plans:
+            dirs = [directory for directory in provider_output_dirs("bmad")
+                    if (repo.resolve() / directory).resolve() == repo.resolve() / directory]
+            path = provider_artifact(repo, plan["path"], dirs)
+            if not path.is_file():
+                raise ValueError("PLAN_SOURCE_MISSING: " + plan["path"])
+            states = _sprint_selected_states(path, plan.get("item_ids") or [])
+            observations[plan["path"]] = {"selectors": plan["item_ids"], "states": states}
+            pending.extend(f"{plan['path']}#{item} ({state})" for item, state in states.items() if state != "done")
+        values = [state for observation in observations.values() for state in observation["states"].values()]
+        if not pending:
+            raw = "done"
+        elif all(state in {"backlog", "drafted", "ready-for-dev", "ready_for_dev"} for state in values):
+            raw = "ready_for_dev"
+        elif any(state in {"in-progress", "in_progress", "in_process", "review", "in-review", "done"} for state in values):
+            raw = "in_progress"
+        else:
+            raw = None
+        return {"ready": not pending, "state": "pending" if pending else "done",
+                "raw": raw, "canonical": _canonical_native_state(raw),
+                "reason": "BMAD_PLAN_NOT_DONE" if pending else None,
+                "pending_plan_items": pending, "observations": observations, "next": next_step if pending else None}
+    except (ValueError, OSError, UnicodeError, RuntimeError) as exc:
+        return {"ready": False, "state": "blocked", "reason": str(exc), "next": next_step}
+
+
+@locked_command
+def cmd_sdd_plan_bind(args: argparse.Namespace) -> int:
+    repo = repo_root(args.repo); ensure_initialized(repo)
+    work = resolve_work(repo, args.work)
+    if not work or work.get("status") not in {"active", "suspended"}:
+        print(json.dumps({"ok": False, "error": "NO_ACTIVE_WORK_ITEM"})); return 2
+    try:
+        sdd = work["sdd"]
+        selections = {}
+        for plan in (sdd.get("plan_scope") or {}).get("plans", []):
+            selections[plan["path"]] = list(plan.get("item_ids") or [])
+        for value in args.plan_item:
+            path, item = value.rsplit("#", 1)
+            if not path or not item:
+                raise ValueError("PLAN_ITEM_INVALID")
+            selections.setdefault(path, []).append(item)
+        scope = bind_plan_scope(repo, work, list(selections), selections, False)
+        scope["requirement_sha256"] = work["requirement"]["sha256"]
+    except (ValueError, OSError, UnicodeError) as exc:
+        print(json.dumps({"ok": False, "error": str(exc).split(":", 1)[0], "reason": str(exc)})); return 2
+    sdd["plan_scope"] = scope
+    queue_event(work, {"event": "sdd.plan.bound", "work_item_id": work["id"], "source": "cao",
+                       "plan_scope": scope, "occurred_at": now()})
+    save_work(repo, work)
+    reconcile_native_sdd_state(repo, work)
+    print(json.dumps({"ok": True, "plan_scope": scope, "verification_plan": bmad_verification_plan_state(repo, work)}, ensure_ascii=False)); return 0
 
 
 def sdd_acceptance_outputs(repo: Path, work: dict) -> set[str]:
@@ -2884,6 +3026,9 @@ def verification_inputs(repo: Path, work: dict, cfg: dict) -> dict:
     binding = (work.get("sdd") or {}).get("spec_binding")
     if binding:
         inputs["rules_snapshot"] = binding_digest({"rules": inputs["rules_snapshot"], "spec_binding": binding})
+    plan_state = bmad_verification_plan_state(repo, work)
+    if plan_state["state"] != "not_applicable":
+        inputs["rules_snapshot"] = binding_digest({"rules": inputs["rules_snapshot"], "bmad_plan": plan_state})
     record = (work.get("sdd") or {}).get("acceptance") or {}
     if record.get("declaration") and (work.get("path_assessment") or {}).get("profile") != "light":
         sources = source_hashes(repo, record["declaration"], provider_output_dirs(work["sdd"]["provider"]))
@@ -2900,6 +3045,9 @@ def completion_status(repo: Path, work: dict[str, Any] | None) -> dict[str, Any]
         return {"ready": False, "reason": f"work status is {work.get('status')}"}
     if work.get("blockers"):
         return {"ready": False, "reason": "active blocker exists"}
+    plan_state = bmad_verification_plan_state(repo, work)
+    if not plan_state["ready"]:
+        return plan_state
     req = repo / work["requirement"]["path"]
     if not req.exists():
         return {"ready": False, "reason": "requirement file missing"}
@@ -4817,6 +4965,11 @@ def _prepare_verification(args: argparse.Namespace):
     if not work:
         print(json.dumps({"ok": False, "error": "NO_ACTIVE_WORK_ITEM"}, ensure_ascii=False, indent=2)); return 2
 
+    plan_state = bmad_verification_plan_state(repo, work)
+    if not plan_state["ready"]:
+        print(json.dumps({"ok": False, "error": str(plan_state["reason"]).split(":", 1)[0],
+                          "verification_plan": plan_state, "next": plan_state["next"]}, ensure_ascii=False, indent=2)); return 2
+
     cfg = config(repo)
     cfg_scripts = verification_scripts(cfg)
     cli_values = args.script or args.command or []
@@ -5780,6 +5933,12 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--repo", default="."); sp.add_argument("--work"); sp.add_argument("--spec", required=True)
     sp.add_argument("--criteria"); sp.add_argument("--criteria-section"); sp.add_argument("--replace", action="store_true")
     sp.set_defaults(fn=cmd_sdd_spec)
+    plan = sdd_sub.add_parser("plan", help="Associate native execution items with this requirement")
+    plan_sub = plan.add_subparsers(dest="plan_action", required=True)
+    sp = plan_sub.add_parser("bind")
+    sp.add_argument("--repo", default="."); sp.add_argument("--work")
+    sp.add_argument("--plan-item", action="append", required=True, help="Plan path#story-id or path#epic-N; repeat for ALL requirement items; adds to existing scope")
+    sp.set_defaults(fn=cmd_sdd_plan_bind)
     sp = sdd_sub.add_parser("list"); sp.add_argument("--repo", default="."); sp.set_defaults(fn=cmd_sdd_list)
     sp = sdd_sub.add_parser("select"); sp.add_argument("--repo", default="."); sp.add_argument("--provider", required=True, choices=sorted(SDD_CATALOG)); sp.set_defaults(fn=cmd_sdd_select)
     sp = sdd_sub.add_parser("install"); sp.add_argument("--repo", default="."); sp.add_argument("--provider", choices=sorted(SDD_CATALOG)); sp.add_argument("--tools", default=None, help="OpenSpec init tool ids, or all/none"); sp.add_argument("--host", choices=["claude-code", "codex", "pi"], default=None, help="Current coding-agent host; used by Spec Kit to select its integration"); sp.add_argument("--integration", default=None, help="Spec Kit integration key, e.g. claude, codex, pi, copilot"); sp.add_argument("--integration-options", default=None, help="Spec Kit integration options passed through as one value"); sp.add_argument("--yes", action="store_true", help="Confirm installation of external/project software"); sp.set_defaults(fn=cmd_sdd_install)
@@ -5802,7 +5961,7 @@ def build_parser() -> argparse.ArgumentParser:
     plan = sp.add_mutually_exclusive_group()
     plan.add_argument("--plan", action="append", help="Associated plan path; repeat for related changes/features")
     plan.add_argument("--no-plan", action="store_true", help="Explicitly declare that this workflow produces no plan")
-    sp.add_argument("--plan-item", action="append", help="Shared plan path#story-id; repeat for every associated story")
+    sp.add_argument("--plan-item", action="append", help="Shared plan path#story-id or path#epic-N; repeat for every associated story/epic")
     sp.add_argument("--allow-unverified", action="store_true", help="Record a documented native-entrypoint or failed-execution exception; output ownership is still required")
     sp.add_argument("--reason", default=None, help="Why this completion needs an exception; required with --allow-unverified")
     sp.set_defaults(fn=cmd_sdd_workflow)

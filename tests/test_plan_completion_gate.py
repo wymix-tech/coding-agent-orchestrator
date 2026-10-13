@@ -52,7 +52,7 @@ PROVIDER_ENTRYPOINTS = {
 }
 
 
-def ready_to_close(repo: pathlib.Path, provider: str, artifact: str, profile: str = "standard", plan=None) -> str:
+def ready_to_close(repo: pathlib.Path, provider: str, artifact: str, profile: str = "standard", plan=None, expect_verify_blocked=False) -> str:
     """Drive a Work Item to the point where only `cao done` remains."""
     entrypoint = PROVIDER_ENTRYPOINTS[provider]
     run(repo, "init", "--host", "pi")
@@ -93,6 +93,9 @@ def ready_to_close(repo: pathlib.Path, provider: str, artifact: str, profile: st
                   *(plan_args or ["--no-plan"]))
     assert rc == 0, f"workflow completion failed: {out}"
     rc, out = run(repo, "verify", "--work", wid)
+    if expect_verify_blocked:
+        assert rc == 2 and out["error"] == "BMAD_PLAN_NOT_DONE", out
+        return wid
     assert rc == 0, f"verify failed: {out}"
     for gate in ("scope_review", "implementation_review"):
         rc, out = run(repo, "gate", "satisfy", "--gate", gate, "--evidence", "done", "--work", wid)
@@ -104,7 +107,7 @@ class BmadPlan(unittest.TestCase):
     def test_done_refuses_while_stories_are_still_backlog(self):
         with tempfile.TemporaryDirectory() as td:
             repo = pathlib.Path(td)
-            wid = ready_to_close(repo, "bmad", "_bmad-output/implementation_artifacts/story.md", plan=_write(
+            wid = ready_to_close(repo, "bmad", "_bmad-output/implementation_artifacts/story.md", expect_verify_blocked=True, plan=_write(
                 "_bmad-output/implementation_artifacts/sprint-status.yaml", 
                 "generated: 10-10-2026\n"
                 "development_status:\n"
@@ -114,11 +117,12 @@ class BmadPlan(unittest.TestCase):
                 "  2-1-登录接口: in-progress\n"
                 "  2-3-jwt-token: review\n"
                 "  epic-1-retrospective: optional\n"))
-            complete_acceptance(repo, run, wid)
+            rc, out = run(repo, "verify", "--work", wid)
+            self.assertEqual((rc, out["error"]), (2, "BMAD_PLAN_NOT_DONE"))
             rc, out = run(repo, "done", "--work", wid)
             self.assertEqual(rc, 2, out)
             self.assertEqual(out["error"], "COMPLETION_BLOCKED")
-            self.assertIn("unfinished item", out["reason"])
+            self.assertEqual(out["reason"], "BMAD_PLAN_NOT_DONE")
             # Epics are aggregates of their stories and retrospectives are
             # optional, so only the four real stories count.
             self.assertEqual(len(out["pending_plan_items"]), 4, out["pending_plan_items"])

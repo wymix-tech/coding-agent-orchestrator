@@ -531,3 +531,14 @@ Provider light guidance preserves OpenSpec schema prerequisites and Spec Kit fea
 Native reconciliation resolves the current provider/requirement-bound SPEC before native_ref or unique filename identity. It reads mutable native status even when acceptance file hashes have become stale, without changing those hashes. Binding and host post-tool/file-change events synchronize immediately; session/prompt/tool/settle/handoff read boundaries refresh before reporting context. Dashboard and CLI reads backfill older active records. Native completion projects to review, never directly to completed Work; later CAO verification checkpoints retain their cursor.
 
 Unbound, invalid or unreadable native evidence is exposed as read-only diagnostics instead of falsely inferring implementation from generated task/story files. Explicit broken bindings never fall back to a competing spec; provider ownership, Unicode identity and ambiguity checks govern candidate discovery. For OpenSpec nested change specs, native task progress comes from the owning change root. Source replacement with identical bytes updates source provenance. Completed historical Work is not re-observed or recertified.
+
+
+BMAD requirement-wide verification: when a `sprint-status.yaml` or `.yml` exists, associate ALL stories belonging to the current requirement before `cao verify`:
+
+```sh
+cao sdd plan bind --plan-item _bmad-output/implementation-artifacts/sprint-status.yaml#epic-1 --plan-item _bmad-output/implementation-artifacts/sprint-status.yaml#epic-2
+```
+
+Repeat `--plan-item <path>#<story-id>` instead when an epic contains multiple requirements. A whole-epic selector includes future stories and retains the identities already bound, so deleting a bound story or completing just one story cannot reduce the scope. Only associated stories must be exactly `done`; unrelated epics and optional retrospectives do not block. Epic summary status itself is derived and is not counted twice. `in_process`, `in-progress`, `review`, backlog and unknown story states remain unfinished. Binding adds to prior scope without changing acceptance anchors or native files. `sdd workflow complete --plan-item` supports the same selectors and preserves prior associations.
+
+This check runs before either configured or CLI verification scripts, on light as well as full paths; an unresolved/missing/malformed source blocks rather than guessing all project items. It also applies at `cao done` and contributes selected plan states to verification freshness, so scope additions/regressions require a new successful verification. Aggregate sprint progress takes precedence over a single completed SPEC in native phase projection. Native oneshot/light without a sprint tracker needs no sprint binding. Direct developer tests and CAO/SDD artifact writes remain available while the plan is unfinished.
