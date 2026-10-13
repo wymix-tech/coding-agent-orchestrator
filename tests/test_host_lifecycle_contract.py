@@ -126,10 +126,10 @@ class HostLifecycleTests(RepairCase):
                 self.assertEqual(out["hookSpecificOutput"]["additionalContext"], "assess scope")
                 self.assertEqual(out["hookSpecificOutput"]["permissionDecision"], "allow")
 
-    def test_product_without_work_reminds_but_intake_and_reads_pass(self):
+    def test_product_without_work_blocks_but_intake_and_reads_pass(self):
         out = self.event("pre_tool", toolName="write", input={"path": "src.py", "content": "x"})
-        self.assertEqual(out["decision"], "allow")
-        self.assertIn("cao start", out["additional_context"])
+        self.assertEqual(out["decision"], "deny")
+        self.assertIn("start --requirement", out["reason"])
         for name, payload in (("read", {"path": "src.py"}), ("write", {"path": ".orchestrator/requirements/new.md", "content": "x"}),
                               ("bash", {"command": "cao next"})):
             out = self.event("pre_tool", toolName=name, input=payload)

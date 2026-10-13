@@ -1,13 +1,4 @@
-"""PreToolUse no longer blocks tool calls.
-
-The mutation gate was removed: it denied the prerequisite work it depended on
-(the requirement document had to exist before `cao start` could create a Work
-Item, but writing it was denied while no Work Item existed), and host adapters
-fail closed, so any hook error denied everything, including `cao bootstrap`.
-
-These tests pin the new contract: `pre_tool` always returns `allow`. If a gate
-is ever reintroduced, it must be opt-in and must never fail closed.
-"""
+"""No-Work product writes block; intake/control and bridge failures stay open."""
 import json
 import os
 import pathlib
@@ -45,8 +36,8 @@ def decision(repo: pathlib.Path, raw: dict) -> str:
     return json.loads(p.stdout)["decision"]
 
 
-class PreToolUseNeverBlocks(unittest.TestCase):
-    """Every payload shape, every target: allowed."""
+class PreToolUseWorkBoundary(unittest.TestCase):
+    """Every host payload shape preserves the intake/product boundary."""
 
     TARGETS = (
         "src/App.java",
@@ -65,13 +56,14 @@ class PreToolUseNeverBlocks(unittest.TestCase):
         {"event": "pre_tool", "tool_name": "bash", "tool_input": {"command": "rm -rf @"}},
     ]
 
-    def test_nothing_is_denied(self):
+    def test_product_is_denied_and_intake_is_allowed(self):
         with tempfile.TemporaryDirectory() as td:
             repo = provisioned_repo(td)
             for shape in self.SHAPES:
                 for target in self.TARGETS:
                     raw = json.loads(json.dumps(shape).replace("@", target))
-                    self.assertEqual(decision(repo, raw), "allow", f"gate blocked: {raw}")
+                    expected = "allow" if target.startswith((".orchestrator/requirements/", "_bmad-output/")) else "deny"
+                    self.assertEqual(decision(repo, raw), expected, f"incorrect boundary: {raw}")
 
     def test_cao_commands_are_never_blocked(self):
         with tempfile.TemporaryDirectory() as td:

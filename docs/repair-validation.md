@@ -307,3 +307,23 @@ wheel/editable各21个安装组合通过，其中3个新增BMAD oneshot组合覆
 最终固定源码全量：**544项通过，257.090秒，OK**，日志
 `/tmp/cao-oneshot-final-full.log`。Pi的13项零跳过、TypeScript、wheel/editable各21个
 安装组合、compileall、Shell语法、diff空白均通过。本轮形成本地提交，未推送、合并或发布。
+
+## 2026-10-13：无 Work 业务写入门禁
+
+用户授权在新项目中严格要求先创建 Work，保留 CAO 和 SDD 产物写入。
+本节取代历史“所有业务写入仅提醒”和“验证准备先于 Work 创建”的契约。
+证据为异机 `/tmp/demo1` 的 `2026-10-13T04-39-38-641Z_01a1338f-1990-77da-86a8-f5fe858b28b9.jsonl`：
+L5 已加载项目模板，L17 Work 为空，L20 发出提醒，L21–42 仍成功写入 11 个业务/测试文件。
+
+- 无活动 Work 的业务代码、配置、测试和验证骨架写入返回 deny，给出实际 CAO 命令和编号需求/start 路径。
+- CAO CLI 自己更新派生状态不受阻；需求目录、四类原生 SDD 输出目录保持可写。直接手改派生状态仍禁止。
+- 原生 patch 的各宿主形态、复制读取来源、重定向、字面 heredoc、原生元数据工具和已安装的辅助脚本保持通畅。
+- 混合业务/原生写入、移动目的地、路径穿越、指向业务目录的软链接和 heredoc 中展开的写入均覆盖负向回归。
+- 无 Work bootstrap 返回 select；创建 Work 不依赖验证配置或测试通过。有 Work 后再做验证准备，原生 oneshot 实现仍可进行。
+- 非活动 Work 给出恢复指引；Stop/settle 可正常结束回复，桥接故障仍报告诊断并 fail-open，不恢复旧的全工具死锁。
+
+最终全量 **560 项通过**，按文件名互斥分为四组（120/220/198/22），日志 `/tmp/cao-strict-shard-{0,1,2,3}.log`。
+Pi **14 项零失败/跳过**、严格 TypeScript、Skill 校验、compileall、Shell 语法和 diff 检查通过。
+最新 wheel 在 checkout 外通过 **21 个本地夹具组合**，包括三类 Provider/Host、light、standard 和 BMAD oneshot。
+安装验证走 select → numbered requirement → start → configure/reanchor → native workflow → verify/done，覆盖无 Work deny 和原生产物 allow。
+Provider、宿主事件及辅助脚本仍为本地夹具；没有声称重跑用户异机的真实模型会话或真实在线 SDD 安装。

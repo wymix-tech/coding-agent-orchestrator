@@ -10,23 +10,23 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 
 
 class VerificationGuidanceDocuments(unittest.TestCase):
-    def test_templates_preflight_before_start_and_preserve_sdd_authorization(self):
+    def test_templates_start_before_preflight_and_preserve_sdd_authorization(self):
         for name in ("AGENTS.md", "CLAUDE.md"):
             with self.subTest(template=name):
                 text = (ROOT / "templates" / name).read_text(encoding="utf-8")
                 self.assertIn("mode: verification_setup", text)
                 self.assertLess(text.index("mode: sdd_select"), text.index("mode: verification_setup"))
-                self.assertLess(text.index("mode: verification_setup"), text.index("start --requirement"))
+                self.assertLess(text.index("start --requirement"), text.index("mode: verification_setup"))
                 for token in ("product manifests", "user's explicit", "ask the user", "Zero tests",
                               "missing tools", "missing dependencies", "JUnit5", "Surefire",
                               "{{CAO_COMMAND}} verification configure", "init --force", "reanchor",
                               "not verification success", ".agents", ".pi", "requirements remain relevant"):
                     self.assertIn(token, text)
 
-    def test_skill_explains_setup_before_work_and_no_false_pass(self):
+    def test_skill_explains_work_before_setup_and_no_false_pass(self):
         text = (ROOT / "SKILL.md").read_text(encoding="utf-8")
         self.assertIn("mode: verification_setup", text)
-        self.assertLess(text.index("mode: verification_setup"), text.index("### Landing"))
+        self.assertLess(text.index("### Landing"), text.index("mode: verification_setup"))
         for token in ("product manifests", "ask the user", "Zero tests", "JUnit5", "Surefire",
                       "verification configure", "--replace", "init --force", "reanchor",
                       "not verification success", "existing scripts", "requirements remain relevant"):

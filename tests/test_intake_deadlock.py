@@ -47,7 +47,7 @@ def provisioned_repo(repo):
     run(repo, "sdd", "select", "--provider", "bmad")
     (repo / "_bmad").mkdir(exist_ok=True)  # BMAD's project marker
     rc, out, _ = run(repo, "bootstrap", env_extra=NO_HOST_ENV)
-    assert out.get("mode") == "verification_setup", f"bootstrap did not reach verification setup: {out}"
+    assert out.get("mode") == "select", f"bootstrap did not reach Work intake: {out}"
     assert out.get("work_item") is None
 
 
@@ -94,12 +94,12 @@ class IntakeDeadlock(unittest.TestCase):
             self.assertEqual(rc, 0)
             self.assertEqual(out["decision"], "allow", f"intake write was denied: {out}")
 
-    def test_product_code_is_also_allowed_now_that_the_gate_is_removed(self):
+    def test_product_code_is_denied_without_deadlocking_intake(self):
         with tempfile.TemporaryDirectory() as td:
             repo = pathlib.Path(td)
             provisioned_repo(repo)
             rc, out, _ = pre_tool(repo, write_tool(str(repo / "src/App.java")))
-            self.assertEqual(out["decision"], "allow")
+            self.assertEqual(out["decision"], "deny")
 
     def test_start_reports_a_missing_explicit_requirement_as_missing_file(self):
         with tempfile.TemporaryDirectory() as td:

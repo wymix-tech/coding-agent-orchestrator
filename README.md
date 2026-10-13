@@ -21,10 +21,10 @@ Direct edits to CAO-derived `.orchestrator/` state are denied; actual requiremen
 Targets are resolved, including `..`, symlinks, structured patch moves, Shell redirects and simple compound commands.
 Native workflow outputs must stay in the current provider's real output directories, even with `--allow-unverified`.
 That flag documents an entrypoint or failed-execution exception; it does not turn product files into SDD artifacts.
-Product writes remain allowed with governance reminders.
+Product writes require an active Work Item. Numbered requirement documents, native SDD outputs and CAO commands remain writable before Work creation; within an active Work, governance gaps yield reminders.
 
 This is **not a Shell sandbox**. Dynamic variables, command substitution, evaluated/nested scripts and unparseable
-commands cannot be reliably mapped to file targets; detectable cases receive a risk reminder, not a claim of isolation.
+commands cannot be reliably mapped to file targets. Without an active Work, unclassified mutations are denied; within an active Work, detectable dynamic cases receive a risk reminder. These checks are not a claim of isolation.
 Verification and installation commands are trusted project code and may have side effects.
 
 ## Installation
@@ -208,7 +208,7 @@ not replace native prerequisites or waive configured Verification scripts.
 Intake is exempt from this gate: writes inside a provider's native output directory
 (`_bmad-output/`, `openspec/`, `specs/`, `.specify/`) are allowed without an active Work Item, because a
 requirement/PRD must exist before `cao start` can create one — blocking those writes deadlocks intake.
-Product writes elsewhere are allowed with reminders when an active, assessed Work Item is missing.
+Product writes elsewhere are denied without an active Work Item. Missing/stale assessments within an active Work still produce reminders. Mixed native/product writes are denied without Work; copying a read-only input to a native output remains allowed.
 
 ### Handoff history and inspection
 
@@ -427,12 +427,12 @@ commands are not sandboxed. Results also record `timed_out`; optional failures d
 
 ### First-project verification setup
 
-Fresh projects have no verification scripts. After the SDD authorization checks, bootstrap returns
-`mode: verification_setup` when declarations are empty, invalid or optional-only. The Agent analyzes
+Fresh projects have no verification scripts. After the SDD authorization checks, bootstrap first returns
+`mode: select` with concrete requirement/start instructions if no Work exists. Create or resume Work before verification scaffolding; empty verification configuration does not block `cao start`. With an existing Work, bootstrap returns `mode: verification_setup` when declarations are empty, invalid or optional-only. The Agent analyzes
 existing product manifests/source/tests/CI and reuses meaningful checks. For a new product it uses the
 user's specified stack or asks first, never inferring it from host/SDD tooling or caches. The Agent, not
 CAO, generates project-owned wrappers that fail/block on zero tests or missing tools/dependencies.
-Initial scaffolding and test creation are allowed; product writes receive reminders, not a setup deny.
+Within an active Work, initial scaffolding and test creation are allowed before tests pass. Keep verification setup limited to build/test scaffolding and wrappers; follow path assessment and native SDD instructions before business implementation.
 
 Configure safely without resetting language, SDD, timeout, Host settings or Work:
 

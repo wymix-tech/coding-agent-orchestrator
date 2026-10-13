@@ -512,7 +512,7 @@ def gate_state(work: dict[str, Any], verification_fresh: bool, sdd_ready: bool =
     gates = [str(gate) for gate in (assessment.get("required_gates") or [])]
     status = work.get("gate_status") or {}
     satisfied: list[str] = []
-    pending: list[str] = []
+    pending: list[tuple[str, bool]] = []
     for gate in gates:
         if gate == "sdd_acceptance":
             ok = bool(sdd_ready)
@@ -2948,8 +2948,29 @@ def resume_payload(repo: Path, work: dict[str, Any], session_id: str | None = No
     }
 
 
+def work_intake_instruction(work: dict[str, Any] | None = None) -> str:
+    command = cao_invocation()["command"]
+    if work and work.get("status") in {"todo", "suspended"}:
+        return f'Resume the existing Work before product writes with `{command} resume --work {work["id"]}`; do not create a replacement requirement.'
+    return (
+        "Create an active Work before product code, configuration, tests or verification scaffolding. "
+        "Honor bootstrap's SDD authorization/install instructions first. "
+        f"Inspect `{command} list` and resume existing suspended/todo work instead of repeating intake. "
+        f'For an inline requirement run `{command} requirement next-id --title "<short title>"`, '
+        "fill the returned numbered file with the user's confirmed requirement, "
+        f"then run `{command} start --requirement <returned-path>`. "
+        "If a requirement file already exists, use it directly; do not invent another requirement. "
+        "Verification need not pass or be configured before start. After start, rerun bootstrap "
+        "for verification setup and follow `next` for path assessment and the native SDD workflow. "
+        "CAO commands, numbered requirement documents and native SDD output writes remain allowed; "
+        "direct edits to CAO-derived state remain denied."
+    )
+
+
 def render_context(repo: Path, work: dict[str, Any] | None, *, session_id: str | None = None, host: str | None = None) -> str:
     inspection = setup_state(config(repo))
+    if not work or work.get("status") in {"todo", "suspended", "completed"}:
+        return "# Coding Agent Orchestrator Work Intake\n" + work_intake_instruction(work)
     if not inspection["ready"]:
         # Preserve continuity without calculating completion from invalid declarations.
         return "\n".join([
@@ -2958,8 +2979,6 @@ def render_context(repo: Path, work: dict[str, Any] | None, *, session_id: str |
             json.dumps({"verification_setup": inspection, "work": verification_setup_context(work),
                         "session_id": session_id, "host": host}, ensure_ascii=False),
         ])
-    if not work:
-        return "# Coding Agent Orchestrator\nNo active work item. Run `cao start --requirement <path>` after selecting a requirement."
     p = resume_payload(repo, work, session_id=session_id, host=host)
     e = p["execution"] or {}
     lines = [
@@ -3290,7 +3309,7 @@ def cmd_bootstrap(args: argparse.Namespace) -> int:
         return 0
 
     inspection = setup_state(cfg)
-    if not inspection["ready"]:
+    if not inspection["ready"] and work:
         next_out = {
             "ok": True, "mode": "verification_setup",
             "work_item": work_summary(work) if work else None,
@@ -3336,7 +3355,7 @@ def cmd_bootstrap(args: argparse.Namespace) -> int:
             "work_item": None,
             "sdd": sdd_status(repo),
             "context": None,
-            "next": action("agent", "Select a requirement and run `cao start --requirement <path>`. Do not invent a new requirement while resuming."),
+            "next": action("agent", work_intake_instruction()),
         }
     next_out["verification_setup"] = inspection
     if bootstrap_session:
@@ -5033,10 +5052,12 @@ def native_output_dirs() -> list[str]:
 
 
 # Compared against lower-cased keys, so every entry must be lower-case too.
-WRITE_TOOL_PATH_KEYS = ("path", "file_path", "filepath", "filename", "notebook_path")
+WRITE_TOOL_PATH_KEYS = ("path", "file_path", "filepath", "filename", "notebook_path",
+                       "destination", "destination_path", "dest", "new_path", "newpath",
+                       "target_path", "targetpath", "source_path", "old_path", "oldpath")
 
 # Tools whose target lives in a command string rather than a path argument.
-SHELL_TOOLS = frozenset({"bash", "shell", "exec", "command"})
+SHELL_TOOLS = frozenset({"bash", "shell", "exec", "command", "exec_command", "shell_command", "run_shell_command", "run_command"})
 
 
 def _collect_path_strings(node: Any, depth: int = 0) -> list[str]:
@@ -5128,6 +5149,8 @@ def tool_write_targets(raw: dict[str, Any]) -> list[str]:
     payload = raw.get("tool_input") or raw.get("input") or raw.get("arguments") or raw
     targets = _collect_path_strings(raw)
     patches = _collect_values_for_keys(raw, {"patch", "patch_text", "input"})
+    if tool in {"apply_patch", "patch"}:
+        patches.extend(_collect_values_for_keys(raw, {"command", "cmd"}))
     if isinstance(payload, str):
         if tool in SHELL_TOOLS:
             patches = []
@@ -5152,16 +5175,56 @@ def tool_write_targets(raw: dict[str, Any]) -> list[str]:
                     directory = Path(tokens[1])
                     cwd = directory if directory.is_absolute() else cwd / directory
                 elif not _readonly_tokens(tokens):
-                    output_only = tokens[0] in {"echo", "printf", "cat", "head", "tail", "ls", "grep", "rg"}
-                    outputs = {i + 1 for i, token in enumerate(tokens) if token in {">", ">>", "&>"}}
-                    for i, token in enumerate(tokens[1:], 1):
-                        if output_only and i not in outputs:
-                            continue
-                        if token.startswith("-") or token in {">", ">>", "<", "<<", "2", "&"}:
-                            continue
+                    for token in shell_write_operands(tokens):
                         path = Path(token)
                         targets.append(str(path if path.is_absolute() else cwd / path))
     return list(dict.fromkeys(target for target in targets if target))
+
+
+def shell_write_operands(tokens: list[str]) -> list[str]:
+    """Keep read inputs and command data out of native-output exemptions."""
+    redirects = {">", ">>", "&>", ">|", "<>"}
+    outputs = [tokens[i + 1] for i, token in enumerate(tokens[:-1]) if token in redirects]
+    if tokens[0] in {"echo", "printf", "cat", "head", "tail", "ls", "grep", "rg"}:
+        return outputs
+    operands = []
+    skip = False
+    for token in tokens[1:]:
+        if skip:
+            skip = False
+            continue
+        if token in redirects | {"<", "<<", "<<<", "<&", ">&"}:
+            skip = True
+            continue
+        if token.startswith("-") or token in {"2", "&"}:
+            continue
+        operands.append(token)
+    if tokens[0] == "cp":
+        target_dir = next((tokens[i + 1] for i, token in enumerate(tokens[:-1])
+                           if token in {"-t", "--target-directory"}), None)
+        target_dir = target_dir or next((token.split("=", 1)[1] for token in tokens
+                                        if token.startswith("--target-directory=")), None)
+        return outputs + ([target_dir] if target_dir else operands[-1:])
+    if tokens[0] == "sed":
+        if not any(token.startswith("-i") or token.startswith("--in-place") for token in tokens[1:]):
+            return outputs
+        # -e expressions and -f scripts are inputs; without them the first
+        # positional operand is the expression, followed by edited files.
+        args = []
+        skip = False
+        explicit_script = False
+        for token in tokens[1:]:
+            if skip:
+                skip = False
+                continue
+            if token in {"-e", "--expression", "-f", "--file"}:
+                explicit_script = skip = True
+            elif token.startswith(("--expression=", "--file=")) or token.startswith(("-e", "-f")):
+                explicit_script = True
+            elif not token.startswith("-"):
+                args.append(token)
+        return outputs + (args if explicit_script else args[1:])
+    return outputs + operands
 
 
 def intake_writable_dirs() -> list[str]:
@@ -5180,7 +5243,7 @@ def intake_writable_dirs() -> list[str]:
 
 
 def write_targets_native_sdd_output(repo: Path, raw: dict[str, Any]) -> bool:
-    """Only an all-native write is exempt from product reminders."""
+    """Only an all-native write is exempt from the no-Work gate and reminders."""
     targets = tool_write_targets(raw)
     if not targets:
         return False
@@ -5189,7 +5252,58 @@ def write_targets_native_sdd_output(repo: Path, raw: dict[str, Any]) -> bool:
             path = repo_file(repo, target)
         except ValueError:
             return False
-        if not any(inside(path, repo / directory) for directory in intake_writable_dirs()):
+        if not any((repo.resolve() / directory).resolve() == repo.resolve() / directory
+                   and inside(path, repo.resolve() / directory) for directory in intake_writable_dirs()):
+            return False
+    return True
+
+
+def native_intake_shell(repo: Path, raw: dict[str, Any]) -> bool:
+    """Trust native metadata commands, not general implementation scripts."""
+    if _event_key(raw, "tool_name", "toolname", "tool", "name").lower() not in SHELL_TOOLS:
+        return False
+    commands = _collect_values_for_keys(raw, {"command", "cmd"})
+    payload = raw.get("tool_input") or raw.get("input") or raw.get("arguments")
+    if isinstance(payload, str):
+        commands.append(payload)
+    if not commands:
+        return False
+    for command in commands:
+        try:
+            segments = _shell_segments(command)
+        except ValueError:
+            return False
+        for tokens in segments:
+            if _readonly_tokens(tokens):
+                continue
+            if any(any(char in token for char in "$`") or token in {">", ">>", "&>", "<", "<<", "(", ")"} for token in tokens):
+                return False
+            for i, token in enumerate(tokens):
+                if token in {"--output", "--output-dir", "--out", "-o"} and i + 1 < len(tokens):
+                    output = tokens[i + 1]
+                elif token.startswith(("--output=", "--output-dir=", "--out=")):
+                    output = token.split("=", 1)[1]
+                else:
+                    continue
+                if not write_targets_native_sdd_output(repo, {"tool_name": "write", "tool_input": {"path": output}}):
+                    return False
+            if tokens[:2] in (["openspec", "status"], ["openspec", "instructions"], ["openspec", "list"], ["openspec", "show"], ["openspec", "validate"]):
+                continue
+            if tokens[:3] == ["openspec", "new", "change"] and detect_sdd(repo, "openspec")["installed"]:
+                continue
+            identities = workflow_command_identities(shlex.join(tokens))
+            if Path(tokens[0]).stem.lower() in {"pwsh", "powershell"} and len(tokens) > 2 and tokens[1].lower() == "-file":
+                identities.append(tokens[2])
+            helpers = [repo / "_bmad/scripts/render_skill.py"] + [
+                repo / ".specify/scripts" / directory / (name + suffix)
+                for directory, suffix in (("bash", ".sh"), ("powershell", ".ps1"))
+                for name in ("check-prerequisites", "create-new-feature", "setup-plan")
+            ]
+            if any(helper.is_file() and helper.parent.resolve() == repo.resolve() / helper.parent.relative_to(repo)
+                   and inside(helper.resolve(), helper.parent)
+                   and any((Path(identity) if Path(identity).is_absolute() else repo / identity).resolve() == helper.resolve()
+                           for identity in identities) for helper in helpers):
+                continue
             return False
     return True
 
@@ -5237,7 +5351,7 @@ def tool_is_mutating(raw: dict[str, Any]) -> bool:
     payload = raw.get("tool_input") or raw.get("input") or raw.get("arguments") or raw
     if _collect_values_for_keys(payload if payload is not raw else raw, MUTATION_PAYLOAD_KEYS):
         return True
-    if tool in {"bash", "shell", "exec", "command"}:
+    if tool in SHELL_TOOLS:
         commands = _collect_values_for_keys(payload if payload is not raw else raw, {"command", "cmd"})
         if isinstance(payload, str):
             commands.append(payload)
@@ -5246,6 +5360,48 @@ def tool_is_mutating(raw: dict[str, Any]) -> bool:
 
 
 def _shell_segments(command: str) -> list[list[str]]:
+    # Heredoc bodies are input data, not additional mutating commands. Keep
+    # subsequent commands after the terminator visible to the gate.
+    lines = []
+    pending: list[str] = []
+    for line in command.splitlines(keepends=True):
+        if pending:
+            delimiter, quoted = pending[0]
+            if line.rstrip("\r\n") == delimiter:
+                pending.pop(0)
+            elif not quoted and any(char in line for char in "$`"):
+                # Unquoted heredocs execute command substitutions. Preserve
+                # those bodies for target checking instead of treating them
+                # as literal native document content.
+                lines = None
+                break
+            continue
+        lines.append(line)
+        try:
+            header = shlex.shlex(line, posix=False, punctuation_chars=";&|<>()")
+            header.whitespace_split = True
+            tokens = list(header)
+        except ValueError:
+            # A quoted string may span lines; do not interpret any of its
+            # later lines as a heredoc operator.
+            lines = None
+            break
+        for i, token in enumerate(tokens[:-1]):
+            if token == "<<":
+                marker = tokens[i + 1]
+                quoted = re.fullmatch(r"(['\"])([A-Za-z_][A-Za-z0-9_-]*)\1", marker)
+                if quoted:
+                    pending.append((quoted.group(2), True))
+                elif re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", marker):
+                    pending.append((marker, False))
+                else:
+                    # Unsupported delimiters must not hide later commands.
+                    lines = None
+                    break
+        if lines is None:
+            break
+    if lines is not None:
+        command = "".join(lines)
     lexer = shlex.shlex(command, posix=True, punctuation_chars=";&|<>()\n")
     lexer.whitespace_split = True
     lexer.whitespace = " \t\r"  # Preserve unquoted newlines as command boundaries.
@@ -5271,7 +5427,11 @@ def _readonly_tokens(tokens: list[str]) -> bool:
     if not tokens or any(token in operators for token in tokens):
         return False
     name = tokens[0].lower()
-    if name in {"ls", "dir", "cat", "type", "pwd", "find", "grep", "rg", "head", "tail", "echo", "printf", "cd", "exit"}:
+    if name in {"ls", "dir", "cat", "type", "pwd", "find", "grep", "rg", "head", "tail", "echo", "printf", "cd", "exit", "which", "file", "stat", "wc"}:
+        return True
+    if name == "command" and len(tokens) > 1 and tokens[1] in {"-v", "-V"}:
+        return True
+    if len(tokens) == 2 and tokens[1] in {"--version", "-version", "-v"} and name in {"java", "javac", "mvn", "gradle", "node", "npm", "uv", "python", "python3"}:
         return True
     if name == "git" and len(tokens) > 1 and tokens[1] in {"status", "diff", "log", "show", "branch"}:
         return True
@@ -5379,7 +5539,7 @@ def host_event(args: argparse.Namespace) -> int:
         return respond({"decision": "allow", "additional_context": render_context(repo, work, session_id=host_session_id, host=args.host)})
 
     if event == "pre_tool":
-        # Product writes receive reminders; hand edits to managed state are denied.
+        # No-Work product writes and hand edits to managed state are denied.
         result: dict[str, Any] = {"decision": "allow"}
         # CAO's own state narrow enough that it can never deadlock intake:
         # `requirements/` stays writable (the Agent authors those), and CAO
@@ -5394,9 +5554,13 @@ def host_event(args: argparse.Namespace) -> int:
                 ),
             }
             return respond(result)
-        if tool_is_mutating(raw) and not write_targets_native_sdd_output(repo, raw):
+        native_write = write_targets_native_sdd_output(repo, raw) or native_intake_shell(repo, raw)
+        if tool_is_mutating(raw) and not native_write:
             if not work or work.get("status") != "active":
-                result["additional_context"] = "CAO reminder: no active work item. Select a requirement with `cao start --requirement <path>`."
+                advice_work = work
+                if not advice_work and session and session.get("work_item_id"):
+                    advice_work = load_work(repo, session["work_item_id"])
+                return respond({"decision": "deny", "reason": "CAO: no active Work; product writes are blocked. " + work_intake_instruction(advice_work)})
             else:
                 path_state = path_assessment_state(repo, work)
                 if not path_state["ready"]:
@@ -5417,7 +5581,7 @@ def host_event(args: argparse.Namespace) -> int:
                             f"`cao done` requires native workflow evidence. Run it, then record it with "
                             f"`cao sdd workflow execute --work {work['id']} --command \"<command actually run>\"`."
                         )
-        if tool_is_mutating(raw) and not write_targets_native_sdd_output(repo, raw) and not setup_state(config(repo))["ready"]:
+        if tool_is_mutating(raw) and not native_write and not setup_state(config(repo))["ready"]:
             result["additional_context"] = (result.get("additional_context", "") + "\n" + setup_instruction(cao_invocation()["command"])).strip()
         commands = _collect_values_for_keys(raw, {"command", "cmd"})
         payload = raw.get("tool_input") or raw.get("input") or raw.get("arguments")

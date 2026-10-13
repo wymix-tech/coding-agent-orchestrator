@@ -333,12 +333,12 @@ class CoreTests(unittest.TestCase):
             run(repo, "init"); rc, out, _ = run(repo, "start", "--requirement", str(p), "--sdd-ref", "changes/add-login")
             self.assertEqual(rc, 0); self.assertEqual(out["work_item"]["sdd"]["provider"], "openspec"); self.assertEqual(out["work_item"]["sdd"]["native_ref"], "changes/add-login")
 
-    def test_host_does_not_block_mutation_without_work(self):
+    def test_host_blocks_product_mutation_without_work(self):
         td, repo = self.init_repo()
         with td:
             run(repo, "init")
             payload = {"event": "pre_tool", "tool_name": "write", "tool_input": {"path": "app.py", "content": "x"}}
-            rc, out, _ = run(repo, "host-event", "--host", "claude-code", input_text=json.dumps(payload)); self.assertEqual(rc, 0); self.assertEqual(out["hookSpecificOutput"]["permissionDecision"], "allow")
+            rc, out, _ = run(repo, "host-event", "--host", "claude-code", input_text=json.dumps(payload)); self.assertEqual(rc, 0); self.assertEqual(out["hookSpecificOutput"]["permissionDecision"], "deny")
 
     def test_index_is_synced_after_checkpoint(self):
         td, repo = self.init_repo()

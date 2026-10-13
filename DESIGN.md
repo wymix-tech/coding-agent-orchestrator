@@ -114,7 +114,7 @@ A requirement stated inline in conversation has no file, and `cao start` require
 location (`.orchestrator/requirements/`) and the numbering (`NNN-requirement-<slug>-<YYYY-MM-DD>.md`);
 the Agent owns the content. `cao requirement next-id` allocates the next path and creates a skeleton;
 the Agent edits it rather than squeezing the text through a CLI argument. Intake remains writable without
-an active Work Item; product writes also remain allowed, with governance reminders.
+an active Work Item; product writes require an active Work Item. CAO control commands remain allowed.
 `requirement_files()` always includes `.orchestrator/requirements/**/*.md`, so requirement discovery
 works in projects initialized before the glob existed in the default config.
 
@@ -201,7 +201,7 @@ multi-module changes, and compatibility risks require at least `standard`. The e
 required gates are persisted under `work.path_assessment` with the current requirement hash.
 
 `major_ambiguity` requests clarification and reassessment. Missing/stale assessment or ambiguity causes
-Host reminders, never denied product writes; it still prevents `cao done`. Direct state edits stay denied.
+Host reminders for assessment gaps within an active Work; product writes without an active Work are denied. Assessment gaps still prevent `cao done`. Direct state edits stay denied.
 Intentional requirement changes use `cao start --requirement <path> --replace` before reassessment.
 
 Each built-in SDD Provider contains lightweight `path_guidance` for `light`, `standard`, and
@@ -276,26 +276,19 @@ as a startup gate for requirement-driven coding.
 
 Bootstrap follows this decision path:
 
-```text
-bootstrap
-   ↓
-project SDD detected?
-   ├─ no → return `sdd_select` → user chooses provider
-   │                              ↓
-   │                       `cao sdd install`
-   │                              ↓
-   │                         install + init
-   │                              ↓
-   └─ yes ←──────────────── bootstrap again
-          ↓
-   required verification declarations ready?
-   ├─ no → `verification_setup` → Agent analyzes/asks product stack
-   │                              ↓
-   │                     project wrappers + safe configure
-   │                              ↓
-   │                         bootstrap again
-   └─ yes → Work Item selection / resume
+```mermaid
+flowchart TD
+  B[Bootstrap] --> S{Project SDD installed?}
+  S -->|No| U[Explicit user selection]
+  U --> I[CAO SDD install]
+  I --> B
+  S -->|Yes| W[Select/start or resume Work]
+  W --> V{Verification configured?}
+  V -->|No| C[Build/test scaffolding and configure]
+  C --> B
+  V -->|Yes| N[Path assessment and native SDD next action]
 ```
+
 
 The built-in installation catalog currently provides OpenSpec, BMad Method, and GitHub Spec Kit. The installer owns
 provider-specific prerequisites, package installation, and native project initialization. CAO only
@@ -397,12 +390,13 @@ owns the scripts and their quality rules. Each script returns `0=pass`, `1=fail`
 project-specific metrics. Changing a config-bound verification script set invalidates the previous
 verification automatically.
 
-After SDD authorization, bootstrap reports `verification_setup` for empty, invalid or optional-only
+After SDD authorization, no-Work bootstrap reports `select` and concrete requirement/start instructions.
+With an existing Work, bootstrap reports `verification_setup` for empty, invalid or optional-only
 scripts. The Agent analyzes product manifests/source/tests/CI, reuses existing checks, or uses the user's
 explicit stack for new products; otherwise it asks and waits. Host/SDD assets and caches are not product
 stack evidence. CAO does not call an LLM or maintain framework templates. Project wrappers must fail/block
 on zero tests or missing tools/dependencies; core never parses test reports. Configuration readiness is
-not verification success. Scaffolding/test creation remains allowed and product writes are only reminded.
+not verification success. Scaffolding/test creation within an active Work remains allowed before tests pass; no-Work product writes are denied. Setup must not expand into business implementation. Empty verification configuration does not prevent Work creation.
 
 `cao verification configure --test-script "<tests>" --verify-script "<general check>"` performs a locked
 atomic config-only update. Required tests are explicit; general checks do not gain tests capability.
@@ -476,7 +470,7 @@ Reassessment invalidates old claims. Done returns pending gates and an actionabl
 
 ### Intake exemption in the PreToolUse gate
 
-PreToolUse reminds on product writes without current assessment; it denies direct edits to managed state.
+PreToolUse denies product writes without an active Work and direct edits to managed state. Assessment gaps within an active Work yield reminders. CAO commands own their state writes and remain allowed.
 Writes inside requirement intake or a provider-owned SDD output directory
 (`SDD_CATALOG[*].output_dirs`: `_bmad-output/`, `openspec/`, `specs/`, `.specify/`) are therefore exempt
 for every mutating branch of the gate — with or without a Work Item. Requirement, PRD, and spec

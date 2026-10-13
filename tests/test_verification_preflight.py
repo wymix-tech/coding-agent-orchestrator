@@ -1,4 +1,4 @@
-"""Verification setup happens before work selection, without blocking product writes."""
+"""Work selection precedes setup; setup preserves active Work and its evidence."""
 from repair_helpers import RepairCase
 from scripts import cao
 
@@ -16,19 +16,17 @@ class VerificationPreflightTests(RepairCase):
         self.assertEqual(rc, 0, out)
         return out
 
-    def test_missing_verification_precedes_new_work_selection(self):
+    def test_new_work_selection_precedes_missing_verification(self):
         self.scripts([])
         before = (self.repo / cao.CONFIG_REL).read_bytes()
         for _ in range(2):
             rc, out = self.run_cli("bootstrap", "--host", "pi")
             self.assertEqual(rc, 0, out)
-            self.assertEqual(out["mode"], "verification_setup")
+            self.assertEqual(out["mode"], "select")
             self.assertFalse(out["verification_setup"]["ready"])
             self.assertIsNone(out["work_item"])
-            self.assertIn("tech stack", out["next"]["instruction"])
-            self.assertIn("ask the user", out["next"]["instruction"])
-            self.assertIn("zero tests", out["next"]["instruction"].lower())
-            self.assertIn("verification configure", out["next"]["instruction"])
+            self.assertIn("requirement next-id", out["next"]["instruction"])
+            self.assertIn("start --requirement", out["next"]["instruction"])
         self.assertEqual((self.repo / cao.CONFIG_REL).read_bytes(), before)
         self.assertEqual(list((self.repo / cao.WORK_DIR).glob("*.json")), [])
         self.assertEqual(cao.load_session(self.repo, "native-pi", host="pi"), None)
@@ -40,7 +38,7 @@ class VerificationPreflightTests(RepairCase):
                 self.scripts(value)
                 rc, out = self.run_cli("bootstrap")
                 self.assertEqual(rc, 0, out)
-                self.assertEqual(out["mode"], "verification_setup")
+                self.assertEqual(out["mode"], "select")
                 self.assertFalse(out["verification_setup"]["ready"])
 
     def test_valid_configuration_keeps_work_selection(self):
@@ -76,6 +74,7 @@ class VerificationPreflightTests(RepairCase):
                 self.assertEqual((self.repo / cao.WORK_DIR / (wid + ".json")).read_bytes(), before)
 
     def test_start_and_prompt_guidance_are_model_visible(self):
+        self.start()
         self.scripts([])
         for name in ("session_start", "prompt_submit"):
             with self.subTest(event=name):
@@ -100,7 +99,8 @@ class VerificationPreflightTests(RepairCase):
         self.assertIn("Keep chosen stack", out["additional_context"])
         self.assertIn("verification setup", out["additional_context"].lower())
 
-    def test_missing_configuration_only_reminds_product_writes(self):
+    def test_missing_configuration_only_reminds_product_writes_with_active_work(self):
+        self.start()
         self.scripts([])
         out = self.event("pre_tool", toolName="write", input={"path": "src.py", "content": "x"})
         self.assertEqual(out["decision"], "allow")

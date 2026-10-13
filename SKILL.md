@@ -27,9 +27,31 @@ the current session's own `SessionStart`. If `cao bootstrap` reports `host_adapt
 `cao done` is the hard gate even without hooks. Run `cao resume`, `cao checkpoint`, and `cao handoff`
 yourself when lifecycle events cannot be observed.
 
+### Landing a one-sentence requirement
+
+A requirement stated inline has no file yet, and `cao start` needs one. CAO owns the location and
+numbering; you own the content:
+
+```
+cao requirement next-id --title "<short title>"
+```
+
+creates the numbered file and returns its `path` (for example
+`.orchestrator/requirements/001-requirement-用户登录-2026-10-10.md`). CAO creates it with a skeleton
+to allocate a stable intake path. Requirement intake stays writable without a Work. Product code,
+configuration, tests and verification scaffolding require an active Work; missing assessment on an
+active Work still yields reminders. Edit that file with the requirement content,
+then `cao start --requirement <path>`. Do not create the file yourself and do not place requirement
+documents anywhere else — CAO allocates numbers from existing files so they never collide, and
+`cao requirement list` shows what already exists.
+
+Create or resume Work before verification setup. Empty verification configuration and failing tests
+do not prevent `cao start`. If work is already active or resumable, continue it rather than creating
+another requirement.
+
 ### First-project verification baseline
 
-After honoring SDD selection/install authorization, `mode: verification_setup` means the verification
+After honoring SDD selection/install authorization and creating or resuming an active Work, `mode: verification_setup` means the verification
 configuration is empty, invalid or optional-only. Before feature development:
 
 1. Existing project: analyze product manifests, source, tests and CI; reuse meaningful checks. Host assets,
@@ -48,42 +70,27 @@ configuration is empty, invalid or optional-only. Before feature development:
 
    Different nonempty/invalid declarations need explicit `--replace`. Identical declarations are unchanged.
    Never hand-edit derived config or use `init --force` to configure verification.
-5. Rerun bootstrap before selecting/resuming feature work. Configuration readiness is not verification success:
-   initial scaffolding and tests may be written before tests pass. Product writes receive reminders, not a setup deny.
+5. Rerun bootstrap before business implementation. Configuration readiness is not verification success:
+   within an active Work, initial scaffolding and tests may be written before tests pass. Keep setup limited
+   to build/test scaffolding and verification wrappers; follow path assessment and native SDD instructions
+   before business implementation.
    Existing Work keeps its acceptance anchor; review any changed standard and explicitly reanchor with
    `cao reopen --work <id> --reanchor --reason "Reviewed acceptance changes"`. Do not replace the Work or its decisions.
 
 CAO does not call an LLM, generate stack-specific templates, parse test reports or detect zero tests;
 those checks belong to the project's wrappers. `--verify-script` does not automatically declare tests.
 
-### Landing a one-sentence requirement
-
-A requirement stated inline has no file yet, and `cao start` needs one. CAO owns the location and
-numbering; you own the content:
-
-```
-cao requirement next-id --title "<short title>"
-```
-
-creates the numbered file and returns its `path` (for example
-`.orchestrator/requirements/001-requirement-用户登录-2026-10-10.md`). CAO creates it with a skeleton
-to allocate a stable intake path. Intake and product writes are not blocked by missing assessment;
-product writes receive reminders. Edit that file with the requirement content,
-then `cao start --requirement <path>`. Do not create the file yourself and do not place requirement
-documents anywhere else — CAO allocates numbers from existing files so they never collide, and
-`cao requirement list` shows what already exists.
-
 ### Intake from a one-sentence requirement
 
 The first requirement usually does not exist as a file yet. Writes inside a provider's native output
 directory (`_bmad-output/`, `openspec/`, `specs/`, `.specify/`) are allowed **without** an active Work
 Item, so create the requirement/PRD there and then run `cao start --requirement <path>`. Product writes
-elsewhere remain allowed with reminders; direct managed-state edits remain denied. Do not move product
+elsewhere require an active Work; direct managed-state edits remain denied. Do not move product
 code into native output directories to fake evidence — `cao done` still enforces native artifact ownership.
 `cao start` reports `REQUIREMENT_FILE_MISSING` when an explicit requirement path does not exist yet:
 create the file first, do not guess another path.
 
-Bootstrap initializes CAO state when needed, verifies that a project SDD is installed, guides verification configuration, then reports the active/resumable Work Item and next action.
+Bootstrap initializes CAO state when needed, verifies that a project SDD is installed, guides requirement selection/start before verification configuration, then reports the active Work Item and next action.
 It never creates a Work Item and never reruns requirement intake because an Agent or session changed.
 If no SDD is installed, bootstrap stops before coding. If `cao bootstrap` reports `mode: sdd_select`, this is a hard authorization boundary, not a recommendation. You MUST ask the user directly which provider they want and wait for an explicit answer before running any `cao sdd install` or `cao sdd select` command. Never choose a provider yourself based on a recommendation label, popularity, task type, installed global CLI, or personal preference. Do not treat `auto` as a user choice. If the current interface cannot ask the user, stop and report `SDD_SELECTION_REQUIRED`; do not install anything or begin coding. A recommendation is informational only and is never the default or authorization. After the user explicitly chooses, install only that provider and rerun bootstrap.
 

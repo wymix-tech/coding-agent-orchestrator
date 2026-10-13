@@ -68,6 +68,32 @@ function realCoreFixture() {
   return {...f, python, cli};
 }
 
+test('real core blocks Pi business writes without Work and preserves CAO/native intake', posix, async () => {
+  const f = realCoreFixture();
+  try {
+    mkdirSync(path.join(f.dir, '_bmad'));
+    f.cli('init', '--host', 'codex', '--sdd', 'bmad');
+    assert.equal(f.cli('bootstrap', '--host', 'pi').mode, 'select');
+    const ctx = f.context('fresh-pi');
+    const denied = await f.handlers.get('tool_call')({toolName: 'write', input: {
+      path: 'src/main/java/AuthService.java', content: 'class AuthService {}'}}, ctx);
+    assert.equal(denied.block, true);
+    assert.match(denied.reason, /start --requirement/);
+    for (const path of ['.orchestrator/requirements/login.md', '_bmad-output/spec.md',
+      'openspec/changes/login/proposal.md', 'specs/login/spec.md', '.specify/spec.md']) {
+      assert.equal(await f.handlers.get('tool_call')({toolName: 'write', input: {path, content: 'scope'}}, ctx), undefined);
+    }
+    assert.equal(await f.handlers.get('tool_call')({toolName: 'bash', input: {
+      command: 'cao requirement next-id --title Login'}}, ctx), undefined);
+    const requirement = f.cli('requirement', 'next-id', '--title', 'Login').path;
+    writeFileSync(path.join(f.dir, requirement), '# Login\nUse user.yaml and sessions.');
+    f.cli('start', '--requirement', requirement);
+    assert.equal(await f.handlers.get('tool_call')({toolName: 'write', input: {
+      path: 'src/main/java/AuthService.java', content: 'class AuthService {}'}}, ctx), undefined);
+    assert.equal(await f.handlers.get('agent_before_settle')({context: {canContinue: true}}, ctx), undefined);
+  } finally {f.close();}
+});
+
 test('real Python core handles Pi tool_result with null verification', posix, async () => {
   const f = realCoreFixture();
   try {

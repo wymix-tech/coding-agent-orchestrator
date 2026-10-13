@@ -56,14 +56,13 @@ def main():
                 tests.mkdir()
                 (tests / "test_acceptance.py").write_text("import unittest\nclass Acceptance(unittest.TestCase):\n    def test_pass(self): self.assertEqual(2+2,4)\n", encoding="utf-8")
                 cli("init", "--host", "codex", "--sdd", provider)
-                assert cli("bootstrap")["mode"] == "verification_setup"
+                assert cli("bootstrap")["mode"] == "select"
                 setup_context = event("prompt_submit")
                 context = setup_context.get("additional_context") or setup_context.get("hookSpecificOutput", {}).get("additionalContext", "")
-                assert "CAO verification setup" in context, setup_context
-                configured = cli("verification", "configure", "--test-script",
-                                 shell([args.python, "-m", "unittest", "discover", "-s", "acceptance-tests"]))
-                assert configured["verification_setup"]["ready"], configured
-                assert cli("bootstrap")["mode"] == "select"
+                assert "start --requirement" in context, setup_context
+                assert decision(event("pre_tool", tool_name="write", tool_input={"path": "product.py", "content": "pass"})) == "deny"
+                for path in (".orchestrator/requirements/intake.md", "_bmad-output/spec.md", "openspec/proposal.md", "specs/spec.md", ".specify/spec.md"):
+                    assert decision(event("pre_tool", tool_name="write", tool_input={"path": path, "content": "scope"})) == "allow"
                 # Test the command advertised to the Agent, including wheel `sh` fallback;
                 # an explicit console outside PATH is not the discovered invocation.
                 readonly = event("pre_tool", tool_name="bash", tool_input={"command": installation["invocation"]["command"] + " status"})
@@ -72,6 +71,11 @@ def main():
                 allocated = cli("requirement", "next-id", "--title", "Installed fixture")
                 (repo / allocated["path"]).write_text("# Local fixture acceptance\n", encoding="utf-8")
                 wid = cli("start", "--requirement", allocated["path"])["work_item"]["id"]
+                assert cli("bootstrap")["mode"] == "verification_setup"
+                configured = cli("verification", "configure", "--test-script",
+                                 shell([args.python, "-m", "unittest", "discover", "-s", "acceptance-tests"]))
+                assert configured["verification_setup"]["ready"], configured
+                cli("reopen", "--work", wid, "--reanchor", "--reason", "Reviewed initial verification baseline")
                 event("session_start")
                 reminder = event("pre_tool", tool_name="write", tool_input={"path": "product.py", "content": "pass"})
                 assert decision(reminder) == "allow", reminder
