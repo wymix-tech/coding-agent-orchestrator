@@ -146,15 +146,16 @@ class TemplateContentStaysCurrent(unittest.TestCase):
             for command in CONTRACT_COMMANDS:
                 self.assertIn(command, text, f"{name} is missing `{command}`")
 
-    def test_templates_state_that_light_also_requires_a_workflow(self):
+    def test_templates_state_light_minimal_completion_contract(self):
         for name, text in every_template_text().items():
-            self.assertIn("including `light`", text, name)
+            self.assertIn("sdd spec bind", text, name)
+            self.assertIn("are optional", text, name)
 
 
     def test_templates_forbid_placeholder_entrypoints_and_fake_artifacts(self):
         for name, text in every_template_text().items():
             self.assertIn("placeholder entrypoint", text, name)
-            self.assertIn("Never register source files", text, name)
+            self.assertIn("product source files", text, name)
 
 
     def test_templates_teach_the_numbered_requirement_convention(self):

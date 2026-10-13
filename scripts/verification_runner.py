@@ -10,7 +10,8 @@ from pathlib import Path
 from scripts.completion_policy import normalize_timeout
 
 
-def run_script(command: str, repo: Path, timeout: float = 300.0, max_bytes: int = 4000) -> dict:
+def run_script(command: str, repo: Path, timeout: float = 300.0, max_bytes: int = 4000,
+               env: dict[str, str] | None = None) -> dict:
     timeout = normalize_timeout(timeout)
     if isinstance(max_bytes, bool) or not isinstance(max_bytes, int) or max_bytes < 1:
         raise ValueError("VERIFICATION_LIMIT_INVALID")
@@ -21,10 +22,11 @@ def run_script(command: str, repo: Path, timeout: float = 300.0, max_bytes: int 
         launch = command
         kwargs = {"start_new_session": True, "shell": True}
     try:
-        child = subprocess.Popen(launch, cwd=repo, stdout=subprocess.PIPE, stderr=subprocess.PIPE, **kwargs)
+        child = subprocess.Popen(launch, cwd=repo, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env, **kwargs)
     except OSError as exc:
         return {"exit_code": 127, "stdout_tail": "", "stderr_tail": str(exc)[-max_bytes:], "timed_out": False}
     tails = [bytearray(), bytearray()]
+    byte_counts = [0, 0]
     errors = []
 
     def kill_group():
@@ -38,12 +40,13 @@ def run_script(command: str, repo: Path, timeout: float = 300.0, max_bytes: int 
             except ProcessLookupError:
                 pass
 
-    def read(stream, tail):
+    def read(stream, tail, index):
         try:
             while True:
                 chunk = stream.read(4096)
                 if not chunk:
                     break
+                byte_counts[index] += len(chunk)
                 tail.extend(chunk)
                 if len(tail) > max_bytes:
                     del tail[:-max_bytes]
@@ -56,8 +59,8 @@ def run_script(command: str, repo: Path, timeout: float = 300.0, max_bytes: int 
             except Exception as exc:
                 errors.append(str(exc))
 
-    readers = [threading.Thread(target=read, args=(stream, tail), daemon=True)
-               for stream, tail in zip((child.stdout, child.stderr), tails)]
+    readers = [threading.Thread(target=read, args=(stream, tail, index), daemon=True)
+               for index, (stream, tail) in enumerate(zip((child.stdout, child.stderr), tails))]
     started_readers = []
     deadline = time.monotonic() + timeout
     timed_out = False
@@ -101,4 +104,5 @@ def run_script(command: str, repo: Path, timeout: float = 300.0, max_bytes: int 
     if timed_out:
         stderr = (stderr + "\nVERIFICATION_TIMEOUT")[-max_bytes:]
     return {"exit_code": 125 if errors else 124 if timed_out else child.returncode,
-            "stdout_tail": stdout, "stderr_tail": stderr, "timed_out": timed_out}
+            "stdout_tail": stdout, "stderr_tail": stderr, "timed_out": timed_out,
+            "stdout_bytes": byte_counts[0], "stderr_bytes": byte_counts[1]}

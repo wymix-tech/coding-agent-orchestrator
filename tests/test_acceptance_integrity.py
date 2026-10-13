@@ -7,7 +7,7 @@ import sys
 import tempfile
 import unittest
 
-from tests.helpers import configure_verification
+from tests.helpers import configure_verification, complete_acceptance
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 CAO = ROOT / "scripts/cao.py"
@@ -129,6 +129,7 @@ class Reopen(unittest.TestCase):
         self.assertEqual(rc, 0, out)
         for gate in ("scope_review", "implementation_review"):
             run(repo, "gate", "satisfy", "--gate", gate, "--evidence", "observed and reviewed", "--work", wid)
+        complete_acceptance(repo, run, wid)
         rc, out = run(repo, "done", "--work", wid)
         self.assertEqual(rc, 0, out)
         return wid
@@ -163,6 +164,7 @@ class Reopen(unittest.TestCase):
             self.assertEqual(rc, 0, out)
             for gate in ("scope_review", "implementation_review"):
                 run(repo, "gate", "satisfy", "--gate", gate, "--evidence", "re-reviewed", "--work", wid)
+            complete_acceptance(repo, run, wid)
             rc, out = run(repo, "done", "--work", wid)
             self.assertEqual(rc, 0, out)
 

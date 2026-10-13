@@ -467,6 +467,9 @@ def build_dashboard_overview(repo: Path, stale_after_minutes: int = 30) -> dict[
         completion_next_instruction,
         bound_verification_fresh,
         gate_state,
+        sdd_acceptance_state,
+        light_spec_state,
+        provider_output_dirs,
         verification_inputs,
         detect_sdd,
         empty_index,
@@ -537,6 +540,10 @@ def build_dashboard_overview(repo: Path, stale_after_minutes: int = 30) -> dict[
                 fresh = bound_verification_fresh(work, verification_inputs(repo, work, cfg)) if work.get("verification") else False
             except (OSError, ValueError, KeyError, RuntimeError):
                 fresh = False
+        independent = sdd_acceptance_state(repo, work)
+        spec_state = (light_spec_state(repo, work, provider_output_dirs(sdd.get("provider")))
+                      if (assessment or {}).get("profile") == "light" else
+                      {"ready": True, "state": "not_applicable", "reason": None})
         workflow = sdd.get("workflow") or {}
         exceptions = {key: workflow[field] for key, field in (("entry", "unverified"), ("execution_failure", "failure_exception"))
                       if workflow.get(field) and (field == "failure_exception" or workflow[field].get("allowed"))}
@@ -548,9 +555,12 @@ def build_dashboard_overview(repo: Path, stale_after_minutes: int = 30) -> dict[
             "updated_at": timestamp_label(work.get("updated_at")),
             "started_at": timestamp_label(work.get("started_at")),
             "requirement": {"path": requirement.get("path"), "sha256": requirement.get("sha256")},
-            "sdd": {"provider": sdd.get("provider") or "none", "native_ref": sdd.get("native_ref"), "artifacts": sdd.get("artifacts") or [], "workflow": workflow},
+            "sdd": {"provider": sdd.get("provider") or "none", "native_ref": sdd.get("native_ref"), "artifacts": sdd.get("artifacts") or [], "workflow": workflow,
+                    "spec_binding": sdd.get("spec_binding"), "acceptance": sdd.get("acceptance")},
+            "light_spec": spec_state,
+            "sdd_acceptance": independent,
             "completion": completion,
-            "gates": gate_state(work, bool(fresh)),
+            "gates": gate_state(work, bool(fresh), independent["ready"]),
             "legacy_evidence": summary["legacy_evidence"],
             "workflow_exception": exceptions or None,
             "execution": {

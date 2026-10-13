@@ -1,4 +1,5 @@
 from repair_helpers import RepairCase
+from tests.helpers import complete_acceptance
 from scripts import cao
 
 
@@ -145,7 +146,7 @@ class PlanScopeTests(RepairCase):
             self.bind(work, ["_bmad-output/tasks.md"])
 
     def test_complete_none_and_unresolved_have_distinct_done_results(self):
-        wid = self.start()
+        wid = self.start(profile="standard")
         self.run_cli("sdd", "workflow", "select", "--name", "bmad-build", "--entrypoint", "bmad-build")
         self.run_cli("sdd", "workflow", "execute", "--command", "bmad-build")
         self.write_plan("_bmad-output/story.md", "# story\n")
@@ -161,7 +162,9 @@ class PlanScopeTests(RepairCase):
         self.assertEqual(self.read_work(wid)["sdd"]["plan_scope"]["mode"], "none")
         events = cao.list_lifecycle_events(self.repo, wid, 100)
         self.assertTrue(any(event["event"] == "workflow.no_plan_declared" for event in events))
-        self.run_cli("verify")
+        for gate in ("scope_review", "implementation_review"):
+            self.run_cli("gate", "satisfy", "--gate", gate, "--evidence", "Fixture reviewed")
+        complete_acceptance(self.repo, lambda repo, *args: self.run_cli(*args), wid)
         rc, out = self.run_cli("done")
         self.assertEqual(rc, 0, out)
 

@@ -1,3 +1,4 @@
+from tests.helpers import complete_acceptance
 """Regressions from the supplied real Pi session, using the real CAO CLI."""
 import json
 import os
@@ -104,6 +105,8 @@ class CompoundEntrypointTests(RepairCase):
                      ("gate", "satisfy", "--gate", "scope_review", "--evidence", "local fixture scope"),
                      ("gate", "satisfy", "--gate", "implementation_review", "--evidence", "local fixture implementation"),
                      ("verify",), ("done",)):
+            if args == ("done",):
+                complete_acceptance(self.repo, lambda repo, *argv: self.run_cli(*argv))
             rc, out = self.run_cli(*args)
             self.assertEqual(rc, 0, out)
         self.assertEqual(out["status"], "completed")

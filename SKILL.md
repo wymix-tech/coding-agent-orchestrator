@@ -123,6 +123,8 @@ cao list
 cao start --requirement <path> [--title <human title>] [--sdd-ref <native-ref>]
 cao path assess --profile <light|standard|comprehensive> --reason "<short reason>" [--risk-flag <flag>]
 cao path show --work <id>
+cao sdd spec bind --spec <provider-spec.md> --criteria-section "<heading>"
+cao sdd acceptance show
 cao sdd workflow select --name "<native workflow>" --entrypoint "<native command or skill>"
 cao sdd workflow execute --command "<command actually run>" --exit-code <code>
 cao sdd workflow complete --artifact <repo-relative-file>
@@ -152,8 +154,7 @@ standard       ordinary feature/fix requiring some analysis/design, tests and re
 comprehensive  major uncertainty, cross-system or high-risk change; explicit planning and stronger gates
 ```
 
-`light` reduces *how much* native workflow runs, not *whether* it runs. Every profile must still select,
-execute, and complete the provider's own native workflow.
+`light` uses a minimal native SPEC with explicit criteria plus fresh project verification. It does not require workflow registration, plans/no-plan or independent final acceptance. Standard/comprehensive retain the full native workflow and independent acceptance contract.
 
 Record the assessment in the Work Item:
 
@@ -177,7 +178,7 @@ Spec Kit, or another provider's own commands, artifacts, and mandatory precondit
 invent a duplicate SDD lifecycle. Reassess only when scope, requirement, or risk materially changes.
 The profile never bypasses the project's configured Verification scripts or provider-native gates.
 
-For **every** profile (`light`, `standard`, `comprehensive`) with an installed SDD provider, selecting a
+For **standard/comprehensive** profiles with an installed SDD provider, selecting a
 path is not proof that its native workflow ran. Before implementation, record the actual provider-native
 workflow and entrypoint, then execute it using that provider's installed instructions:
 
@@ -200,8 +201,7 @@ cao sdd workflow complete --artifact <repo-relative-file>
 ```
 
 CAO blocks `cao done` until the workflow is selected, executed, and completed with existing output files.
-This contract applies to all profiles and across providers, not only BMAD. `light` is **not** exempt: it
-requires the provider's smallest safe native workflow.
+This workflow registration/plan contract applies to standard/comprehensive across providers. For light, bind the native SPEC and explicit criteria with `cao sdd spec bind --spec <provider-spec.md> --criteria-section "<heading>"`, then verify; do not manufacture a plan or no-plan declaration.
 
 CAO rejects workflow records it can verify as fake:
 
@@ -224,9 +224,10 @@ cao gate satisfy --gate <gate> --evidence "<what was done>"
 cao gate show
 ```
 
-Verification-flavoured gates and `tests` are automatic: run config-bound `cao verify`, never mark them
-manually. Tests additionally requires a successful required script with `gates: ["tests"]`; command names
-are not proof. Human gate evidence binds requirement hash and assessment revision. Done requires every gate.
+Verification-flavoured gates and `tests` derive from config-bound `cao verify`; `sdd_acceptance` derives from the independent final run. Never mark these gates manually. Tests additionally requires a successful required script with `gates: ["tests"]`; command names
+are not proof. Standard/comprehensive also configure `cao sdd acceptance configure --declaration <repo-json>`, explicitly reanchor reviewed sources, verify, then `cao sdd acceptance run` or `begin`/`submit` for an installed Skill. Use exact declared Work-scoped report outputs; unregistered reports change the snapshot. Full declaration/report contracts are in README. Skill submissions are evidence, not proof that an independent reviewer executed. Follow native reviewer instructions or their human-return fallback.
+
+Human gate evidence binds requirement hash and assessment revision. Done requires every gate.
 
 ## State ownership
 
@@ -435,3 +436,5 @@ The project language preference is `.orchestrator/config.json` → `language.use
 Use `cao language show` to inspect the setting, `cao language set --language <locale>` to update it and apply it to installed SDDs, or `cao language apply` to reapply the current preference. Bootstrap and SDD selection/installation apply the preference automatically.
 
 If the user expresses an ongoing language preference that differs from `language.user`, update the project setting with `cao language set --language <locale>` before producing further SDD artifacts; do not change the preference merely for a one-off explicitly requested artifact.
+
+Preserve user-selected language/framework/test runner and delivery shape through specification, implementation and acceptance. Missing dependencies block the selected checks; do not silently substitute main programs for JUnit 5 or install system dependencies. Configure wrappers before feature work; the initial skeleton may fail. Register a combined tests/general wrapper once. Read installed native Skills completely, including their exact renderer; a render exit 0 only loads instructions. Re-select when the workflow changes.

@@ -39,3 +39,6 @@
 5. Add optional project-level completion gates without reintroducing an evidence graph.
 
 - [x] Local orchestration dashboard for Work Items, execution path, Sessions, Verification summaries, SDD providers, Handoff history, native SDD artifact inventory/status, safe preview, and hash-bound confirmation.
+
+- [x] Profile-specific light SPEC/criteria completion, native Skill identity guidance and operation-scoped exception audit
+- [x] Standard/comprehensive independent final SDD acceptance with command and installed Skill modes, freshness and exact output boundaries

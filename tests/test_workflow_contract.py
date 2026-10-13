@@ -13,7 +13,7 @@ import sys
 import tempfile
 import unittest
 
-from tests.helpers import configure_verification, verify_via_config
+from tests.helpers import bind_light_spec, configure_verification, verify_via_config
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 CAO = ROOT / "scripts" / "cao.py"
@@ -138,7 +138,7 @@ class WorkflowContractTests(unittest.TestCase):
 
 
 class LightPathContractTests(unittest.TestCase):
-    def test_light_is_no_longer_exempt_from_the_native_workflow(self):
+    def test_light_requires_bound_spec_instead_of_workflow(self):
         with tempfile.TemporaryDirectory() as td:
             repo = pathlib.Path(td)
             init_repo(repo)
@@ -146,18 +146,14 @@ class LightPathContractTests(unittest.TestCase):
             verify_via_config(repo, run)
             rc, out, _ = run(repo, "done")
             self.assertEqual(rc, 2)
-            self.assertEqual(out["reason"], "native SDD workflow is not recorded as completed")
+            self.assertIn("spec", out["reason"])
 
-    def test_light_completes_after_the_native_workflow_and_gates(self):
+    def test_light_completes_without_workflow_with_bound_spec(self):
         with tempfile.TemporaryDirectory() as td:
             repo = pathlib.Path(td)
             init_repo(repo)
             run(repo, "path", "assess", "--profile", "light", "--reason", "Small local change")
-            run(repo, "sdd", "workflow", "select", "--name", "quick-fix", "--entrypoint", "bmad quick-fix")
-            run(repo, "sdd", "workflow", "execute", "--command", "bmad quick-fix")
-            (repo / "_bmad-output").mkdir()
-            (repo / "_bmad-output" / "fix.md").write_text("# fix", encoding="utf-8")
-            run(repo, "sdd", "workflow", "complete", "--artifact", "_bmad-output/fix.md", "--no-plan")
+            bind_light_spec(repo, run, "_bmad-output/fix.md")
             verify_via_config(repo, run)
             rc, out, _ = run(repo, "done")
             self.assertEqual(rc, 0, out)

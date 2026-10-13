@@ -112,13 +112,13 @@ class BoundaryTests(RepairCase):
         self.run_cli("verify")
         rc, out = self.run_cli("done")
         self.assertEqual(rc, 2, out)
-        self.assertEqual(out.get("pending_gates"), ["scope_review", "implementation_review"])
+        self.assertEqual(out.get("pending_gates"), ["scope_review", "implementation_review", "sdd_acceptance"])
         self.assertIn("cao gate satisfy", out["next"])
 
     def test_mixed_product_and_native_targets_keep_product_reminder(self):
         out = self.pre_tool("edit", {"files": [{"path": "_bmad-output/story.md"}, {"path": "src/main.py"}], "new_string": "x"})
         self.assertEqual(out["decision"], "allow")
-        self.assertIn("NOT been executed", out.get("additional_context", ""))
+        self.assertIn("sdd spec bind", out.get("additional_context", ""))
 
     def test_dynamic_shell_is_not_claimed_to_be_isolated(self):
         out = self.pre_tool("bash", {"command": "printf x > \"$TARGET\""})
@@ -160,6 +160,7 @@ class BoundaryTests(RepairCase):
         self.assertEqual(out["workflow"]["artifacts"], ["_bmad-output/story.md"])
 
     def test_done_rechecks_provider_membership_after_symlink_retarget(self):
+        self.run_cli("path", "assess", "--profile", "standard", "--reason", "ownership check")
         self.execute_workflow()
         target = self.repo / "_bmad-output/story.md"
         target.write_text("# same bytes\n", encoding="utf-8")

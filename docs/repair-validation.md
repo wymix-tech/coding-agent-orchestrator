@@ -228,3 +228,45 @@ Session/prompt 提示进入模型；产品写仅提醒，状态 deny 优先，�
 
 C6 外部验收保持未完成（任务 #29，阻塞任务 #32），不宣称已经达到全平台出口。
 交付可以先保留此隔离分支和上述限制；真实宿主、浏览器及远端平台验收补齐后再讨论发布。
+
+## 2026-10-13 light 与异机 Pi 会话修复
+
+本轮基线为 `fix/cao-integrity-repair` 的 `8b144f6`，工作目录为当前源码 checkout。
+环境为 Linux、Python 3.12.14、Node 24.19.0；复用已有 npm 开发依赖，无在线 Provider 安装。
+
+已实现：
+
+- light 用当前原生 SPEC／明确非空标准绑定和新鲜项目验证关闭，不强制 workflow、计划/no-plan 或独立 SDD 验收。绑定变化须显式 replace；风险升级、需求、阻塞和项目验证不豁免。
+- 合法 `uv run --no-cache` 渲染入口、真实安装 Skill 发现与流程替换检查；select/execute/complete 例外入持久审计并注明 Agent 声明和操作类型。
+- 非通过验证优先 stderr；verify 后根据当前完成状态给出下一步；active 重锚不误称完成后重开；退出命令不引导创建需求；缺检查时使用 verification configure，而非 init --force。
+- standard/comprehensive 的独立验收声明、显式来源锚定、当前 run、锁外真实命令执行与 Skill begin/submit。精确报告排除、逐项覆盖、证据 hash、并发决策保存、输入变化 stale、失败替换旧成功、重开清 run 均接入完成判定。
+- Dashboard、schema、README/DESIGN/SKILL 与宿主模板同步；说明 JUnit 5、用户可感知范围、语言、依赖安装和独立 reviewer 的指导边界。CAO 无法仅凭 JSON 证明模型遵循这些指导。
+
+实际结果：
+
+| 检查 | 结果 | 日志 |
+|---|---|---|
+| 全量 Python（静态复验） | 533 项通过，240.550 秒 | `/tmp/cao-release-python.log` |
+| 迁移定向 | 178 项通过 | `/tmp/cao-migration-tests.log` |
+| 最后兼容回归 | 50 项通过，60.071 秒 | `/tmp/cao-final-compatibility.log` |
+| 最新原生入口与验收 | 54 项通过 | `/tmp/cao-final-native.log` |
+| 指导及审计 | 30 项通过 | `/tmp/cao-final-guidance.log` |
+| Dashboard 投影与实际页面 JS | 8 项通过 | `/tmp/cao-final-dashboard.log` |
+| Pi 真实核心桥及模拟宿主契约 | 13 项通过，零跳过 | `/tmp/cao-pi-tests.log` |
+| Pi TypeScript 严格类型检查 | 通过 | `npm run check:pi` |
+| wheel 构建/临时安装/源码目录外测试 | 18 个组合通过 | `/tmp/cao-wheel-build.log`、`/tmp/cao-wheel-smoke.log` |
+| editable 临时安装/源码目录外测试 | 18 个组合通过 | `/tmp/cao-editable-smoke.log` |
+| compileall、Shell 语法、diff 空白 | 通过 | 实际运行命令 |
+
+安装组合为 BMAD／OpenSpec／Spec Kit × Claude Code／Codex／Pi 模拟事件 × light／standard。
+完整路径执行真实 fixture unittest 和验收包装器；Provider 原生入口与宿主事件仍为明确的本地夹具。
+没有启动异机 Pi 或真实三类宿主，没有重新执行用户的登录应用，也没有声称浏览器/Windows/macOS 实测通过。
+Dashboard 使用页面实际 JS 的 DOM 夹具，不是完整浏览器视觉验收。
+
+首轮523项发现28个旧契约失败，已按新profile语义迁移；保留原计划、路径、失败执行、过期证据等负向检查。
+一次并行编辑与测试重叠导致 CLI 读到短暂未写完的源码并报语法错误；当前源码编译正常，最终交付以停止源码修改后的全量复验为准。
+Pi 的 missing-console 测试在将 PATH 隐藏后需显式设置绝对 `CAO_TEST_PYTHON`，正确解释器下13项通过；未为该环境问题修改桥实现。
+
+全量通过后补充一个窄兼容修复：显式降为 light 后，技术标准重锚不读取可选的旧独立验收来源；相同场景已扩展到正式降级回归。最后50项兼容检查全部通过，覆盖独立验收、light、技术标准重锚与证据绑定，结果见 `/tmp/cao-final-compatibility.log`。最终 wheel 已重新构建并复验。
+
+本轮在当前分支形成一个本地集成提交；未推送、合并或发布。

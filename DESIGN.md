@@ -210,10 +210,7 @@ engine. CAO does not create SDD artifacts, issue a numeric score, scan the repos
 or build a provenance graph. Profile selection never waives provider-native prerequisites or configured
 Verification scripts.
 
-The profile also never waives the native SDD workflow: `light`, `standard`, and `comprehensive` all
-require the provider's own workflow to be selected, executed, and completed. `light` only reduces how
-much of that workflow runs. Exempting `light` previously let an Agent go straight from path selection to
-verification, skipping native planning, implementation, and review entirely.
+Light completion checks a bound provider-native SPEC and explicit criteria plus fresh configured technical verification. Native workflow registration, plan/no-plan and independent final acceptance are optional for light. Standard/comprehensive require those native workflow/plan/review records and independent final acceptance. Risk upgrades and common requirement/assessment/blocker checks remain unchanged.
 
 Each provider also declares `output_dirs` (the directories it owns) and `workflow_hints` (tokens that
 identify its own CLI/skill entrypoints). Both are used only for validation; CAO still never writes SDD
@@ -460,7 +457,7 @@ CAO stores one project-level preference at `language.user` (default `zh-CN`). Us
 
 ## Native SDD workflow completion contract
 
-For **every** profile (`light`, `standard`, `comprehensive`) on a Work Item using an installed SDD Provider, a successful code/test verification is not sufficient to complete the Work Item. The Agent records the provider-native workflow name and entrypoint with `cao sdd workflow select`, records that it actually ran the workflow with `cao sdd workflow execute --command ...`, and records existing repository-relative output files with `cao sdd workflow complete --artifact ...`. `cao done` requires a requirement/provider-bound run, acceptable exit code and matching artifact bytes/real paths. Plans are Work Item-bound:
+For **standard/comprehensive** profiles on a Work Item using an installed SDD Provider, a successful code/test verification is not sufficient to complete the Work Item. The Agent records the provider-native workflow name and entrypoint with `cao sdd workflow select`, records that it actually ran the workflow with `cao sdd workflow execute --command ...`, and records existing repository-relative output files with `cao sdd workflow complete --artifact ...`. `cao done` requires a requirement/provider-bound run, acceptable exit code and matching artifact bytes/real paths. Plans are Work Item-bound:
 repeat `--plan` for related changes, `--plan-item '<path>#<id>'` for shared sprint stories, or audit `--no-plan`. Unresolved/missing scope cannot certify completion. This is provider-neutral orchestration metadata, not a replacement SDD workflow; native artifacts remain owned by the provider. Verification should run after native artifacts have stabilized so snapshot freshness remains valid.
 
 The contract is verifiable, not self-certifying. CAO refuses:
@@ -520,3 +517,11 @@ Provider adapters discover work-item-scoped artifacts and extract native status 
 A successful observation updates `WorkItem.sdd.native_ref` when one unique, requirement-matched entry artifact is available, persists the latest normalized native state, and appends an idempotent event to `.orchestrator/lifecycle/events.jsonl`. Exact artifact identity wins over partial-slug matches; ambiguous BMAD candidates are ignored until the Work Item can be bound safely. Event append is guarded by an exclusive lock and flushed to disk before the command returns. Repeated polling of the same native state does not emit a second transition event. `cao lifecycle events` provides an audit view.
 
 Reconciliation is invoked at bootstrap/status/list/resume/next and Dashboard refresh boundaries rather than relying on all SDD systems to expose the same native Hook. Bootstrap performs the read before constructing the resumed session context. This is a compensating-read model: provider-specific Hooks or command wrappers can be added later without changing the canonical CAO event names. It does not claim immediate background observation when no CAO command or Dashboard refresh is running.
+
+## Independent final acceptance and light binding
+
+`sdd.spec_binding` binds requirement/provider, exact native SPEC/criteria hashes and an optional unique criteria heading. It is included in technical inputs; changed bytes require explicit rebinding. The light check is structural, not semantic.
+
+`sdd.acceptance` stores a normalized declaration, explicit source anchor, current run and owned exact output hashes. Command runs execute outside the lock using the bounded verification runner. Skill mode begins a frozen run and accepts matching structured evidence for that run; it does not certify that an Agent honestly executed a reviewer. Start and finish use transactions; finish reloads Work so concurrent decisions survive, and input changes mark results stale. Replacement runs cannot accept an older run's report. Outputs are bounded new Work-scoped files under provider directories, excluded identically from technical and SDD snapshots; arbitrary input files remain included. Failed/error/blocked runs replace success. `sdd_acceptance` is auto-derived and cannot be satisfied manually or by workflow exceptions. Full CLI and JSON examples are in README.
+
+Dashboard exposes light SPEC state and independent acceptance separately from technical verification. Historical completed records remain historical; active old records need current profile evidence, never automatic recertification.

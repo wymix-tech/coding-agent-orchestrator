@@ -38,6 +38,10 @@ from scripts.completion_policy import (
     verification_fresh as bound_verification_fresh, normalize_scripts, tests_satisfied, workflow_ready, normalize_timeout,
 )
 from scripts.verification_runner import run_script
+from scripts.light_spec_policy import make_binding, binding_digest, light_spec_state
+from scripts.sdd_acceptance_policy import digest as acceptance_digest
+from scripts.sdd_acceptance_files import source_hashes, output_paths, report_hashes
+from scripts.sdd_acceptance_runtime import acceptance_status, reanchor_record
 from scripts.verification_setup import (
     configured_scripts, setup_state, declared_scripts, prepare_config, setup_instruction, verification_setup_context,
 )
@@ -112,8 +116,8 @@ PATH_RISK_GATES: dict[str, list[str]] = {
 }
 PROFILE_BASE_GATES: dict[str, list[str]] = {
     "light": ["targeted_verification"],
-    "standard": ["scope_review", "tests", "implementation_review", "verification"],
-    "comprehensive": ["requirements_review", "design_review", "implementation_review", "verification"],
+    "standard": ["scope_review", "tests", "implementation_review", "verification", "sdd_acceptance"],
+    "comprehensive": ["requirements_review", "design_review", "implementation_review", "verification", "sdd_acceptance"],
 }
 
 SDD_CATALOG: dict[str, dict[str, Any]] = {
@@ -179,7 +183,7 @@ SDD_CATALOG: dict[str, dict[str, Any]] = {
             ],
         },
         "path_guidance": {
-            "light": "Use BMAD's smallest safe native build/quick-fix path. Do not generate full PRD, architecture, epics, or stories unless the task's risk or uncertainty requires them.",
+            "light": "Use the smallest build Skill actually installed by this BMAD version; read its complete SKILL.md and exact renderer. Bind a minimal SPEC and explicit acceptance criteria for light; do not guess a quick-fix CLI command. Do not generate full PRD, architecture, epics, or stories unless the task's risk or uncertainty requires them.",
             "standard": "Use relevant BMAD analysis/specification or build workflows and create only the native artifacts needed to clarify scope, implement, review, and verify the change.",
             "comprehensive": "Use the applicable full BMAD planning path, including requirements, architecture, epics/stories when warranted, then implement in stages with explicit review and verification.",
         },
@@ -223,7 +227,7 @@ PLACEHOLDER_ENTRYPOINT_COMMANDS = {
 
 # Gates CAO can derive from its own state. Everything else must be marked
 # explicitly with `cao gate satisfy` because only the Agent can observe it.
-AUTO_DERIVED_GATES = {"verification", "targeted_verification", "tests"}
+AUTO_DERIVED_GATES = {"verification", "targeted_verification", "tests", "sdd_acceptance"}
 
 
 def provider_output_dirs(provider: str) -> list[str]:
@@ -287,7 +291,7 @@ def workflow_command_identities(entrypoint: str, depth: int = 0) -> list[str]:
                         tokens = tokens[1:]
                     else:
                         tokens = []
-                flags = {"-y", "--yes", "--no-install"} if head == "npx" else {"-q", "--quiet", "--offline", "--no-sync"}
+                flags = {"-y", "--yes", "--no-install"} if head == "npx" else {"-q", "--quiet", "--offline", "--no-sync", "--no-cache"}
                 valued = {"-p", "--package"} if head == "npx" else {"--from", "--project", "--python", "--with"}
                 index = 0
                 while index < len(tokens) and tokens[index].startswith("-"):
@@ -354,13 +358,14 @@ def skill_invocation_guidance(repo: Path, provider: str, entrypoint: str) -> str
     """
     skills = provider_native_skills(repo, provider)
     if skills:
-        lowered = entrypoint.strip().lower()
+        lowered = entrypoint.strip().lower().removeprefix("invoke skill ")
         matched = next((s for s in skills if s["name"].lower() == lowered), None)
         if matched:
             return (
                 f" This provider exposes this workflow as an agent skill, not a shell command: invoke the "
                 f"`{matched['name']}` skill (read `{matched['rel_path']}` and follow it, including its native "
                 f"preconditions). Do not substitute your own implementation for running it."
+                " Read the complete SKILL.md and run its exact project-root renderer; do not guess a skill/scripts location. Renderer success loads instructions, it is not workflow completion. Preserve the configured user language."
             )
         listed = ", ".join(f"`{s['name']}`" for s in skills)
         return (
@@ -375,6 +380,26 @@ def skill_invocation_guidance(repo: Path, provider: str, entrypoint: str) -> str
             f"Do not substitute your own implementation."
         )
     return ""
+
+
+def workflow_skill_identity(repo: Path, provider: str, entrypoint: str) -> str | None:
+    """Identify an installed Skill only in invocation/script argument positions."""
+    tokens = workflow_entrypoint_tokens(entrypoint)
+    skills = {skill["name"]: skill for skill in provider_native_skills(repo, provider)}
+    if tokens[:2] == ["invoke", "skill"] and len(tokens) == 3:
+        return tokens[2] if tokens[2] in skills else None
+    if len(tokens) == 1 and tokens[0] in skills:
+        return tokens[0]
+    if any(Path(identity).name == "render_skill.py" for identity in workflow_command_identities(entrypoint)):
+        if "--skill" in tokens and tokens.index("--skill") + 1 < len(tokens):
+            try:
+                target = repo_file(repo, tokens[tokens.index("--skill") + 1])
+                for name, skill in skills.items():
+                    if target == (repo / skill["rel_path"]).parent.resolve():
+                        return name
+            except (ValueError, OSError, RuntimeError):
+                pass
+    return None
 
 
 def validate_workflow_entrypoint(provider: str, name: str, entrypoint: str) -> dict[str, Any]:
@@ -445,7 +470,7 @@ def gate_is_auto_derived(name: str) -> bool:
     return low in AUTO_DERIVED_GATES or low.endswith("_verification")
 
 
-def gate_state(work: dict[str, Any], verification_fresh: bool) -> dict[str, Any]:
+def gate_state(work: dict[str, Any], verification_fresh: bool, sdd_ready: bool = False) -> dict[str, Any]:
     """Split the assessment's required gates into satisfied and pending ones.
 
     Verification gates require fresh configured evidence; tests additionally need
@@ -458,7 +483,9 @@ def gate_state(work: dict[str, Any], verification_fresh: bool) -> dict[str, Any]
     satisfied: list[str] = []
     pending: list[str] = []
     for gate in gates:
-        if gate == "tests":
+        if gate == "sdd_acceptance":
+            ok = bool(sdd_ready)
+        elif gate == "tests":
             ok = bool(verification_fresh and tests_satisfied(work.get("verification") or {}))
         elif gate_is_auto_derived(gate):
             ok = bool(verification_fresh)
@@ -2690,12 +2717,81 @@ def provider_pending_plan_items(repo: Path, work: dict) -> list[str]:
     return pending
 
 
+def sdd_acceptance_outputs(repo: Path, work: dict) -> set[str]:
+    record = (work.get("sdd") or {}).get("acceptance") or {}
+    declaration = record.get("declaration")
+    if not declaration:
+        return set()
+    previous = dict(record.get("owned_outputs") or {})
+    run = record.get("run") or {}
+    if run.get("status") == "running":
+        # The run validated absence/ownership before starting. It owns only its
+        # frozen exact output paths, never a directory or a newly changed declaration.
+        for value in declaration.get("outputs", []):
+            path = repo_file(repo, value)
+            if path.is_file():
+                previous[value] = sha256_file(path)
+    return output_paths(repo, declaration, provider_output_dirs(work["sdd"]["provider"]), work["id"], previous)
+
+
+def sdd_acceptance_inputs(repo: Path, work: dict, cfg: dict) -> dict:
+    record = (work.get("sdd") or {}).get("acceptance") or {}
+    if not record.get("declaration"):
+        raise ValueError("SDD_ACCEPTANCE_NOT_CONFIGURED")
+    return {**verification_inputs(repo, work, cfg), "work_id": work["id"], "provider": work["sdd"]["provider"],
+            "declaration_sha256": record["declaration_sha256"],
+            "source_hashes": source_hashes(repo, record["declaration"], provider_output_dirs(work["sdd"]["provider"]))}
+
+
+def sdd_acceptance_current_hashes(repo: Path, work: dict) -> dict:
+    record = (work.get("sdd") or {}).get("acceptance") or {}
+    run = record.get("run") or {}
+    if run.get("status") != "passed":
+        return {}
+    return report_hashes(repo, run.get("results") or [], record["declaration"]["outputs"])
+
+
+def sdd_acceptance_state(repo: Path, work: dict) -> dict:
+    profile = (work.get("path_assessment") or {}).get("profile")
+    if profile == "light":
+        return {"ready": True, "state": "not_applicable", "reason": None}
+    try:
+        if not ((work.get("sdd") or {}).get("acceptance") or {}).get("declaration"):
+            state = {"ready": False, "state": "unconfigured", "reason": "SDD acceptance is not configured"}
+        else:
+            inputs = sdd_acceptance_inputs(repo, work, config(repo))
+            state = acceptance_status(work, inputs, sdd_acceptance_current_hashes(repo, work))
+    except (ValueError, OSError, RuntimeError) as exc:
+        state = {"ready": False, "state": "blocked", "reason": "SDD acceptance: " + str(exc)}
+    if not state["ready"]:
+        record = (work.get("sdd") or {}).get("acceptance") or {}
+        if not record.get("declaration"):
+            state["next"] = 'Configure native acceptance: `cao sdd acceptance configure --declaration <repo-json>`; review sources and explicitly `cao reopen --reanchor --reason "Reviewed SDD scope"`, then `cao verify`.'
+        elif not record.get("anchor_sha256") or "reanchor" in str(state.get("reason")):
+            state["next"] = 'Review sources/standard, then `cao reopen --reanchor --reason "Reviewed SDD scope"` and rerun `cao verify`.'
+        else:
+            mode = record["declaration"]["executor"]["mode"]
+            state["next"] = ('Run `cao verify`, then `cao sdd acceptance run`.' if mode == "command" else
+                             'Run `cao verify`, then `cao sdd acceptance begin`; follow the installed native Skill and submit the current report with `cao sdd acceptance submit --run <id> --report <repo-json>`. Renderer success is not acceptance.')
+    return state
+
+
 def verification_inputs(repo: Path, work: dict, cfg: dict) -> dict:
-    return {"requirement_sha256": sha256_file(repo / work["requirement"]["path"]),
+    inputs = {"requirement_sha256": sha256_file(repo / work["requirement"]["path"]),
             "code_snapshot": code_snapshot(repo, {work["requirement"]["path"]}),
             "rules_snapshot": rules_snapshot(repo, cfg),
             "verification_config_sha256": verification_snapshot(cfg),
             "assessment_revision": (work.get("path_assessment") or {}).get("revision")}
+    binding = (work.get("sdd") or {}).get("spec_binding")
+    if binding:
+        inputs["rules_snapshot"] = binding_digest({"rules": inputs["rules_snapshot"], "spec_binding": binding})
+    record = (work.get("sdd") or {}).get("acceptance") or {}
+    if record.get("declaration") and (work.get("path_assessment") or {}).get("profile") != "light":
+        sources = source_hashes(repo, record["declaration"], provider_output_dirs(work["sdd"]["provider"]))
+        inputs["code_snapshot"] = code_snapshot(repo, {work["requirement"]["path"]} | sdd_acceptance_outputs(repo, work))
+        inputs["rules_snapshot"] = acceptance_digest({"rules": inputs["rules_snapshot"],
+                                                      "declaration": record["declaration_sha256"], "sources": sources})
+    return inputs
 
 
 def completion_status(repo: Path, work: dict[str, Any] | None) -> dict[str, Any]:
@@ -2725,14 +2821,16 @@ def completion_status(repo: Path, work: dict[str, Any] | None) -> dict[str, Any]
                 "next": f"Review the standard, then run `cao reopen --work {work['id']} --reanchor --reason \"<why>\"`."}
     fresh = bound_verification_fresh(work, current)
 
-    # The native-workflow contract applies to every profile, including `light`.
-    # Exempting `light` let an Agent go straight from path selection to
-    # verification with no native planning, implementation, or review step.
+    # Light binds minimal native intent; full profiles require execution/plan evidence.
     sdd = work.get("sdd") or {}
     assessment = work.get("path_assessment") or {}
     provider = str(sdd.get("provider") or "none")
     profile = str(assessment.get("profile") or "light")
-    if provider in SDD_CATALOG and profile in PROFILE_RANK:
+    if profile == "light":
+        spec_state = light_spec_state(repo, work, provider_output_dirs(provider))
+        if not spec_state["ready"]:
+            return {"ready": False, "reason": spec_state["reason"], "next": spec_state.get("next"), "light_spec": spec_state}
+    if provider in SDD_CATALOG and profile in {"standard", "comprehensive"}:
         workflow = sdd.get("workflow") or {}
         if workflow.get("status") == "completed":
             ownership = validate_workflow_artifacts(repo, provider, workflow.get("artifacts") or [])
@@ -2770,9 +2868,12 @@ def completion_status(repo: Path, work: dict[str, Any] | None) -> dict[str, Any]
                 "next": f"Finish the remaining items in the provider's own plan ({shown}{more}), or get the user to confirm the reduced scope, then run `cao verify` and `cao done` again.",
             }
 
-    gates = gate_state(work, fresh)
+    sdd_state = sdd_acceptance_state(repo, work)
+    gates = gate_state(work, fresh, sdd_state["ready"])
     if gates["pending"]:
         manual = [gate for gate in gates["pending"] if not gate_is_auto_derived(gate)]
+        if gates["pending"] == ["sdd_acceptance"]:
+            return {"ready": False, "reason": sdd_state["reason"], "next": sdd_state.get("next"), "sdd_acceptance": sdd_state, "gates": gates}
         return {
             "ready": False,
             "reason": "required execution gates are not satisfied",
@@ -2784,10 +2885,13 @@ def completion_status(repo: Path, work: dict[str, Any] | None) -> dict[str, Any]
             ),
         }
 
+    if profile in {"standard", "comprehensive"} and not sdd_state["ready"]:
+        return {"ready": False, "reason": sdd_state["reason"], "next": sdd_state.get("next"), "sdd_acceptance": sdd_state}
     return {
         "ready": fresh,
         "reason": None if fresh else "verification is missing or stale",
         "gates": gates,
+        "sdd_acceptance": sdd_state,
         "current_code_snapshot": code_sha,
         "current_rules_snapshot": rules_sha,
         "current_verification_config_sha256": verification_cfg_sha,
@@ -3471,11 +3575,11 @@ def cmd_sdd_install(args: argparse.Namespace) -> int:
     return 0
 
 
-def record_workflow_unverified(repo: Path, work: dict[str, Any], provider: str, name: str, reason: str) -> None:
+def record_workflow_unverified(repo: Path, work: dict[str, Any], provider: str, name: str, reason: str, operation: str = "select") -> None:
     """Persist an auditable trace for a documented native-workflow exception."""
     identity = {"work_item_id": work["id"], "event": "workflow.unverified_exception", "workflow": name,
                 "provider": provider, "requirement_sha256": work["requirement"]["sha256"], "reason": reason}
-    key = hashlib.sha256(json.dumps(identity, sort_keys=True).encode("utf-8")).hexdigest()
+    key = uuid.uuid4().hex
     queue_event(work, {
         "event_id": "evt-" + key[:20],
         "idempotency_key": key,
@@ -3486,6 +3590,8 @@ def record_workflow_unverified(repo: Path, work: dict[str, Any], provider: str, 
         "requirement_sha256": identity["requirement_sha256"],
         "workflow": name,
         "reason": reason,
+        "evidence_source": "agent_declaration",
+        "operation": operation,
         "occurred_at": now(),
     })
 
@@ -3508,6 +3614,14 @@ def cmd_sdd_workflow(args: argparse.Namespace) -> int:
         entrypoint = str(args.entrypoint or "").strip()
         if not name or not entrypoint:
             print(json.dumps({"ok": False, "error": "WORKFLOW_NAME_AND_ENTRYPOINT_REQUIRED"}, ensure_ascii=False, indent=2)); return 2
+        skills = provider_native_skills(repo, provider)
+        selected = workflow_skill_identity(repo, provider, entrypoint)
+        explicit_skill = workflow_entrypoint_tokens(entrypoint)[:2] == ["invoke", "skill"]
+        if not allow_unverified and not selected and (explicit_skill or (skills and provider == "bmad")):
+            next_step = (f'Select an installed Skill: `cao sdd workflow select --name {skills[0]["name"]} --entrypoint "invoke skill {skills[0]["name"]}"`.'
+                         if skills else "No matching native Skill is installed. Inspect the provider installation and its documented CLI/Skill entrypoint.")
+            print(json.dumps({"ok": False, "error": "NATIVE_SKILL_REQUIRED", "skills": skills,
+                              "next": next_step})); return 2
         if allow_unverified:
             check = {"ok": True, "reason": None}
         else:
@@ -3543,6 +3657,11 @@ def cmd_sdd_workflow(args: argparse.Namespace) -> int:
         command = str(getattr(args, "command", "") or "").strip()
         if not command:
             print(json.dumps({"ok": False, "error": "WORKFLOW_COMMAND_REQUIRED", "reason": "Record the command that was actually executed."}, ensure_ascii=False, indent=2)); return 2
+        selected_skill = workflow_skill_identity(repo, provider, str(workflow["entrypoint"]))
+        executed_skill = workflow_skill_identity(repo, provider, command)
+        if executed_skill and selected_skill != executed_skill:
+            print(json.dumps({"ok": False, "error": "NATIVE_WORKFLOW_IDENTITY_CHANGED",
+                              "next": "Reselect the actual workflow with `cao sdd workflow select` before recording its execution."})); return 2
         if not allow_unverified:
             check = validate_workflow_entrypoint(provider, str(workflow.get("name") or ""), command)
             if not check["ok"]:
@@ -3567,6 +3686,8 @@ def cmd_sdd_workflow(args: argparse.Namespace) -> int:
             "output_tail": str(getattr(args, "output", "") or "").strip()[-2000:],
         }
         workflow["unverified"] = {"allowed": True, "reason": unverified_reason, "at": now(), "by": "agent"} if allow_unverified else workflow.get("unverified")
+        if allow_unverified:
+            record_workflow_unverified(repo, work, provider, workflow["name"], unverified_reason, "execute")
         work.setdefault("execution", {})["step"] = "native-sdd-workflow-executed"
         work["execution"]["next_action"] = action("agent", f"Record the real output files produced by `{workflow.get('name')}` with `cao sdd workflow complete --work {work['id']} --artifact <repo-relative-file>` (repeat --artifact for each file).")
     elif args.workflow_action == "complete":
@@ -3646,11 +3767,45 @@ def cmd_sdd_workflow(args: argparse.Namespace) -> int:
         workflow["completed_at"] = now()
         if allow_unverified and not (execution and execution.get("exit_code") != 0):
             workflow["unverified"] = {"allowed": True, "reason": unverified_reason, "at": now(), "by": "agent"}
-            record_workflow_unverified(repo, work, provider, str(workflow.get("name") or ""), unverified_reason)
+            record_workflow_unverified(repo, work, provider, str(workflow.get("name") or ""), unverified_reason, "complete")
         work["execution"]["step"] = "native-sdd-workflow-completed"
         work["execution"]["next_action"] = action("agent", "Continue implementation/review/verification according to the selected path; record manual reviews with `cao gate satisfy`, record additional native workflow outputs if produced, then run configured `cao verify` for derived gates and `cao done`.")
     save_work(repo, work)
     print(json.dumps({"ok": True, "work_item": work_summary(work), "workflow": sdd.get("workflow")}, ensure_ascii=False, indent=2)); return 0
+
+
+@locked_command
+def cmd_sdd_spec(args: argparse.Namespace) -> int:
+    repo = repo_root(args.repo); ensure_initialized(repo)
+    work = resolve_work(repo, args.work)
+    if not work or work.get("status") not in {"active", "suspended"}:
+        print(json.dumps({"ok": False, "error": "NO_ACTIVE_WORK_ITEM"})); return 2
+    try:
+        binding = make_binding(repo, work, args.spec, args.criteria, args.criteria_section,
+                               provider_output_dirs(work["sdd"]["provider"]))
+        previous = work["sdd"].get("spec_binding")
+        if previous == binding:
+            print(json.dumps({"ok": True, "status": "unchanged", "binding": binding}, ensure_ascii=False)); return 0
+        if previous and not args.replace:
+            raise ValueError("LIGHT_SPEC_REPLACE_REQUIRED")
+    except ValueError as exc:
+        print(json.dumps({"ok": False, "error": str(exc)}, ensure_ascii=False)); return 2
+    work["sdd"]["spec_binding"] = binding
+    for ref, role in ((binding["spec"], "spec"), (binding["criteria"], "acceptance-criteria")):
+        artifacts = work["sdd"].setdefault("artifacts", [])
+        if not any(item.get("path") == ref["path"] for item in artifacts):
+            artifacts.append({**ref, "role": role})
+    queue_event(work, {"event": "spec.bound", "work_item_id": work["id"], "source": "cao",
+                       "provider": binding["provider"], "requirement_sha256": binding["requirement_sha256"],
+                       "binding_sha256": binding_digest(binding), "occurred_at": now()})
+    save_work(repo, work)
+    print(json.dumps({"ok": True, "status": "bound", "binding": binding,
+                      "next": "Run configured `cao verify`, then `cao done`."}, ensure_ascii=False)); return 0
+
+
+def cmd_sdd_acceptance(args: argparse.Namespace) -> int:
+    from scripts.sdd_acceptance_commands import dispatch
+    return dispatch(args, sys.modules[__name__])
 
 
 def cmd_sdd(args: argparse.Namespace) -> int:
@@ -4004,7 +4159,7 @@ def _prepare_start(args: argparse.Namespace):
         work["path_assessment"] = None
         work["gate_status"] = {}
         work["verification"] = None
-        for field in ("workflow", "plan_scope", "native_state"):
+        for field in ("workflow", "plan_scope", "native_state", "spec_binding", "acceptance"):
             work["sdd"].pop(field, None)
         hint = work["sdd"].pop("native_ref", None)
         if hint:
@@ -4138,7 +4293,9 @@ def cmd_path_assess(args: argparse.Namespace) -> int:
         execution["next_action"] = action(
             "agent",
             f"Apply the {assessment['profile']} path using {provider}'s native workflow. {assessment['provider_guidance']} "
-            + (f"Before implementation, select and record the native workflow with `cao sdd workflow select --name \"<native workflow name>\" --entrypoint \"<native workflow command or skill>\" --work {work['id']}`. Then execute it and record the run with `cao sdd workflow execute --command \"<command actually run>\" --exit-code <code> --work {work['id']}`. Finally record its real output files with `cao sdd workflow complete --work {work['id']} --artifact <repo-relative-file>` (repeat --artifact for each produced native artifact). Outputs must live under the provider's own directory; product source files are not SDD artifacts. `cao done` blocks until this contract is satisfied. " if provider in SDD_CATALOG else "")
+            + (f'Bind the native SPEC and explicit criteria with `cao sdd spec bind --spec <provider-spec.md> --criteria-section "<heading>" --work {work["id"]}`. Light does not require workflow/plan/independent acceptance registration. '
+               if assessment["profile"] == "light" else
+               f"Before implementation, select and record the native workflow with `cao sdd workflow select --name \"<native workflow name>\" --entrypoint \"<native workflow command or skill>\" --work {work['id']}`. Then execute it and record the run with `cao sdd workflow execute --command \"<command actually run>\" --exit-code <code> --work {work['id']}`. Finally record its real output files with `cao sdd workflow complete --work {work['id']} --artifact <repo-relative-file>` (repeat --artifact for each produced native artifact). Outputs must live under the provider's own directory; product source files are not SDD artifacts. `cao done` blocks until this contract is satisfied. " if provider in SDD_CATALOG else "")
             + f"Required gates: {gate_text}. Record observed manual reviews with `cao gate satisfy --gate <gate> --evidence \"<what was done>\"`; verification and tests gates come from fresh configured scripts, not manual claims. `cao done` blocks until all are satisfied. Reassess only if the scope, risk, or requirement materially changes.",
             profile=assessment["profile"],
             provider=provider,
@@ -4198,7 +4355,7 @@ def cmd_gate(args: argparse.Namespace) -> int:
                 "ok": False,
                 "error": "GATE_IS_AUTO_DERIVED",
                 "gate": name,
-                "reason": "This gate is derived from verification freshness; run `cao verify` instead.",
+                "reason": ("This gate is derived from current independent acceptance; follow `cao sdd acceptance show`." if name == "sdd_acceptance" else "This gate is derived from verification freshness; run `cao verify` instead."),
             }, ensure_ascii=False, indent=2))
             return 2
         evidence = str(args.evidence or "").strip()
@@ -4226,7 +4383,7 @@ def cmd_gate(args: argparse.Namespace) -> int:
         "ok": True,
         "work_item": work_summary(work),
         "required_gates": assessment.get("required_gates") or [],
-        "gates": gate_state(work, fresh),
+        "gates": gate_state(work, fresh, sdd_acceptance_state(repo, work)["ready"]),
         "gate_status": work.get("gate_status") or {},
     }, ensure_ascii=False, indent=2))
     return 0
@@ -4503,7 +4660,7 @@ def verification_status_for_exit_code(exit_code: int) -> str:
 
 
 def verification_reason(stdout: str, stderr: str, status: str) -> str:
-    for stream in (stdout, stderr):
+    for stream in ((stdout, stderr) if status == "passed" else (stderr, stdout)):
         lines = [line.strip() for line in stream.splitlines() if line.strip()]
         if lines:
             return lines[-1][-1000:]
@@ -4550,7 +4707,7 @@ def _prepare_verification(args: argparse.Namespace):
         print(json.dumps({
             "ok": False,
             "error": "VERIFICATION_SCRIPT_REQUIRED",
-            "next": "Configure required verification with `cao init --test-script \"<real test command>\" --force`, then explicitly re-anchor the Work Item."
+            "next": "Configure required verification with `cao verification configure --test-script \"<real test command>\" --replace`, then explicitly re-anchor the Work Item."
         }, ensure_ascii=False, indent=2)); return 2
 
     if source == "config":
@@ -4568,7 +4725,7 @@ def _prepare_verification(args: argparse.Namespace):
             print(json.dumps({
                 "ok": False, "error": "VERIFICATION_GATE_UNBOUND",
                 "reason": "The tests gate needs a required verification script explicitly declaring gates: [tests].",
-                "next": "Use `cao init --test-script \"<real test command>\" --force`, then `cao reopen --reanchor --reason \"<why>\"` and rerun `cao verify`.",
+                "next": "Use `cao verification configure --test-script \"<real test command>\" --replace`, then `cao reopen --reanchor --reason \"<why>\"` and rerun `cao verify`.",
             }, ensure_ascii=False, indent=2)); return 2
 
     req = repo / work["requirement"]["path"]
@@ -4591,7 +4748,11 @@ def commit_verification(repo, wid, inputs, scripts, results, source, started):
         work["verification"] = verification
         if not changed:
             work["execution"]["step"] = "verification"
-            work["execution"]["next_action"] = action("agent", "Run `cao done`." if status == "passed" else "Fix verification and rerun `cao verify`.")
+            completion = completion_status(repo, work) if status == "passed" else None
+            instruction = ("Run `cao done`." if completion and completion["ready"] else
+                           (completion.get("next") or completion_next_instruction(repo, work, completion)) if completion else
+                           "Fix verification and rerun `cao verify`.")
+            work["execution"]["next_action"] = action("agent", instruction)
             work["resume"]["summary"] = "Verification passed." if status == "passed" else f"Verification {status}. See verification.results for script status and reasons."
         save_work(repo, work)
         return verification
@@ -4733,12 +4894,21 @@ def cmd_reopen(args: argparse.Namespace) -> int:
         anchor_acceptance(work, verification_scripts(cfg), verification_timeout(cfg))
         work["started_at"] = now()
         work["reanchored_at"] = now()
+        record = work["sdd"].get("acceptance") or {}
+        if record.get("declaration") and (work.get("path_assessment") or {}).get("profile") != "light":
+            sources = source_hashes(repo, record["declaration"], provider_output_dirs(work["sdd"]["provider"]))
+            reanchor_record(work, sources)
+    reopening_message = (
+        "The active Work Item's verification standard was re-anchored after explicit review."
+        if status == "active" else
+        "The Work Item was reopened: it was marked completed but the requirement is not actually satisfied."
+    )
     work["status"] = "active"
     work["completed_at"] = None
     work["execution"]["step"] = "reopened"
     work["execution"]["next_action"] = action(
         "agent",
-        f"The Work Item was reopened: it was marked completed but the requirement is not actually satisfied."
+        reopening_message
         + (f" Reopen reason: {args.reason}." if args.reason else "")
         + (" The current verification configuration was explicitly accepted as the new standard."
            if reanchored else "")
@@ -4750,6 +4920,8 @@ def cmd_reopen(args: argparse.Namespace) -> int:
     )
     work["gate_status"] = {}
     work["verification"] = {}
+    if (work.get("sdd") or {}).get("acceptance"):
+        work["sdd"]["acceptance"]["run"] = None
     queue_event(work, {
         "event": "task.reopened",
         "work_item_id": work["id"],
@@ -5067,7 +5239,7 @@ def _readonly_tokens(tokens: list[str]) -> bool:
     if not tokens or any(token in operators for token in tokens):
         return False
     name = tokens[0].lower()
-    if name in {"ls", "dir", "cat", "type", "pwd", "find", "grep", "rg", "head", "tail", "echo", "printf", "cd"}:
+    if name in {"ls", "dir", "cat", "type", "pwd", "find", "grep", "rg", "head", "tail", "echo", "printf", "cd", "exit"}:
         return True
     if name == "git" and len(tokens) > 1 and tokens[1] in {"status", "diff", "log", "show", "branch"}:
         return True
@@ -5200,6 +5372,10 @@ def host_event(args: argparse.Namespace) -> int:
                     if path_state["reason"] == "requirement changed since work started":
                         next_step = completion_next_instruction(repo, work, path_state) + " " + next_step
                     result["additional_context"] = f"CAO reminder: {path_state['reason']}. {next_step} Clarify open questions before reassessment."
+                elif (work.get("path_assessment") or {}).get("profile") == "light":
+                    state = light_spec_state(repo, work, provider_output_dirs((work.get("sdd") or {}).get("provider")))
+                    if not state["ready"]:
+                        result["additional_context"] = "CAO light reminder: " + (state.get("next") or state["reason"])
                 else:
                     workflow = ((work.get("sdd") or {}).get("workflow") or {})
                     if not (workflow.get("execution") or {}).get("executed_at") and not (workflow.get("unverified") or {}).get("allowed"):
@@ -5314,6 +5490,22 @@ def build_parser() -> argparse.ArgumentParser:
     sp.set_defaults(fn=cmd_language_apply)
     sdd = sub.add_parser("sdd", help="Detect, select, and install a project SDD")
     sdd_sub = sdd.add_subparsers(dest="sdd_command", required=True)
+    acceptance = sdd_sub.add_parser("acceptance", help="Independent SDD final acceptance for full paths")
+    acceptance_sub = acceptance.add_subparsers(dest="acceptance_action", required=True)
+    for name in ("configure", "show", "run", "begin", "submit"):
+        sp = acceptance_sub.add_parser(name)
+        sp.add_argument("--repo", default="."); sp.add_argument("--work")
+        if name == "configure":
+            sp.add_argument("--declaration", required=True); sp.add_argument("--replace", action="store_true")
+        if name == "submit":
+            sp.add_argument("--run", required=True); sp.add_argument("--report", required=True); sp.add_argument("--exit-code", type=int, default=0)
+        sp.set_defaults(fn=cmd_sdd_acceptance)
+    spec = sdd_sub.add_parser("spec", help="Bind a minimal native SPEC and explicit criteria")
+    spec_sub = spec.add_subparsers(dest="spec_command", required=True)
+    sp = spec_sub.add_parser("bind")
+    sp.add_argument("--repo", default="."); sp.add_argument("--work"); sp.add_argument("--spec", required=True)
+    sp.add_argument("--criteria"); sp.add_argument("--criteria-section"); sp.add_argument("--replace", action="store_true")
+    sp.set_defaults(fn=cmd_sdd_spec)
     sp = sdd_sub.add_parser("list"); sp.add_argument("--repo", default="."); sp.set_defaults(fn=cmd_sdd_list)
     sp = sdd_sub.add_parser("select"); sp.add_argument("--repo", default="."); sp.add_argument("--provider", required=True, choices=sorted(SDD_CATALOG)); sp.set_defaults(fn=cmd_sdd_select)
     sp = sdd_sub.add_parser("install"); sp.add_argument("--repo", default="."); sp.add_argument("--provider", choices=sorted(SDD_CATALOG)); sp.add_argument("--tools", default=None, help="OpenSpec init tool ids, or all/none"); sp.add_argument("--host", choices=["claude-code", "codex", "pi"], default=None, help="Current coding-agent host; used by Spec Kit to select its integration"); sp.add_argument("--integration", default=None, help="Spec Kit integration key, e.g. claude, codex, pi, copilot"); sp.add_argument("--integration-options", default=None, help="Spec Kit integration options passed through as one value"); sp.add_argument("--yes", action="store_true", help="Confirm installation of external/project software"); sp.set_defaults(fn=cmd_sdd_install)

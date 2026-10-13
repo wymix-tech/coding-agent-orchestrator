@@ -65,6 +65,8 @@ def reset_requirement(work: dict, requirement: dict) -> bool:
         work["gate_status"] = {}
         work["verification"] = None
         sdd = work.setdefault("sdd", {})
+        sdd.pop("spec_binding", None)
+        sdd.pop("acceptance", None)
         previous = sdd.get("workflow") or {}
         sdd["workflow"] = {key: previous[key] for key in ("name", "entrypoint") if key in previous}
         if sdd["workflow"]:

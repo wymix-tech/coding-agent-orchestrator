@@ -38,6 +38,89 @@
     "sdd": {
       "type": "object",
       "properties": {
+        "spec_binding": {
+          "type": ["object", "null"],
+          "properties": {
+            "version": {"const": 1},
+            "requirement_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+            "provider": {"type": "string"},
+            "spec": {
+              "type": "object",
+              "properties": {"path": {"type": "string", "minLength": 1}, "sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"}},
+              "required": ["path", "sha256"],
+              "additionalProperties": true
+            },
+            "criteria": {
+              "type": "object",
+              "properties": {"path": {"type": "string", "minLength": 1}, "sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"}},
+              "required": ["path", "sha256"],
+              "additionalProperties": true
+            },
+            "criteria_section": {"type": ["string", "null"]}
+          },
+          "required": ["version", "requirement_sha256", "provider", "spec", "criteria", "criteria_section"],
+          "additionalProperties": false
+        },
+        "acceptance": {
+          "type": ["object", "null"],
+          "description": "Work-scoped independent final acceptance; required for current full-profile closure, optional in historical records.",
+          "properties": {
+            "version": {"const": 1},
+            "declaration": {
+              "type": "object",
+              "properties": {
+                "spec": {"type": "string", "minLength": 1},
+                "sources": {"type": "array", "items": {"type": "string"}},
+                "outputs": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
+                "criteria": {
+                  "type": "array",
+                  "minItems": 1,
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "id": {"type": "string", "minLength": 1},
+                      "source": {"type": "string", "minLength": 1},
+                      "kind": {"enum": ["requirement", "design"]},
+                      "description": {"type": "string", "minLength": 1}
+                    },
+                    "required": ["id", "source", "kind", "description"]
+                  }
+                },
+                "executor": {
+                  "type": "object",
+                  "properties": {
+                    "mode": {"enum": ["command", "skill"]},
+                    "entrypoint": {"type": "string", "minLength": 1},
+                    "timeout_seconds": {"type": "number", "exclusiveMinimum": 0}
+                  },
+                  "required": ["mode", "entrypoint", "timeout_seconds"]
+                }
+              },
+              "required": ["spec", "sources", "outputs", "criteria", "executor"]
+            },
+            "declaration_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+            "anchor_sha256": {"type": ["string", "null"]},
+            "anchor_sources": {"type": "object", "additionalProperties": {"type": "string", "pattern": "^[a-f0-9]{64}$"}},
+            "owned_outputs": {"type": "object", "additionalProperties": {"type": "string", "pattern": "^[a-f0-9]{64}$"}},
+            "run": {
+              "type": ["object", "null"],
+              "properties": {
+                "id": {"type": "string", "minLength": 1},
+                "status": {"enum": ["running", "passed", "failed", "blocked", "stale", "error"]},
+                "inputs": {"type": "object"},
+                "input_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+                "results": {"type": "array", "items": {"type": "object"}},
+                "evidence_hashes": {"type": "object", "additionalProperties": {"type": "string", "pattern": "^[a-f0-9]{64}$"}},
+                "output_hashes": {"type": "object", "additionalProperties": {"type": "string", "pattern": "^[a-f0-9]{64}$"}},
+                "execution": {"type": "object"}
+              },
+              "required": ["id", "status", "inputs", "input_sha256", "results", "evidence_hashes", "output_hashes"],
+              "additionalProperties": true
+            }
+          },
+          "required": ["version", "declaration", "declaration_sha256", "anchor_sha256", "anchor_sources", "run", "owned_outputs"],
+          "additionalProperties": true
+        },
         "plan_scope": {
           "type": "object",
           "properties": {

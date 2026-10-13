@@ -24,7 +24,7 @@ def main():
     records = []
     with tempfile.TemporaryDirectory(prefix="cao-installed-smoke-") as td:
         base = Path(td)
-        modules = ("import json; from scripts import cao, state_store, completion_policy, path_guard, verification_runner, verification_setup, windows_supervisor, dashboard; "
+        modules = ("import json; from scripts import cao, state_store, completion_policy, path_guard, verification_runner, verification_setup, windows_supervisor, dashboard, light_spec_policy, sdd_acceptance_runtime, sdd_acceptance_commands; "
                    "root=cao.package_root_dir(); "
                    "assert all((root/p).is_file() for p in ['hosts/pi/coding-orchestrator.ts','hooks/host-event.sh','hosts/claude-code/settings.fragment.json','hosts/codex/hooks.json','SKILL.md']); "
                    "assert dashboard.dashboard_html_path().is_file(); print(json.dumps({'runner':verification_runner.__file__,'invocation':cao.cao_invocation()}))")
@@ -86,17 +86,43 @@ def main():
                 assert json.loads(session.read_text(encoding="utf-8"))["status"] == "ended"
                 cli("path", "assess", "--profile", "light", "--reason", "bounded local fixture")
                 native = repo / f"{provider}-fixture.py"
-                native.write_text(f"from pathlib import Path\np=Path({artifact!r})\np.parent.mkdir(parents=True,exist_ok=True)\np.write_text('Local fixture output',encoding='utf-8')\n", encoding="utf-8")
+                native.write_text(f"from pathlib import Path\np=Path({artifact!r})\np.parent.mkdir(parents=True,exist_ok=True)\np.write_text('Local fixture output\\n## Acceptance\\n- Expected fixture output exists.\\n',encoding='utf-8')\n", encoding="utf-8")
                 command = shell([args.python, native.name])
                 cli("sdd", "workflow", "select", "--name", "local-fixture", "--entrypoint", command)
                 subprocess.run([args.python, str(native)], cwd=repo, env=env, timeout=10, check=True)
                 cli("sdd", "workflow", "execute", "--command", command, "--exit-code", "0")
                 cli("sdd", "workflow", "complete", "--artifact", artifact, "--no-plan")
+                cli("sdd", "spec", "bind", "--spec", artifact, "--criteria-section", "Acceptance")
                 cli("verify")
                 cli("done")
                 work = json.loads((repo / f".orchestrator/work/{wid}.json").read_text(encoding="utf-8"))
                 assert work["status"] == "completed"
-                records.append({"provider_fixture": provider, "simulated_host": host, "status": work["status"]})
+                records.append({"provider_fixture": provider, "simulated_host": host, "status": work["status"], "profile": "light"})
+                # Full profile uses the installed acceptance CLI and a real fixture executor.
+                req = cli("requirement", "next-id", "--title", "Full profile installed fixture")
+                (repo / req["path"]).write_text("# Full fixture\nVerify the explicit fixture behavior.\n", encoding="utf-8")
+                full_id = cli("start", "--requirement", req["path"])["work_item"]["id"]
+                cli("path", "assess", "--profile", "standard", "--reason", "full fixture acceptance")
+                cli("sdd", "workflow", "select", "--name", "local-fixture", "--entrypoint", command)
+                subprocess.run([args.python, str(native)], cwd=repo, env=env, timeout=10, check=True)
+                cli("sdd", "workflow", "execute", "--command", command)
+                cli("sdd", "workflow", "complete", "--artifact", artifact, "--no-plan")
+                executor = repo / "fixture-final.py"
+                executor.write_text("import json,os,subprocess,sys\nr=json.loads(os.environ['CAO_SDD_ACCEPTANCE_REQUEST'])\n"
+                    "rc=subprocess.run([sys.executable,'-m','unittest','discover','-s','acceptance-tests','-v'],stdout=sys.stderr,stderr=sys.stderr).returncode\n"
+                    "print(json.dumps({'run_id':r['run_id'],'input_sha256':r['input_sha256'],'provider':r['provider'],'items':[{'id':'AC-1','status':'passed' if rc==0 else 'failed','evidence':[{'path':'acceptance-tests/test_acceptance.py','reason':'Actual fixture unittest execution'}]}]}))\nsys.exit(rc)\n", encoding="utf-8")
+                declaration = {"spec": artifact, "criteria": [{"id": "AC-1", "source": artifact, "kind": "requirement", "description": "Fixture unittest passes"}],
+                    "executor": {"mode": "command", "entrypoint": shell([args.python, executor.name])}}
+                (repo / "fixture-declaration.json").write_text(json.dumps(declaration), encoding="utf-8")
+                cli("sdd", "acceptance", "configure", "--declaration", "fixture-declaration.json")
+                cli("reopen", "--reanchor", "--reason", "Reviewed native fixture acceptance")
+                for gate in ("scope_review", "implementation_review"):
+                    cli("gate", "satisfy", "--gate", gate, "--evidence", "Explicit local fixture review")
+                cli("verify")
+                cli("sdd", "acceptance", "run")
+                assert "sdd_acceptance" in cli("gate", "show")["gates"]["satisfied"]
+                cli("done")
+                records.append({"provider_fixture": provider, "simulated_host": host, "profile": "standard", "status": "completed", "work": full_id})
         print(json.dumps({"installed_runner": installation["runner"], "resolved_invocation": installation["invocation"],
                           "fixture_cases": records}, indent=2))
 

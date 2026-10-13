@@ -1,10 +1,12 @@
-# 全 profile 双验收与 light 最小原生流程设计
+> 2026-10-13 修订：本轮 light 决策优先于下文旧执行细节。light 不强制 workflow/plan/独立验收登记；完整实施以 2026-10-13-light-and-pi-repair.md 为准。
+
+# 按 profile 分层验收与 light 最小规范设计
 
 ## 1. 需求与审批状态
 
 用户已确认以下原则：
 
-- 所有 profile（light、standard、comprehensive）都必须通过技术验收与独立 SDD 收尾验收。
+- standard/comprehensive 必须通过技术验收与独立 SDD 收尾验收；light 仅要求有效 SPEC、非空验收标准和新鲜技术验证。
 - 即使 SDD 之前已经确认功能验收，CAO 仍须组织针对当前实现的新一次需求/设计验收。
 - 使用混合执行：可运行命令由 CAO 实际执行；只有原生 Skill 时由 Agent 重新执行并提交逐项证据。
 - light 的前置最低限度为 Provider 最简原生流程产出的 SPEC 和明确验收标准。
@@ -167,7 +169,7 @@ Provider 生成的验收报告仍留在其原生目录，输出与输入必须�
 
 ## 10. 必须验证的场景
 
-- 三个 profile 都拒绝技术通过但没有本次 SDD 验收；原生 completed/旧报告/人工 gate/例外不可替代。
+- standard/comprehensive 拒绝技术通过但没有本次 SDD 验收；原生 completed/旧报告/人工 gate/例外不可替代。
 - light 真正的最简原生 SPEC + 同文档非空标准，无架构/Story/计划可满足前置；占位或只有标题拒绝。
 - 保留 Provider 原生路径与版本前置；无计划不强制新建，已有绑定计划不得隐式缩减。
 - 命令实际执行并验证全项结果；Skill 当前 run 提交同样严格；空/缺项/重复/未知/失败/缺证据拒绝。

@@ -5,7 +5,7 @@ import sys
 import tempfile
 import unittest
 
-from tests.helpers import configure_verification, verify_via_config
+from tests.helpers import bind_light_spec, complete_acceptance, configure_verification, verify_via_config
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 CAO = ROOT / "scripts" / "cao.py"
@@ -199,6 +199,7 @@ class CoreTests(unittest.TestCase):
             self.assertEqual(rc, 0)
             rc, _, _ = run(repo, "checkpoint", "--step", "implement-login-api", "--next", "run integration tests", "--summary", "JWT API implemented", "--completed", "JWT API")
             self.assertEqual(rc, 0)
+            bind_light_spec(repo, run, "openspec/changes/demo.md")
             rc, _, _ = verify_via_config(repo, run); self.assertEqual(rc, 0)
             rc, out, _ = run(repo, "done"); self.assertEqual(rc, 0); self.assertEqual(out["status"], "completed")
             rc, events, _ = run(repo, "lifecycle", "events")
@@ -239,6 +240,7 @@ class CoreTests(unittest.TestCase):
             for gate in ("scope_review", "implementation_review"):
                 rc, out, _ = run(repo, "gate", "satisfy", "--gate", gate, "--evidence", f"{gate} performed")
                 self.assertEqual(rc, 0)
+            complete_acceptance(repo, run)
             rc, out, _ = run(repo, "done")
             self.assertEqual(rc, 0)
 

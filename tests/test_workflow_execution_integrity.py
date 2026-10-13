@@ -2,12 +2,13 @@ import copy
 import json
 
 from repair_helpers import RepairCase
+from tests.helpers import complete_acceptance
 from scripts import cao, completion_policy as policy
 
 
 class WorkflowExecutionTests(RepairCase):
     def select_execute(self, exit_code=0, entry_exception=False):
-        wid = self.start()
+        wid = self.start(profile="standard")
         args = ["sdd", "workflow", "select", "--name", "bmad-build", "--entrypoint", "bmad-build"]
         if entry_exception:
             args += ["--allow-unverified", "--reason", "entrypoint uncertainty"]
@@ -48,6 +49,9 @@ class WorkflowExecutionTests(RepairCase):
         self.assertEqual(self.ready(work), (True, None))
         rc, out = self.run_cli("verify")
         self.assertEqual(rc, 0, out)
+        for gate in ("scope_review", "implementation_review"):
+            self.run_cli("gate", "satisfy", "--gate", gate, "--evidence", "Fixture reviewed")
+        complete_acceptance(self.repo, lambda repo, *args: self.run_cli(*args), wid)
         rc, out = self.run_cli("done")
         self.assertEqual(rc, 0, out)
 
@@ -66,6 +70,9 @@ class WorkflowExecutionTests(RepairCase):
         self.assertEqual(events[0]["exit_code"], 7)
         self.assertEqual(self.ready(self.read_work(wid)), (True, None))
         self.run_cli("verify")
+        for gate in ("scope_review", "implementation_review"):
+            self.run_cli("gate", "satisfy", "--gate", gate, "--evidence", "Fixture reviewed")
+        complete_acceptance(self.repo, lambda repo, *args: self.run_cli(*args), wid)
         rc, out = self.run_cli("done")
         self.assertEqual(rc, 0, out)
 

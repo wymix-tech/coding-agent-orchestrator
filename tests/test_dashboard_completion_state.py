@@ -5,6 +5,7 @@ import subprocess
 import unittest
 
 from repair_helpers import RepairCase, ROOT
+from tests.helpers import bind_light_spec
 from scripts import cao
 from scripts.dashboard import build_dashboard_overview, infer_execution_phase, confirm_artifact
 
@@ -25,20 +26,23 @@ class PhaseTests(unittest.TestCase):
 
 
 class DashboardCompletionTests(RepairCase):
-    def native_complete(self, exit_code=0, no_plan=True):
-        wid = self.start()
+    def native_complete(self, exit_code=0, no_plan=True, profile="light"):
+        wid = self.start(profile=profile)
         for args in (("select", "--name", "bmad-build", "--entrypoint", "bmad-build"),
                      ("execute", "--command", "bmad-build", "--exit-code", str(exit_code))):
             rc, out = self.run_cli("sdd", "workflow", *args)
             self.assertEqual(rc, 0, out)
         artifact = self.repo / "_bmad-output/story.md"
         artifact.parent.mkdir(exist_ok=True)
-        artifact.write_text("# story\n", encoding="utf-8")
+        artifact.write_text("# story\nBody\n## Acceptance\n- Fixture passes.\n", encoding="utf-8")
         args = ["--no-plan"] if no_plan else []
         if exit_code:
             args += ["--allow-unverified", "--reason", "accepted environment failure"]
         rc, out = self.run_cli("sdd", "workflow", "complete", "--artifact", "_bmad-output/story.md", *args)
         self.assertEqual(rc, 0, out)
+        if profile == "light":
+            rc, out = self.run_cli("sdd", "spec", "bind", "--spec", "_bmad-output/story.md", "--criteria-section", "Acceptance")
+            self.assertEqual(rc, 0, out)
         return wid
 
     def view(self):
@@ -92,7 +96,7 @@ class DashboardCompletionTests(RepairCase):
         self.assertEqual(view["status"], "active")
 
     def test_unresolved_scope_and_changed_artifact_keep_completion_blocked(self):
-        self.native_complete(no_plan=False)
+        self.native_complete(no_plan=False, profile="standard")
         rc, out = self.run_cli("verify")
         self.assertEqual(rc, 0, out)
         unresolved = self.view()
@@ -127,7 +131,7 @@ vm.runInContext(html.match(/<script>([\s\S]*?)<\/script>/)[1],context);
 const work=JSON.parse(process.argv[2]);
 vm.runInContext('state='+JSON.stringify({work_items:[work]})+';selectedId='+JSON.stringify(work.id)+';renderDetail()',context);
 const detail=element('work-detail').innerHTML;
-for(const text of ['STALE_TEST_EVIDENCE','tests','accepted environment failure','旧版证据']) assert.ok(detail.includes(text),text);
+for(const text of ['STALE_TEST_EVIDENCE','tests','accepted environment failure','旧版证据','独立 SDD 验收','不适用','原生规范 / 验收标准']) assert.ok(detail.includes(text),text);
 for(const step of ['native-sdd-workflow-completed','done','complete','closed']) {
  const active={...work,status:'active',path_state:{ready:true},execution:{step}};
  assert.notEqual(vm.runInContext('currentFlowIndex('+JSON.stringify(active)+')',context),6);

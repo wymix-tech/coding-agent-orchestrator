@@ -13,7 +13,7 @@ import sys
 import tempfile
 import unittest
 
-from tests.helpers import configure_verification
+from tests.helpers import configure_verification, complete_acceptance
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 CAO = ROOT / "scripts" / "cao.py"
@@ -114,6 +114,7 @@ class BmadPlan(unittest.TestCase):
                 "  2-1-登录接口: in-progress\n"
                 "  2-3-jwt-token: review\n"
                 "  epic-1-retrospective: optional\n"))
+            complete_acceptance(repo, run, wid)
             rc, out = run(repo, "done", "--work", wid)
             self.assertEqual(rc, 2, out)
             self.assertEqual(out["error"], "COMPLETION_BLOCKED")
@@ -131,6 +132,7 @@ class BmadPlan(unittest.TestCase):
                 "  epic-1: done\n"
                 "  1-1-项目初始化: done\n"
                 "  epic-1-retrospective: optional\n"))
+            complete_acceptance(repo, run, wid)
             rc, out = run(repo, "done", "--work", wid)
             self.assertEqual(rc, 0, out)
 
@@ -142,6 +144,7 @@ class OpenSpecPlan(unittest.TestCase):
             wid = ready_to_close(repo, "openspec", "openspec/changes/login/proposal.md", plan=_write(
                 "openspec/changes/login/tasks.md", 
                 "# Tasks\n\n- [x] 1.1 created project\n- [ ] 1.2 configure yml\n- [ ] 2.1 jwt service\n"))
+            complete_acceptance(repo, run, wid)
             rc, out = run(repo, "done", "--work", wid)
             self.assertEqual(rc, 2, out)
             self.assertEqual(len(out["pending_plan_items"]), 2, out["pending_plan_items"])
@@ -152,6 +155,7 @@ class OpenSpecPlan(unittest.TestCase):
             wid = ready_to_close(repo, "openspec", "openspec/changes/login/proposal.md", plan=_write(
                 "openspec/changes/login/tasks.md",
                 "# Tasks\n\n- [x] 1.1 created project\n- [x] 1.2 configure yml\n"))
+            complete_acceptance(repo, run, wid)
             rc, out = run(repo, "done", "--work", wid)
             self.assertEqual(rc, 0, out)
 
@@ -165,6 +169,7 @@ class OpenSpecPlan(unittest.TestCase):
                 (r / "openspec" / "changes" / "login" / "tasks.md").write_text("- [x] done\n", encoding="utf-8")
 
             wid = ready_to_close(repo, "openspec", "openspec/changes/login/proposal.md", plan=plan)
+            complete_acceptance(repo, run, wid)
             rc, out = run(repo, "done", "--work", wid)
             self.assertEqual(rc, 0, out)
 
@@ -175,6 +180,7 @@ class SpecKitPlan(unittest.TestCase):
             repo = pathlib.Path(td)
             wid = ready_to_close(repo, "speckit", "specs/login/plan.md", plan=_write(
                 "specs/login/tasks.md", "- [ ] 1.1 create project\n- [ ] 1.2 add jwt\n"))
+            complete_acceptance(repo, run, wid)
             rc, out = run(repo, "done", "--work", wid)
             self.assertEqual(rc, 2, out)
             self.assertIn("unfinished item", out["reason"])
@@ -191,6 +197,7 @@ class NoFalsePositives(unittest.TestCase):
                 (r / "openspec" / "changes" / "login" / "tasks.md").write_text("- [x] done\n", encoding="utf-8")
 
             wid = ready_to_close(repo, "openspec", "openspec/changes/login/proposal.md", plan=plan)
+            complete_acceptance(repo, run, wid)
             rc, out = run(repo, "done", "--work", wid)
             self.assertEqual(rc, 0, out)
 
@@ -200,6 +207,7 @@ class NoFalsePositives(unittest.TestCase):
             # No plan file at all: the provider simply has nothing to check.
             wid = ready_to_close(repo, "openspec", "openspec/changes/login/proposal.md")
             self.assertFalse(list((repo / "openspec").rglob("tasks.md")), "test needs a provider with no plan file")
+            complete_acceptance(repo, run, wid)
             rc, out = run(repo, "done", "--work", wid)
             self.assertEqual(rc, 0, out)
 

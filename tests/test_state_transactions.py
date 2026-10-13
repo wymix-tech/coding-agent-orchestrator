@@ -11,6 +11,7 @@ from concurrent.futures import ThreadPoolExecutor
 from unittest import mock
 
 from repair_helpers import RepairCase
+from tests.helpers import bind_light_spec
 from scripts import cao, dashboard
 from scripts.state_store import repo_transaction
 
@@ -302,6 +303,7 @@ class TransactionsTests(RepairCase):
         rc, out = self.run_cli("sdd", "workflow", "complete", "--work", wid,
                                "--artifact", artifact.relative_to(self.repo), "--no-plan")
         self.assertEqual(rc, 0, out)
+        bind_light_spec(self.repo, lambda repo, *args: self.run_cli(*args), "_bmad-output/output.md", wid)
         rc, out = self.run_cli("verify", "--work", wid)
         self.assertEqual(rc, 0, out)
         self.assertTrue(cao.completion_status(self.repo, self.read_work(wid))["ready"])

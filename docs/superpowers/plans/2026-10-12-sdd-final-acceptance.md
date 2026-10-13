@@ -1,4 +1,6 @@
-# 全 profile 独立 SDD 收尾验收实施计划
+> 2026-10-13 修订：Task 3—6 仅为 standard/comprehensive 接入独立验收；light 完成采用 SPEC/标准绑定与项目验证，无 workflow/plan 硬门禁。本轮执行以 2026-10-13-light-and-pi-repair.md 为准，不照搬旧 worktree 路径。
+
+# standard/comprehensive 独立 SDD 收尾验收实施计划
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans. Steps use checkbox (`- [ ]`) syntax. 用户已经选择当前会话顺序执行、无子代理，不重复请求执行方式选择。
 
@@ -12,7 +14,7 @@
 
 - 已批准设计：`docs/superpowers/specs/2026-10-12-sdd-final-acceptance-design.md`；不再等待总体设计审批。
 - 当前隔离 worktree `/Users/wymix/Projects/coding-agent-orchestrator/.worktrees/cao-integrity-repair`；顺序 TDD、独立提交、inline 自审，无子代理。
-- light/standard/comprehensive 均强制双验收；人工 gate、旧 workflow/报告、例外和 CLI override 不补造 SDD 验收。
+- standard/comprehensive 强制双验收；light 仅规范与技术检查；人工 gate、旧 workflow/报告、例外和 CLI override 不补造 SDD 验收。
 - light 前置 SPEC+非空可观察标准即可，不强制 PRD/架构/Story/tasks；原生前置与已绑定计划仍有效。
 - 产品/intake 写保持 allow+提醒，内部派生状态 deny；不主动 turn，不调用 LLM，不自动安装/重锚/Work 重建。
 - 源文档/产品文件不能作为验收报告排除；精确输出文件受 Provider/Work 范围和真实路径限制，不排除整个目录。
@@ -174,7 +176,7 @@ with self.assertRaisesRegex(ValueError, 'SDD_ACCEPTANCE_RUN_CHANGED'):
     finish_run(work, first['id'], inputs, report, {'exit_code':0}, hashes)
 self.assertEqual(work['sdd']['acceptance']['run']['id'], second['id'])
 ```
-- [ ] 在verification_inputs中将声明/source身份纳入规则快照，技术与原生采用相同 exact outputs。未配置时保留原5字段行为，避免无意义破坏旧工程验证接口；有配置但来源非法不能 fallback 到无配置。
+- [ ] 在verification_inputs中将声明/source身份纳入规则快照，技术与原生采用相同 exact outputs。未配置时保留原5字段行为，避免无意义破坏旧工程验证接口；完整路径有配置但来源非法不能 fallback 到无配置；light的可选历史验收不参与其技术输入与关闭硬判定。
 ```python
 inputs = existing_verification_inputs
 record = (work.get('sdd') or {}).get('acceptance') or {}
@@ -234,9 +236,9 @@ execution = run_script(record['declaration']['executor']['entrypoint'], repo,
 **Consumes:** acceptance_status、来源/报告校验与 frozen inputs；现有 workflow_ready/技术fresh/gate派生。
 **Produces:** 新 `sdd_acceptance` 自动派生门禁，所有profile独立复查；tests helpers `configure_sdd_acceptance(case,wid) -> dict`、`pass_sdd_acceptance(case,wid) -> dict` 使用真实CLI与可运行夹具，不直接手填passed。
 
-- [ ] 正式RED三profile：技术passed/nativecompleted/manual reviews齐全仍无法done；旧报告/全勾选/allow-unverified不能放行，gate satisfy新gate拒；历史completed只读不重认证，reopen后要新验收。
+- [ ] 正式RED：standard/comprehensive 在技术passed/nativecompleted/manual reviews齐全时仍需本次独立验收；light 只需有效SPEC/标准与新鲜项目验证；旧报告/全勾选/allow-unverified不能放行，gate satisfy新gate拒；历史completed只读不重认证，reopen后要新验收。
 ```python
-for profile in ('light','standard','comprehensive'):
+for profile in ('standard','comprehensive'):
     with self.subTest(profile=profile):
         wid = self.start(profile=profile)
         # 用fixture真实命令完成原生workflow和原技术验证，绝不补SDD结果。
@@ -244,7 +246,7 @@ for profile in ('light','standard','comprehensive'):
         self.assertEqual(rc, 2, out)
         self.assertIn('SDD', json.dumps(out))
 ```
-- [ ] 新gate加入所有PROFILE_BASE_GATES和AUTO_DERIVED_GATES；gate_state显示真实派生结果，gate satisfy不能覆盖；completion_status独立强制调用，不能靠历史assessment列表缺gate绕过。
+- [ ] 新gate只加入standard/comprehensive的PROFILE_BASE_GATES和AUTO_DERIVED_GATES；gate_state显示真实派生结果，gate satisfy不能覆盖；completion_status独立强制调用，不能靠历史assessment列表缺gate绕过。
 ```python
 status = acceptance_status(work, sdd_acceptance_inputs(repo,work,cfg), sdd_acceptance_current_hashes(repo,work))
 if not status['ready']:
@@ -252,9 +254,9 @@ if not status['ready']:
             'next':f'Run the configured SDD final acceptance for {work["id"]}; old workflow completion cannot substitute.'}
 ```
 先返回来源/配置/技术/SDD各类准确未满足原因；调用模式为command提示run，skill提示begin→原生Skill→submit。仍不在done自动启动重验。
-- [ ] light指导真实Provider最简SPEC+标准；source validation接受同文档，无额外架构/Story/计划。保留no-plan审计与已有计划冲突，不用“有一个工件”当SPEC/标准通过。
+- [ ] light指导真实Provider最简SPEC+标准；source validation接受同文档，无额外架构/Story/计划。完整路径保留no-plan审计与已有计划冲突；light不要求计划/无计划声明，不用“有一个工件”当SPEC/标准通过。
 - [ ] 使用真实CLI实现两个fixture接口：configure_sdd_acceptance 写有正文/标准的原生SPEC和D文件，configure→显式reopen/reanchor，返回声明；pass_sdd_acceptance在已重新登记原生证据后技术verify→command run并返回当前run。原生夹具的SPEC正文至少包含目标/边界与AC-1行为标准，command wrapper从CAO_SDD_ACCEPTANCE_REQUEST读取run_id/input_sha256，实际运行一个项目unittest成功后才输出R，不手填passed。逐项迁移旧happy-path done夹具：显式增加有正文/标准的SPEC、配置与显式重锚、必要重评估/重新登记原生证据、技术verify→真实SDD命令；原错误用例继续验证原错误，不改assert为泛失败。配置重锚不能凭夹具手写避开。
-- [ ] 四个模块以上定向/full/Node/TS GREEN；提交 `feat: require fresh SDD final acceptance for every profile`。
+- [ ] 四个模块以上定向/full/Node/TS GREEN；提交 `feat: require fresh SDD final acceptance for full profiles`。
 
 ## Task 6: 指导、展示、协议及安装出口
 
@@ -262,13 +264,13 @@ if not status['ready']:
 
 **Interfaces:** 不改Host输运。复用additional_context/steer/triggerTurn:false；Dashboard展示独立 state/reason，只有Work completed关闭。
 
-- [ ] 文档/DOM/协议RED：明确allprofile双验收、light只有SPEC+标准、混合真实执行、旧完成不得替代；UI区分技术passed/SDDpending/failed/stale/ready，不把原生结果passed关闭Work；既有模板不覆盖。
+- [ ] 文档/DOM/协议RED：明确standard/comprehensive双验收、light为SPEC+标准与新鲜项目验证、混合真实执行、旧完成不得替代；UI区分技术passed/SDDpending/failed/stale/ready，不把原生结果passed关闭Work；既有模板不覆盖。
 ```python
 self.assertEqual(overview['status'], 'active')
 self.assertEqual(overview['sdd_acceptance']['state'], 'pending')
 self.assertFalse(overview['completion']['ready'])
 ```
-- [ ] 指导放在原生流程后、done前；技术fresh→SDD重验→必要技术重验→done。noSkill/no工具/no标准blocked并保留state保护；不跳过light的最简原生执行。
+- [ ] 指导放在原生流程后、done前；技术fresh→SDD重验→必要技术重验→done。noSkill/no工具/no标准blocked并保留state保护；light不要求原生执行登记或独立验收，只绑定有效原生SPEC与标准。
 - [ ] schema保存D/run所有状态与nullable未配置结果；不能以旧字段迁移认定passed。Dashboard只投影相同core接受状态，不新增第二套验收规则。
 - [ ] Node真实核心回归当前Skill或真实命令验收提示进入模型且无额外turn，内容/details不变；产品allow/状态deny；安装smoke导入4模块，checkout外3Provider×3模拟Host对照真实执行两个门禁。
 - [ ] 离线缓存wheel/editable临时安装，全部Python/Node/TS/编译/Shell/diff；真实Host/平台/浏览器保持原未验边界。无模型压力测试授权不派发代理。
@@ -294,3 +296,7 @@ git diff --check
 - 所有新增函数在接口中定义；D/R/I/Work字段在固定接口定义；现有函数以当前源码为准，若接口差异先更新计划再实现。
 - 命令JSON/报告长度、无执行/当前run提交、未知ID、精确输出边界、no-plan与旧证据迁移均有对应RED。
 - 已开始执行：Tasks 1/2 纯策略与文件边界已验证；Tasks 3—6 待完成，不能将现有通过结果当作完整新门禁已实现。
+
+## 2026-10-13 实施状态
+
+Task 3—6 已在本次修复集成实现：runtime、configure/show/run/begin/submit、锁外命令执行、当前Skill证据、完整路径独立门禁、Dashboard、schema及wheel/editable安装夹具。light按后续用户决策采用独立SPEC/标准绑定与项目验证；本文件中的旧子提交标题是历史计划，不表示本轮逐一生成同名提交。实际测试与交付记录见 `docs/repair-validation.md` 的2026-10-13章节。
