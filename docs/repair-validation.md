@@ -411,3 +411,32 @@ Pi **15 项零失败/跳过**与 TypeScript 通过；Skill 校验、compileall�
 
 初始定向回归确认提前 verify/缺少通用 plan CLI 的失败；测试矩阵首次在同一临时 repo 重复 start 被既有活动 Work 门禁正确拒绝，改为在同一夹具中切换 Provider。
 两个历史负向夹具假定 pending 的 OpenSpec/Spec Kit 计划仍能先 verify，现明确断言 verify 与 done 都拒绝，未删除原失败条件。
+
+## 真实 oneshot 会话中的三次遗漏（2026-10-13）
+
+分析用户提供的 `2026-10-13T08-07-34-908Z_01a1344d-78fb-71fc-9e3a-c0adf70bb67c.jsonl`：
+该会话在业务实现前创建了 Work，属于 BMAD oneshot，不包含 sprint tracker；此前的 Work/状态同步路径已生效。
+但已渲染的 `step-oneshot.md` 要求独立同模型 Review、Classify 和可用 Git 下的 Commit，日志没有对应执行记录，SPEC 却直接变为 done；
+验证配置直到第一次 verify 被拒绝后才建立；手动 smoke 的新服务因端口占用退出，curl 仍访问了旧服务。
+本节取代历史“active Work 可在无验证基线时直接实现”及“原生 oneshot 仅凭 Intent + tests 就完成”的契约。
+
+- 增加独立的 `cao sdd review begin/submit`：绑定当前需求、Intent、代码及实际渲染指令摘要，记录每个启用层的独立 reviewer 身份/模型、原始 findings 和逐条 Classify 结果。
+  缺失或失效时在 verify/done 拒绝，SPEC done、测试和手工 implementation_review 不能替代。代码/指令/证据变化要求重新评审，CAO 不向 SPEC 补造 Tasks & Acceptance。
+- active Work 的业务写入要求配置并接受验证基线；不要求此时测试通过。配置变化明确指向 reopen/reanchor，bootstrap 与宿主上下文同步。
+  CAO/SDD 产物、初始测试/验证包装、清单及环境准备保持可写；无 Work 和受保护状态的既有门禁保留。混合业务补丁和通向业务目录的脚手架软链接不豁免。
+- Git 可用的 native oneshot 在 done 检查业务/SPEC 是否已经提交，状态/安装/评审文件的日常写入不会造成无休止提交。
+  新增 `cao verification smoke`：前台启动独立服务，动态 loopback 端口，检查进程和期望 HTTP 状态，结束后清理拥有的进程树并确认不再返回 HTTP 服务。
+  不接受固定端口或失败的新服务；启动/API 行为属于验收时，应显式登记该 smoke 为必需验证脚本。
+
+新增 `tests/test_native_omissions.py` 15 项；旧路径/原生提醒测试明确建立真实基线后再验证原契约，业务无基线写入的旧成功断言改为拒绝，并增加脚手架成功对照。
+定向 54 项与路径/原生提醒兼容回归 22 项通过。
+新 wheel 的 checkout 外 CLI 额外实测了 configure --work、接受基线前后业务写入、原生/脚手架写入、缺 review 拒绝、记录后实际测试执行、Git 提交前后 done，以及成功/失败/固定端口的 owned smoke。必需 smoke 还实际登记到验证配置并由 `cao verify` 执行。
+评审成功夹具执行独立本地 Python 进程，并明确标记为 fixture；没有声称运行真实在线同模型 reviewer。
+报告身份/模型及完整性检查是结构和新鲜度校验，不能密码学证明实际模型执行或语义正确性。
+
+最终全量 **622 项通过**，文件互斥四组为 147/153/171/151，日志 `/tmp/cao-omissions-checked-shard-{0,1,2,3}.log`。
+Pi **15 项零失败/跳过**与 TypeScript 通过，日志 `/tmp/cao-omissions-checked-pi.log`、`/tmp/cao-omissions-final-ts.log`。
+新 wheel 的 **21 个既有安装组合通过**，新增门禁/注册 smoke 实测也通过，日志 `/tmp/cao-omissions-final-installed.log`、`/tmp/cao-omissions-installed-gates.log`。
+源码与已安装包的四个变更运行时模块 SHA-256 一致；Skill 校验、compileall、Shell 语法及 diff 检查通过。
+临时分组运行器首次漏设源码导入路径导致加载失败，补正 sys.path 后重新执行完整四组；Pi 的 8 秒严格断言未放宽，先前并发负载导致的超时失败在最终检查通过。
+这些结果是本机 Linux、实际安装 CLI、模拟 Host 与本地 Provider/独立进程夹具验证；未声称真实在线原生 reviewer 或 Windows 冒烟验收。

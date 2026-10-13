@@ -43,7 +43,7 @@ def declared_scripts(general: list[str], tests: list[str]) -> list[dict[str, Any
 
 def setup_instruction(command: str) -> str:
     return (
-        "CAO verification setup: establish a configured acceptance baseline before feature development. "
+        "CAO verification setup: establish and explicitly accept a configured baseline before feature development; product writes are blocked until then, while native artifacts, manifests, tests and verification wrappers remain writable. "
         "Run bootstrap first and honor explicit SDD selection/install authorization. "
         "Create or resume an active Work before writing product or verification scaffolding; "
         "an empty verification configuration does not prevent cao start. "

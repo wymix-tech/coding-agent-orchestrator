@@ -9,6 +9,9 @@ from pathlib import Path
 import shlex
 import subprocess
 import tempfile
+import sys
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from tests.helpers import fixture_native_review
 
 
 def main():
@@ -137,6 +140,7 @@ def main():
                     before = oneshot.read_bytes()
                     bound = cli("sdd", "spec", "bind", "--spec", "_bmad-output/spec-oneshot.md")
                     assert bound["binding"]["mode"] == "bmad_oneshot", bound
+                    fixture_native_review(repo, lambda _repo, *argv: (0, cli(*argv)), native_id)
                     cli("verify")
                     cli("done")
                     assert oneshot.read_bytes() == before

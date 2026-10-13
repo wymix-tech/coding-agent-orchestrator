@@ -85,3 +85,30 @@ sys.exit(p.returncode)
                 checked('gate', 'satisfy', '--gate', gate, '--evidence', record['evidence'])
     checked('verify')
     checked('sdd', 'acceptance', 'run')
+
+
+def fixture_native_review(repo, run, wid=None):
+    """Recorded, independently executed local review fixture; not a real model review."""
+    import tempfile
+    repo = pathlib.Path(repo)
+    source = repo / '_bmad/render/cao-fixture/step-oneshot.md'
+    source.parent.mkdir(parents=True, exist_ok=True)
+    source.write_text('### Review\n#### Blind Hunter (`blind-hunter`)\nRun an independent fixture inspection.\n### Classify\nRecord each finding.\n### Commit\nCommit when Git is available.\n')
+    args = ['sdd','review','begin','--layer','blind-hunter','--model','fixture-model','--instructions',source.relative_to(repo).as_posix()]
+    if wid: args += ['--work',wid]
+    rc,out = run(repo,*args);assert rc==0,out
+    ticket=out['review'];directory=repo/'_bmad-output/review-fixture';directory.mkdir(parents=True,exist_ok=True)
+    with tempfile.TemporaryDirectory() as d:
+        script=pathlib.Path(d)/'reviewer.py'
+        script.write_text("from pathlib import Path\nimport sys\np=Path(sys.argv[1])\nassert p.is_dir()\nprint('- F1: Independently inspect the local fixture source and verification setup.')\n")
+        findings=subprocess.check_output([sys.executable,str(script),str(repo)],text=True)
+    raw=directory/'findings.md';raw.write_text(findings)
+    report=directory/'report.json'
+    report.write_text(json.dumps({'run_id':ticket['id'],'input_sha256':ticket['input_sha256'],
+        'reviewer':{'mode':'external-session','session_id':'independent-fixture-process','model':'fixture-model'},
+        'findings_file':raw.relative_to(repo).as_posix(),'findings':[{'id':'F1','verdict':'false','disposition':'reject',
+        'evidence':'A separate local Python process inspected the fixture directory; this fixture does not assert expert semantic review.'}]}))
+    args=['sdd','review','submit','--layer','blind-hunter','--report',report.relative_to(repo).as_posix()]
+    if wid:args+=['--work',wid]
+    rc,out=run(repo,*args);assert rc==0,out
+    return report

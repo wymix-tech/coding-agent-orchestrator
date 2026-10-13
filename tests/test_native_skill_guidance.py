@@ -15,6 +15,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from tests.helpers import configure_verification
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 CAO = ROOT / "scripts" / "cao.py"
@@ -118,6 +119,7 @@ class SelectGuidance(unittest.TestCase):
     def _reached_workflow_select(self, repo: pathlib.Path) -> tuple[int, dict]:
         rc, out, _ = run(repo, "requirement", "next-id", "--title", "login", env_extra=NO_HOST_ENV)
         path = out["path"]
+        configure_verification(repo)
         rc, out, _ = run(repo, "start", "--requirement", path, env_extra=NO_HOST_ENV)
         assert rc == 0, out
         rc, out, _ = run(repo, "path", "assess", "--profile", "standard", "--reason", "clear scope", env_extra=NO_HOST_ENV)
@@ -172,4 +174,4 @@ class PreToolReminder(SelectGuidance):
             rc, out, _ = run(repo, "host-event", "--repo", ".", "--host", "pi", env_extra=NO_HOST_ENV, stdin=json.dumps(raw))
             self.assertEqual(out["decision"], "allow")
             self.assertNotIn("has NOT been executed", out.get("additional_context", ""))
-            self.assertIn("verification setup", out["additional_context"].lower())
+            self.assertNotIn("verification setup", out.get("additional_context", "").lower())

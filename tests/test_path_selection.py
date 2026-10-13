@@ -4,6 +4,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from tests.helpers import configure_verification
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 CAO = ROOT / "scripts" / "cao.py"
@@ -37,6 +38,7 @@ class PathSelectionTests(unittest.TestCase):
         (repo / "requirements/change.md").write_text("Change the login behavior", encoding="utf-8")
         rc, _, _ = run(repo, "init")
         self.assertEqual(rc, 0)
+        configure_verification(repo)
         rc, _, _ = run(repo, "start", "--requirement", "requirements/change.md")
         self.assertEqual(rc, 0)
         return td, repo
@@ -115,7 +117,7 @@ class PathSelectionTests(unittest.TestCase):
             self.assertEqual(out["next_action"]["type"], "human")
 
     def test_code_mutation_is_not_blocked_by_the_hook(self):
-        """The PreToolUse gate is removed; CAO advises instead of blocking tools."""
+        """With an accepted baseline, path guidance remains advisory."""
         td, repo = self.init_repo()
         with td:
             event = {"event": "pre_tool", "tool_name": "write", "tool_input": {"path": "src.py", "content": "x"}}

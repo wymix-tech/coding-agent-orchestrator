@@ -38,6 +38,8 @@ from scripts.completion_policy import (
     verification_fresh as bound_verification_fresh, normalize_scripts, tests_satisfied, workflow_ready, normalize_timeout,
 )
 from scripts.verification_runner import run_script
+from scripts.native_obligations import review_state as native_review_state, review_inputs, submit_review, commit_state as native_commit_state, digest as native_digest
+from scripts.smoke_runner import run_smoke
 from scripts.light_spec_policy import make_binding, binding_digest, light_spec_state
 from scripts.sdd_acceptance_policy import digest as acceptance_digest
 from scripts.sdd_acceptance_files import source_hashes, output_paths, report_hashes
@@ -1632,7 +1634,7 @@ def requirement_files(repo: Path, cfg: dict[str, Any]) -> list[Path]:
     return sorted(files)
 
 
-def code_snapshot(repo: Path, excluded: set[str] | None = None) -> str:
+def code_snapshot(repo: Path, excluded: set[str] | None = None, additional_ignore_dirs: set[str] | None = None) -> str:
     """Prune ignored directories; hash internal file links by their lexical names.
 
     Directory links are not followed. Unreadable or external file inputs cannot certify freshness.
@@ -1643,7 +1645,7 @@ def code_snapshot(repo: Path, excluded: set[str] | None = None) -> str:
     def walk_error(exc):
         raise RuntimeError("SNAPSHOT_READ_FAILED: " + str(exc.filename or repo)) from exc
     for base, dirs, names in os.walk(repo, topdown=True, followlinks=False, onerror=walk_error):
-        dirs[:] = sorted(directory for directory in dirs if directory not in SNAPSHOT_IGNORE_DIRS)
+        dirs[:] = sorted(directory for directory in dirs if directory not in SNAPSHOT_IGNORE_DIRS | (additional_ignore_dirs or set()))
         files.extend(Path(base) / name for name in names if name not in SNAPSHOT_IGNORE_DIRS)
     for p in sorted(files):
         rp = p.relative_to(repo).as_posix()
@@ -3233,6 +3235,9 @@ def completion_status(repo: Path, work: dict[str, Any] | None) -> dict[str, Any]
         spec_state = light_spec_state(repo, work, provider_output_dirs(provider))
         if not spec_state["ready"]:
             return {"ready": False, "reason": spec_state["reason"], "next": spec_state.get("next"), "light_spec": spec_state}
+    review = native_review_state(repo, work, code_snapshot)
+    if not review["ready"]:
+        return review
     if provider in SDD_CATALOG and profile in {"standard", "comprehensive"}:
         workflow = sdd.get("workflow") or {}
         if workflow.get("status") == "completed":
@@ -3290,6 +3295,10 @@ def completion_status(repo: Path, work: dict[str, Any] | None) -> dict[str, Any]
 
     if profile in {"standard", "comprehensive"} and not sdd_state["ready"]:
         return {"ready": False, "reason": sdd_state["reason"], "next": sdd_state.get("next"), "sdd_acceptance": sdd_state}
+    if fresh:
+        commit = native_commit_state(repo, work, SNAPSHOT_IGNORE_DIRS | {".agents", ".pi", "_bmad", "_bmad-output"})
+        if not commit["ready"]:
+            return commit
     return {
         "ready": fresh,
         "reason": None if fresh else "verification is missing or stale",
@@ -3344,11 +3353,12 @@ def render_context(repo: Path, work: dict[str, Any] | None, *, session_id: str |
     inspection = setup_state(config(repo))
     if not work or work.get("status") in {"todo", "suspended", "completed"}:
         return "# Coding Agent Orchestrator Work Intake\n" + work_intake_instruction(work)
-    if not inspection["ready"]:
+    baseline = verification_baseline_state(repo, work)
+    if not baseline["ready"]:
         # Preserve continuity without calculating completion from invalid declarations.
         return "\n".join([
             "# Coding Agent Orchestrator Verification Setup",
-            setup_instruction(cao_invocation()["command"]),
+            baseline["next"],
             json.dumps({"verification_setup": inspection, "work": verification_setup_context(work),
                         "session_id": session_id, "host": host}, ensure_ascii=False),
         ])
@@ -3682,12 +3692,13 @@ def cmd_bootstrap(args: argparse.Namespace) -> int:
         return 0
 
     inspection = setup_state(cfg)
-    if not inspection["ready"] and work:
+    baseline = verification_baseline_state(repo, work) if work else {"ready": True}
+    if work and not baseline["ready"]:
         next_out = {
             "ok": True, "mode": "verification_setup",
             "work_item": work_summary(work) if work else None,
             "sdd": sdd_status(repo), "context": verification_setup_context(work),
-            "next": action("agent", setup_instruction(cao_invocation()["command"])),
+            "next": action("agent", baseline["next"]),
         }
     elif work:
         next_out = {
@@ -4229,6 +4240,53 @@ def cmd_sdd_spec(args: argparse.Namespace) -> int:
                       "next": "Follow the native implementation/review workflow. After reviewing any SPEC changes, rebind if needed, run configured `cao verify`, then `cao done`."}, ensure_ascii=False)); return 0
 
 
+@locked_command
+def cmd_sdd_review(args: argparse.Namespace) -> int:
+    repo = repo_root(args.repo); ensure_initialized(repo)
+    work = resolve_work(repo, args.work)
+    if not work or work.get("status") != "active":
+        print(json.dumps({"ok": False, "error": "NO_ACTIVE_WORK_ITEM"})); return 2
+    try:
+        records = work.setdefault("sdd", {}).setdefault("native_reviews", {})
+        if args.review_action == "begin":
+            if not args.model.strip():
+                raise ValueError("NATIVE_REVIEW_MODEL_REQUIRED")
+            path = repo_file(repo, args.instructions)
+            if path.name != "step-oneshot.md" or not inside(path, repo / "_bmad/render") or (repo / "_bmad/render").resolve() != repo / "_bmad/render" or not path.is_file():
+                raise ValueError("NATIVE_REVIEW_INSTRUCTIONS_INVALID")
+            content = path.read_text()
+            layers = sorted(set(re.findall(r"(?m)^####[^\n]*\(`?([a-z][a-z0-9-]*)`?\)", content)))
+            if not layers or args.layer not in layers:
+                raise ValueError("NATIVE_REVIEW_LAYER_NOT_ACTIVE")
+            records["_contract"] = {"sources": [path.relative_to(repo).as_posix()], "layers": layers}
+            inputs = review_inputs(repo, work, code_snapshot)
+            primary_ids = [session.get("host_session_id") for session in list_sessions(repo)
+                           if session.get("work_item_id") == work["id"] and session.get("kind") == "primary"]
+            run = {"id": new_id("review"), "status": "running", "inputs": inputs,
+                   "input_sha256": native_digest(inputs), "model": args.model,
+                   "primary_session_ids": primary_ids}
+            records[args.layer] = run
+            output = {"ok": True, "review": run, "active_layers": layers,
+                      "next": "Launch EVERY active native reviewer as directed by the rendered instructions, at the current model level. Preserve each independent reviewer's returned Markdown in a provider-owned file; submit a JSON report with run_id, input_sha256, reviewer {mode: subagent|external-session, session_id, model}, findings_file, and findings [{id, verdict: high|medium|low|false|maybe-false, disposition: patch|defer|reject, evidence, resolved: true for patch}]. If subagents are unavailable, stop for the native external-session fallback; never fabricate findings or label primary self-review as independent."}
+        else:
+            output = {"ok": True, "review": submit_review(repo, work, args.layer, args.report, code_snapshot)}
+        queue_event(work, {"event": "sdd.native_review." + args.review_action,
+                           "work_item_id": work["id"], "layer": args.layer, "occurred_at": now()})
+        save_work(repo, work)
+    except (ValueError, OSError, KeyError, TypeError, RuntimeError) as exc:
+        print(json.dumps({"ok": False, "error": str(exc)}, ensure_ascii=False)); return 2
+    print(json.dumps(output, ensure_ascii=False)); return 0
+
+
+def cmd_verification_smoke(args: argparse.Namespace) -> int:
+    try:
+        result = run_smoke(repo_root(args.repo), args.server_command, args.path, args.method,
+                           args.body, args.expect_status, args.timeout)
+    except (ValueError, OSError, subprocess.SubprocessError) as exc:
+        result = {"ok": False, "error": str(exc)}
+    print(json.dumps(result)); return 0 if result["ok"] else 2
+
+
 def cmd_sdd_acceptance(args: argparse.Namespace) -> int:
     from scripts.sdd_acceptance_commands import dispatch
     return dispatch(args, sys.modules[__name__])
@@ -4419,7 +4477,7 @@ def cmd_verification_configure(args: argparse.Namespace) -> int:
         candidate, changed = prepare_config(raw, scripts, args.replace, now())
         effective = json.loads(json.dumps(DEFAULT_CONFIG))
         deep_merge(effective, candidate)
-        wid = load_index(repo).get("active_work")
+        wid = getattr(args, "work", None) or load_index(repo).get("active_work")
         # Configuring verification must not upgrade or reanchor a Work record.
         work = _read_work(repo, wid) if wid else None
         review = bool(work and work.get("status") == "active" and
@@ -5125,6 +5183,9 @@ def _prepare_verification(args: argparse.Namespace):
     if not plan_state["ready"]:
         print(json.dumps({"ok": False, "error": str(plan_state["reason"]).split(":", 1)[0],
                           "verification_plan": plan_state, "next": plan_state["next"]}, ensure_ascii=False, indent=2)); return 2
+    review = native_review_state(repo, work, code_snapshot)
+    if not review["ready"]:
+        print(json.dumps({"ok": False, "error": review["reason"], "native_review": review, "next": review.get("next")}, ensure_ascii=False)); return 2
 
     cfg = config(repo)
     cfg_scripts = verification_scripts(cfg)
@@ -5611,6 +5672,62 @@ def shell_write_operands(tokens: list[str]) -> list[str]:
     return outputs + operands
 
 
+def verification_baseline_state(repo: Path, work: dict) -> dict:
+    cfg = config(repo)
+    state = setup_state(cfg)
+    if not state["ready"]:
+        return {"ready": False, "reason": "VERIFICATION_BASELINE_REQUIRED", "next": setup_instruction(cao_invocation()["command"])}
+    anchor = work.get("acceptance") or {}
+    if anchor.get("version") != 2 or anchor.get("config_sha256") != verification_snapshot(cfg):
+        return {"ready": False, "reason": "VERIFICATION_BASELINE_REANCHOR_REQUIRED",
+                "next": f'Review the configured scripts, then `cao reopen --work {work["id"]} --reanchor --reason "Reviewed verification baseline"` before feature implementation. Tests need not pass yet.'}
+    return {"ready": True}
+
+
+def verification_scaffold_write(repo: Path, raw: dict) -> bool:
+    targets = tool_write_targets(raw)
+    setup_roots = ("tests", "test", "acceptance-tests", "src/test", "scripts/verification", ".venv", "venv")
+    manifests = {"requirements.txt", "requirements-dev.txt", "pyproject.toml", "pytest.ini", "setup.cfg", "uv.lock", "package.json", "package-lock.json", "pom.xml", "build.gradle", "build.gradle.kts", "settings.gradle", "settings.gradle.kts", "tsconfig.json", "Makefile"}
+    if targets:
+        valid = True
+        for value in targets:
+            try:
+                path = repo_file(repo, value)
+                relative = path.relative_to(repo.resolve()).as_posix()
+                allowed = relative in manifests or any(inside(path, repo.resolve() / root) and
+                          (repo.resolve() / root).resolve() == repo.resolve() / root for root in setup_roots)
+                valid = valid and allowed
+            except (ValueError, OSError, RuntimeError):
+                valid = False
+        if valid:
+            return True
+    if _event_key(raw, "tool_name", "toolname", "tool", "name").lower() in SHELL_TOOLS:
+        commands = _collect_values_for_keys(raw, {"command", "cmd"})
+        try:
+            for command in commands:
+                for tokens in _shell_segments(command):
+                    if _readonly_tokens(tokens): continue
+                    if any(char in shlex.join(tokens) for char in "$`") or any(t in {">", ">>", "<<", "&>"} for t in tokens): return False
+                    name = Path(tokens[0]).name
+                    if tokens[:2] == ["git", "init"]: continue
+                    if tokens[:2] in (["uv", "venv"], ["uv", "run"]):
+                        if tokens[:2] == ["uv", "run"]:
+                            runner = tokens[2:]
+                            while runner and runner[0].startswith("--"):
+                                runner = runner[1:]
+                            if not runner or not (Path(runner[0]).name == "pytest" or
+                                    (Path(runner[0]).name.startswith("python") and runner[1:3] in (["-m", "pytest"], ["-m", "unittest"]))): return False
+                        continue
+                    if tokens[:3] == ["uv", "pip", "install"] or (name in {"pip", "pip3", "npm"} and "install" in tokens): continue
+                    if name.startswith("python") and tokens[1:3] == ["-m", "pip"] and "install" in tokens: continue
+                    if name.startswith("python") and tokens[1:3] in (["-m", "pytest"], ["-m", "unittest"], ["-m", "venv"]): continue
+                    return False
+            return bool(commands)
+        except ValueError:
+            return False
+    return False
+
+
 def intake_writable_dirs() -> list[str]:
     """Directories that stay writable before a Work Item exists.
 
@@ -5950,6 +6067,9 @@ def host_event(args: argparse.Namespace) -> int:
                     advice_work = load_work(repo, session["work_item_id"])
                 return respond({"decision": "deny", "reason": "CAO: no active Work; product writes are blocked. " + work_intake_instruction(advice_work)})
             else:
+                baseline = verification_baseline_state(repo, work)
+                if not baseline["ready"] and not verification_scaffold_write(repo, raw):
+                    return respond({"decision": "deny", "reason": baseline["reason"] + ": " + baseline["next"]})
                 path_state = path_assessment_state(repo, work)
                 if not path_state["ready"]:
                     next_step = path_assessment_instruction(work)
@@ -6076,6 +6196,17 @@ def build_parser() -> argparse.ArgumentParser:
     sp.set_defaults(fn=cmd_language_apply)
     sdd = sub.add_parser("sdd", help="Detect, select, and install a project SDD")
     sdd_sub = sdd.add_subparsers(dest="sdd_command", required=True)
+    review = sdd_sub.add_parser("review", help="Record fresh independent native oneshot reviews")
+    review_sub = review.add_subparsers(dest="review_action", required=True)
+    for name in ("begin", "submit"):
+        sp = review_sub.add_parser(name)
+        sp.add_argument("--repo", default="."); sp.add_argument("--work")
+        sp.add_argument("--layer", required=True)
+        if name == "begin":
+            sp.add_argument("--model", required=True); sp.add_argument("--instructions", required=True)
+        else:
+            sp.add_argument("--report", required=True)
+        sp.set_defaults(fn=cmd_sdd_review)
     acceptance = sdd_sub.add_parser("acceptance", help="Independent SDD final acceptance for full paths")
     acceptance_sub = acceptance.add_subparsers(dest="acceptance_action", required=True)
     for name in ("configure", "show", "run", "begin", "submit"):
@@ -6177,7 +6308,14 @@ def build_parser() -> argparse.ArgumentParser:
     sp = sessions_sub.add_parser("show"); sp.add_argument("--repo", default="."); sp.add_argument("--id", required=True); sp.add_argument("--host", choices=["claude-code", "codex", "pi"]); sp.add_argument("--stale-after-minutes", type=int, default=30); sp.set_defaults(fn=cmd_sessions_show)
     verification = sub.add_parser("verification", help="Configure project verification without resetting other state")
     verification_sub = verification.add_subparsers(dest="verification_command", required=True)
+    sp = verification_sub.add_parser("smoke", help="HTTP smoke with a fresh port and owned server process")
+    sp.add_argument("--repo", default="."); sp.add_argument("--server-command", required=True)
+    sp.add_argument("--path", default="/"); sp.add_argument("--method", choices=["GET", "POST"], default="GET")
+    sp.add_argument("--body"); sp.add_argument("--expect-status", type=int, default=200)
+    sp.add_argument("--timeout", type=float, default=10)
+    sp.set_defaults(fn=cmd_verification_smoke)
     sp = verification_sub.add_parser("configure", help="Declare required project scripts without installing or executing anything")
+    sp.add_argument("--work", help="Work to inspect for reanchor; scripts remain project-wide")
     sp.add_argument("--repo", default="."); sp.add_argument("--test-script", action="append"); sp.add_argument("--verify-script", action="append")
     sp.add_argument("--replace", action="store_true", help="Explicitly replace different existing verification declarations")
     sp.set_defaults(fn=cmd_verification_configure)

@@ -2,6 +2,7 @@
 from pathlib import Path
 from scripts import cao
 from tests.repair_helpers import RepairCase
+from tests.helpers import fixture_native_review
 
 ONESHOT = "---\ntitle: 'Login fix'\nroute: 'oneshot'\nstatus: 'done'\n---\n<frozen-after-approval>\n## Intent\nReject an empty password and keep existing valid logins working.\n</frozen-after-approval>\n## Implementation Notes\nFixed the validator.\n"
 
@@ -24,6 +25,7 @@ class OneShotCompletion(RepairCase):
         self.assertEqual(out['binding']['criteria_section'], 'Intent')
         self.assertEqual(path.read_bytes(), before)
         self.assertEqual([p.name for p in path.parent.iterdir()], ['spec-fix.md'])
+        fixture_native_review(self.repo, lambda repo, *args: self.run_cli(*args))
         rc, out = self.run_cli('verify'); self.assertEqual(rc, 0, out)
         from scripts.dashboard import build_dashboard_overview
         view = build_dashboard_overview(self.repo)['work_items'][0]
@@ -63,6 +65,7 @@ class OneShotCompletion(RepairCase):
         rc, out = self.bind('--criteria', '_bmad-output/criteria.md'); self.assertEqual(rc, 0, out)
         self.assertNotIn('mode', out['binding'])
         rc, out = self.bind('--replace'); self.assertEqual(rc, 0, out)
+        fixture_native_review(self.repo, lambda repo, *args: self.run_cli(*args))
         self.run_cli('verify')
         path.write_text(ONESHOT.replace('empty password', 'empty credentials'))
         rc, out = self.run_cli('done'); self.assertEqual(rc, 2, out)
@@ -70,12 +73,14 @@ class OneShotCompletion(RepairCase):
         self.assertNotIn('--criteria-section', out['next'])
         rc, out = self.bind('--replace'); self.assertEqual(rc, 0, out)
         rc, out = self.run_cli('done'); self.assertEqual(rc, 2, out)
+        fixture_native_review(self.repo, lambda repo, *args: self.run_cli(*args))
         self.run_cli('verify')
         rc, out = self.run_cli('done'); self.assertEqual(rc, 0, out)
 
     def test_oneshot_does_not_bypass_failed_verification_or_changed_requirement(self):
         wid = self.start(); self.native_spec(); self.bind()
         (self.repo / 'acceptance-tests/test_acceptance.py').write_text('import unittest\nclass Broken(unittest.TestCase):\n def test_bad(self): self.fail("not fixed")\n')
+        fixture_native_review(self.repo, lambda repo, *args: self.run_cli(*args))
         rc, out = self.run_cli('verify'); self.assertEqual(rc, 1, out)
         rc, out = self.run_cli('done'); self.assertEqual(rc, 2, out)
         req = self.repo / self.read_work(wid)['requirement']['path']; req.write_text('Changed scope')

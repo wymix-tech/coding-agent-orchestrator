@@ -77,15 +77,16 @@ class NoWorkGuardTests(RepairCase):
         self.assertEqual(out["decision"], "deny")
         self.assertIn("CAO-managed", out["reason"])
 
-    def test_active_work_allows_setup_and_oneshot_implementation(self):
+    def test_active_work_allows_setup_but_requires_baseline_before_implementation(self):
         self.start()
         cfg = cao.config(self.repo)
         cfg["verification"]["scripts"] = []
         cao.save_json(self.repo / cao.CONFIG_REL, cfg)
         out = self.event("write", {"path": "src.py", "content": "code"})
-        self.assertEqual(out["decision"], "allow")
-        self.assertIn("verification setup", out["additional_context"].lower())
-        self.assertEqual(self.event("bash", {"command": "mkdir -p src"})["decision"], "allow")
+        self.assertEqual(out["decision"], "deny")
+        self.assertIn("verification setup", out["reason"].lower())
+        self.assertEqual(self.event("bash", {"command": "mkdir -p src"})["decision"], "deny")
+        self.assertEqual(self.event("write", {"path": "tests/test_setup.py", "content": "fixture"})["decision"], "allow")
 
     def test_native_metadata_tools_stay_allowed_without_granting_business_writes(self):
         script = self.repo / "_bmad/scripts/render_skill.py"

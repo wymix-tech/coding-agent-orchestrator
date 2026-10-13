@@ -88,8 +88,10 @@ test('real core blocks Pi business writes without Work and preserves CAO/native 
     const requirement = f.cli('requirement', 'next-id', '--title', 'Login').path;
     writeFileSync(path.join(f.dir, requirement), '# Login\nUse user.yaml and sessions.');
     f.cli('start', '--requirement', requirement);
+    assert.equal((await f.handlers.get('tool_call')({toolName: 'write', input: {
+      path: 'src/main/java/AuthService.java', content: 'class AuthService {}'}}, ctx)).block, true);
     assert.equal(await f.handlers.get('tool_call')({toolName: 'write', input: {
-      path: 'src/main/java/AuthService.java', content: 'class AuthService {}'}}, ctx), undefined);
+      path: 'tests/test_setup.py', content: '# verification scaffold'}}, ctx), undefined);
     assert.equal(await f.handlers.get('agent_before_settle')({context: {canContinue: true}}, ctx), undefined);
   } finally {f.close();}
 });
@@ -142,7 +144,7 @@ test('real Pi tool_result synchronizes a bound BMAD SPEC with a Chinese Work tit
   } finally {f.close();}
 });
 
-test('real core setup reaches Pi model without blocking product writes or resetting Work', posix, async () => {
+test('real core setup reaches Pi model with blocked product writes and preserved Work', posix, async () => {
   const f = realCoreFixture();
   try {
     const {cli} = f;
@@ -156,9 +158,9 @@ test('real core setup reaches Pi model without blocking product writes or resett
     const guidance = await f.handlers.get('before_agent_start')({type: 'before_agent_start', prompt: 'continue'}, ctx);
     assert.match(guidance.message.content, /CAO verification setup/);
     assert.match(guidance.message.content, /tech stack/);
-    assert.equal(await f.handlers.get('tool_call')({type: 'tool_call', toolName: 'write',
-      input: {path: 'product.py', content: 'pass'}}, ctx), undefined);
-    assert.ok(f.sent.some(([message]) => message.content.includes('CAO verification setup')));
+    assert.equal((await f.handlers.get('tool_call')({type: 'tool_call', toolName: 'write',
+      input: {path: 'product.py', content: 'pass'}}, ctx)).block, true);
+    assert.match(guidance.message.content, /verification configure/);
     for (const [, options] of f.sent) {
       assert.equal(options.triggerTurn, false);
       assert.equal(options.deliverAs, 'steer');
@@ -177,9 +179,9 @@ test('real core setup reaches Pi model without blocking product writes or resett
     assert.equal(configured.verification_setup.ready, true);
     assert.equal(configured.acceptance_review_required, true);
     assert.equal(readFileSync(workFile, 'utf8'), before, 'configure cannot reanchor Work');
-    assert.equal(cli('bootstrap').mode, 'resume');
+    assert.equal(cli('bootstrap').mode, 'verification_setup');
     const after = await f.handlers.get('before_agent_start')({type: 'before_agent_start', prompt: 'continue'}, ctx);
-    assert.doesNotMatch(after.message.content, /CAO verification setup/);
+    assert.match(after.message.content, /reanchor|reopen/);
     assert.equal(f.notices.length, 0, JSON.stringify(f.notices));
     cli('reopen', '--work', wid, '--reanchor', '--reason', 'Reviewed acceptance baseline');
     assert.notEqual(JSON.parse(readFileSync(workFile, 'utf8')).acceptance.config_sha256,

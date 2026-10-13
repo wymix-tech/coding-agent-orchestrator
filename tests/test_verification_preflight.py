@@ -99,12 +99,12 @@ class VerificationPreflightTests(RepairCase):
         self.assertIn("Keep chosen stack", out["additional_context"])
         self.assertIn("verification setup", out["additional_context"].lower())
 
-    def test_missing_configuration_only_reminds_product_writes_with_active_work(self):
+    def test_missing_configuration_blocks_product_writes_but_allows_setup(self):
         self.start()
         self.scripts([])
         out = self.event("pre_tool", toolName="write", input={"path": "src.py", "content": "x"})
-        self.assertEqual(out["decision"], "allow")
-        self.assertIn("verification setup", out["additional_context"].lower())
+        self.assertEqual(out["decision"], "deny")
+        self.assertIn("verification setup", out["reason"].lower())
         for name, args in (("read", {"path": "src.py"}),
                            ("write", {"path": ".orchestrator/requirements/new.md", "content": "scope"}),
                            ("bash", {"command": "cao verification configure --test-script 'project wrapper'"})):

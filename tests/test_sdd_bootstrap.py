@@ -5,6 +5,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from helpers import configure_verification
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 CAO = ROOT / "scripts" / "cao.py"
@@ -159,6 +160,7 @@ class SddBootstrapTests(unittest.TestCase):
             (repo / "requirements").mkdir()
             (repo / "requirements/login.md").write_text("Add login", encoding="utf-8")
             run(repo, "init")
+            configure_verification(repo)
             rc, _, = run(repo, "start", "--requirement", "requirements/login.md")
             self.assertEqual(rc, 0)
             import shutil
