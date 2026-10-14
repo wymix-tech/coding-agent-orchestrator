@@ -85,6 +85,7 @@ def reset_requirement(work: dict, requirement: dict) -> bool:
         if sdd["workflow"]:
             sdd["workflow"]["status"] = "selected"
         sdd.pop("plan_scope", None)
+        sdd.pop("spec_task_scope", None)
         sdd.pop("native_state", None)
         hint = sdd.pop("native_ref", None)
         if hint:

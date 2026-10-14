@@ -40,6 +40,7 @@ class RouteSync(unittest.TestCase):
         self.run_cli("verification", "configure", "--test-script", f"{sys.executable} -m unittest discover -s tests")
         self.run_cli("path", "assess", "--profile", "standard", "--reason", "安全敏感认证")
         self.run_cli("sdd", "workflow", "select", "--name", "bmad-build", "--entrypoint", "bmad-build")
+        self.hook("session_start")
 
     def write(self, path, value):
         target = self.repo / path
@@ -124,7 +125,9 @@ class RouteSync(unittest.TestCase):
         self.hook("prompt_submit", prompt="继续")
         self.assertEqual("pending", self.work()["sdd"]["spec_approval"]["status"])
         self.assertEqual("deny", self.product_write()["decision"])
-        self.hook("post_tool", tool_name="ask_user_question", details={"answers": [{"answer": "批准并继续"}]})
+        self.hook("pre_tool", tool_name="ask_user_question", toolCallId="spec-approval-question")
+        self.hook("post_tool", tool_name="ask_user_question", toolCallId="spec-approval-question",
+                  details={"answers": [{"answer": "批准并继续"}]})
         self.assertEqual("allow", self.product_write()["decision"])
 
     def test_stop_approval_does_not_authorize_implementation(self):

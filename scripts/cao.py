@@ -35,7 +35,9 @@ from scripts.state_store import atomic_json, backup_once, repo_transaction
 from scripts.native_route import (
     normalize_decision as normalize_route_decision, route_state, intent_hash,
     owned_file as native_owned_file, approve_observed_response, approve_baseline_response,
+    bind_request_context, bind_approval_question,
 )
+from scripts.native_progress import direct_build_decision, spec_task_state, merge_plan_states
 from scripts.path_guard import inside, repo_file, provider_artifact, patch_targets
 from scripts.completion_policy import (
     acceptance_hash, anchor_acceptance, reset_requirement, evidence_matches,
@@ -518,7 +520,7 @@ def gate_state(work: dict[str, Any], verification_fresh: bool, sdd_ready: bool =
     gates = [str(gate) for gate in (assessment.get("required_gates") or [])]
     status = work.get("gate_status") or {}
     satisfied: list[str] = []
-    pending: list[tuple[str, bool]] = []
+    pending: list[str] = []
     for gate in gates:
         if gate == "sdd_acceptance":
             ok = bool(sdd_ready)
@@ -1141,18 +1143,6 @@ def language_label(language: str) -> str:
     return LANGUAGE_LABELS.get(language.strip().lower(), language.strip())
 
 
-def language_policy(language: str) -> str:
-    label = language_label(language)
-    return (
-        f"Communicate with the user in {label}. Write all SDD artifacts and project documentation "
-        f"in {label}, including requirements/specifications, proposals, designs, plans, tasks, "
-        "architecture documents, review summaries, and handoffs. Keep code symbols, API names, "
-        "commands, standardized keywords, and file names unchanged where required. If the user "
-        "explicitly requests a different language for a specific artifact or conversation, follow "
-        "that explicit request for the requested scope."
-    )
-
-
 def _toml_quote(value: str) -> str:
     return json.dumps(value, ensure_ascii=False)
 
@@ -1504,7 +1494,6 @@ def cmd_language_show(args: argparse.Namespace) -> int:
         print(json.dumps({"ok": True, "initialized": False, "language": {"user": "zh-CN", "label": "Simplified Chinese"}}, ensure_ascii=False, indent=2))
         return 0
     ensure_language_preference(repo)
-    cfg = config(repo)
     current = user_language(repo)
     providers = {name: bool(detect_sdd(repo, name)["installed"]) for name in SDD_CATALOG}
     print(json.dumps({"ok": True, "language": {"user": current, "label": language_label(current), "communication": "follow-user", "sdd_artifacts": "follow-user"}, "installed_sdds": providers}, ensure_ascii=False, indent=2))
@@ -2136,7 +2125,7 @@ def native_sync_state(repo: Path, work: dict[str, Any]) -> dict[str, Any]:
         return {"state": "observed" if plan["canonical"] else "status_unavailable", "source": ", ".join(plan["observations"]),
                 "raw": plan["raw"], "canonical": plan["canonical"],
                 "next": plan.get("next"), "verification_plan": plan}
-    candidates, anchor = _native_candidates(repo, provider, work, str(sdd.get("native_ref") or ""))
+    candidates, _ = _native_candidates(repo, provider, work, str(sdd.get("native_ref") or ""))
     if not candidates:
         explicit = sdd.get("spec_binding") is not None or bool(sdd.get("native_ref"))
         return {"state": "source_unavailable" if explicit else "unbound", "source": None,
@@ -2172,6 +2161,47 @@ def implementation_preflight(repo: Path, work: dict) -> dict:
     return native_route_state(repo, work)
 
 
+def approval_request_contexts(repo: Path, work: dict, host: str | None = None) -> list[dict[str, str]]:
+    contexts = [{"host": session["host"], "session_id": session["host_session_id"]}
+                for session in list_sessions(repo)
+                if session.get("work_item_id") == work["id"]
+                and session.get("kind") == "primary" and session.get("status") == "active"]
+    identity = host_session_identity(host)
+    if identity:
+        context = {"host": identity[0], "session_id": identity[1]}
+        if context not in contexts:
+            contexts.append(context)
+    return contexts
+
+
+def expose_approval_context(repo: Path, work: dict | None, host: str, session_id: str) -> None:
+    if not work or work.get("status") != "active":
+        return
+    changed = False
+    for record in ((work.get("sdd") or {}).get("spec_approval") or {},
+                   work.get("verification_review") or {}):
+        if record.get("status") == "pending" or record.get("stop_after_approval"):
+            changed = bind_request_context(record, work["id"], host, session_id) or changed
+    if changed:
+        save_work(repo, work)
+
+
+def ensure_verification_review(repo: Path, work: dict, cfg: dict) -> dict:
+    """Reuse only a current Work-bound request; legacy approval is not transferable."""
+    current_hash = verification_snapshot(cfg)
+    review = work.get("verification_review") or {}
+    if (review.get("config_sha256") != current_hash or review.get("work_item_id") != work["id"]
+            or "contexts" not in review):
+        review = {"id": new_id("baseline-review"), "status": "pending",
+                  "work_item_id": work["id"], "contexts": approval_request_contexts(repo, work),
+                  "config_sha256": current_hash, "requested_at": now(),
+                  "previous_config_sha256": (work.get("acceptance") or {}).get("config_sha256"),
+                  "scripts": verification_scripts(cfg)}
+        work["verification_review"] = review
+        save_work(repo, work)
+    return review
+
+
 @locked_command
 def cmd_sdd_route(args: argparse.Namespace) -> int:
     repo = repo_root(args.repo); ensure_initialized(repo)
@@ -2202,6 +2232,7 @@ def cmd_sdd_route(args: argparse.Namespace) -> int:
         work["sdd"]["route_decision"] = decision
         work["sdd"]["native_ref"] = decision["primary_artifact"]
         work["sdd"].pop("spec_approval", None)
+        work["sdd"].pop("spec_task_scope", None)
         work["verification"] = {}
         work["gate_status"] = {}
         # Reselecting a route must never retain a completed workflow certificate.
@@ -2267,10 +2298,13 @@ def cmd_sdd_approval(args: argparse.Namespace) -> int:
         existing = work["sdd"].get("spec_approval") or {}
         if (existing.get("route_decision_id") == decision["id"]
                 and existing.get("intent_sha256") == intent_hash(path)
+                and existing.get("work_item_id") == work["id"]
                 and existing.get("status") in {"pending", "approved"}):
             print(json.dumps({"ok": True, "status": "unchanged", "approval": existing,
                               "implementation": state}, ensure_ascii=False)); return 0
         approval = {"id": new_id("approval"), "status": "pending", "requested_at": now(),
+                    "work_item_id": work["id"], "contexts": approval_request_contexts(repo, work),
+                    "questions": [],
                     "path": decision["primary_artifact"], "intent_sha256": intent_hash(path),
                     "requirement_sha256": work["requirement"]["sha256"], "route_decision_id": decision["id"]}
         work["sdd"]["spec_approval"] = approval
@@ -2396,6 +2430,9 @@ def reconcile_native_sdd_state(repo: Path, work: dict[str, Any]) -> bool:
     canonical = _canonical_native_state(raw_state)
     plan = provider_verification_plan_state(repo, work)
     if plan["state"] != "not_applicable":
+        if plan.get("spec_task_scope") and sdd.get("spec_task_scope") != plan["spec_task_scope"]:
+            sdd["spec_task_scope"] = plan["spec_task_scope"]
+            changed = True
         if plan.get("scope") and sdd.get("plan_scope") != plan["scope"]:
             sdd["plan_scope"] = plan["scope"]
             changed = True
@@ -2411,7 +2448,6 @@ def reconcile_native_sdd_state(repo: Path, work: dict[str, Any]) -> bool:
             task_counts = {"total": total, "checked": total - len(plan["pending_plan_items"]),
                            "unchecked": len(plan["pending_plan_items"])}
     old_native = sdd.get("native_state") if isinstance(sdd.get("native_state"), dict) else {}
-    old_raw = old_native.get("raw")
     old_canonical = old_native.get("canonical")
     new_snapshot = {
         "raw": raw_state,
@@ -2483,6 +2519,16 @@ def reconcile_native_sdd_state(repo: Path, work: dict[str, Any]) -> bool:
             blockers = work.setdefault("blockers", [])
             if not any(isinstance(item, dict) and item.get("id") == "native-sdd-state" for item in blockers):
                 blockers.append({"id": "native-sdd-state", "reason": f"Native {provider} state is blocked", "source": status_source, "observed_at": now()})
+                changed = True
+        if canonical in {"ready", "in_progress", "in_review", "completed"}:
+            blockers = work.get("blockers") or []
+            automatic = [item for item in blockers if isinstance(item, dict)
+                         and item.get("id") == "native-sdd-state"]
+            if automatic:
+                work["blockers"] = [item for item in blockers if item not in automatic]
+                queue_event(work, {"event": "sdd.native_blocker.cleared", "work_item_id": work["id"],
+                                   "source": provider, "blockers": automatic, "to_state": canonical,
+                                   "occurred_at": now()})
                 changed = True
     # Observation is retained even when it reveals an unauthorized transition.
     # It must not itself satisfy routing or approval prerequisites.
@@ -2642,16 +2688,18 @@ def update_session_event(
     kind: str = "primary",
     parent_session_id: str | None = None,
 ) -> dict[str, Any]:
+    # A delayed result reports the caller's earlier Work; it is not a reattach.
+    event_work = None if event in {"post_tool", "file_changed", "session_end", "subagent_stop"} else work
     if work:
         _refresh_work(repo, work)
     session = load_session(repo, session_ref, host=host)
     if session is None:
-        return register_session(repo, work, session_ref, host, event=event, kind=kind, parent_session_id=parent_session_id)
+        return register_session(repo, event_work, session_ref, host, event=event, kind=kind, parent_session_id=parent_session_id)
     if session.get("host") == "unknown" and host and host != "unknown":
         # Re-register to re-key the stored file using the now-known Host identity.
         return register_session(
             repo,
-            work,
+            event_work,
             session_ref,
             host,
             event=event,
@@ -2660,7 +2708,7 @@ def update_session_event(
         )
     if host and host != "unknown":
         session["host"] = host
-    session["work_item_id"] = work.get("id") if work else session.get("work_item_id")
+    session["work_item_id"] = event_work.get("id") if event_work else session.get("work_item_id")
     if session.get("status") != "ended" and event not in {"session_end", "subagent_stop"}:
         session["status"] = "active"
     session["last_event"] = event
@@ -2670,7 +2718,7 @@ def update_session_event(
         session["ended_at"] = None
         session["end_reason"] = None
     save_session(repo, session)
-    if work:
+    if work and session.get("work_item_id") == work["id"]:
         work.setdefault("resume", {})["last_agent"] = host
         save_work(repo, work)
     return session
@@ -2731,11 +2779,6 @@ def cmd_sessions_show(args: argparse.Namespace) -> int:
     out["activity"] = session_activity(session, args.stale_after_minutes)
     print(json.dumps({"ok": True, "session": out}, ensure_ascii=False, indent=2))
     return 0
-
-
-def current_work_id(repo: Path, index: dict[str, Any] | None = None) -> str | None:
-    index = index or load_index(repo)
-    return index.get("active_work")
 
 
 def requirement_evidence(repo: Path, requirement: Path) -> dict[str, str]:
@@ -3178,6 +3221,20 @@ def bmad_verification_plan_state(repo: Path, work: dict) -> dict:
         return {"ready": True, "state": "not_applicable"}
     scope = sdd.get("plan_scope") or {}
     plans = [plan for plan in scope.get("plans", []) if Path(plan.get("path", "")).name in SPRINT_STATUS_NAMES]
+    spec = spec_task_state(repo, work, provider_output_dirs("bmad"), _checkbox_tasks)
+    if spec["state"] in {"pending", "done"}:
+        candidates, _ = _native_candidates(repo, "bmad", work, str(sdd.get("native_ref") or ""))
+        raw_status, _, _, _ = _read_native_status("bmad", candidates)
+        canonical = _canonical_native_state(raw_status)
+        if canonical == "blocked":
+            spec.update(ready=False, state="pending", raw=raw_status, canonical=canonical,
+                        reason="BMAD_SPEC_BLOCKED", next="Resolve the native SPEC blocker, then synchronize and verify.")
+        elif not spec["ready"] and canonical == "in_progress":
+            spec.update(raw=raw_status, canonical=canonical)
+    decision = direct_build_decision(work)
+    if decision and not plans and not any(item.get("role") == "sprint"
+                                         for item in decision.get("required_artifacts", [])):
+        return spec
     candidates = {repo / "_bmad-output" / name for name in SPRINT_STATUS_NAMES}
     candidates.update(repo / "_bmad-output/implementation-artifacts" / name for name in SPRINT_STATUS_NAMES)
     for ref in [sdd.get("native_ref"), ((sdd.get("spec_binding") or {}).get("spec") or {}).get("path"),
@@ -3185,7 +3242,7 @@ def bmad_verification_plan_state(repo: Path, work: dict) -> dict:
         if ref:
             candidates.update((repo / str(ref)).parent / name for name in SPRINT_STATUS_NAMES)
     if not plans and not any(path.exists() for path in candidates):
-        return {"ready": True, "state": "not_applicable"}
+        return spec
     next_step = (f"Bind ALL stories or whole epics belonging to this requirement with `cao sdd plan bind --work {work['id']} "
                  "--plan-item <sprint-status.yaml-or-yml>#<story-id-or-epic-N>` (repeat for all associated items). "
                  "Continue the native workflow until every associated story is done, then run `cao verify`.")
@@ -3223,10 +3280,11 @@ def bmad_verification_plan_state(repo: Path, work: dict) -> dict:
             raw = "in_progress"
         else:
             raw = None
-        return {"ready": not pending, "state": "pending" if pending else "done",
+        sprint = {"ready": not pending, "state": "pending" if pending else "done",
                 "raw": raw, "canonical": _canonical_native_state(raw),
                 "reason": "BMAD_PLAN_NOT_DONE" if pending else None,
                 "scope": effective_scope, "pending_plan_items": pending, "observations": observations, "next": next_step if pending else None}
+        return merge_plan_states(sprint, spec)
     except (ValueError, OSError, UnicodeError, RuntimeError) as exc:
         return {"ready": False, "state": "blocked", "reason": str(exc), "scope": effective_scope, "next": next_step}
 
@@ -3314,6 +3372,10 @@ def observe_plan_scope(repo: Path, work: dict) -> dict:
     _refresh_work(repo, work)
     observation = provider_verification_plan_state(repo, work)
     scope = observation.get("scope")
+    spec_scope = observation.get("spec_task_scope")
+    if spec_scope and spec_scope != (work.get("sdd") or {}).get("spec_task_scope"):
+        work.setdefault("sdd", {})["spec_task_scope"] = spec_scope
+        save_work(repo, work)
     if scope and scope != (work.get("sdd") or {}).get("plan_scope"):
         work.setdefault("sdd", {})["plan_scope"] = scope
         save_work(repo, work)
@@ -4544,10 +4606,6 @@ def cmd_sdd_acceptance(args: argparse.Namespace) -> int:
     return dispatch(args, sys.modules[__name__])
 
 
-def cmd_sdd(args: argparse.Namespace) -> int:
-    return int(args.fn(args))
-
-
 def resolve_work(repo: Path, work_id: str | None = None) -> dict[str, Any] | None:
     index = load_index(repo)
     wid = work_id or index.get("active_work")
@@ -4761,13 +4819,7 @@ def cmd_verification_configure(args: argparse.Namespace) -> int:
     if review:
         out["next"] = action("human", f'Review changed acceptance and explicitly run `cao reopen --work {wid} --reanchor --reason "Reviewed acceptance changes"`.')
         if work["sdd"].get("native_route_required") or any(s["name"] == "bmad-build" for s in provider_native_skills(repo, work["sdd"]["provider"])):
-            current_review = work.get("verification_review") or {}
-            if current_review.get("config_sha256") != verification_snapshot(effective):
-                work["verification_review"] = {"id": new_id("baseline-review"), "status": "pending",
-                    "config_sha256": verification_snapshot(effective), "requested_at": now(),
-                    "previous_config_sha256": (work.get("acceptance") or {}).get("config_sha256"),
-                    "scripts": verification_scripts(effective)}
-                save_work(repo, work)
+            ensure_verification_review(repo, work, effective)
             out["next"] = action("human", f'Present the changed verification scripts and wait for explicit user `批准验证基线` (approve verification baseline) through the host. Then `cao reopen --work {wid} --reanchor --reason "Reviewed acceptance changes"`. Agent reason text is not human approval.')
     print(json.dumps(out, ensure_ascii=False, indent=2))
     return 0
@@ -4875,21 +4927,21 @@ def _prepare_start(args: argparse.Namespace):
         candidates = [rel(x, repo) for x in requirement_files(repo, config(repo))]
         print(json.dumps({"ok": False, "error": "REQUIREMENT_SELECTION_REQUIRED", "candidates": candidates}, ensure_ascii=False, indent=2)); return 2
     index = load_index(repo)
+    wid = stable_work_id(repo, p)
+    existing = load_work(repo, wid)
+    is_new_work = existing is None
+    if existing and existing.get("status") == "completed" and not args.reopen:
+        print(json.dumps({"ok": False, "error": "WORK_ITEM_ALREADY_COMPLETED", "work_item": work_summary(existing)}, ensure_ascii=False, indent=2))
+        return 2
     active_id = index.get("active_work")
+    active_to_suspend = None
     if active_id:
         active = load_work(repo, active_id)
         if active and active.get("status") == "active":
             if not args.replace:
                 print(json.dumps({"ok": False, "error": "WORK_ITEM_ALREADY_ACTIVE", "work_item": work_summary(active)}, ensure_ascii=False, indent=2)); return 2
-            active["status"] = "suspended"
-            active.setdefault("resume", {})["pending"] = list(dict.fromkeys((active.get("resume", {}).get("pending") or []) + [f"Execution re-anchored to a new work item: {Path(p).stem}"]))
-            save_work(repo, active)
-            create_handoff(repo, active, None, None, reason="execution re-anchored to another work item")
-    wid = stable_work_id(repo, p)
-    existing = load_work(repo, wid)
-    is_new_work = existing is None
-    if existing and existing.get("status") == "completed" and not args.reopen:
-        print(json.dumps({"ok": False, "error": "WORK_ITEM_ALREADY_COMPLETED", "work_item": work_summary(existing)}, ensure_ascii=False, indent=2)); return 2
+            if active_id != wid:
+                active_to_suspend = active
     configured_provider = str((config(repo).get("sdd") or {}).get("provider") or "auto")
     provider = configured_provider if configured_provider != "auto" else infer_sdd_provider(repo, p, config(repo))
     work = existing or {
@@ -4907,7 +4959,7 @@ def _prepare_start(args: argparse.Namespace):
         "verification": None,
         "created_at": now(),
     }
-    if _activation_denied(repo, wid):
+    if active_to_suspend is None and _activation_denied(repo, wid):
         return 2
     work["status"] = "active"
     work["started_at"] = work.get("started_at") or now()
@@ -4917,7 +4969,7 @@ def _prepare_start(args: argparse.Namespace):
         work["gate_status"] = {}
         work["verification"] = None
         for field in ("workflow", "plan_scope", "native_state", "spec_binding", "acceptance",
-                      "native_route_required", "route_decision", "spec_approval", "implementation_state"):
+                      "native_route_required", "route_decision", "spec_approval", "implementation_state", "spec_task_scope"):
             work["sdd"].pop(field, None)
         hint = work["sdd"].pop("native_ref", None)
         if hint:
@@ -4942,6 +4994,15 @@ def _prepare_start(args: argparse.Namespace):
         queue_event(work, {"event": "task.created", "work_item_id": wid, "source": "cao",
                            "native_ref": work.get("sdd", {}).get("native_ref"),
                            "occurred_at": work.get("created_at") or now()})
+    # Prepare and validate all target evidence before mutating the current Work.
+    # A rejection must not leave it suspended or create a false handoff.
+    if active_to_suspend:
+        active_to_suspend["status"] = "suspended"
+        active_to_suspend.setdefault("resume", {})["pending"] = list(dict.fromkeys(
+            (active_to_suspend.get("resume", {}).get("pending") or [])
+            + [f"Execution re-anchored to a new work item: {Path(p).stem}"]))
+        save_work(repo, active_to_suspend)
+        create_handoff(repo, active_to_suspend, None, None, reason="execution re-anchored to another work item")
     save_work(repo, work)
     # Associate the new work and Session in the same transaction as activation.
     identity = host_session_identity(getattr(args, "host", None))
@@ -5683,12 +5744,15 @@ def cmd_reopen(args: argparse.Namespace) -> int:
     previous_execution = json.loads(json.dumps(work.get("execution") or {}))
     if reanchored:
         review = work.get("verification_review") or {}
-        current_hash = verification_snapshot(config(repo))
+        cfg = config(repo)
+        current_hash = verification_snapshot(cfg)
         if ((work.get("acceptance") or {}).get("config_sha256") != current_hash
-                and (review or work["sdd"].get("native_route_required"))
-                and (review.get("status") != "approved" or review.get("config_sha256") != current_hash)):
-            print(json.dumps({"ok": False, "error": "VERIFICATION_REVIEW_REQUIRED",
-                              "next": "Present changed scripts and wait for explicit user 批准验证基线 through the host."})); return 2
+                and (review or work["sdd"].get("native_route_required"))):
+            review = ensure_verification_review(repo, work, cfg)
+            if review.get("status") != "approved":
+                print(json.dumps({"ok": False, "error": "VERIFICATION_REVIEW_REQUIRED",
+                                  "next": "Present changed scripts and wait for explicit user 批准验证基线 through the host."}))
+                return 2
         p = repo / work["requirement"]["path"]
         if not p.is_file():
             print(json.dumps({"ok": False, "error": "REQUIREMENT_FILE_MISSING"}, ensure_ascii=False)); return 2
@@ -5791,14 +5855,6 @@ def cmd_context(args: argparse.Namespace) -> int:
     repo = repo_root(args.repo); ensure_initialized(repo)
     index = load_index(repo); work = load_work(repo, args.work or index.get("active_work")) if (args.work or index.get("active_work")) else None
     print(render_context(repo, work, session_id=args.session, host=args.host)); return 0
-
-
-def cmd_path(args: argparse.Namespace) -> int:
-    if args.path_command == "assess":
-        return cmd_path_assess(args)
-    if args.path_command == "show":
-        return cmd_path_show(args)
-    raise ValueError(f"unsupported path command: {args.path_command}")
 
 
 def native_output_dirs() -> list[str]:
@@ -6259,7 +6315,7 @@ def _shell_segments(command: str) -> list[list[str]]:
     # Heredoc bodies are input data, not additional mutating commands. Keep
     # subsequent commands after the terminator visible to the gate.
     lines = []
-    pending: list[str] = []
+    pending: list[tuple[str, bool]] = []
     for line in command.splitlines(keepends=True):
         if pending:
             delimiter, quoted = pending[0]
@@ -6437,6 +6493,8 @@ def host_event(args: argparse.Namespace) -> int:
             session = update_session_event(repo, host_session_id, args.host, event, work, kind=kind, parent_session_id=parent_id)
 
     if event in {"session_start", "subagent_start"}:
+        if kind == "primary":
+            expose_approval_context(repo, work, args.host, host_session_id)
         context = render_context(repo, work, session_id=host_session_id, host=args.host)
         result = {"decision": "allow", "additional_context": context}
         if host_session_id:
@@ -6463,9 +6521,15 @@ def host_event(args: argparse.Namespace) -> int:
                                    "approval": approval, "occurred_at": now()})
                 save_work(repo, work)
                 reconcile_native_sdd_state(repo, work)
+            expose_approval_context(repo, work, args.host, host_session_id)
         return respond({"decision": "allow", "additional_context": render_context(repo, work, session_id=host_session_id, host=args.host)})
 
     if event == "pre_tool":
+        if work:
+            approval = (work.get("sdd") or {}).get("spec_approval") or {}
+            if ((approval.get("status") == "pending" or approval.get("stop_after_approval"))
+                    and bind_approval_question(approval, work["id"], raw, args.host, host_session_id)):
+                save_work(repo, work)
         # No-Work product writes and hand edits to managed state are denied.
         result: dict[str, Any] = {"decision": "allow"}
         # CAO's own state narrow enough that it can never deadlock intake:

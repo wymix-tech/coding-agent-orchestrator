@@ -141,9 +141,40 @@
             "path",
             "intent_sha256",
             "requirement_sha256",
-            "route_decision_id"
+            "route_decision_id",
+            "work_item_id",
+            "contexts",
+            "questions"
           ],
           "properties": {
+            "work_item_id": {"type": "string", "minLength": 1},
+            "contexts": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["host", "session_id"],
+                "properties": {
+                  "host": {"type": "string", "minLength": 1},
+                  "session_id": {"type": "string", "minLength": 1}
+                },
+                "additionalProperties": false
+              }
+            },
+            "questions": {
+              "type": "array",
+              "maxItems": 32,
+              "items": {
+                "type": "object",
+                "required": ["host", "session_id", "tool_call_id", "approval_id"],
+                "properties": {
+                  "host": {"type": "string", "minLength": 1},
+                  "session_id": {"type": "string", "minLength": 1},
+                  "tool_call_id": {"type": "string", "minLength": 1},
+                  "approval_id": {"type": "string", "minLength": 1}
+                },
+                "additionalProperties": false
+              }
+            },
             "status": {
               "enum": [
                 "pending",
@@ -162,6 +193,18 @@
             }
           },
           "additionalProperties": true
+        },
+        "spec_task_scope": {
+          "type": "object",
+          "description": "Observed Direct Build task descriptions retained for the current route.",
+          "additionalProperties": {
+            "type": "object",
+            "required": ["descriptions"],
+            "properties": {
+              "descriptions": {"type": "array", "items": {"type": "string"}}
+            },
+            "additionalProperties": false
+          }
         },
         "spec_binding": {
           "type": ["object", "null"],

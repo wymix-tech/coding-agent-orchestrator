@@ -27,7 +27,7 @@ def main():
     records = []
     with tempfile.TemporaryDirectory(prefix="cao-installed-smoke-") as td:
         base = Path(td)
-        modules = ("import json; from scripts import cao, state_store, completion_policy, path_guard, verification_runner, verification_setup, windows_supervisor, dashboard, light_spec_policy, sdd_acceptance_runtime, sdd_acceptance_commands, native_route; "
+        modules = ("import json; from scripts import cao, state_store, completion_policy, path_guard, verification_runner, verification_setup, windows_supervisor, dashboard, light_spec_policy, sdd_acceptance_runtime, sdd_acceptance_commands, native_route, native_progress; "
                    "root=cao.package_root_dir(); "
                    "assert all((root/p).is_file() for p in ['hosts/pi/coding-orchestrator.ts','hooks/host-event.sh','hosts/claude-code/settings.fragment.json','hosts/codex/hooks.json','SKILL.md','docs/native-route-contract.md']); "
                    "assert cao.overall_verification_status([{'required':False,'status':'failed'}]) == 'blocked'; "

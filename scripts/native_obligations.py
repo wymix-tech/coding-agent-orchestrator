@@ -16,11 +16,25 @@ def digest(value):
 def oneshot_source(repo, work):
     sdd = work.get('sdd') or {}
     binding = sdd.get('spec_binding') or {}
-    if sdd.get('provider') != 'bmad' or not binding.get('spec'):
+    if sdd.get('provider') != 'bmad':
         return None
-    path = provider_artifact(repo, binding['spec']['path'], ['_bmad-output'])
+    decision = sdd.get('route_decision') or {}
+    if decision:
+        if (decision.get('provider') != 'bmad'
+                or decision.get('requirement_sha256') != work['requirement']['sha256']):
+            raise ValueError('NATIVE_REVIEW_SOURCE_STALE')
+        if decision.get('build_route') != 'oneshot':
+            return None
+        source = decision['primary_artifact']
+    else:
+        source = (binding.get('spec') or {}).get('path')
+    if not source:
+        return None
+    path = provider_artifact(repo, source, ['_bmad-output'])
     raw = path.read_bytes()
     if not _oneshot(raw, _lines(raw)):
+        if decision:
+            raise ValueError('NATIVE_ONESHOT_SPEC_INVALID')
         return None
     content = raw.decode('utf-8-sig')
     frozen = re.search(r'<frozen-after-approval\b[^>]*>(.*?)</frozen-after-approval>', content, re.S)

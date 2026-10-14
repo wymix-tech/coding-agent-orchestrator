@@ -7,7 +7,6 @@ an evidence boundary, not a security sandbox against a forged hook invocation.
 import hashlib
 import json
 import re
-from pathlib import Path
 
 from scripts.path_guard import repo_file, provider_artifact
 
@@ -220,7 +219,8 @@ def route_state(repo, work, dirs, required=False):
                 return blocked("NATIVE_ROUTE_PLAN_SCOPE_REQUIRED", "Bind ALL current requirement stories/epics with `cao sdd plan bind --plan-item <sprint-status.yaml>#<id>`; do not adopt the whole shared project plan.")
         if record["approval_required"]:
             approval = sdd.get("spec_approval") or {}
-            if (approval.get("status") != "approved" or approval.get("path") != record["primary_artifact"]
+            if (approval.get("status") != "approved" or approval.get("work_item_id") != work["id"]
+                    or approval.get("path") != record["primary_artifact"]
                     or approval.get("requirement_sha256") != record["requirement_sha256"]
                     or approval.get("route_decision_id") != record["id"]
                     or approval.get("intent_sha256") != intent_hash(primary)):
@@ -233,10 +233,54 @@ def route_state(repo, work, dirs, required=False):
             "build_route": record["build_route"], "decision_id": record["id"]}
 
 
+def request_context_matches(record, work_id, host, session_id, raw=None, event=None):
+    """A reply belongs to a request shown in this Work's host session."""
+    if record.get("work_item_id") != work_id or not session_id:
+        return False
+    if {"host": host, "session_id": session_id} not in record.get("contexts", []):
+        return False
+    if event == "post_tool":
+        call_id = (raw or {}).get("toolCallId") or (raw or {}).get("tool_call_id") or (raw or {}).get("tool_use_id")
+        binding = {"host": host, "session_id": session_id, "tool_call_id": call_id,
+                   "approval_id": record.get("id")}
+        return bool(call_id and binding in record.get("questions", []))
+    return True
+
+
+def bind_request_context(record, work_id, host, session_id):
+    if record.get("work_item_id") != work_id or not session_id:
+        return False
+    context = {"host": host, "session_id": session_id}
+    contexts = record.setdefault("contexts", [])
+    if context in contexts:
+        return False
+    contexts.append(context)
+    return True
+
+
+def bind_approval_question(record, work_id, raw, host, session_id):
+    """Capture the native tool-call identity before the question is answered."""
+    if ((raw.get("tool_name") or raw.get("toolName")) != "ask_user_question"
+            or not request_context_matches(record, work_id, host, session_id)):
+        return False
+    call_id = raw.get("toolCallId") or raw.get("tool_call_id") or raw.get("tool_use_id")
+    if not isinstance(call_id, str) or not call_id:
+        return False
+    binding = {"host": host, "session_id": session_id, "tool_call_id": call_id,
+               "approval_id": record["id"]}
+    questions = record.setdefault("questions", [])
+    if binding in questions:
+        return False
+    questions.append(binding)
+    record["questions"] = questions[-32:]
+    return True
+
+
 def approve_observed_response(repo, work, raw, event, host, session_id, dirs, timestamp):
     """Accept only an explicit approval response after a Work-specific request."""
     approval = (work.get("sdd") or {}).get("spec_approval") or {}
-    if approval.get("status") not in {"pending", "approved"} or not session_id:
+    if (approval.get("status") not in {"pending", "approved"}
+            or not request_context_matches(approval, work["id"], host, session_id, raw, event)):
         return None
     replies = []
     if event == "prompt_submit":
@@ -244,7 +288,8 @@ def approve_observed_response(repo, work, raw, event, host, session_id, dirs, ti
         if isinstance(value, str):
             replies.append(value)
     elif event == "post_tool" and (raw.get("tool_name") or raw.get("toolName")) == "ask_user_question" and not raw.get("isError"):
-        details = raw.get("details") or (raw.get("tool_response") or {}).get("details") or {}
+        response = raw.get("tool_response")
+        details = raw.get("details") or (response.get("details") if isinstance(response, dict) else {})
         if isinstance(details, dict):
             for answer in details.get("answers", []):
                 if isinstance(answer, dict):
@@ -272,7 +317,9 @@ def approve_observed_response(repo, work, raw, event, host, session_id, dirs, ti
     except (ValueError, OSError, KeyError, RuntimeError):
         return None
     approval.update(status="approved", approved_at=timestamp, evidence={"host": host,
-                    "session_id": session_id, "event": event, "response": reply,
+                    "session_id": session_id, "work_item_id": work["id"], "approval_id": approval["id"],
+                    "tool_call_id": raw.get("toolCallId") or raw.get("tool_call_id") or raw.get("tool_use_id"),
+                    "event": event, "response": reply,
                     "response_sha256": digest(reply)})
     approval["stop_after_approval"] = bool(re.search(r"停止|\bstop\b", reply, re.I))
     return approval
@@ -281,11 +328,13 @@ def approve_observed_response(repo, work, raw, event, host, session_id, dirs, ti
 def approve_baseline_response(work, raw, event, host, session_id, current_hash, timestamp):
     review = work.get("verification_review") or {}
     reply = raw.get("prompt")
-    if (event != "prompt_submit" or not session_id or review.get("status") != "pending"
+    if (event != "prompt_submit" or review.get("status") != "pending"
+            or not request_context_matches(review, work["id"], host, session_id)
             or review.get("config_sha256") != current_hash or not isinstance(reply, str)
             or not re.fullmatch(r"(?:批准验证基线|approve verification baseline)[。.!！\s]*", reply.strip(), re.I)):
         return None
     review.update(status="approved", approved_at=timestamp, evidence={"host": host,
-                  "session_id": session_id, "event": event, "response": reply,
+                  "session_id": session_id, "work_item_id": work["id"], "approval_id": review["id"],
+                  "event": event, "response": reply,
                   "response_sha256": digest(reply)})
     return review

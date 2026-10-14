@@ -113,7 +113,7 @@ def _artifact_label(path: str) -> tuple[str, str]:
     name = Path(path).name.lower()
     if name in {"proposal.md", "change.md"}:
         return "proposal", "Proposal / 变更提案"
-    if name in {"spec.md", "specification.md", "spec.md"} or name == "spec.md":
+    if name in {"spec.md", "specification.md"}:
         return "spec", "Spec / 需求规格"
     if name in {"design.md", "architecture.md", "architecture-decision-record.md"}:
         return "design", "Design / 架构设计"
@@ -287,7 +287,6 @@ def build_sdd_artifact_catalog(repo: Path, work: dict[str, Any]) -> list[dict[st
         elif (repo / ".specify/memory").is_dir():
             add_expected("constitution", "Constitution / 项目原则", ".specify/memory/constitution.md")
     elif provider == "bmad":
-        planning = repo / "_bmad-output/planning-artifacts"
         known = [
             ("prd.md", "prd", "PRD / 产品需求", ["prd.md", "PRD.md", "product-requirements.md"]),
             ("architecture.md", "design", "Architecture / 架构设计", ["architecture.md", "ARCHITECTURE.md"]),
@@ -479,7 +478,6 @@ def build_dashboard_overview(repo: Path, stale_after_minutes: int = 30) -> dict[
         reconcile_native_sdd_state,
         native_sync_state,
         native_route_state,
-        rel,
         session_activity,
         work_summary,
     )

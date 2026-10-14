@@ -79,6 +79,13 @@ cao sdd sync
 dispatch 在所有 Open Questions 解决后才进入审批；仍有开放问题时，CAO 保留先澄清的下一步，并拒绝审批请求。请求绑定当前需求、路线决策和 SPEC 的 frozen intent 指纹。
 用户通过宿主输入 `批准并继续` 或 `批准并停止`（对应英文同样支持）；Pi 的
 ask_user_question 结构化实际返回也可观察。CAO 保存原始回答、摘要、宿主、会话和时间。
+审批请求同时绑定 Work ID 和已关联的主会话。新会话先接收当前 Work 的宿主上下文，
+然后才可以批准；旧会话的迟到回复不会直接批准新任务。结构化提问必须由宿主先报告
+pre-tool，再报告带相同 tool-call ID 的 post-tool；该调用与当时的审批 ID 绑定，
+替换路线或审批请求后，旧提问的结果不能复用。验证基线批准也使用同一会话归属检查。
+历史审批缺少这些绑定时，应重新 `cao sdd approval request` 并由当前宿主观察新批准。
+旧验证基线请求可重复运行相同的 `cao verification configure` 重建；显式 reanchor
+也会重建缺少绑定的 pending 请求，但必须观察到新的用户批准才继续，不继承旧批准。
 `继续`、技术选项回答和状态字段修改均不成立。批准并停止保持暂停，用户明确
 `继续实现` 后才解除。宿主事件是信任边界；本机制不能防御人为伪造宿主事件。
 宿主未观察到审批时须保留 pending，不能通过 CLI 的理由字段补造批准记录。
@@ -89,6 +96,14 @@ ask_user_question 结构化实际返回也可观察。CAO 保存原始回答、�
 多 Story/task 范围依照已有的需求级计划聚合。原生来源有状态但未批准时，记录真实
 观察和实现阶段，同时显示阻塞原因，禁止业务写入、正式 verify 和 done。
 构建清单、测试脚手架、需求和原生产物保留写入通路，避免初始化死锁。
+
+Direct Build 检查路线绑定的 SPEC `Tasks & Acceptance`，全部任务完成后才允许 verify/done。
+`--no-plan` 只声明没有独立计划文件，不能忽略 SPEC 内的任务。已观察的任务保留在
+当前路线的 `spec_task_scope` 中，删除任务不能缩小验收范围；需求或路线真正变更时
+重新提交证据。未关联的历史项目 sprint 文件不阻塞独立 Direct Build，显式绑定的
+sprint 或路线声明的 sprint 仍按当前需求的所有 story 聚合检查。
+oneshot 的独立审查与本地 Git 提交义务按实际 Build route 启用，适用于所有 CAO 档位。
+原生阻塞解除时只清除 `native-sdd-state` 自动 blocker，保留人工 blocker 并记录解除事件。
 
 修改需求、规则、路线或 frozen intent 必须重新评估/批准；单纯状态及任务勾选不使
 批准意图失效。源文件消失或关联改变失败关闭，不自动采用另一份 SPEC。
