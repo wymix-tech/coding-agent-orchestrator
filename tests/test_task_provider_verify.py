@@ -132,10 +132,15 @@ class TaskProviderVerifyTests(RepairCase):
         self.prepare()
         self.tasks.write_text(self.tasks.read_text().replace('[ ]', '[x]'))
         work = cao.load_work(self.repo, self.wid)
-        inputs = cao.verification_inputs(self.repo, work, cao.config(self.repo))
+        import contextlib, io
+        args = cao.build_parser().parse_args(['verify', '--repo', str(self.repo)])
+        with contextlib.redirect_stdout(io.StringIO()):
+            prepared = cao._prepare_verification(args)
+        self.assertIsInstance(prepared, tuple)
+        _repo, _wid, scripts, source, inputs, _timeout, run = prepared
         second = self.root.parent / 'new/tasks.md';second.parent.mkdir(exist_ok=True);second.write_text('- [ ] New related change\n')
         self.bind(second.relative_to(self.repo))
-        result = cao.commit_verification(self.repo, self.wid, inputs, [], [{'required': True, 'status': 'passed'}], 'config', cao.now())
+        result = cao.commit_verification(self.repo, self.wid, inputs, [], [{'required': True, 'status': 'passed'}], 'config', cao.now(), run)
         self.assertEqual(result['status'], 'stale')
 
     def test_custom_openspec_tracked_glob_includes_new_shards_and_keeps_deleted_paths(self):

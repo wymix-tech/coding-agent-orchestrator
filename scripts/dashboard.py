@@ -62,9 +62,14 @@ def _verification_view(work: dict[str, Any], fresh: bool | None = None) -> dict[
         "run_status": raw.get("run_status") or raw.get("status") or "unknown",
         "fresh": fresh,
         "source": raw.get("source") or "unknown",
+        "run_id": raw.get("run_id"),
+        "sequence": raw.get("sequence"),
+        "generation": raw.get("generation"),
+        "snapshot_format": raw.get("snapshot_format"),
         "at": timestamp_label(raw.get("at")),
         "results": results,
-        "freshness_note": ("当前验证证据新鲜" if fresh else "验证证据缺失或已过期；请执行 cao verify")
+        "freshness_note": ("验证正在运行，完成资格暂不可用；遗留运行可重新执行 cao verify 替代" if raw.get("status") == "running" else
+                           "当前验证证据新鲜" if fresh else "验证证据缺失或已过期；请执行 cao verify")
         if fresh is not None else "历史记录未重新认证",
     }
 

@@ -113,6 +113,27 @@ def commit_state(repo, work, ignored_dirs):
         exists = subprocess.run(['git', '-C', str(repo), 'rev-parse', '--show-toplevel'], capture_output=True, text=True)
         if exists.returncode:
             return {'ready': True, 'state': 'unavailable'}
+        source = oneshot_source(repo, work)
+        root = Path(exists.stdout.strip()).resolve()
+        spec = (repo.resolve() / source['path']).relative_to(root).as_posix()
+        def git(*args):
+            return subprocess.run(['git', '-C', str(root), *args], capture_output=True)
+        def blocked(code):
+            return {'ready': False, 'state': 'pending', 'reason': code, 'spec': source['path'],
+                    'next': 'Inspect SPEC tracking and Git diff; explicitly stage the intended SPEC and business changes, then commit. For ignored SPEC, review your ignore policy before staging; CAO never force-adds. Retry `cao done` without reanchoring solely for the commit.'}
+        if git('ls-files', '--error-unmatch', '--', spec).returncode:
+            ignored = git('check-ignore', '--quiet', '--', spec).returncode == 0
+            return blocked('NATIVE_SPEC_IGNORED' if ignored else 'NATIVE_SPEC_UNTRACKED')
+        if git('cat-file', '-e', 'HEAD:' + spec).returncode:
+            return blocked('NATIVE_SPEC_NOT_IN_HEAD')
+        # Git's own diff honors index flags, CRLF and clean filters; raw bytes do not.
+        dirty = git('diff', '--quiet', 'HEAD', '--', spec)
+        staged = git('diff', '--cached', '--quiet', 'HEAD', '--', spec)
+        # Refresh explicitly with Git-cleaned content to avoid assume-unchanged/skip-worktree bypass.
+        blob = git('hash-object', '--path=' + spec, '--', str(root / spec))
+        head_blob = git('rev-parse', 'HEAD:' + spec)
+        if dirty.returncode or staged.returncode or blob.returncode or head_blob.returncode or blob.stdout.strip() != head_blob.stdout.strip():
+            return blocked('NATIVE_SPEC_UNCOMMITTED')
         status = subprocess.run(['git', '-C', str(repo), 'status', '--porcelain=v1', '-z', '--untracked-files=all', '--', '.'], capture_output=True, check=True).stdout
         changed = []
         entries = status.split(b'\0'); i = 0
@@ -126,7 +147,7 @@ def commit_state(repo, work, ignored_dirs):
             for value in paths:
                 prefix = repo.resolve().relative_to(Path(exists.stdout.strip()).resolve()).as_posix()
                 if prefix != '.': value = Path(value).relative_to(prefix).as_posix()
-                if value == oneshot_source(repo, work)['path'] or not any(part in ignored_dirs for part in Path(value).parts):
+                if value != source['path'] and not any(part in ignored_dirs for part in Path(value).parts):
                     changed.append(value)
         if changed:
             return {'ready': False, 'state': 'pending', 'reason': 'NATIVE_COMMIT_REQUIRED', 'changed': changed[:20],

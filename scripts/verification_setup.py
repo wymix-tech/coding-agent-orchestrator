@@ -2,7 +2,7 @@
 from copy import deepcopy
 from typing import Any
 
-from scripts.completion_policy import normalize_scripts
+from scripts.completion_policy import normalize_scripts, required_entries
 
 
 def configured_scripts(cfg: dict[str, Any]) -> list[dict[str, Any]]:
@@ -25,7 +25,7 @@ def setup_state(cfg: dict[str, Any]) -> dict[str, Any]:
     except ValueError as exc:
         return {"ready": False, "reason": "invalid verification declarations", "scripts": [],
                 "tests_bound": False, "error": str(exc)}
-    ready = any(script["required"] for script in scripts)
+    ready = bool(required_entries(scripts))
     return {"ready": ready, "reason": None if ready else "no required verification scripts configured",
             "scripts": scripts,
             "tests_bound": any(script["required"] and "tests" in script["gates"] for script in scripts)}

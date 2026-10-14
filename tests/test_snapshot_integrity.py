@@ -10,19 +10,13 @@ from scripts import cao
 
 
 class SnapshotTests(RepairCase):
-    def test_normal_snapshot_matches_previous_algorithm_and_tracks_mutations(self):
+    def test_versioned_snapshot_tracks_mutations(self):
         (self.repo / "src").mkdir()
         file = self.repo / "src/app.py"
         file.write_text("x = 1\n", encoding="utf-8")
         excluded = {"acceptance-tests/test_acceptance.py"}
-        h = hashlib.sha256()
-        for p in sorted(self.repo.rglob("*")):
-            if not p.is_file(): continue
-            rp = cao.rel(p, self.repo)
-            if any(part in cao.SNAPSHOT_IGNORE_DIRS for part in pathlib.Path(rp).parts) or rp in excluded: continue
-            h.update(rp.encode()); h.update(b"\0"); h.update(hashlib.sha256(p.read_bytes()).digest()); h.update(b"\0")
         initial = cao.code_snapshot(self.repo, excluded)
-        self.assertEqual(initial, h.hexdigest())
+        self.assertTrue(initial.startswith("v3:"))
         file.write_text("x = 2\n", encoding="utf-8")
         changed = cao.code_snapshot(self.repo, excluded)
         self.assertNotEqual(changed, initial)
@@ -89,7 +83,7 @@ class SnapshotTests(RepairCase):
         with self.assertRaisesRegex(RuntimeError, "SNAPSHOT_EXTERNAL_SYMLINK.*source-link.py"):
             cao.code_snapshot(self.repo)
 
-    def test_internal_file_link_is_hashed_and_directory_link_not_followed(self):
+    def test_internal_file_and_directory_links_are_hashed(self):
         file = self.repo / "src.py"
         file.write_text("first\n", encoding="utf-8")
         self.symlink(self.repo / "link.py", file)
@@ -101,7 +95,10 @@ class SnapshotTests(RepairCase):
         (hidden / "ignored.py").write_text("ignored\n", encoding="utf-8")
         before = cao.code_snapshot(self.repo)
         self.symlink(self.repo / "linked-dir", hidden, directory=True)
-        self.assertEqual(cao.code_snapshot(self.repo), before)
+        linked = cao.code_snapshot(self.repo)
+        self.assertNotEqual(linked, before)
+        (hidden / "ignored.py").write_text("changed linked business input\n")
+        self.assertNotEqual(cao.code_snapshot(self.repo), linked)
 
     def test_rules_read_error_and_external_link_report_explicit_diagnostics(self):
         rules = self.repo / "AGENTS.md"

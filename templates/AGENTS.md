@@ -55,3 +55,13 @@ Before product implementation, accept the configured verification baseline. Init
 For BMAD oneshot, run ALL native independent Review layers and Classify, then record fresh tickets/reports through `{{CAO_COMMAND}} sdd review begin --layer <active-layer> --instructions <rendered-step-oneshot.md> --model <current-model>` and `{{CAO_COMMAND}} sdd review submit --layer <active-layer> --report <provider-owned-report.json>`. Preserve returned findings, same-model independent reviewer identity and every triage entry; never invent reviewer evidence. Follow the rendered external-session fallback if needed. Tests/self-review/SPEC done cannot substitute. Finalize/rebind the SPEC and run verification; Git-available native oneshot must commit the intended Work changes before CAO done. Do not push without authorization.
 
 For HTTP smoke, use `{{CAO_COMMAND}} verification smoke --server-command '<project server command with {port}>' --path <local endpoint>` and register it as a required verification script when applicable. Do not reuse a fixed-port old service or mask startup errors. The runner owns the new process, uses a dynamic port and validates cleanup.
+
+
+Formal verification requires active Work and an accepted required baseline. A newer run supersedes
+an older run; running/late results cannot authorize completion. Rerun `{{CAO_COMMAND}} verify` after
+an abandoned run, managing the old process before retrying external side effects. Explicitly reopen
+completed Work or reactivate suspended Work; never recover by repeating intake. Preserve every
+observed Story ID, including those observed by failed verify. Restore missing entries or explicitly
+revise/reanchor the requirement and rebind approved scope. New snapshot formats, permissions and
+source-link changes require fresh verification. BMAD oneshot Commit requires the actual SPEC
+in HEAD and a clean SPEC index/worktree; never force-add or change ignore policy automatically.

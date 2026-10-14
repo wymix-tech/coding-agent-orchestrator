@@ -6,7 +6,7 @@ import math
 import time
 from pathlib import Path
 
-SNAPSHOT_KEYS = ("requirement_sha256", "code_snapshot", "rules_snapshot",
+SNAPSHOT_KEYS = ("snapshot_format", "requirement_sha256", "code_snapshot", "rules_snapshot",
                  "verification_config_sha256", "assessment_revision")
 
 
@@ -31,6 +31,19 @@ def normalize_scripts(raw: list) -> list[dict]:
         result.append({"name": name, "command": command, "required": required,
                        "gates": sorted(set(gates))})
     return result
+
+
+def required_entries(items: list[dict]) -> list[dict]:
+    return [item for item in items if item.get("required") is True]
+
+
+def required_verification_status(results: list[dict]) -> str:
+    required = required_entries(results)
+    if not required: return "blocked"
+    statuses = {item.get("status") for item in required}
+    for status in ("error", "blocked", "failed"):
+        if status in statuses: return status
+    return "passed" if statuses == {"passed"} else "blocked"
 
 
 def tests_satisfied(verification: dict) -> bool:
@@ -126,7 +139,9 @@ def workflow_ready(work: dict, repo: Path) -> tuple[bool, str | None]:
 def verification_fresh(work: dict, current: dict) -> bool:
     verification = work.get("verification") or {}
     anchor = work.get("acceptance") or {}
-    return bool(verification.get("version") == 2 and verification.get("source") == "config"
-                and verification.get("status") == "passed" and anchor.get("version") == 2
+    return bool(verification.get("snapshot_format") == 3 and verification.get("version") == 2 and verification.get("source") == "config"
+                and verification.get("status") == "passed"
+                and required_verification_status(verification.get("results", [])) == "passed"
+                and anchor.get("version") == 2
                 and anchor.get("config_sha256") == current["verification_config_sha256"]
                 and all(verification.get(key) == current.get(key) for key in SNAPSHOT_KEYS))

@@ -48,7 +48,7 @@ function invoke(command: string, args: string[], input: string, cwd: string): Pr
 
 async function callCao(event: string, payload: object, cwd: string): Promise<CaoReply> {
   const args = ["host-event", "--repo", cwd, "--host", "pi"];
-  const input = JSON.stringify({ ...payload, event });
+  const input = JSON.stringify({ cwd, ...payload, event });
   let result = await invoke("cao", args, input, cwd);
   if (result.missing) result = await invoke("sh", [path.join(ROOT, "cao"), ...args], input, cwd);
   if (result.error || result.code !== 0) return { diagnostic: result.error || "CAO_UNAVAILABLE" };

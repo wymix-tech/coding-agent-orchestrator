@@ -30,6 +30,7 @@ def main():
         modules = ("import json; from scripts import cao, state_store, completion_policy, path_guard, verification_runner, verification_setup, windows_supervisor, dashboard, light_spec_policy, sdd_acceptance_runtime, sdd_acceptance_commands; "
                    "root=cao.package_root_dir(); "
                    "assert all((root/p).is_file() for p in ['hosts/pi/coding-orchestrator.ts','hooks/host-event.sh','hosts/claude-code/settings.fragment.json','hosts/codex/hooks.json','SKILL.md']); "
+                   "assert cao.overall_verification_status([{'required':False,'status':'failed'}]) == 'blocked'; "
                    "assert dashboard.dashboard_html_path().is_file(); print(json.dumps({'runner':verification_runner.__file__,'invocation':cao.cao_invocation()}))")
         imported = subprocess.run([args.python, "-c", modules], cwd=base, env=env,
                                   text=True, capture_output=True, timeout=10)
@@ -42,11 +43,11 @@ def main():
                 repo = base / f"{provider}-{host}"
                 repo.mkdir()
                 (repo / marker).mkdir()
-                def cli(*argv, payload=None):
+                def cli(*argv, payload=None, expected=0):
                     result = subprocess.run([args.cao, *argv, "--repo", str(repo)], cwd=repo, env=env,
                                             text=True, capture_output=True, timeout=30,
                                             input=json.dumps(payload) if payload is not None else None)
-                    if result.returncode:
+                    if result.returncode != expected:
                         raise AssertionError((argv, result.returncode, result.stdout, result.stderr))
                     return json.loads(result.stdout)
                 def event(name, **fields):
@@ -64,6 +65,9 @@ def main():
                 context = setup_context.get("additional_context") or setup_context.get("hookSpecificOutput", {}).get("additionalContext", "")
                 assert "start --requirement" in context, setup_context
                 assert decision(event("pre_tool", tool_name="write", tool_input={"path": "product.py", "content": "pass"})) == "deny"
+                native_cwd = repo / artifact.split('/')[0]; native_cwd.mkdir(exist_ok=True)
+                assert decision(event("pre_tool", tool_name="exec_command", tool_input={"cmd": "./unknown.sh", "workdir": str(native_cwd)})) == "deny"
+                assert decision(event("pre_tool", tool_name="exec_command", tool_input={"cmd": "touch $DESTINATION", "workdir": str(native_cwd)})) == "deny"
                 for path in (".orchestrator/requirements/intake.md", "_bmad-output/spec.md", "openspec/proposal.md", "specs/spec.md", ".specify/spec.md"):
                     assert decision(event("pre_tool", tool_name="write", tool_input={"path": path, "content": "scope"})) == "allow"
                 # Test the command advertised to the Agent, including wheel `sh` fallback;
@@ -100,8 +104,17 @@ def main():
                 cli("sdd", "workflow", "execute", "--command", command, "--exit-code", "0")
                 cli("sdd", "workflow", "complete", "--artifact", artifact, "--no-plan")
                 cli("sdd", "spec", "bind", "--spec", artifact, "--criteria-section", "Acceptance")
-                cli("verify")
+                assert decision(event("pre_tool", tool_name="exec_command", tool_input={"cmd": "sed -n 'w .orchestrator/config.json' input.txt"})) == "deny"
+                subdir = repo / "sub"; subdir.mkdir()
+                assert decision(event("pre_tool", tool_name="exec_command", tool_input={"cmd": "printf x > ../.orchestrator/config.json", "workdir": str(subdir)})) == "deny"
+                verified = cli("verify")
+                assert verified["verification"]["snapshot_format"] == 3
+                assert verified["verification"]["run_id"]
                 cli("done")
+                before_completed = (repo / f".orchestrator/work/{wid}.json").read_bytes()
+                denied = subprocess.run([args.cao, "verify", "--work", wid, "--repo", str(repo)], cwd=repo, env=env, capture_output=True, text=True, timeout=30)
+                assert denied.returncode == 2 and json.loads(denied.stdout)["error"] == "VERIFICATION_WORK_NOT_ACTIVE"
+                assert (repo / f".orchestrator/work/{wid}.json").read_bytes() == before_completed
                 work = json.loads((repo / f".orchestrator/work/{wid}.json").read_text(encoding="utf-8"))
                 assert work["status"] == "completed"
                 records.append({"provider_fixture": provider, "simulated_host": host, "status": work["status"], "profile": "light"})
@@ -140,8 +153,27 @@ def main():
                     before = oneshot.read_bytes()
                     bound = cli("sdd", "spec", "bind", "--spec", "_bmad-output/spec-oneshot.md")
                     assert bound["binding"]["mode"] == "bmad_oneshot", bound
+                    sprint = repo / '_bmad-output/sprint-status.yml'
+                    sprint.write_text('development_status:\n  epic-1: done\n  1-1-existing: done\n')
+                    cli('sdd', 'plan', 'bind', '--plan-item', '_bmad-output/sprint-status.yml#epic-1')
+                    sprint.write_text(sprint.read_text()+'  1-2-added: backlog\n')
+                    assert cli('verify', expected=2)['error'] == 'BMAD_PLAN_NOT_DONE'
+                    sprint.write_text('development_status:\n  epic-1: done\n  1-1-existing: done\n')
+                    assert cli('verify', expected=2)['error'] == 'PLAN_ITEM_MISSING'
+                    sprint.write_text(sprint.read_text()+'  1-2-added: done\n')
+                    def git(*argv):
+                        subprocess.run(['git', '-C', str(repo), *argv], check=True, capture_output=True, env=env)
+                    git('init', '-q')
+                    excludes = repo / '.git/info/exclude'
+                    excludes.write_text('.orchestrator/\n_bmad-output/\n')
                     fixture_native_review(repo, lambda _repo, *argv: (0, cli(*argv)), native_id)
                     cli("verify")
+                    git('add', '-A'); git('-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.test', 'commit', '-qm', 'Installed business fixture')
+                    assert cli('done', expected=2)['reason'] == 'NATIVE_SPEC_IGNORED'
+                    excludes.write_text('.orchestrator/\n')
+                    git('add', '--', '_bmad-output/spec-oneshot.md')
+                    assert cli('done', expected=2)['reason'] == 'NATIVE_SPEC_NOT_IN_HEAD'
+                    git('-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.test', 'commit', '-qm', 'Installed SPEC fixture')
                     cli("done")
                     assert oneshot.read_bytes() == before
                     records.append({"provider_fixture": provider, "simulated_host": host, "profile": "light-oneshot", "status": "completed", "work": native_id})

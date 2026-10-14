@@ -1,6 +1,6 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync} from 'node:fs';
+import {mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, symlinkSync} from 'node:fs';
 import {spawnSync} from 'node:child_process';
 import os from 'node:os';
 import path from 'node:path';
@@ -8,10 +8,20 @@ import install from '../hosts/pi/coding-orchestrator.ts';
 
 const posix = {skip: process.platform === 'win32'};
 
+function resolvePython() {
+  const candidate = process.env.CAO_TEST_PYTHON || 'python3';
+  const result = spawnSync(candidate, ['-c', 'import os,sys; print(os.path.abspath(sys.executable))'],
+    {encoding: 'utf8'});
+  assert.equal(result.status, 0, `CAO_TEST_PYTHON_UNAVAILABLE: ${result.error || result.stderr}`);
+  return result.stdout.trim();
+}
+
 function fixture() {
+  const python = resolvePython(); // Resolve before any test removes Python from PATH.
   const dir = mkdtempSync(path.join(os.tmpdir(), 'cao-contract-'));
-  const keys = ['PATH', 'CAO_CAPTURE', 'CAO_FAKE_MODE'];
+  const keys = ['PATH', 'CAO_CAPTURE', 'CAO_FAKE_MODE', 'CAO_TEST_PYTHON'];
   const old = Object.fromEntries(keys.map(key => [key, process.env[key]]));
+  process.env.CAO_TEST_PYTHON = python;
   process.env.CAO_CAPTURE = path.join(dir, 'events.jsonl');
   process.env.PATH = dir + path.delimiter + process.env.PATH;
   process.env.CAO_FAKE_MODE = 'allow';
@@ -306,8 +316,8 @@ test('missing console CLI uses checkout fallback', posix, async () => {
       JSON.stringify(path.join(f.dir, 'fake.py')) + '\n', {mode: 0o755});
     process.env.PATH = f.dir;
     await f.handlers.get('session_start')({type: 'session_start'}, f.context('A', true));
+    assert.equal(f.notices.length, 0, JSON.stringify(f.notices));
     assert.equal(f.rows()[0].session_id, 'A');
-    assert.equal(f.notices.length, 0);
   } finally {f.close();}
 });
 
@@ -347,4 +357,41 @@ test('bridge timeout is bounded and fail-open', {...posix, timeout: 12000}, asyn
     assert.ok(Date.now() - start < 8000);
     assert.match(f.notices[0][0], /CAO_TIMEOUT/);
   } finally {f.close();}
+});
+
+
+test('fallback accepts an interpreter path containing spaces', posix, async () => {
+  const python = resolvePython();
+  const dir = mkdtempSync(path.join(os.tmpdir(), 'cao python '));
+  const previous = process.env.CAO_TEST_PYTHON;
+  try {
+    const alias = path.join(dir, 'python interpreter');
+    symlinkSync(python, alias);
+    process.env.CAO_TEST_PYTHON = alias;
+    const f = fixture();
+    try {
+      rmSync(path.join(f.dir, 'cao'));
+      writeFileSync(path.join(f.dir, 'sh'), '#!/bin/sh\nexec "$CAO_TEST_PYTHON" ' +
+        JSON.stringify(path.join(f.dir, 'fake.py')) + '\n', {mode: 0o755});
+      process.env.PATH = f.dir;
+      await f.handlers.get('session_start')({type: 'session_start'}, f.context('spaces', true));
+      assert.equal(f.notices.length, 0, JSON.stringify(f.notices));
+      assert.equal(f.rows()[0].session_id, 'spaces');
+    } finally { f.close(); }
+  } finally {
+    if (previous === undefined) delete process.env.CAO_TEST_PYTHON;
+    else process.env.CAO_TEST_PYTHON = previous;
+    rmSync(dir, {recursive: true, force: true});
+  }
+});
+
+test('an unavailable interpreter diagnoses the actual fixture failure', posix, () => {
+  const previous = process.env.CAO_TEST_PYTHON;
+  try {
+    process.env.CAO_TEST_PYTHON = '/nonexistent/cao-fixture-python';
+    assert.throws(resolvePython, /CAO_TEST_PYTHON_UNAVAILABLE/);
+  } finally {
+    if (previous === undefined) delete process.env.CAO_TEST_PYTHON;
+    else process.env.CAO_TEST_PYTHON = previous;
+  }
 });

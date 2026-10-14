@@ -85,7 +85,10 @@ class DerivedStateIsProtected(unittest.TestCase):
             out = pre_tool(repo, {"event": "pre_tool", "toolName": "write",
                                   "params": {"path": ".orchestrator/work/w.json", "content": "x"}})
             self.assertIn("cao checkpoint", out["reason"])
-            self.assertIn("cao decision add", out["reason"])
+            self.assertIn("cao decision --decision", out["reason"])
+            from scripts import cao
+            args = cao.build_parser().parse_args(["decision", "--decision", "Observed decision"])
+            self.assertEqual(args.decision, "Observed decision")
 
 
 class GuardDoesNotDeadlockIntake(unittest.TestCase):

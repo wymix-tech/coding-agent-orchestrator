@@ -616,3 +616,46 @@ Native oneshot omissions: host pre-tool checks now require a configured, explici
 BMAD oneshot Review/Classify is recorded separately from full-profile final acceptance: `cao sdd review begin --layer <active-layer> --instructions <rendered-step-oneshot.md> --model <current-model>` freezes code/requirement/intent/native instructions; submit the preserved independent findings and complete triage through `cao sdd review submit --layer <active-layer> --report <native-report.json>`. Every active rendered layer must be current before verify/done. Tests, manual gates and SPEC done cannot replace review. Reports record evidence/provenance and validate structure/freshness, not cryptographic proof of who ran a model or proof of semantic correctness. Primary self-review must not be labeled independent. Native external-session fallback still requires actual returned findings. SPEC is not expanded with fake tasks/acceptance sections.
 
 When Git is available for native oneshot, done checks local uncommitted product/SPEC changes and requires the native commit; it never stages/commits/pushes on the user's behalf. CAO runtime-state churn and native installation/review assets do not create an endless commit requirement. A commit alone does not change verification content snapshots. HTTP smoke can be registered with `cao verification smoke --server-command '<foreground server using {port}>' --path /health`: fresh dynamic port, process liveness, expected status, owned-tree cleanup and no remaining HTTP service response. Fixed ports are rejected and a failed owned server process cannot yield success. Startup/manual scripts are not automatically enrolled; choose required endpoints and register them in the project's verification standard.
+
+
+## Verification integrity and recovery
+
+Formal `cao verify` runs only on active Work and requires an accepted configuration with at least
+one required script. Optional failures keep their optional meaning. `verify --script/--command` is
+engineering diagnosis and cannot grant `done` eligibility.
+
+A run is registered under the repository lock before execution. A new run supersedes the previous
+run; only the current run ID, input binding and execution generation may commit an authoritative
+result. Running or superseded results cannot complete Work. After a crash, rerun `cao verify`;
+CAO does not infer success from an abandoned process. Superseding does not kill the older trusted
+script, so allow it to finish or manage that process before rerunning scripts with external effects.
+Completed Work requires `cao reopen --work <id> --reason "<why>"`; suspended Work requires
+`cao resume --work <id> --reactivate` and resolution of remaining blockers. Reanchoring uses the
+existing `cao reopen --work <id> --reanchor --reason "<reviewed changes>"` command.
+
+BMAD epic selectors retain every associated Story observed by CAO, including a blocked verification.
+Deleting a known Story blocks completion. Restore its native entry and complete the actual work.
+For an intentional scope reduction, revise the requirement with the approved change and rationale,
+explicitly reanchor, reassess the execution path and rebind the revised native SPEC/plan. Ordinary
+querying/binding never removes known scope. Unobserved transient additions cannot be reconstructed.
+
+Snapshot format 3 (`v3:` hashes and `snapshot_format: 3`) binds bytes, file types, POSIX execution bits,
+link targets and internal directory-link content. Cycles, broken links, unsupported inputs and
+unregistered external business links block certification. Traversal is bounded to 100,000 entries
+and 100 lexical directory levels. Dependency caches remain excluded by their lexical directory name;
+a business source alias into such a directory is scanned. Windows binds content/type/link semantics,
+without claiming POSIX executable-bit equivalence. Legacy evidence remains readable and historical
+completed Work is preserved; active/reopened Work must rerun verification and any stale native review
+or independent acceptance. Ordinary Git commits and excluded caches do not invalidate snapshots.
+
+BMAD oneshot Commit additionally proves its SPEC is tracked, present in HEAD and unchanged in the
+index/worktree using Git content normalization. Ignored/untracked/staged-only/modified SPECs block
+with specific reasons. Inspect and explicitly stage/commit the intended changes; CAO never force-adds
+or rewrites `.gitignore`. No-Git and non-repository behavior retains the existing policy.
+
+Tool guards share bounded read/write/unknown analysis and use per-tool workdir/cwd before host cwd,
+then the known invocation directory. Shell `cd`, directory aliases, relative targets and structured
+edits use the same target normalization. Managed-state writes remain denied; unknown programs/variable targets cannot gain an exemption merely from a native directory. Explicit native helpers retain their dedicated policy. Unknown Shell analysis
+retains the existing risk policy and is not a sandbox guarantee.
+
+Detailed compatibility and regression mapping: [R1–R9 integrity repair](docs/2026-10-13-r1-r9-integrity-repair.md).

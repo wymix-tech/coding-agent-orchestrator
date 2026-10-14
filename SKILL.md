@@ -149,6 +149,23 @@ cao verify
 cao done
 ```
 
+## Verification run and scope recovery
+
+Use formal `cao verify` only on active Work with an accepted required baseline. Treat CLI overrides
+as engineering diagnostics. A new verification supersedes an older run and invalidates its completion
+qualification immediately; a late result cannot overwrite the current run. After an abandoned run,
+rerun `cao verify`; manage the old trusted process before retrying commands with external effects.
+For completed Work explicitly `cao reopen --work <id> --reason "<why>"`; for suspended Work use
+`cao resume --work <id> --reactivate` and resolve blockers. Never restart intake to recover verification.
+
+Restore deleted known Story entries; observations, including failed verify, only expand bound scope.
+For an approved reduction, revise the requirement with rationale, explicitly reanchor and rebind the
+revised native scope. Rerun verification after snapshot-format upgrades, execution-bit/link changes,
+or repaired external/broken/cyclic source links. Follow any stale native review/acceptance guidance.
+For oneshot Commit, explicitly stage and commit the intended SPEC; do not force-add or edit ignores
+automatically. Git commit alone does not require reanchoring.
+
+
 ## Minimum-safe execution path
 
 After creating a Work Item, assess the minimum safe workflow before making code changes. Keep this

@@ -35,7 +35,7 @@ from scripts.state_store import atomic_json, backup_once, repo_transaction
 from scripts.path_guard import inside, repo_file, provider_artifact, patch_targets
 from scripts.completion_policy import (
     acceptance_hash, anchor_acceptance, reset_requirement, evidence_matches,
-    verification_fresh as bound_verification_fresh, normalize_scripts, tests_satisfied, workflow_ready, normalize_timeout,
+    verification_fresh as bound_verification_fresh, normalize_scripts, tests_satisfied, workflow_ready, normalize_timeout, required_verification_status,
 )
 from scripts.verification_runner import run_script
 from scripts.native_obligations import review_state as native_review_state, review_inputs, submit_review, commit_state as native_commit_state, digest as native_digest
@@ -1634,33 +1634,69 @@ def requirement_files(repo: Path, cfg: dict[str, Any]) -> list[Path]:
     return sorted(files)
 
 
-def code_snapshot(repo: Path, excluded: set[str] | None = None, additional_ignore_dirs: set[str] | None = None) -> str:
-    """Prune ignored directories; hash internal file links by their lexical names.
+SNAPSHOT_FORMAT = 3
 
-    Directory links are not followed. Unreadable or external file inputs cannot certify freshness.
-    """
+
+def code_snapshot(repo: Path, excluded: set[str] | None = None, additional_ignore_dirs: set[str] | None = None) -> str:
+    """Versioned content, execution bits and link topology; bounded internal traversal."""
+    repo = repo.resolve()
     excluded = excluded or set()
+    ignored = SNAPSHOT_IGNORE_DIRS | (additional_ignore_dirs or set())
     h = hashlib.sha256()
-    files = []
+    records = []
+    visited_entries = 0
     def walk_error(exc):
         raise RuntimeError("SNAPSHOT_READ_FAILED: " + str(exc.filename or repo)) from exc
-    for base, dirs, names in os.walk(repo, topdown=True, followlinks=False, onerror=walk_error):
-        dirs[:] = sorted(directory for directory in dirs if directory not in SNAPSHOT_IGNORE_DIRS | (additional_ignore_dirs or set()))
-        files.extend(Path(base) / name for name in names if name not in SNAPSHOT_IGNORE_DIRS)
-    for p in sorted(files):
-        rp = p.relative_to(repo).as_posix()
-        if rp in excluded:
-            continue
-        if not p.resolve().is_relative_to(repo.resolve()):
-            raise RuntimeError("SNAPSHOT_EXTERNAL_SYMLINK: " + rp)
+    def identity(path):
+        relative = path.relative_to(repo).as_posix()
         try:
-            if not stat.S_ISREG(p.stat().st_mode):
-                continue
-            data = p.read_bytes()
+            resolved = path.resolve(strict=True)
+            if not resolved.is_relative_to(repo):
+                raise RuntimeError("SNAPSHOT_EXTERNAL_SYMLINK: " + relative)
+            info = path.lstat()
+            target = os.readlink(path) if stat.S_ISLNK(info.st_mode) else None
+            mode = path.stat().st_mode
+            kind = "directory" if stat.S_ISDIR(mode) else "file" if stat.S_ISREG(mode) else "special"
+            bits = mode & 0o111 if os.name != "nt" else 0
+            return relative, {"type": kind, "executable": bits, "link": target}
+        except RuntimeError as exc:
+            if str(exc).startswith("SNAPSHOT_"): raise
+            raise RuntimeError("SNAPSHOT_SYMLINK_CYCLE: " + relative) from exc
+        except (OSError, ValueError) as exc:
+            raise RuntimeError("SNAPSHOT_READ_FAILED: " + relative) from exc
+    for base, dirs, names in os.walk(repo, topdown=True, followlinks=True, onerror=walk_error):
+        directory = Path(base)
+        try:
+            real = directory.resolve(strict=True)
+            ancestors = [parent.resolve(strict=True) for parent in directory.parents if parent.is_relative_to(repo)]
+            if real in ancestors:
+                raise RuntimeError("SNAPSHOT_SYMLINK_CYCLE: " + directory.relative_to(repo).as_posix())
         except OSError as exc:
-            raise RuntimeError("SNAPSHOT_READ_FAILED: " + rp) from exc
-        h.update(rp.encode()); h.update(b"\0"); h.update(hashlib.sha256(data).digest()); h.update(b"\0")
-    return h.hexdigest()
+            raise RuntimeError("SNAPSHOT_READ_FAILED: " + str(directory)) from exc
+        dirs[:] = sorted(name for name in dirs if name not in ignored)
+        visited_entries += len(dirs) + len(names)
+        if visited_entries > 100000 or len(directory.relative_to(repo).parts) > 100:
+            raise RuntimeError("SNAPSHOT_SCAN_LIMIT: " + str(directory))
+        for name in dirs:
+            path = directory / name
+            if path.is_symlink():
+                relative, meta = identity(path)
+                records.append((relative, meta, b""))
+        for name in names:
+            path = directory / name
+            relative = path.relative_to(repo).as_posix()
+            if name in ignored or relative in excluded: continue
+            relative, meta = identity(path)
+            if meta["type"] != "file":
+                raise RuntimeError("SNAPSHOT_UNSUPPORTED_INPUT: " + relative)
+            try: content = hashlib.sha256(path.read_bytes()).digest()
+            except OSError as exc: raise RuntimeError("SNAPSHOT_READ_FAILED: " + relative) from exc
+            records.append((relative, meta, content))
+    for relative, meta, content in sorted(records):
+        h.update(relative.encode()); h.update(b"\0")
+        h.update(json.dumps(meta, sort_keys=True).encode()); h.update(b"\0")
+        h.update(content); h.update(b"\0")
+    return f"v{SNAPSHOT_FORMAT}:" + h.hexdigest()
 
 
 def verification_timeout(cfg: dict[str, Any]) -> float:
@@ -1878,6 +1914,11 @@ def _persist_work(repo: Path, work: dict[str, Any]) -> None:
 
 @locked_repo
 def save_work(repo: Path, work: dict[str, Any]) -> None:
+    current = _read_work(repo, work["id"])
+    generation = int((current or {}).get("execution_generation", 0))
+    if current and any(current.get(key) != work.get(key) for key in ("status", "requirement", "acceptance")):
+        generation += 1
+    work["execution_generation"] = max(generation, int(work.get("execution_generation", 0)))
     _persist_work(repo, work)
     if work.get("pending_events"):
         drain_events(repo, work)
@@ -2976,6 +3017,7 @@ def bmad_verification_plan_state(repo: Path, work: dict) -> dict:
     next_step = (f"Bind ALL stories or whole epics belonging to this requirement with `cao sdd plan bind --work {work['id']} "
                  "--plan-item <sprint-status.yaml-or-yml>#<story-id-or-epic-N>` (repeat for all associated items). "
                  "Continue the native workflow until every associated story is done, then run `cao verify`.")
+    effective_scope = json.loads(json.dumps(scope))
     try:
         if scope.get("mode") != "bound" or not plans:
             raise ValueError("BMAD_PLAN_SCOPE_REQUIRED")
@@ -2989,8 +3031,16 @@ def bmad_verification_plan_state(repo: Path, work: dict) -> dict:
             path = provider_artifact(repo, plan["path"], dirs)
             if not path.is_file():
                 raise ValueError("PLAN_SOURCE_MISSING: " + plan["path"])
-            states = _sprint_selected_states(path, plan.get("item_ids") or [])
-            observations[plan["path"]] = {"selectors": plan["item_ids"], "states": states}
+            known = set(plan.get("item_ids") or [])
+            observed = _sprint_states(path)
+            for selector in list(known):
+                if re.fullmatch(r"epic-\d+", selector):
+                    prefix = selector.removeprefix("epic-") + "-"
+                    known.update(key for key in observed if re.match(r"^" + re.escape(prefix) + r"\d+-", key))
+            effective = next(item for item in effective_scope["plans"] if item["path"] == plan["path"])
+            effective["item_ids"] = sorted(known)
+            states = _sprint_selected_states(path, effective["item_ids"])
+            observations[plan["path"]] = {"selectors": effective["item_ids"], "states": states}
             pending.extend(f"{plan['path']}#{item} ({state})" for item, state in states.items() if state != "done")
         values = [state for observation in observations.values() for state in observation["states"].values()]
         if not pending:
@@ -3004,9 +3054,9 @@ def bmad_verification_plan_state(repo: Path, work: dict) -> dict:
         return {"ready": not pending, "state": "pending" if pending else "done",
                 "raw": raw, "canonical": _canonical_native_state(raw),
                 "reason": "BMAD_PLAN_NOT_DONE" if pending else None,
-                "pending_plan_items": pending, "observations": observations, "next": next_step if pending else None}
+                "scope": effective_scope, "pending_plan_items": pending, "observations": observations, "next": next_step if pending else None}
     except (ValueError, OSError, UnicodeError, RuntimeError) as exc:
-        return {"ready": False, "state": "blocked", "reason": str(exc), "next": next_step}
+        return {"ready": False, "state": "blocked", "reason": str(exc), "scope": effective_scope, "next": next_step}
 
 
 def provider_verification_plan_state(repo: Path, work: dict) -> dict:
@@ -3084,6 +3134,18 @@ def provider_verification_plan_state(repo: Path, work: dict) -> dict:
                 "pending_plan_items": pending, "scope": effective_scope, "next": next_step if pending else None}
     except (ValueError, OSError, UnicodeError, RuntimeError) as exc:
         return {"ready": False, "state": "blocked", "reason": str(exc), "next": next_step}
+
+
+@locked_repo
+def observe_plan_scope(repo: Path, work: dict) -> dict:
+    """Persist pure provider scope deltas before any verification early return."""
+    _refresh_work(repo, work)
+    observation = provider_verification_plan_state(repo, work)
+    scope = observation.get("scope")
+    if scope and scope != (work.get("sdd") or {}).get("plan_scope"):
+        work.setdefault("sdd", {})["plan_scope"] = scope
+        save_work(repo, work)
+    return observation
 
 
 @locked_command
@@ -3176,7 +3238,7 @@ def sdd_acceptance_state(repo: Path, work: dict) -> dict:
 
 
 def verification_inputs(repo: Path, work: dict, cfg: dict) -> dict:
-    inputs = {"requirement_sha256": sha256_file(repo / work["requirement"]["path"]),
+    inputs = {"snapshot_format": SNAPSHOT_FORMAT, "requirement_sha256": sha256_file(repo / work["requirement"]["path"]),
             "code_snapshot": code_snapshot(repo, {work["requirement"]["path"]}),
             "rules_snapshot": rules_snapshot(repo, cfg),
             "verification_config_sha256": verification_snapshot(cfg),
@@ -3216,14 +3278,15 @@ def completion_status(repo: Path, work: dict[str, Any] | None) -> dict[str, Any]
     if not path_state["ready"]:
         return {"ready": False, "reason": path_state["reason"]}
     cfg = config(repo)
+    baseline = verification_baseline_state(repo, work)
+    if not baseline["ready"]:
+        return {**baseline, "reason_code": baseline["reason"]}
+    if (work.get("verification") or {}).get("status") == "running":
+        return {"ready": False, "reason": "VERIFICATION_RUNNING", "next": "Wait for the current verification, or rerun `cao verify` to supersede an abandoned run."}
     current = verification_inputs(repo, work, cfg)
     code_sha = current["code_snapshot"]
     rules_sha = current["rules_snapshot"]
     verification_cfg_sha = current["verification_config_sha256"]
-    anchor = work.get("acceptance") or {}
-    if anchor.get("version") != 2 or anchor.get("config_sha256") != verification_cfg_sha:
-        return {"ready": False, "reason": "verification standard is missing or changed",
-                "next": f"Review the standard, then run `cao reopen --work {work['id']} --reanchor --reason \"<why>\"`."}
     fresh = bound_verification_fresh(work, current)
 
     # Light binds minimal native intent; full profiles require execution/plan evidence.
@@ -3333,7 +3396,7 @@ def resume_payload(repo: Path, work: dict[str, Any], session_id: str | None = No
 def work_intake_instruction(work: dict[str, Any] | None = None) -> str:
     command = cao_invocation()["command"]
     if work and work.get("status") in {"todo", "suspended"}:
-        return f'Resume the existing Work before product writes with `{command} resume --work {work["id"]}`; do not create a replacement requirement.'
+        return f'Resume the existing Work before product writes with `{command} resume --work {work["id"]} --reactivate`; do not create a replacement requirement.'
     return (
         "Create an active Work before product code, configuration, tests or verification scaffolding. "
         "Honor bootstrap's SDD authorization/install instructions first. "
@@ -5159,17 +5222,7 @@ def verification_reason(stdout: str, stderr: str, status: str) -> str:
 
 
 def overall_verification_status(results: list[dict[str, Any]]) -> str:
-    required = [r for r in results if r["required"]]
-    if not required:
-        return "passed"
-    statuses = {r["status"] for r in required}
-    if "error" in statuses:
-        return "error"
-    if "blocked" in statuses:
-        return "blocked"
-    if "failed" in statuses:
-        return "failed"
-    return "passed"
+    return required_verification_status(results)
 
 
 @locked_command
@@ -5179,7 +5232,12 @@ def _prepare_verification(args: argparse.Namespace):
     if not work:
         print(json.dumps({"ok": False, "error": "NO_ACTIVE_WORK_ITEM"}, ensure_ascii=False, indent=2)); return 2
 
-    plan_state = provider_verification_plan_state(repo, work)
+    if work.get("status") != "active":
+        recovery = (f'cao reopen --work {wid} --reason "<why>"' if work.get("status") == "completed"
+                    else f'cao resume --work {wid} --reactivate')
+        print(json.dumps({"ok": False, "error": "VERIFICATION_WORK_NOT_ACTIVE", "status": work.get("status"), "next": recovery})); return 2
+
+    plan_state = observe_plan_scope(repo, work)
     if not plan_state["ready"]:
         print(json.dumps({"ok": False, "error": str(plan_state["reason"]).split(":", 1)[0],
                           "verification_plan": plan_state, "next": plan_state["next"]}, ensure_ascii=False, indent=2)); return 2
@@ -5204,15 +5262,9 @@ def _prepare_verification(args: argparse.Namespace):
         }, ensure_ascii=False, indent=2)); return 2
 
     if source == "config":
-        # Compare content, not seconds: legacy evidence needs an explicit anchor too.
-        anchor = work.get("acceptance") or {}
-        if anchor.get("version") != 2 or anchor.get("config_sha256") != verification_snapshot(cfg):
-            print(json.dumps({
-                "ok": False,
-                "error": "VERIFICATION_STANDARD_CHANGED",
-                "reason": "The configured verification standard is not the Work Item's accepted standard.",
-                "next": f"Review the standard, then run `cao reopen --work {work['id']} --reanchor --reason \"<why>\"`; re-earn gates and run `cao verify`.",
-            }, ensure_ascii=False, indent=2)); return 2
+        baseline = verification_baseline_state(repo, work)
+        if not baseline["ready"]:
+            print(json.dumps({"ok": False, "error": baseline["reason"], "next": baseline["next"]})); return 2
         required_gates = ((work.get("path_assessment") or {}).get("required_gates")) or []
         if "tests" in required_gates and not any(item["required"] and "tests" in item["gates"] for item in scripts):
             print(json.dumps({
@@ -5224,21 +5276,48 @@ def _prepare_verification(args: argparse.Namespace):
     req = repo / work["requirement"]["path"]
     if not req.exists():
         print(json.dumps({"ok": False, "error": "REQUIREMENT_FILE_MISSING"}, ensure_ascii=False, indent=2)); return 2
-    return repo, work["id"], scripts, source, verification_inputs(repo, work, cfg), verification_timeout(cfg)
+    inputs = verification_inputs(repo, work, cfg)
+    run = {"run_id": "verify-" + uuid.uuid4().hex,
+           "sequence": int(work.get("verification_sequence", 0)) + 1,
+           "generation": int(work.get("execution_generation", 0)), "status": "running", "at": now(),
+           "inputs": inputs, "source": source}
+    previous = work.get("verification") or {}
+    if previous:
+        work.setdefault("verification_history", []).append(previous)
+    work["verification_sequence"] = run["sequence"]
+    work["verification"] = run
+    save_work(repo, work)
+    return repo, work["id"], scripts, source, inputs, verification_timeout(cfg), run
 
 
-def commit_verification(repo, wid, inputs, scripts, results, source, started):
+def commit_verification(repo, wid, inputs, scripts, results, source, started, run=None):
     with repo_transaction(repo):
         work = load_work(repo, wid)
         if work is None:
             raise RuntimeError("WORK_ITEM_NOT_FOUND")
-        current = verification_inputs(repo, work, config(repo))
+        identity = work.get("verification") or {}
+        eligible = (run is not None and work.get("status") == "active"
+                    and identity.get("run_id") == run["run_id"] and identity.get("status") == "running"
+                    and int(work.get("execution_generation", 0)) == run["generation"])
+        if not eligible:
+            rejected = {"status": "superseded", "run_status": overall_verification_status(results),
+                        "run_id": (run or {}).get("run_id"), "results": results,
+                        "reason": "VERIFICATION_RUN_CHANGED", "source": source, "at": started}
+            # Completed history remains immutable. Do not change its progress/official result.
+            if work.get("status") != "completed":
+                work.setdefault("verification_history", []).append(rejected)
+                save_work(repo, work)
+            return rejected
+        try:
+            current = verification_inputs(repo, work, config(repo))
+        except (ValueError, OSError, RuntimeError):
+            current = None
         changed = current != inputs
-        plan_state = provider_verification_plan_state(repo, work)
+        plan_state = observe_plan_scope(repo, work)
         if plan_state.get("scope"):
             work.setdefault("sdd", {})["plan_scope"] = plan_state["scope"]
         status = overall_verification_status(results)
-        verification = {"version": 2, "source": source, "at": started, **inputs,
+        verification = {"version": 2, "run_id": run["run_id"], "sequence": run["sequence"], "generation": run["generation"], "source": source, "at": started, **inputs,
                         "scripts": scripts, "results": results,
                         "status": "stale" if changed else status, "run_status": status}
         work["verification"] = verification
@@ -5258,13 +5337,16 @@ def cmd_verify(args: argparse.Namespace) -> int:
     prepared = _prepare_verification(args)
     if isinstance(prepared, int):
         return prepared
-    repo, wid, scripts, source, inputs, timeout = prepared
+    repo, wid, scripts, source, inputs, timeout, run = prepared
     started = now()
     results: list[dict[str, Any]] = []
     for item in scripts:
         command = item["command"]
         command_started = now()
-        result = run_script(command, repo, timeout=timeout)
+        try:
+            result = run_script(command, repo, timeout=timeout)
+        except Exception as exc:
+            result = {"exit_code": 127, "stdout_tail": "", "stderr_tail": f"VERIFICATION_EXECUTION_ERROR: {exc}", "timed_out": False}
         exit_code = result["exit_code"]
         stdout, stderr = result["stdout_tail"], result["stderr_tail"]
         status_for_script = verification_status_for_exit_code(exit_code)
@@ -5282,12 +5364,12 @@ def cmd_verify(args: argparse.Namespace) -> int:
             "stderr_tail": stderr[-4000:],
         })
 
-    verification = commit_verification(repo, wid, inputs, scripts, results, source, started)
+    verification = commit_verification(repo, wid, inputs, scripts, results, source, started, run)
     status = verification["status"]
     with repo_transaction(repo):
         work = load_work(repo, wid)
         next_action = work["execution"]["next_action"]
-    cao_exit = {"passed": 0, "failed": 1, "blocked": 2, "error": 3, "stale": 2}[status]
+    cao_exit = {"passed": 0, "failed": 1, "blocked": 2, "error": 3, "stale": 2, "superseded": 2}[status]
     print(json.dumps({"ok": status == "passed", "verification": verification, "next": next_action}, ensure_ascii=False, indent=2)); return cao_exit
 
 
@@ -5399,6 +5481,7 @@ def cmd_reopen(args: argparse.Namespace) -> int:
         if status == "active" else
         "The Work Item was reopened: it was marked completed but the requirement is not actually satisfied."
     )
+    work["execution_generation"] = int(work.get("execution_generation", 0)) + 1
     work["status"] = "active"
     work["completed_at"] = None
     work["execution"]["step"] = "reopened"
@@ -5452,6 +5535,8 @@ def cmd_done(args: argparse.Namespace) -> int:
         index = load_index(repo)
         wid = args.work or index.get("active_work")
         work = load_work(repo, wid) if wid else None
+        if work and work.get("status") == "active":
+            observe_plan_scope(repo, work)
         c = completion_status(repo, work)
         if not c["ready"]:
             return _completion_blocked(repo, work, c)
@@ -5461,6 +5546,8 @@ def cmd_done(args: argparse.Namespace) -> int:
     # Native transitions can change both state and freshness. Judge again before closing.
     with repo_transaction(repo):
         work = load_work(repo, wid)
+        if work and work.get("status") == "active":
+            observe_plan_scope(repo, work)
         c = completion_status(repo, work)
         if not c["ready"]:
             return _completion_blocked(repo, work, c)
@@ -5533,7 +5620,7 @@ def write_targets_protected_state(repo: Path, raw: dict[str, Any]) -> list[str]:
     repo = repo.resolve()
     state, requirements = repo / ORCH, repo / REQUIREMENT_DIR
     hits = []
-    for target in tool_write_targets(raw):
+    for target in tool_write_targets(raw, repo):
         value = Path(target)
         lexical = Path(os.path.abspath(value if value.is_absolute() else repo / value))
         resolved = lexical.resolve()
@@ -5556,10 +5643,10 @@ def protected_state_advice(targets: list[str]) -> str:
         return "Requirement documents are Agent-authored; use `cao requirement next-id` to create one."
     if "/work/" in joined:
         return ("Work Item state is CAO-derived. Use its commands instead: `cao checkpoint --summary ...`, "
-                "`cao decision add --text ...`, `cao path assess ...`, `cao sdd workflow <select|execute|complete>`, "
+                "`cao decision --decision ...`, `cao path assess ...`, `cao sdd workflow <select|execute|complete>`, "
                 "`cao verify`, `cao done`.")
     if "config.json" in joined:
-        return "Project config is written by `cao init`, `cao language set`, and provider install commands."
+        return "Project config is written by `cao verification configure`, `cao init`, `cao language set`, and provider install commands."
     if "index.json" in joined:
         return "`index.json` is regenerated from `work/*.json` after every Work Item mutation; it never needs editing."
     if "sessions/" in joined or "handoffs/" in joined:
@@ -5586,44 +5673,141 @@ def _event_key(raw: Any, *keys: str) -> str:
     return ""
 
 
-def tool_write_targets(raw: dict[str, Any]) -> list[str]:
-    """Best-effort file targets of a mutating tool call, at any nesting depth."""
+def tool_cwd(raw: dict, repo: Path | None = None) -> Path | None:
+    payload = raw.get("tool_input") or raw.get("input") or raw.get("arguments") or raw.get("params") or {}
+    session_value = _event_key(raw, "cwd", "workdir", "working_directory")
+    session = Path(session_value) if session_value else repo
+    if session is not None and not session.is_absolute() and repo is not None: session = repo / session
+    value = _event_key(payload, "workdir", "cwd", "working_directory")
+    if value:
+        path = Path(value)
+        if path.is_absolute(): return path
+        return session / path if session is not None else None
+    return session
+
+
+def tool_effect(raw: dict, repo: Path | None = None) -> dict:
+    """One bounded analysis supplies mutation classification and write targets."""
     tool = _event_key(raw, "tool_name", "toolname", "tool", "name").lower()
     if not tool:
         tool = next(iter(_collect_values_for_keys(raw, TOOL_NAME_KEYS)), "").lower()
-    payload = raw.get("tool_input") or raw.get("input") or raw.get("arguments") or raw
-    targets = _collect_path_strings(raw)
-    patches = _collect_values_for_keys(raw, {"patch", "patch_text", "input"})
-    if tool in {"apply_patch", "patch"}:
-        patches.extend(_collect_values_for_keys(raw, {"command", "cmd"}))
-    if isinstance(payload, str):
-        if tool in SHELL_TOOLS:
-            patches = []
-        elif tool in {"apply_patch", "patch"}:
-            patches.append(payload)
-        else:
-            targets.append(payload)
-    for text in patches:
-        targets.extend(patch_targets(text))
-    if tool in SHELL_TOOLS:
-        commands = _collect_values_for_keys(raw, {"command", "cmd"})
+    payload = raw.get("tool_input") or raw.get("input") or raw.get("arguments") or raw.get("params") or raw
+    cwd = tool_cwd(raw, repo)
+    if cwd is not None and cwd.is_absolute(): cwd = cwd.resolve()
+    targets, diagnostics = [], []
+    effect = "write" if tool in MUTATING_TOOLS or _collect_values_for_keys(payload, MUTATION_PAYLOAD_KEYS) else "read"
+    if tool not in SHELL_TOOLS:
+        targets = _collect_path_strings(raw)
+        patches = _collect_values_for_keys(raw, {"patch", "patch_text", "input"})
+        if tool in {"apply_patch", "patch"}:
+            patches.extend(_collect_values_for_keys(raw, {"command", "cmd"}))
         if isinstance(payload, str):
-            commands.append(payload)
+            if tool in {"apply_patch", "patch"}: patches.append(payload)
+            else: targets.append(payload)
+        for patch in patches: targets.extend(patch_targets(patch))
+    else:
+        commands = _collect_values_for_keys(raw, {"command", "cmd"})
+        if isinstance(payload, str): commands.append(payload)
+        effect = "read" if commands else "unknown"
         for command in commands:
+            directory = cwd or Path(".")
             try:
                 segments = _shell_segments(command)
             except ValueError:
-                continue  # Unparseable commands get a risk reminder, not a sandbox guarantee.
-            cwd = Path(".")
+                effect = "unknown" if effect != "write" else effect
+                diagnostics.append("SHELL_PARSE_UNKNOWN")
+                continue
             for tokens in segments:
-                if tokens[0] == "cd" and len(tokens) == 2 and not any(char in tokens[1] for char in "$`"):
-                    directory = Path(tokens[1])
-                    cwd = directory if directory.is_absolute() else cwd / directory
-                elif not _readonly_tokens(tokens):
-                    for token in shell_write_operands(tokens):
-                        path = Path(token)
-                        targets.append(str(path if path.is_absolute() else cwd / path))
-    return list(dict.fromkeys(target for target in targets if target))
+                if tokens[0] == "cd" and len(tokens) == 2 and not any(c in tokens[1] for c in "$`~"):
+                    path = Path(tokens[1]); directory = path if path.is_absolute() else directory / path
+                    if directory.is_absolute(): directory = directory.resolve()
+                    continue
+                if _readonly_tokens(tokens): continue
+                operands = shell_write_operands(tokens)
+                redirects = any(token in {">", ">>", "&>", ">|", "<>"} for token in tokens)
+                known_command = tokens[0] in {"rm", "mv", "cp", "touch", "mkdir", "rmdir", "chmod", "tee", "find", "sed", "git", "echo", "printf", "cat", "head", "tail", "ls", "grep", "rg"}
+                known = known_command and (bool(operands) or redirects)
+                if known: effect = "write"
+                elif effect != "write": effect = "unknown"
+                if not known_command or (tokens[0] == "sed" and sed_effect(tokens)[0] == "unknown"):
+                    diagnostics.append("SHELL_EFFECT_UNKNOWN")
+                if tokens[0] == "find":
+                    for flag in ("-exec", "-execdir", "-ok", "-okdir"):
+                        if flag in tokens:
+                            nested = [t for t in tokens[tokens.index(flag) + 1:] if t not in {"{}", ";", "+"}]
+                            if nested and not _readonly_tokens(nested):
+                                if nested[0] not in {"rm", "mv", "cp", "touch", "mkdir", "rmdir", "chmod", "tee", "sed"} or (nested[0] == "sed" and sed_effect(nested)[0] == "unknown"):
+                                    diagnostics.append("SHELL_EFFECT_UNKNOWN")
+                if any(c in operand for operand in operands for c in "$`~"):
+                    diagnostics.append("SHELL_TARGET_UNKNOWN")
+                target_cwd = directory
+                if tokens[0] == "git":
+                    for i, token in enumerate(tokens[:-1]):
+                        if token == "-C":
+                            path = Path(tokens[i + 1]); target_cwd = path if path.is_absolute() else target_cwd / path
+                for operand in operands:
+                    path = Path(operand)
+                    targets.append(str(path if path.is_absolute() else target_cwd / path))
+    # Retain lexical paths as well as resolving links in the protection layer.
+    if tool not in SHELL_TOOLS:
+        targets = [str(Path(value) if Path(value).is_absolute() or cwd is None else cwd / value) for value in targets]
+    if cwd is None and any(not Path(value).is_absolute() for value in targets):
+        diagnostics.append("TOOL_CWD_UNKNOWN")
+    if repo is not None:
+        # Preserve the lexical target for state-link protection, and include the
+        # actual target resolved before lexical .. collapses a directory alias.
+        actual = [str(Path(value).resolve()) for value in targets]
+        targets = actual + [os.path.abspath(value) for value in targets]
+    return {"effect": effect, "targets": list(dict.fromkeys(targets)),
+            "cwd": str(cwd) if cwd is not None else None, "diagnostics": diagnostics}
+
+
+def tool_write_targets(raw: dict[str, Any], repo: Path | None = None) -> list[str]:
+    return tool_effect(raw, repo)["targets"]
+
+
+def sed_effect(tokens: list[str]) -> tuple[str, list[str]]:
+    expressions, files = [], []
+    explicit, unknown, skip = False, False, False
+    for i, token in enumerate(tokens[1:], 1):
+        if skip: skip = False; continue
+        if token in {"-e", "--expression"} and i + 1 < len(tokens):
+            expressions.append(tokens[i + 1]); explicit = skip = True
+        elif token in {"-f", "--file"}:
+            unknown = explicit = skip = True
+        elif token.startswith(("--expression=", "-e")):
+            expressions.append(token.split("=", 1)[1] if "=" in token else token[2:]); explicit = True
+        elif token.startswith(("--file=", "-f")):
+            unknown = explicit = True
+        elif not token.startswith("-"):
+            files.append(token)
+    if not explicit and files: expressions.append(files.pop(0))
+    targets = []
+    if any(token.startswith(("-i", "--in-place")) for token in tokens[1:]): targets.extend(files)
+    for expression in expressions:
+        # w/W commands, address-prefixed w, and substitution w flags.
+        for match in re.finditer(r"(?:^|[;}]|/[gIp0-9]*)\s*(?:[0-9,$!/]+\s*)?[wW]\s+([^;\n]+)", expression):
+            targets.append(match.group(1).strip())
+        execution = re.search(r"(?:^|;)\s*(?:[0-9,$!/]+\s*)?e(?:\s+([^;\n]+)|$)", expression)
+        if execution:
+            unknown = True
+            if execution.group(1):
+                try:
+                    for segment in _shell_segments(execution.group(1)):
+                        targets.extend(shell_write_operands(segment))
+                except ValueError: pass
+        if re.search(r"/[^;]*e(?:\s|$)", expression): unknown = True
+        # Unsupported expression grammar is unknown rather than proven read.
+        if not re.match(r"^(?:[0-9,$!/]+\s*)?(?:[spdqnaic=hrwWyY]|$)", expression): unknown = True
+    return ("unknown" if unknown else "write" if targets else "read"), targets
+
+
+def git_output_targets(tokens: list[str]) -> list[str]:
+    targets = []
+    for i, token in enumerate(tokens[1:], 1):
+        if token in {"--output", "-o"} and i + 1 < len(tokens): targets.append(tokens[i + 1])
+        elif token.startswith("--output="): targets.append(token.split("=", 1)[1])
+    return targets
 
 
 def shell_write_operands(tokens: list[str]) -> list[str]:
@@ -5650,25 +5834,25 @@ def shell_write_operands(tokens: list[str]) -> list[str]:
         target_dir = target_dir or next((token.split("=", 1)[1] for token in tokens
                                         if token.startswith("--target-directory=")), None)
         return outputs + ([target_dir] if target_dir else operands[-1:])
-    if tokens[0] == "sed":
-        if not any(token.startswith("-i") or token.startswith("--in-place") for token in tokens[1:]):
-            return outputs
-        # -e expressions and -f scripts are inputs; without them the first
-        # positional operand is the expression, followed by edited files.
-        args = []
-        skip = False
-        explicit_script = False
+    if tokens[0] == "find":
+        roots = []
         for token in tokens[1:]:
-            if skip:
-                skip = False
-                continue
-            if token in {"-e", "--expression", "-f", "--file"}:
-                explicit_script = skip = True
-            elif token.startswith(("--expression=", "--file=")) or token.startswith(("-e", "-f")):
-                explicit_script = True
-            elif not token.startswith("-"):
-                args.append(token)
-        return outputs + (args if explicit_script else args[1:])
+            if token.startswith("-") or token in {"(", ")", "!"}: break
+            roots.append(token)
+        if "-delete" in tokens: outputs.extend(roots or ["."])
+        for i, token in enumerate(tokens[:-1]):
+            if token in {"-fprint", "-fprint0", "-fprintf"}: outputs.append(tokens[i + 1])
+        for flag in ("-exec", "-execdir", "-ok", "-okdir"):
+            if flag in tokens:
+                nested = tokens[tokens.index(flag) + 1:]
+                substitutes = "{}" in nested
+                nested = [token for token in nested if token not in {"{}", ";", "+"}]
+                if nested:
+                    outputs.extend(shell_write_operands(nested))
+                    if substitutes and not _readonly_tokens(nested): outputs.extend(roots or ["."])
+        return outputs
+    if tokens[0] == "git": return outputs + git_output_targets(tokens)
+    if tokens[0] == "sed": return outputs + sed_effect(tokens)[1]
     return outputs + operands
 
 
@@ -5679,13 +5863,14 @@ def verification_baseline_state(repo: Path, work: dict) -> dict:
         return {"ready": False, "reason": "VERIFICATION_BASELINE_REQUIRED", "next": setup_instruction(cao_invocation()["command"])}
     anchor = work.get("acceptance") or {}
     if anchor.get("version") != 2 or anchor.get("config_sha256") != verification_snapshot(cfg):
-        return {"ready": False, "reason": "VERIFICATION_BASELINE_REANCHOR_REQUIRED",
+        return {"ready": False, "reason": "VERIFICATION_STANDARD_CHANGED",
                 "next": f'Review the configured scripts, then `cao reopen --work {work["id"]} --reanchor --reason "Reviewed verification baseline"` before feature implementation. Tests need not pass yet.'}
     return {"ready": True}
 
 
 def verification_scaffold_write(repo: Path, raw: dict) -> bool:
-    targets = tool_write_targets(raw)
+    analysis = tool_effect(raw, repo)
+    targets = [] if analysis["diagnostics"] else analysis["targets"]
     setup_roots = ("tests", "test", "acceptance-tests", "src/test", "scripts/verification", ".venv", "venv")
     manifests = {"requirements.txt", "requirements-dev.txt", "pyproject.toml", "pytest.ini", "setup.cfg", "uv.lock", "package.json", "package-lock.json", "pom.xml", "build.gradle", "build.gradle.kts", "settings.gradle", "settings.gradle.kts", "tsconfig.json", "Makefile"}
     if targets:
@@ -5745,7 +5930,11 @@ def intake_writable_dirs() -> list[str]:
 
 def write_targets_native_sdd_output(repo: Path, raw: dict[str, Any]) -> bool:
     """Only an all-native write is exempt from the no-Work gate and reminders."""
-    targets = tool_write_targets(raw)
+    analysis = tool_effect(raw, repo)
+    # A literal-looking operand is not proof of the effects of an unknown
+    # program, or of an expanded variable target inside a native directory.
+    if analysis["diagnostics"]: return False
+    targets = analysis["targets"]
     if not targets:
         return False
     for target in targets:
@@ -5835,29 +6024,7 @@ def _collect_values_for_keys(node: Any, keys: frozenset[str] | set[str], depth: 
 
 
 def tool_is_mutating(raw: dict[str, Any]) -> bool:
-    """Whether a tool call changes files.
-
-    Hosts nest tool arguments differently (`tool_input`, `input`, `params`, ...).
-    Reading only the top level silently disabled the whole gate for Pi-shaped
-    events: nothing looked mutating, so every write was allowed through. The
-    checks below therefore look at any depth.
-    """
-    tool = str(raw.get("tool_name") or raw.get("tool") or raw.get("name") or "").lower()
-    if not tool:
-        for candidate in _collect_values_for_keys(raw, TOOL_NAME_KEYS):
-            tool = candidate.lower()
-            break
-    if tool in MUTATING_TOOLS:
-        return True
-    payload = raw.get("tool_input") or raw.get("input") or raw.get("arguments") or raw
-    if _collect_values_for_keys(payload if payload is not raw else raw, MUTATION_PAYLOAD_KEYS):
-        return True
-    if tool in SHELL_TOOLS:
-        commands = _collect_values_for_keys(payload if payload is not raw else raw, {"command", "cmd"})
-        if isinstance(payload, str):
-            commands.append(payload)
-        return any(not readonly_shell(command) for command in commands)
-    return False
+    return tool_effect(raw)["effect"] != "read"
 
 
 def _shell_segments(command: str) -> list[list[str]]:
@@ -5928,16 +6095,23 @@ def _readonly_tokens(tokens: list[str]) -> bool:
     if not tokens or any(token in operators for token in tokens):
         return False
     name = tokens[0].lower()
-    if name in {"ls", "dir", "cat", "type", "pwd", "find", "grep", "rg", "head", "tail", "echo", "printf", "cd", "exit", "which", "file", "stat", "wc"}:
+    if any(char in token for token in tokens for char in "$`"): return False
+    if name == "find":
+        return not any(token in {"-delete", "-exec", "-execdir", "-ok", "-okdir", "-fprint", "-fprint0", "-fprintf"} for token in tokens)
+    if name in {"ls", "dir", "cat", "type", "pwd", "grep", "rg", "head", "tail", "echo", "printf", "cd", "exit", "which", "file", "stat", "wc"}:
         return True
     if name == "command" and len(tokens) > 1 and tokens[1] in {"-v", "-V"}:
         return True
     if len(tokens) == 2 and tokens[1] in {"--version", "-version", "-v"} and name in {"java", "javac", "mvn", "gradle", "node", "npm", "uv", "python", "python3"}:
         return True
-    if name == "git" and len(tokens) > 1 and tokens[1] in {"status", "diff", "log", "show", "branch"}:
-        return True
+    if name == "git":
+        args = tokens[1:]
+        while len(args) >= 2 and args[0] == "-C": args = args[2:]
+        if args and args[0] in {"status", "diff", "log", "show", "branch"}:
+            unsafe = {"--ext-diff", "--textconv", "-d", "-D", "-m", "-M", "-c", "-C", "--delete", "--move", "--copy"}
+            return not git_output_targets(tokens) and not any(token in unsafe for token in args[1:]) and (args[0] != "branch" or all(token.startswith("-") for token in args[1:]))
     if name == "sed":
-        return not any(token.startswith("-i") or token.startswith("--in-place") for token in tokens[1:])
+        return sed_effect(tokens)[0] == "read"
     if name == "pytest" or tokens[:3] in (["python", "-m", "unittest"],):
         return True
     if tokens[:2] in (["mvn", "test"], ["gradle", "test"], ["npm", "test"]):
@@ -5983,6 +6157,7 @@ def _readonly_tokens(tokens: list[str]) -> bool:
 def host_event(args: argparse.Namespace) -> int:
     repo = repo_root(args.repo or os.getcwd())
     raw = json.load(sys.stdin)
+    raw.setdefault("cwd", str(Path(args.repo or os.getcwd()).resolve()))
     event = str(raw.get("event") or raw.get("hook_event_name") or raw.get("event_name") or "").lower()
     mapping = {
         "sessionstart": "session_start", "session_start": "session_start",
@@ -6319,7 +6494,7 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--repo", default="."); sp.add_argument("--test-script", action="append"); sp.add_argument("--verify-script", action="append")
     sp.add_argument("--replace", action="store_true", help="Explicitly replace different existing verification declarations")
     sp.set_defaults(fn=cmd_verification_configure)
-    sp = sub.add_parser("verify"); sp.add_argument("--repo", default="."); sp.add_argument("--work"); sp.add_argument("--script", action="append", help="One-off verification script command; repeat to run multiple scripts"); sp.add_argument("--command", action="append", help=argparse.SUPPRESS); sp.set_defaults(fn=cmd_verify)
+    sp = sub.add_parser("verify"); sp.add_argument("--repo", default="."); sp.add_argument("--work"); sp.add_argument("--script", action="append", help="Engineering diagnostic only, never grants done eligibility; repeat for multiple scripts"); sp.add_argument("--command", action="append", help=argparse.SUPPRESS); sp.set_defaults(fn=cmd_verify)
     sp = sub.add_parser("done"); sp.add_argument("--repo", default="."); sp.add_argument("--work"); sp.set_defaults(fn=cmd_done)
     sp = sub.add_parser("reopen", help="Reopen a completed Work Item that should not have been closed"); sp.add_argument("--repo", default="."); sp.add_argument("--work"); sp.add_argument("--reason", help="Why the completion was wrong, e.g. which part of the requirement is missing"); sp.add_argument("--reanchor", action="store_true", help="Explicitly accept the current verification standard and clear gates/verification; also supports active Work Items"); sp.set_defaults(fn=cmd_reopen)
     sp = sub.add_parser("context"); sp.add_argument("--repo", default="."); sp.add_argument("--work"); sp.add_argument("--session"); sp.add_argument("--host", default="unknown"); sp.set_defaults(fn=cmd_context)
@@ -6336,7 +6511,11 @@ def main(argv: list[str] | None = None) -> int:
         args = build_parser().parse_args(argv)
         return int(args.fn(args))
     except (RuntimeError, ValueError, json.JSONDecodeError) as exc:
-        print(json.dumps({"ok": False, "error": str(exc)}, ensure_ascii=False, indent=2))
+        result = {"ok": False, "error": str(exc)}
+        if str(exc).startswith("SNAPSHOT_"):
+            result["reason_code"] = str(exc).split(":", 1)[0]
+            result["next"] = "Restore readable repository-owned inputs and executable permissions; replace external business links with repository-owned sources, repair broken/cyclic links or reduce the linked scan scope, then run `cao verify`. Old evidence is not reusable."
+        print(json.dumps(result, ensure_ascii=False, indent=2))
         return 2
 
 

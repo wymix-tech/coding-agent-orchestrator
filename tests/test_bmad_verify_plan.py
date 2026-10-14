@@ -190,10 +190,15 @@ class BmadVerifyPlanTests(RepairCase):
         self.bind('epic-1')
         self.write({'epic-1': 'done', '1-1-first': 'done', '1-2-second': 'done'})
         work = cao.load_work(self.repo, self.wid)
-        inputs = cao.verification_inputs(self.repo, work, cao.config(self.repo))
+        import contextlib, io
+        args = cao.build_parser().parse_args(['verify', '--repo', str(self.repo)])
+        with contextlib.redirect_stdout(io.StringIO()):
+            prepared = cao._prepare_verification(args)
+        self.assertIsInstance(prepared, tuple)
+        _repo, _wid, scripts, source, inputs, _timeout, run = prepared
         self.write({'epic-1': 'in-progress', '1-1-first': 'done', '1-2-second': 'review'})
         result = cao.commit_verification(self.repo, self.wid, inputs, [],
-                                         [{'required': True, 'status': 'passed'}], 'config', cao.now())
+                                         [{'required': True, 'status': 'passed'}], 'config', cao.now(), run)
         self.assertEqual(result['status'], 'stale')
         self.assertNotEqual(self.read_work(self.wid)['execution']['step'], 'verification')
 
