@@ -40,7 +40,7 @@ creates the numbered file and returns its `path` (for example
 `.orchestrator/requirements/001-requirement-用户登录-2026-10-10.md`). CAO creates it with a skeleton
 to allocate a stable intake path. Requirement intake stays writable without a Work. Product code,
 configuration, tests and verification scaffolding require an active Work; missing assessment on an
-active Work still yields reminders. Edit that file with the requirement content,
+active Work blocks business writes until assessment is current; native outputs and verification scaffolding remain writable. Edit that file with the requirement content,
 then `cao start --requirement <path>`. Do not create the file yourself and do not place requirement
 documents anywhere else — CAO allocates numbers from existing files so they never collide, and
 `cao requirement list` shows what already exists.
@@ -74,7 +74,7 @@ configuration is empty, invalid or optional-only. Before feature development:
    within an active Work, initial scaffolding and tests may be written before tests pass. Keep setup limited
    to build/test scaffolding and verification wrappers; follow path assessment and native SDD instructions
    before business implementation.
-   Existing Work keeps its acceptance anchor; review any changed standard and explicitly reanchor with
+   The first valid baseline on a Work started with empty verification is established without reopening. Existing accepted baselines keep their anchor; review any changed standard and explicitly reanchor with
    `cao reopen --work <id> --reanchor --reason "Reviewed acceptance changes"`. Do not replace the Work or its decisions.
 
 CAO does not call an LLM, generate stack-specific templates, parse test reports or detect zero tests;
@@ -194,13 +194,19 @@ compatibility risks require at least `standard`. The saved assessment reports bo
 effective profile and adds the relevant gates.
 
 `major-ambiguity` asks for user clarification, then a fresh `cao path assess` after incorporating the answer.
-Missing/stale assessment and ambiguity yield reminders, not blocked product writes; `cao done` remains
-blocked. If the requirement changes, explicitly re-anchor before reassessment. Never hand-edit CAO state.
+Missing/stale assessment and ambiguity block business writes; native planning outputs and initial verification scaffolding remain writable. `cao done` also remains blocked. If the requirement changes, explicitly re-anchor before reassessment. Never hand-edit CAO state.
 
 The selected SDD Provider supplies profile-specific native-workflow guidance. Follow BMAD, OpenSpec,
 Spec Kit, or another provider's own commands, artifacts, and mandatory preconditions; CAO does not
 invent a duplicate SDD lifecycle. Reassess only when scope, requirement, or risk materially changes.
 The profile never bypasses the project's configured Verification scripts or provider-native gates.
+
+### Native route and progress contract
+
+Keep CAO quality profile separate from the provider route. Installed BMAD Build may choose direct Build under native rules without lowering standard gates. Read [the route declaration contract](docs/native-route-contract.md) for fields and examples; preserve rule paths/hashes/quotes, required artifacts and each omitted planning document's reason/replacement. Bind its SPEC immediately with `cao sdd artifact bind --artifact <provider-spec.md>`, even when its filename does not match the requirement; submit the native route with `cao sdd route propose --declaration <route.json>`.
+Resolve every native Open Question before SPEC approval. For dispatch, present the complete summary/path, run `cao sdd approval request`, and wait for host-observed `批准并继续` / `批准并停止` (Approve and continue / Approve and stop). Technical choices, generic continue, status edits or Agent claims are not approval. Approve-and-stop pauses implementation until explicit continuation; absent host evidence stays pending.
+Run `cao sdd sync` at native transitions when hooks are unavailable. Bind/route/sync do not certify completion; observed progress does not authorize implementation when prerequisites are missing. Preserve every associated Story/task scope. Requirement, intent, route or rule changes invalidate applicable evidence; status/checkbox progress preserves frozen intent. Keep decision history and recover current Work without repeating intake.
+Active baseline reanchor preserves business phase and recalculates pending actions. For installed Build, changed accepted verification scripts require host-observed `批准验证基线` (approve verification baseline); Agent reanchor reasons cannot substitute.
 
 For **standard/comprehensive** profiles with an installed SDD provider, selecting a
 path is not proof that its native workflow ran. Before implementation, record the actual provider-native

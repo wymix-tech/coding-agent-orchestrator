@@ -32,6 +32,10 @@ if __package__ in (None, ""):
         sys.path.insert(0, _source_root)
 
 from scripts.state_store import atomic_json, backup_once, repo_transaction
+from scripts.native_route import (
+    normalize_decision as normalize_route_decision, route_state, intent_hash,
+    owned_file as native_owned_file, approve_observed_response, approve_baseline_response,
+)
 from scripts.path_guard import inside, repo_file, provider_artifact, patch_targets
 from scripts.completion_policy import (
     acceptance_hash, anchor_acceptance, reset_requirement, evidence_matches,
@@ -2145,6 +2149,155 @@ def native_sync_state(repo: Path, work: dict[str, Any]) -> dict[str, Any]:
             "next": None if canonical else "Follow the installed provider's native status/task conventions; do not infer execution from file existence."}
 
 
+def native_route_state(repo: Path, work: dict) -> dict:
+    sdd = work.get("sdd") or {}
+    provider = sdd.get("provider")
+    # Installed Build is an agent workflow with native routing and checkpoints.
+    # Historical providers without this capability retain their native contracts.
+    required = bool(sdd.get("native_route_required")) or provider == "bmad" and any(
+        item["name"] == "bmad-build" for item in provider_native_skills(repo, provider))
+    return route_state(repo, work, provider_output_dirs(provider), required)
+
+
+def implementation_preflight(repo: Path, work: dict) -> dict:
+    if not work_sdd_ready(repo, work)[0]:
+        provider = (work.get("sdd") or {}).get("provider")
+        return {"ready": False, "reason": "SDD_NOT_INSTALLED", "next": f"Restore the Work's provider with `cao sdd install --provider {provider} --yes`; do not restart intake."}
+    for state in (verification_baseline_state(repo, work), path_assessment_state(repo, work)):
+        if not state["ready"]:
+            next_step = state.get("next") or path_assessment_instruction(work)
+            if state.get("reason") == "requirement changed since work started":
+                next_step = completion_next_instruction(repo, work, state) + " " + next_step
+            return {**state, "next": next_step}
+    return native_route_state(repo, work)
+
+
+@locked_command
+def cmd_sdd_route(args: argparse.Namespace) -> int:
+    repo = repo_root(args.repo); ensure_initialized(repo)
+    work = resolve_work(repo, args.work)
+    if not work or work.get("status") != "active":
+        print(json.dumps({"ok": False, "error": "NO_ACTIVE_WORK_ITEM"})); return 2
+    if args.route_action == "show":
+        print(json.dumps({"ok": True, "route": (work.get("sdd") or {}).get("route_decision"),
+                          "history": (work.get("sdd") or {}).get("route_history", []),
+                          "state": native_route_state(repo, work)}, ensure_ascii=False)); return 0
+    try:
+        if not path_assessment_state(repo, work)["ready"]:
+            raise ValueError("PATH_ASSESSMENT_REQUIRED")
+        declaration = repo_file(repo, args.declaration)
+        raw = json.loads(declaration.read_text(encoding="utf-8"))
+        provider = work["sdd"]["provider"]
+        decision = normalize_route_decision(repo, work, raw, provider_output_dirs(provider),
+                                            provider_native_skills(repo, provider))
+        old = work["sdd"].get("route_decision")
+        if old and all(old.get(key) == value for key, value in decision.items()):
+            print(json.dumps({"ok": True, "status": "unchanged", "route": old,
+                              "implementation": native_route_state(repo, work)}, ensure_ascii=False)); return 0
+        decision.update(id=new_id("route"), accepted_at=now(), assessed_by="agent",
+                        declaration={"path": rel(declaration, repo), "sha256": sha256_file(declaration)},
+                        supersedes=old.get("id") if old else None,
+                        previous_route=old.get("route") if old else None)
+        work["sdd"].setdefault("route_history", []).append(decision)
+        work["sdd"]["route_decision"] = decision
+        work["sdd"]["native_ref"] = decision["primary_artifact"]
+        work["sdd"].pop("spec_approval", None)
+        work["verification"] = {}
+        work["gate_status"] = {}
+        # Reselecting a route must never retain a completed workflow certificate.
+        workflow = work["sdd"].get("workflow")
+        if workflow:
+            workflow["status"] = "selected"
+            for key in ("execution", "completed_at", "artifact_hashes", "failure_exception"):
+                workflow.pop(key, None)
+        for artifact in decision["required_artifacts"]:
+            ref = artifact_reference(repo, artifact["path"], role=artifact["role"])
+            refs = work["sdd"].setdefault("artifacts", [])
+            refs[:] = [r for r in refs if r.get("path") != ref["path"]]
+            refs.append(ref)
+        queue_event(work, {"event": "sdd.route.accepted", "work_item_id": work["id"],
+                           "source": "cao", "decision": decision, "occurred_at": now()})
+        save_work(repo, work)
+        reconcile_native_sdd_state(repo, work)
+        state = native_route_state(repo, work)
+        print(json.dumps({"ok": True, "route": decision, "implementation": state,
+                          "next": state.get("next") or "Follow the accepted native route; synchronize progress with `cao sdd sync`."}, ensure_ascii=False)); return 0
+    except (ValueError, OSError, KeyError, TypeError, RuntimeError) as exc:
+        print(json.dumps({"ok": False, "error": str(exc)}, ensure_ascii=False)); return 2
+
+
+@locked_command
+def cmd_sdd_artifact_bind(args: argparse.Namespace) -> int:
+    repo = repo_root(args.repo); ensure_initialized(repo)
+    work = resolve_work(repo, args.work)
+    if not work or work.get("status") != "active":
+        print(json.dumps({"ok": False, "error": "NO_ACTIVE_WORK_ITEM"})); return 2
+    try:
+        path = native_owned_file(repo, args.artifact, provider_output_dirs(work["sdd"]["provider"]))
+        value = rel(path, repo)
+        decision = work["sdd"].get("route_decision")
+        if decision and decision["primary_artifact"] != value:
+            raise ValueError("NATIVE_ROUTE_SOURCE_CHANGE_REQUIRES_DECISION")
+        work["sdd"]["native_ref"] = value
+        refs = work["sdd"].setdefault("artifacts", [])
+        refs[:] = [r for r in refs if r.get("path") != value]
+        refs.append(artifact_reference(repo, value, role="native-progress-source"))
+        queue_event(work, {"event": "sdd.artifact.bound", "work_item_id": work["id"],
+                           "path": value, "sha256": sha256_file(path), "occurred_at": now()})
+        save_work(repo, work)
+        reconcile_native_sdd_state(repo, work)
+        print(json.dumps({"ok": True, "native_sync": native_sync_state(repo, work),
+                          "implementation": native_route_state(repo, work)}, ensure_ascii=False)); return 0
+    except (ValueError, OSError, KeyError, RuntimeError) as exc:
+        print(json.dumps({"ok": False, "error": str(exc)}, ensure_ascii=False)); return 2
+
+
+@locked_command
+def cmd_sdd_approval(args: argparse.Namespace) -> int:
+    repo = repo_root(args.repo); ensure_initialized(repo)
+    work = resolve_work(repo, args.work)
+    if not work or work.get("status") != "active":
+        print(json.dumps({"ok": False, "error": "NO_ACTIVE_WORK_ITEM"})); return 2
+    if args.approval_action == "request":
+        decision = work["sdd"].get("route_decision")
+        state = native_route_state(repo, work)
+        if not decision or (not state["ready"] and state["reason"] != "NATIVE_SPEC_APPROVAL_REQUIRED"):
+            print(json.dumps({"ok": False, "error": state.get("reason", "NATIVE_ROUTE_REQUIRED")})); return 2
+        path = native_owned_file(repo, decision["primary_artifact"], provider_output_dirs(work["sdd"]["provider"]))
+        existing = work["sdd"].get("spec_approval") or {}
+        if (existing.get("route_decision_id") == decision["id"]
+                and existing.get("intent_sha256") == intent_hash(path)
+                and existing.get("status") in {"pending", "approved"}):
+            print(json.dumps({"ok": True, "status": "unchanged", "approval": existing,
+                              "implementation": state}, ensure_ascii=False)); return 0
+        approval = {"id": new_id("approval"), "status": "pending", "requested_at": now(),
+                    "path": decision["primary_artifact"], "intent_sha256": intent_hash(path),
+                    "requirement_sha256": work["requirement"]["sha256"], "route_decision_id": decision["id"]}
+        work["sdd"]["spec_approval"] = approval
+        queue_event(work, {"event": "sdd.spec.approval_requested", "work_item_id": work["id"],
+                           "approval": approval, "occurred_at": now()})
+        save_work(repo, work)
+    approval = work["sdd"].get("spec_approval") or {}
+    next_step = ("Approval is recorded; follow the native workflow from its current stage and synchronize progress."
+                 if approval.get("status") == "approved" else
+                 "Resolve native Open Questions first. Present the complete spec summary and path. Ask the user to choose 批准并继续 / 批准并停止 (Approve and continue / Approve and stop), or review. The host records the actual reply; answering implementation options is not approval.")
+    if approval.get("stop_after_approval"):
+        next_step = "The user approved and stopped; wait for explicit continuation of implementation."
+    print(json.dumps({"ok": True, "approval": approval or None, "next": next_step}, ensure_ascii=False)); return 0
+
+
+@locked_command
+def cmd_sdd_sync(args: argparse.Namespace) -> int:
+    repo = repo_root(args.repo); ensure_initialized(repo)
+    work = resolve_work(repo, args.work)
+    if not work:
+        print(json.dumps({"ok": False, "error": "NO_WORK_ITEM"})); return 2
+    reconcile_native_sdd_state(repo, work)
+    print(json.dumps({"ok": True, "work_item": work_summary(work),
+                      "native_sync": native_sync_state(repo, work),
+                      "implementation": native_route_state(repo, work)}, ensure_ascii=False)); return 0
+
+
 @locked_repo
 def _append_lifecycle_event(repo: Path, event: dict[str, Any]) -> bool:
     """Append under the repository lock; keyless calls are independent operations."""
@@ -2311,7 +2464,7 @@ def reconcile_native_sdd_state(repo: Path, work: dict[str, Any]) -> bool:
         aggregate_pending_review = plan["state"] == "pending" and current_step == "review"
         if aggregate_pending_review:
             later_checkpoint = False  # A single completed SPEC cannot finish the whole requirement.
-        if canonical == "ready" and (current_step in {"path-selected", "planning", "plan-selected", "sdd-planning", "native-sdd-workflow-selected"} or aggregate_pending_review):
+        if canonical == "ready" and (current_step in {"reopened", "path-selected", "planning", "plan-selected", "sdd-planning", "native-sdd-workflow-selected"} or aggregate_pending_review):
             execution["step"] = "ready-for-dev"
             execution["next_action"] = action("agent", f"Native {provider} work is ready; begin implementation using the bound native work item.")
             work.setdefault("resume", {})["summary"] = f"Native SDD reports ready for implementation ({provider})."
@@ -2331,6 +2484,23 @@ def reconcile_native_sdd_state(repo: Path, work: dict[str, Any]) -> bool:
             if not any(isinstance(item, dict) and item.get("id") == "native-sdd-state" for item in blockers):
                 blockers.append({"id": "native-sdd-state", "reason": f"Native {provider} state is blocked", "source": status_source, "observed_at": now()})
                 changed = True
+    # Observation is retained even when it reveals an unauthorized transition.
+    # It must not itself satisfy routing or approval prerequisites.
+    previous_route_state = sdd.get("implementation_state") or {}
+    route = native_route_state(repo, work)
+    if route.get("state") != "not_applicable" and sdd.get("implementation_state") != route:
+        sdd["implementation_state"] = route
+        changed = True
+    if not route["ready"]:
+        nxt = action("human" if route["reason"] in {"NATIVE_SPEC_APPROVAL_REQUIRED", "NATIVE_SPEC_CLARIFICATION_REQUIRED", "NATIVE_IMPLEMENTATION_PAUSED"} else "agent",
+                     route["next"], reason=route["reason"])
+        if work.setdefault("execution", {}).get("next_action") != nxt:
+            work["execution"]["next_action"] = nxt
+            changed = True
+    elif previous_route_state.get("ready") is False:
+        work.setdefault("execution", {})["next_action"] = action("agent",
+            "Follow the accepted native route from its current stage; record workflow execution after it actually runs, and completion only after native review finishes.")
+        changed = True
     if changed:
         work["sdd"] = sdd
         save_work(repo, work)
@@ -2612,6 +2782,8 @@ def work_summary(work: dict[str, Any]) -> dict[str, Any]:
         "step": work.get("execution", {}).get("step"),
         "next_action": work.get("execution", {}).get("next_action"),
         "execution_profile": (work.get("path_assessment") or {}).get("profile"),
+        "native_route": (work.get("sdd") or {}).get("route_decision"),
+        "implementation_state": (work.get("sdd") or {}).get("implementation_state"),
         "sdd": work.get("sdd"),
         "blockers": work.get("blockers") or [],
         "decision_count": len(work.get("decisions") or []),
@@ -3246,6 +3418,10 @@ def verification_inputs(repo: Path, work: dict, cfg: dict) -> dict:
     binding = (work.get("sdd") or {}).get("spec_binding")
     if binding:
         inputs["rules_snapshot"] = binding_digest({"rules": inputs["rules_snapshot"], "spec_binding": binding})
+    if (work.get("sdd") or {}).get("route_decision"):
+        inputs["rules_snapshot"] = binding_digest({"rules": inputs["rules_snapshot"],
+            "route": work["sdd"]["route_decision"], "approval": work["sdd"].get("spec_approval"),
+            "route_state": native_route_state(repo, work)})
     plan_state = provider_verification_plan_state(repo, work)
     if plan_state["state"] != "not_applicable":
         inputs["rules_snapshot"] = binding_digest({"rules": inputs["rules_snapshot"], "native_plan": plan_state})
@@ -3281,6 +3457,9 @@ def completion_status(repo: Path, work: dict[str, Any] | None) -> dict[str, Any]
     baseline = verification_baseline_state(repo, work)
     if not baseline["ready"]:
         return {**baseline, "reason_code": baseline["reason"]}
+    route = native_route_state(repo, work)
+    if not route["ready"]:
+        return route
     if (work.get("verification") or {}).get("status") == "running":
         return {"ready": False, "reason": "VERIFICATION_RUNNING", "next": "Wait for the current verification, or rerun `cao verify` to supersede an abandoned run."}
     current = verification_inputs(repo, work, cfg)
@@ -4142,10 +4321,20 @@ def cmd_sdd_workflow(args: argparse.Namespace) -> int:
             "execution": None,
             "unverified": {"allowed": True, "reason": unverified_reason, "at": now(), "by": str(getattr(args, "assessed_by", "agent") or "agent")} if allow_unverified else None,
         }
+        if selected == "bmad-build":
+            sdd["native_route_required"] = True
         if allow_unverified:
             record_workflow_unverified(repo, work, provider, name, unverified_reason)
         work.setdefault("execution", {})["step"] = "native-sdd-workflow-selected"
         guidance = skill_invocation_guidance(repo, provider, entrypoint)
+        if selected == "bmad-build":
+            guidance += (" CAO quality profile and BMAD route are separate. After native planning creates a SPEC, "
+                         "bind it immediately with `cao sdd artifact bind --artifact <spec>`; submit installed routing rules, "
+                         "their hashes/quotes, required artifacts and omitted-planning replacements with "
+                         "`cao sdd route propose --declaration <route.json>` before product implementation. "
+                         "Direct Build does not lower standard gates. For dispatch, present the native SPEC summary, "
+                         "run `cao sdd approval request`, and wait for explicit user approval; technical option answers "
+                         "are not SPEC approval. Run `cao sdd sync` at native stage transitions.")
         work["execution"]["next_action"] = action("agent", f"Execute the selected native SDD workflow `{name}` via `{entrypoint}` now. Do not skip its native prerequisites, and do not implement the change yourself instead of running the workflow - `cao done` refuses completion until it has actually run and its artifacts are recorded.{guidance} Then record the execution with `cao sdd workflow execute --command \"<command actually run>\" --exit-code <code> --work {work['id']}`, and record the real output files with `cao sdd workflow complete --work {work['id']} --artifact <repo-relative-file>`.")
     elif args.workflow_action == "execute":
         workflow = sdd.get("workflow") or {}
@@ -4541,9 +4730,15 @@ def cmd_verification_configure(args: argparse.Namespace) -> int:
         effective = json.loads(json.dumps(DEFAULT_CONFIG))
         deep_merge(effective, candidate)
         wid = getattr(args, "work", None) or load_index(repo).get("active_work")
-        # Configuring verification must not upgrade or reanchor a Work record.
+        # An accepted standard cannot be silently reanchored. Only the first
+        # valid baseline of a Work started with empty setup is established here.
         work = _read_work(repo, wid) if wid else None
+        initial_baseline = bool(work and work.get("status") == "active" and
+            not setup_state(config(repo))["ready"] and
+            (work.get("acceptance") or {}).get("config_sha256") == verification_snapshot(config(repo)) and
+            not work.get("verification") and not work.get("gate_status"))
         review = bool(work and work.get("status") == "active" and
+                      not initial_baseline and
                       (work.get("acceptance") or {}).get("config_sha256") != verification_snapshot(effective))
     except ValueError as exc:
         error = "VERIFICATION_CONFIG_INVALID" if isinstance(exc, json.JSONDecodeError) else str(exc).split(":", 1)[0]
@@ -4555,10 +4750,25 @@ def cmd_verification_configure(args: argparse.Namespace) -> int:
         return 2
     if changed:
         save_json(path, candidate)
+    if initial_baseline and setup_state(effective)["ready"]:
+        anchor_acceptance(work, verification_scripts(effective), verification_timeout(effective))
+        queue_event(work, {"event": "verification.baseline.established", "work_item_id": work["id"],
+                           "source": "cao", "acceptance": work["acceptance"], "occurred_at": now()})
+        save_work(repo, work)
     out = {"ok": True, "status": "configured" if changed else "unchanged", "config": str(path),
-           "verification_setup": setup_state(effective), "acceptance_review_required": review}
+           "verification_setup": setup_state(effective), "acceptance_review_required": review,
+           "initial_baseline_established": bool(initial_baseline and setup_state(effective)["ready"])}
     if review:
         out["next"] = action("human", f'Review changed acceptance and explicitly run `cao reopen --work {wid} --reanchor --reason "Reviewed acceptance changes"`.')
+        if work["sdd"].get("native_route_required") or any(s["name"] == "bmad-build" for s in provider_native_skills(repo, work["sdd"]["provider"])):
+            current_review = work.get("verification_review") or {}
+            if current_review.get("config_sha256") != verification_snapshot(effective):
+                work["verification_review"] = {"id": new_id("baseline-review"), "status": "pending",
+                    "config_sha256": verification_snapshot(effective), "requested_at": now(),
+                    "previous_config_sha256": (work.get("acceptance") or {}).get("config_sha256"),
+                    "scripts": verification_scripts(effective)}
+                save_work(repo, work)
+            out["next"] = action("human", f'Present the changed verification scripts and wait for explicit user `批准验证基线` (approve verification baseline) through the host. Then `cao reopen --work {wid} --reanchor --reason "Reviewed acceptance changes"`. Agent reason text is not human approval.')
     print(json.dumps(out, ensure_ascii=False, indent=2))
     return 0
 
@@ -4706,7 +4916,8 @@ def _prepare_start(args: argparse.Namespace):
         work["path_assessment"] = None
         work["gate_status"] = {}
         work["verification"] = None
-        for field in ("workflow", "plan_scope", "native_state", "spec_binding", "acceptance"):
+        for field in ("workflow", "plan_scope", "native_state", "spec_binding", "acceptance",
+                      "native_route_required", "route_decision", "spec_approval", "implementation_state"):
             work["sdd"].pop(field, None)
         hint = work["sdd"].pop("native_ref", None)
         if hint:
@@ -4723,6 +4934,8 @@ def _prepare_start(args: argparse.Namespace):
     if args.title:
         work["title"] = args.title
     work["sdd"]["provider"] = provider
+    if provider == "bmad" and any(s["name"] == "bmad-build" for s in provider_native_skills(repo, provider)):
+        work["sdd"]["native_route_required"] = True
     if args.sdd_ref:
         work["sdd"]["native_ref"] = args.sdd_ref
     if is_new_work:
@@ -5237,6 +5450,10 @@ def _prepare_verification(args: argparse.Namespace):
                     else f'cao resume --work {wid} --reactivate')
         print(json.dumps({"ok": False, "error": "VERIFICATION_WORK_NOT_ACTIVE", "status": work.get("status"), "next": recovery})); return 2
 
+    route = native_route_state(repo, work)
+    if not route["ready"]:
+        print(json.dumps({"ok": False, "error": route["reason"], "next": route["next"]})); return 2
+
     plan_state = observe_plan_scope(repo, work)
     if not plan_state["ready"]:
         print(json.dumps({"ok": False, "error": str(plan_state["reason"]).split(":", 1)[0],
@@ -5463,14 +5680,21 @@ def cmd_reopen(args: argparse.Namespace) -> int:
 
     if _activation_denied(repo, work["id"]):
         return 2
+    previous_execution = json.loads(json.dumps(work.get("execution") or {}))
     if reanchored:
+        review = work.get("verification_review") or {}
+        current_hash = verification_snapshot(config(repo))
+        if ((work.get("acceptance") or {}).get("config_sha256") != current_hash
+                and (review or work["sdd"].get("native_route_required"))
+                and (review.get("status") != "approved" or review.get("config_sha256") != current_hash)):
+            print(json.dumps({"ok": False, "error": "VERIFICATION_REVIEW_REQUIRED",
+                              "next": "Present changed scripts and wait for explicit user 批准验证基线 through the host."})); return 2
         p = repo / work["requirement"]["path"]
         if not p.is_file():
             print(json.dumps({"ok": False, "error": "REQUIREMENT_FILE_MISSING"}, ensure_ascii=False)); return 2
         reset_requirement(work, requirement_evidence(repo, p))
         cfg = config(repo)
         anchor_acceptance(work, verification_scripts(cfg), verification_timeout(cfg))
-        work["started_at"] = now()
         work["reanchored_at"] = now()
         record = work["sdd"].get("acceptance") or {}
         if record.get("declaration") and (work.get("path_assessment") or {}).get("profile") != "light":
@@ -5502,7 +5726,7 @@ def cmd_reopen(args: argparse.Namespace) -> int:
     if (work.get("sdd") or {}).get("acceptance"):
         work["sdd"]["acceptance"]["run"] = None
     queue_event(work, {
-        "event": "task.reopened",
+        "event": "verification.baseline.reanchored" if status == "active" and reanchored else "task.reopened",
         "work_item_id": work["id"],
         "source": "cao",
         "to_state": "active",
@@ -5510,7 +5734,11 @@ def cmd_reopen(args: argparse.Namespace) -> int:
         "reason": args.reason or "not specified",
         "reanchored": reanchored,
     })
+    if status == "active" and reanchored:
+        work["execution"] = previous_execution
+        # Keep the business cursor and reconstruct native prerequisites below.
     save_work(repo, work)
+    reconcile_native_sdd_state(repo, work)
     print(json.dumps({
         "ok": True,
         "status": "active",
@@ -6216,6 +6444,25 @@ def host_event(args: argparse.Namespace) -> int:
         return respond(result)
 
     if event == "prompt_submit":
+        if work:
+            review = None
+            if work.get("verification_review"):
+                try:
+                    review = approve_baseline_response(work, raw, event, args.host, host_session_id,
+                                                      verification_snapshot(config(repo)), now())
+                except ValueError:
+                    pass  # Invalid setup must remain recoverable through host context.
+            if review:
+                queue_event(work, {"event": "verification.baseline.approved", "work_item_id": work["id"],
+                                   "review": review, "occurred_at": now()})
+                save_work(repo, work)
+            approval = approve_observed_response(repo, work, raw, event, args.host, host_session_id,
+                provider_output_dirs(work["sdd"]["provider"]), now())
+            if approval:
+                queue_event(work, {"event": "sdd.spec.approved", "work_item_id": work["id"],
+                                   "approval": approval, "occurred_at": now()})
+                save_work(repo, work)
+                reconcile_native_sdd_state(repo, work)
         return respond({"decision": "allow", "additional_context": render_context(repo, work, session_id=host_session_id, host=args.host)})
 
     if event == "pre_tool":
@@ -6245,6 +6492,10 @@ def host_event(args: argparse.Namespace) -> int:
                 baseline = verification_baseline_state(repo, work)
                 if not baseline["ready"] and not verification_scaffold_write(repo, raw):
                     return respond({"decision": "deny", "reason": baseline["reason"] + ": " + baseline["next"]})
+                if not verification_scaffold_write(repo, raw):
+                    preflight = implementation_preflight(repo, work)
+                    if not preflight["ready"]:
+                        return respond({"decision": "deny", "reason": str(preflight["reason"]) + ": " + preflight["next"]})
                 path_state = path_assessment_state(repo, work)
                 if not path_state["ready"]:
                     next_step = path_assessment_instruction(work)
@@ -6283,13 +6534,22 @@ def host_event(args: argparse.Namespace) -> int:
         return respond(result)
 
     if event in {"post_tool", "file_changed"}:
+        if work:
+            approval = approve_observed_response(repo, work, raw, event, args.host, host_session_id,
+                provider_output_dirs(work["sdd"]["provider"]), now())
+            if approval:
+                queue_event(work, {"event": "sdd.spec.approved", "work_item_id": work["id"],
+                                   "approval": approval, "occurred_at": now()})
+                save_work(repo, work)
         if work and tool_is_mutating(raw):
             if (work.get("verification") or {}).get("status") == "passed":
                 work.setdefault("resume", {})["summary"] = "Code changed after the last verification; verification is now stale."
             save_work(repo, work)
         if work:
             reconcile_native_sdd_state(repo, work)
-        return respond({"decision": "allow"})
+        state = native_route_state(repo, work) if work else {"ready": True}
+        return respond({"decision": "allow", **({"additional_context": state["reason"] + ": " + state["next"]}
+                                                if not state["ready"] else {})})
 
     if event in {"session_end", "subagent_stop"}:
         if session and session.get("status") != "ended":
@@ -6371,6 +6631,26 @@ def build_parser() -> argparse.ArgumentParser:
     sp.set_defaults(fn=cmd_language_apply)
     sdd = sub.add_parser("sdd", help="Detect, select, and install a project SDD")
     sdd_sub = sdd.add_subparsers(dest="sdd_command", required=True)
+    route = sdd_sub.add_parser("route", help="Record evidence-backed native routes separately from CAO quality profiles")
+    route_sub = route.add_subparsers(dest="route_action", required=True)
+    for name in ("propose", "show"):
+        sp = route_sub.add_parser(name)
+        sp.add_argument("--repo", default="."); sp.add_argument("--work")
+        if name == "propose": sp.add_argument("--declaration", required=True)
+        sp.set_defaults(fn=cmd_sdd_route)
+    artifact = sdd_sub.add_parser("artifact", help="Bind a running native artifact without certifying completion")
+    artifact_sub = artifact.add_subparsers(dest="artifact_action", required=True)
+    sp = artifact_sub.add_parser("bind")
+    sp.add_argument("--repo", default="."); sp.add_argument("--work"); sp.add_argument("--artifact", required=True)
+    sp.set_defaults(fn=cmd_sdd_artifact_bind)
+    approval = sdd_sub.add_parser("approval", help="Request native SPEC approval and inspect host-observed evidence")
+    approval_sub = approval.add_subparsers(dest="approval_action", required=True)
+    for name in ("request", "show"):
+        sp = approval_sub.add_parser(name)
+        sp.add_argument("--repo", default="."); sp.add_argument("--work")
+        sp.set_defaults(fn=cmd_sdd_approval)
+    sp = sdd_sub.add_parser("sync", help="Synchronize native progress and implementation blockers")
+    sp.add_argument("--repo", default="."); sp.add_argument("--work"); sp.set_defaults(fn=cmd_sdd_sync)
     review = sdd_sub.add_parser("review", help="Record fresh independent native oneshot reviews")
     review_sub = review.add_subparsers(dest="review_action", required=True)
     for name in ("begin", "submit"):

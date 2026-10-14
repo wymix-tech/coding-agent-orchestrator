@@ -149,9 +149,9 @@ class SelectGuidance(unittest.TestCase):
 
 
 class PreToolReminder(SelectGuidance):
-    """Writing product code before the workflow runs carries a reminder, not a block."""
+    """Installed Build requires a route decision even after a workflow run is recorded."""
 
-    def test_reminder_is_attached_and_tool_still_allowed(self):
+    def test_missing_route_blocks_product_write(self):
         with tempfile.TemporaryDirectory() as td:
             repo = pathlib.Path(td)
             bmad_project(repo)
@@ -159,10 +159,10 @@ class PreToolReminder(SelectGuidance):
             self._reached_workflow_select(repo)
             raw = {"event": "pre_tool", "toolName": "write", "params": {"path": "src/App.java", "content": "x"}}
             rc, out, _ = run(repo, "host-event", "--repo", ".", "--host", "pi", env_extra=NO_HOST_ENV, stdin=json.dumps(raw))
-            self.assertEqual(out["decision"], "allow")
-            self.assertIn("has NOT been executed", out.get("additional_context", ""))
+            self.assertEqual(out["decision"], "deny")
+            self.assertIn("NATIVE_ROUTE_REQUIRED", out["reason"])
 
-    def test_reminder_goes_away_after_the_workflow_is_executed(self):
+    def test_execution_record_does_not_replace_native_route(self):
         with tempfile.TemporaryDirectory() as td:
             repo = pathlib.Path(td)
             bmad_project(repo)
@@ -172,6 +172,6 @@ class PreToolReminder(SelectGuidance):
             self.assertEqual(rc, 0, out)
             raw = {"event": "pre_tool", "toolName": "write", "params": {"path": "src/App.java", "content": "x"}}
             rc, out, _ = run(repo, "host-event", "--repo", ".", "--host", "pi", env_extra=NO_HOST_ENV, stdin=json.dumps(raw))
-            self.assertEqual(out["decision"], "allow")
+            self.assertEqual(out["decision"], "deny")
             self.assertNotIn("has NOT been executed", out.get("additional_context", ""))
             self.assertNotIn("verification setup", out.get("additional_context", "").lower())

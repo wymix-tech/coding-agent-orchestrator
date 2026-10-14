@@ -109,15 +109,15 @@ class HostLifecycleTests(RepairCase):
         self.assertEqual(session["status"], "active")
         self.assertEqual(session["kind"], "primary")
 
-    def test_requirement_change_reminds_without_blocking_product_write(self):
+    def test_requirement_change_blocks_product_write(self):
         wid = self.start()
         requirement = self.repo / self.read_work(wid)["requirement"]["path"]
         requirement.write_text("Changed scope", encoding="utf-8")
         out = self.event("pre_tool", toolName="write", input={"path": "src.py", "content": "x"})
-        self.assertEqual(out["decision"], "allow")
-        self.assertIn("requirement changed", out["additional_context"])
-        self.assertIn("--replace", out["additional_context"])
-        self.assertIn("cao path assess", out["additional_context"])
+        self.assertEqual(out["decision"], "deny")
+        self.assertIn("requirement changed", out["reason"])
+        self.assertIn("--replace", out["reason"])
+        self.assertIn("cao path assess", out["reason"])
 
     def test_allow_keeps_additional_context(self):
         for host in ("claude-code", "codex"):
@@ -136,7 +136,7 @@ class HostLifecycleTests(RepairCase):
             self.assertEqual(out["decision"], "allow")
             self.assertNotIn("additional_context", out)
 
-    def test_missing_assessment_and_ambiguity_remind_with_next_step(self):
+    def test_missing_assessment_and_ambiguity_block_with_next_step(self):
         wid = self.start()
         for assessment in (None, {"risk_flags": ["major_ambiguity"], "open_questions": ["scope?"]}):
             work = cao.load_work(self.repo, wid)
@@ -148,8 +148,8 @@ class HostLifecycleTests(RepairCase):
                 work = cao.load_work(self.repo, wid)
             cao.save_work(self.repo, work)
             out = self.event("pre_tool", toolName="write", input={"path": "src.py", "content": "x"})
-            self.assertEqual(out["decision"], "allow")
-            self.assertIn("path", out["additional_context"])
+            self.assertEqual(out["decision"], "deny")
+            self.assertIn("path", out["reason"])
 
     def test_internal_state_deny_includes_native_reason_even_without_id(self):
         for host in ("pi", "claude-code", "codex"):

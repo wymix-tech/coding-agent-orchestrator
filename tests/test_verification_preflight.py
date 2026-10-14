@@ -119,7 +119,7 @@ class VerificationPreflightTests(RepairCase):
         self.assertEqual(out["decision"], "deny")
         self.assertIn("CAO-managed", out["reason"])
 
-    def test_bypass_start_warns_and_never_auto_reanchors(self):
+    def test_start_without_baseline_establishes_initial_anchor_on_first_configure(self):
         self.scripts([])
         (self.repo / ".orchestrator/requirements").mkdir(exist_ok=True)
         (self.repo / ".orchestrator/requirements/scope.md").write_text("New product scope", encoding="utf-8")
@@ -130,8 +130,9 @@ class VerificationPreflightTests(RepairCase):
         before = self.read_work(wid)["acceptance"]
         rc, out = self.run_cli("verification", "configure", "--test-script", self.test_command)
         self.assertEqual(rc, 0, out)
-        self.assertTrue(out["acceptance_review_required"])
-        self.assertEqual(self.read_work(wid)["acceptance"], before)
+        self.assertFalse(out["acceptance_review_required"])
+        self.assertTrue(out["initial_baseline_established"])
+        self.assertNotEqual(self.read_work(wid)["acceptance"], before)
         self.assertEqual(self.run_cli("done")[0], 2)
 
     def test_existing_valid_active_work_still_resumes(self):

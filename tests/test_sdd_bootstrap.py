@@ -168,7 +168,7 @@ class SddBootstrapTests(unittest.TestCase):
             payload = {"event": "pre_tool", "tool_name": "write", "tool_input": {"path": "app.py", "content": "x"}}
             rc, out = run(repo, "host-event", "--host", "claude-code", input_text=json.dumps(payload))
             self.assertEqual(rc, 0)
-            self.assertEqual(out["hookSpecificOutput"]["permissionDecision"], "allow")
+            self.assertEqual(out["hookSpecificOutput"]["permissionDecision"], "deny")
 
     def test_sdd_select_requires_project_installation(self):
         td, repo = self.init_repo()

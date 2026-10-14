@@ -53,13 +53,13 @@ class NativeOmissionTests(RepairCase):
         rc,out=self.run_cli('host-event','--host','pi',payload={'event':'pre_tool','session_id':'mixed','tool_name':'apply_patch','tool_input':{'patch':patch}})
         self.assertEqual(out['decision'],'deny',out)
 
-    def test_reanchor_required_but_passing_tests_not_required_before_business(self):
+    def test_initial_baseline_needs_no_reopen_or_passing_tests(self):
         self.missing_baseline()
         rc,out=self.run_cli('verification','configure','--work',self.wid,'--test-script',self.test_command)
         self.assertEqual(rc,0,out)
-        self.assertEqual(self.event('main.py')['decision'],'deny')
-        self.assertEqual(self.run_cli('bootstrap')[1]['mode'],'verification_setup')
-        self.run_cli('reopen','--work',self.wid,'--reanchor','--reason','Reviewed baseline')
+        self.assertFalse(out['acceptance_review_required'])
+        self.assertTrue(out['initial_baseline_established'])
+        self.assertEqual(self.run_cli('bootstrap')[1]['mode'],'resume')
         self.assertEqual(self.event('main.py')['decision'],'allow')
         self.assertFalse(self.read_work(self.wid)['verification'])
 

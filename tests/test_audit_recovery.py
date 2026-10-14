@@ -62,7 +62,7 @@ class AuditTests(RepairCase):
         for reason in ("first", "second"):
             rc, out = self.run_cli("reopen", "--work", wid, "--reanchor", "--reason", reason)
             self.assertEqual(rc, 0, out)
-        events = self.events(wid)
+        events = self.events(wid, "verification.baseline.reanchored")
         self.assertEqual(len(events), 2)
         self.assertEqual(len({event["idempotency_key"] for event in events}), 2)
         self.assertEqual({event["reason"] for event in events}, {"first", "second"})
@@ -86,9 +86,9 @@ class AuditTests(RepairCase):
         b = self.start("b")
         rc, out = self.run_cli("reopen", "--work", b, "--reanchor", "--reason", "same reason")
         self.assertEqual(rc, 0, out)
-        self.assertEqual(len(self.events(a)), 1)
-        self.assertEqual(len(self.events(b)), 1)
-        self.assertNotEqual(self.events(a)[0]["idempotency_key"], self.events(b)[0]["idempotency_key"])
+        self.assertEqual(len(self.events(a, "verification.baseline.reanchored")), 1)
+        self.assertEqual(len(self.events(b, "verification.baseline.reanchored")), 1)
+        self.assertNotEqual(self.events(a, "verification.baseline.reanchored")[0]["idempotency_key"], self.events(b, "verification.baseline.reanchored")[0]["idempotency_key"])
 
     def test_log_failure_keeps_pending_state_and_new_process_recovers(self):
         self.require_queue()

@@ -223,7 +223,7 @@ class Reanchor(unittest.TestCase):
             wid = self.verification_stuck_work(repo)
             run(repo, "reopen", "--work", wid, "--reason", "re-anchored", "--reanchor")
             events = [json.loads(line) for line in (repo / ".orchestrator/lifecycle/events.jsonl").read_text(encoding="utf-8").splitlines()]
-            reopens = [event for event in events if event.get("event") == "task.reopened"]
+            reopens = [event for event in events if event.get("event") == "verification.baseline.reanchored"]
             self.assertTrue(reopens)
             self.assertTrue(reopens[-1]["reanchored"])
 

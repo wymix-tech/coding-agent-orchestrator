@@ -27,9 +27,9 @@ def main():
     records = []
     with tempfile.TemporaryDirectory(prefix="cao-installed-smoke-") as td:
         base = Path(td)
-        modules = ("import json; from scripts import cao, state_store, completion_policy, path_guard, verification_runner, verification_setup, windows_supervisor, dashboard, light_spec_policy, sdd_acceptance_runtime, sdd_acceptance_commands; "
+        modules = ("import json; from scripts import cao, state_store, completion_policy, path_guard, verification_runner, verification_setup, windows_supervisor, dashboard, light_spec_policy, sdd_acceptance_runtime, sdd_acceptance_commands, native_route; "
                    "root=cao.package_root_dir(); "
-                   "assert all((root/p).is_file() for p in ['hosts/pi/coding-orchestrator.ts','hooks/host-event.sh','hosts/claude-code/settings.fragment.json','hosts/codex/hooks.json','SKILL.md']); "
+                   "assert all((root/p).is_file() for p in ['hosts/pi/coding-orchestrator.ts','hooks/host-event.sh','hosts/claude-code/settings.fragment.json','hosts/codex/hooks.json','SKILL.md','docs/native-route-contract.md']); "
                    "assert cao.overall_verification_status([{'required':False,'status':'failed'}]) == 'blocked'; "
                    "assert dashboard.dashboard_html_path().is_file(); print(json.dumps({'runner':verification_runner.__file__,'invocation':cao.cao_invocation()}))")
         imported = subprocess.run([args.python, "-c", modules], cwd=base, env=env,
@@ -82,11 +82,12 @@ def main():
                 configured = cli("verification", "configure", "--test-script",
                                  shell([args.python, "-m", "unittest", "discover", "-s", "acceptance-tests"]))
                 assert configured["verification_setup"]["ready"], configured
-                cli("reopen", "--work", wid, "--reanchor", "--reason", "Reviewed initial verification baseline")
+                assert configured["initial_baseline_established"], configured
+                assert not configured["acceptance_review_required"], configured
                 event("session_start")
                 reminder = event("pre_tool", tool_name="write", tool_input={"path": "product.py", "content": "pass"})
-                assert decision(reminder) == "allow", reminder
-                assert reminder.get("additional_context") or reminder.get("hookSpecificOutput", {}).get("additionalContext"), reminder
+                assert decision(reminder) == "deny", reminder
+                assert reminder.get("reason") or reminder.get("hookSpecificOutput", {}).get("permissionDecisionReason"), reminder
                 assert decision(event("pre_tool", tool_name="write", tool_input={"path": ".orchestrator/index.json", "content": "{}"})) == "deny"
                 for _ in range(2):
                     event("turn_end")

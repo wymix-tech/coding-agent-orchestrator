@@ -181,19 +181,20 @@ test('real core setup reaches Pi model with blocked product writes and preserved
     mkdirSync(path.join(f.dir, 'acceptance-tests'));
     writeFileSync(path.join(f.dir, 'acceptance-tests/test_project.py'),
       'import unittest\nclass Project(unittest.TestCase):\n    def test_pass(self): self.assertEqual(2+2,4)\n');
-    // Host events may update last_agent/revision; configuration itself must not touch Work.
+    // Host events may update session metadata. First valid setup establishes the initial anchor.
     const before = readFileSync(workFile, 'utf8');
     assert.deepEqual(JSON.parse(before).acceptance, originalAnchor);
     const configured = cli('verification', 'configure', '--test-script',
       JSON.stringify(f.python) + ' -m unittest discover -s acceptance-tests');
     assert.equal(configured.verification_setup.ready, true);
-    assert.equal(configured.acceptance_review_required, true);
-    assert.equal(readFileSync(workFile, 'utf8'), before, 'configure cannot reanchor Work');
-    assert.equal(cli('bootstrap').mode, 'verification_setup');
+    assert.equal(configured.acceptance_review_required, false);
+    assert.equal(configured.initial_baseline_established, true);
+    assert.notEqual(JSON.parse(readFileSync(workFile, 'utf8')).acceptance.config_sha256,
+      originalAnchor.config_sha256);
+    assert.equal(cli('bootstrap').mode, 'resume');
     const after = await f.handlers.get('before_agent_start')({type: 'before_agent_start', prompt: 'continue'}, ctx);
-    assert.match(after.message.content, /reanchor|reopen/);
+    assert.match(after.message.content, /path assess/);
     assert.equal(f.notices.length, 0, JSON.stringify(f.notices));
-    cli('reopen', '--work', wid, '--reanchor', '--reason', 'Reviewed acceptance baseline');
     assert.notEqual(JSON.parse(readFileSync(workFile, 'utf8')).acceptance.config_sha256,
       originalAnchor.config_sha256);
   } finally {f.close();}
