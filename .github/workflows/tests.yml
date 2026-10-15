@@ -27,3 +27,43 @@ jobs:
           cao --help
       - name: Run tests
         run: python -m unittest discover -s tests -v
+      - name: Build and smoke-test wheel outside checkout
+        run: |
+          python -m pip wheel --no-deps . -w dist
+          python -m venv "$RUNNER_TEMP/cao-wheel"
+          "$RUNNER_TEMP/cao-wheel/bin/python" -m pip install --no-deps dist/*.whl
+          cd "$RUNNER_TEMP"
+          "$RUNNER_TEMP/cao-wheel/bin/cao" --help
+          "$RUNNER_TEMP/cao-wheel/bin/cao" init --help
+          "$RUNNER_TEMP/cao-wheel/bin/cao" sdd workflow complete --help
+          "$RUNNER_TEMP/cao-wheel/bin/python" "$GITHUB_WORKSPACE/tests/installed_package_smoke.py" --cao "$RUNNER_TEMP/cao-wheel/bin/cao" --python "$RUNNER_TEMP/cao-wheel/bin/python"
+
+  state-platforms:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: python -m unittest discover -s tests -p test_state_store.py -v
+      - run: python -m unittest discover -s tests -p test_verification_runner.py -v
+      - run: python -m unittest tests.test_repair_r1_r9 -v
+
+  pi-contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.18.0'
+          cache: npm
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - run: npm run check:pi
+      - run: npm run test:pi

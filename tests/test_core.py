@@ -5,6 +5,8 @@ import sys
 import tempfile
 import unittest
 
+from tests.helpers import bind_light_spec, complete_acceptance, configure_verification, verify_via_config
+
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 CAO = ROOT / "scripts" / "cao.py"
 
@@ -76,6 +78,7 @@ class CoreTests(unittest.TestCase):
             (repo / "requirements/spring-boot-auth-login.md").write_text("Implement login", encoding="utf-8")
             (repo / "_bmad").mkdir()
             run(repo, "init"); run(repo, "sdd", "select", "--provider", "bmad")
+            configure_verification(repo)
             run(repo, "start", "--requirement", "requirements/spring-boot-auth-login.md")
             run(repo, "path", "assess", "--profile", "standard", "--reason", "Feature with planning")
             run(repo, "checkpoint", "--step", "path-selected", "--next", "Run BMAD planning")
@@ -182,11 +185,22 @@ class CoreTests(unittest.TestCase):
         with td:
             (repo / "requirements").mkdir(); (repo / "requirements/login.md").write_text("Add login", encoding="utf-8")
             rc, _, _ = run(repo, "init"); self.assertEqual(rc, 0)
+            configure_verification(repo)
+            run(repo, "sdd", "select", "--provider", "openspec")
             rc, out, _ = run(repo, "start", "--requirement", "requirements/login.md"); self.assertEqual(rc, 0); self.assertEqual(out["action"], "ASSESS_PATH")
             run(repo, "path", "assess", "--profile", "light", "--reason", "Small, clear, local change")
+            rc, _, _ = run(repo, "sdd", "workflow", "select", "--name", "OpenSpec change", "--entrypoint", "openspec new change")
+            self.assertEqual(rc, 0)
+            (repo / "openspec/changes").mkdir(parents=True, exist_ok=True)
+            (repo / "openspec/changes/demo.md").write_text("# change", encoding="utf-8")
+            rc, _, _ = run(repo, "sdd", "workflow", "execute", "--command", "openspec new change demo")
+            self.assertEqual(rc, 0)
+            rc, _, _ = run(repo, "sdd", "workflow", "complete", "--artifact", "openspec/changes/demo.md", "--no-plan")
+            self.assertEqual(rc, 0)
             rc, _, _ = run(repo, "checkpoint", "--step", "implement-login-api", "--next", "run integration tests", "--summary", "JWT API implemented", "--completed", "JWT API")
             self.assertEqual(rc, 0)
-            rc, _, _ = run(repo, "verify", "--script", "python3 -c \"print('ok')\""); self.assertEqual(rc, 0)
+            bind_light_spec(repo, run, "openspec/changes/demo.md")
+            rc, _, _ = verify_via_config(repo, run); self.assertEqual(rc, 0)
             rc, out, _ = run(repo, "done"); self.assertEqual(rc, 0); self.assertEqual(out["status"], "completed")
             rc, events, _ = run(repo, "lifecycle", "events")
             self.assertEqual(rc, 0)
@@ -200,18 +214,33 @@ class CoreTests(unittest.TestCase):
             (repo / "_bmad").mkdir()
             (repo / "requirements").mkdir(); (repo / "requirements/login.md").write_text("Add login", encoding="utf-8")
             run(repo, "init"); run(repo, "sdd", "select", "--provider", "bmad")
+            configure_verification(repo)
             run(repo, "start", "--requirement", "requirements/login.md")
             rc, _, _ = run(repo, "path", "assess", "--profile", "standard", "--reason", "Feature requiring analysis and review")
             self.assertEqual(rc, 0)
             rc, out, _ = run(repo, "done")
             self.assertEqual(rc, 2)
             self.assertEqual(out["reason"], "native SDD workflow is not recorded as completed")
-            rc, out, _ = run(repo, "sdd", "workflow", "select", "--name", "BMAD Specify Requirements", "--entrypoint", "project-local BMAD workflow/skill")
-            self.assertEqual(rc, 0)
+            rc, out, _ = run(repo, "sdd", "workflow", "select", "--name", "BMAD Specify Requirements", "--entrypoint", "bmad workflow specify-requirements")
+            self.assertEqual(rc, 0, out)
             (repo / "_bmad-output").mkdir(); (repo / "_bmad-output/requirements.md").write_text("Requirements", encoding="utf-8")
+            # Completion is denied until the workflow run itself is recorded.
             rc, out, _ = run(repo, "sdd", "workflow", "complete", "--artifact", "_bmad-output/requirements.md")
+            self.assertEqual(rc, 2)
+            self.assertEqual(out["error"], "NATIVE_WORKFLOW_EXECUTION_REQUIRED")
+            rc, out, _ = run(repo, "sdd", "workflow", "execute", "--command", "bmad workflow specify-requirements")
             self.assertEqual(rc, 0)
-            run(repo, "verify", "--script", "python3 -c \"pass\"")
+            rc, out, _ = run(repo, "sdd", "workflow", "complete", "--artifact", "_bmad-output/requirements.md", "--no-plan")
+            self.assertEqual(rc, 0)
+            verify_via_config(repo, run)
+            # The observed gates must be satisfied before `cao done`.
+            rc, out, _ = run(repo, "done")
+            self.assertEqual(rc, 2)
+            self.assertEqual(out["reason"], "required execution gates are not satisfied")
+            for gate in ("scope_review", "implementation_review"):
+                rc, out, _ = run(repo, "gate", "satisfy", "--gate", gate, "--evidence", f"{gate} performed")
+                self.assertEqual(rc, 0)
+            complete_acceptance(repo, run)
             rc, out, _ = run(repo, "done")
             self.assertEqual(rc, 0)
 
@@ -224,6 +253,7 @@ class CoreTests(unittest.TestCase):
             run(repo, "start", "--requirement", "requirements/a.md")
             run(repo, "path", "assess", "--profile", "standard", "--reason", "Ordinary feature")
             run(repo, "sdd", "workflow", "select", "--name", "OpenSpec change", "--entrypoint", "openspec new change")
+            run(repo, "sdd", "workflow", "execute", "--command", "openspec new change demo")
             rc, out, _ = run(repo, "sdd", "workflow", "complete", "--artifact", "openspec/missing.md")
             self.assertEqual(rc, 2)
             self.assertEqual(out["error"], "ARTIFACT_INVALID")
@@ -232,7 +262,7 @@ class CoreTests(unittest.TestCase):
         td, repo = self.init_repo()
         with td:
             (repo / "requirements").mkdir(); (repo / "requirements/a.md").write_text("A", encoding="utf-8"); (repo / "app.py").write_text("x=1", encoding="utf-8")
-            run(repo, "init"); run(repo, "start", "--requirement", "requirements/a.md"); run(repo, "path", "assess", "--profile", "light", "--reason", "Small local change"); run(repo, "verify", "--script", "python3 -c \"pass\"")
+            run(repo, "init"); configure_verification(repo); run(repo, "start", "--requirement", "requirements/a.md"); run(repo, "path", "assess", "--profile", "light", "--reason", "Small local change"); verify_via_config(repo, run)
             (repo / "app.py").write_text("x=2", encoding="utf-8")
             rc, out, _ = run(repo, "done"); self.assertEqual(rc, 2); self.assertEqual(out["error"], "COMPLETION_BLOCKED")
 
@@ -240,7 +270,7 @@ class CoreTests(unittest.TestCase):
         td, repo = self.init_repo()
         with td:
             (repo / "requirements").mkdir(); p = repo / "requirements/a.md"; p.write_text("A", encoding="utf-8")
-            run(repo, "init"); run(repo, "start", "--requirement", "requirements/a.md"); run(repo, "path", "assess", "--profile", "light", "--reason", "Small local change"); run(repo, "verify", "--script", "python3 -c \"pass\"")
+            run(repo, "init"); configure_verification(repo); run(repo, "start", "--requirement", "requirements/a.md"); run(repo, "path", "assess", "--profile", "light", "--reason", "Small local change"); verify_via_config(repo, run)
             p.write_text("A changed", encoding="utf-8")
             rc, out, _ = run(repo, "done")
             self.assertEqual(rc, 2)
@@ -251,7 +281,7 @@ class CoreTests(unittest.TestCase):
         td, repo = self.init_repo()
         with td:
             (repo / "requirements").mkdir(); p = repo / "requirements/a.md"; p.write_text("A", encoding="utf-8")
-            run(repo, "init"); run(repo, "start", "--requirement", "requirements/a.md"); run(repo, "path", "assess", "--profile", "light", "--reason", "Small local change"); run(repo, "verify", "--script", "python3 -c \"pass\"")
+            run(repo, "init"); configure_verification(repo); run(repo, "start", "--requirement", "requirements/a.md"); run(repo, "path", "assess", "--profile", "light", "--reason", "Small local change"); verify_via_config(repo, run)
             p.write_text("A changed", encoding="utf-8"); rc, out, _ = run(repo, "done"); self.assertEqual(rc, 2); self.assertIn("requirement changed", out["reason"])
 
     def test_multiple_work_items_have_independent_state(self):
@@ -303,7 +333,7 @@ class CoreTests(unittest.TestCase):
             run(repo, "init"); rc, out, _ = run(repo, "start", "--requirement", str(p), "--sdd-ref", "changes/add-login")
             self.assertEqual(rc, 0); self.assertEqual(out["work_item"]["sdd"]["provider"], "openspec"); self.assertEqual(out["work_item"]["sdd"]["native_ref"], "changes/add-login")
 
-    def test_host_blocks_mutation_without_work(self):
+    def test_host_blocks_product_mutation_without_work(self):
         td, repo = self.init_repo()
         with td:
             run(repo, "init")
@@ -359,8 +389,8 @@ class CoreTests(unittest.TestCase):
             self.assertEqual(
                 cfg["verification"]["scripts"],
                 [
-                    {"name": "script-1", "command": "./verify-unit.sh", "required": True},
-                    {"name": "script-2", "command": "./verify-coverage.sh", "required": True},
+                    {"name": "script-1", "command": "./verify-unit.sh", "required": True, "gates": []},
+                    {"name": "script-2", "command": "./verify-coverage.sh", "required": True, "gates": []},
                 ],
             )
 

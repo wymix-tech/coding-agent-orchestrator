@@ -12,6 +12,8 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlparse, urlsplit
 
+from scripts.cao import locked_repo
+
 
 def dashboard_html_path() -> Path:
     """Locate the dashboard page in a source checkout or installed wheel."""
@@ -38,7 +40,7 @@ def timestamp_label(value: Any) -> str | None:
     return datetime.fromtimestamp(stamp, tz=timezone.utc).isoformat(timespec="seconds")
 
 
-def _verification_view(work: dict[str, Any]) -> dict[str, Any] | None:
+def _verification_view(work: dict[str, Any], fresh: bool | None = None) -> dict[str, Any] | None:
     raw = work.get("verification")
     if not isinstance(raw, dict):
         return None
@@ -56,12 +58,19 @@ def _verification_view(work: dict[str, Any]) -> dict[str, Any] | None:
             "started_at": timestamp_label(row.get("started_at")),
         })
     return {
-        "status": raw.get("status") or "unknown",
+        "status": "stale" if raw.get("status") == "passed" and fresh is False else raw.get("status") or "unknown",
+        "run_status": raw.get("run_status") or raw.get("status") or "unknown",
+        "fresh": fresh,
         "source": raw.get("source") or "unknown",
+        "run_id": raw.get("run_id"),
+        "sequence": raw.get("sequence"),
+        "generation": raw.get("generation"),
+        "snapshot_format": raw.get("snapshot_format"),
         "at": timestamp_label(raw.get("at")),
         "results": results,
-        # Dashboard intentionally avoids an expensive full-repository snapshot on every poll.
-        "freshness_note": "最终快照新鲜度由 cao done 重新检查",
+        "freshness_note": ("验证正在运行，完成资格暂不可用；遗留运行可重新执行 cao verify 替代" if raw.get("status") == "running" else
+                           "当前验证证据新鲜" if fresh else "验证证据缺失或已过期；请执行 cao verify")
+        if fresh is not None else "历史记录未重新认证",
     }
 
 
@@ -104,7 +113,7 @@ def _artifact_label(path: str) -> tuple[str, str]:
     name = Path(path).name.lower()
     if name in {"proposal.md", "change.md"}:
         return "proposal", "Proposal / 变更提案"
-    if name in {"spec.md", "specification.md", "spec.md"} or name == "spec.md":
+    if name in {"spec.md", "specification.md"}:
         return "spec", "Spec / 需求规格"
     if name in {"design.md", "architecture.md", "architecture-decision-record.md"}:
         return "design", "Design / 架构设计"
@@ -278,7 +287,6 @@ def build_sdd_artifact_catalog(repo: Path, work: dict[str, Any]) -> list[dict[st
         elif (repo / ".specify/memory").is_dir():
             add_expected("constitution", "Constitution / 项目原则", ".specify/memory/constitution.md")
     elif provider == "bmad":
-        planning = repo / "_bmad-output/planning-artifacts"
         known = [
             ("prd.md", "prd", "PRD / 产品需求", ["prd.md", "PRD.md", "product-requirements.md"]),
             ("architecture.md", "design", "Architecture / 架构设计", ["architecture.md", "ARCHITECTURE.md"]),
@@ -372,6 +380,7 @@ def build_sdd_artifact_catalog(repo: Path, work: dict[str, Any]) -> list[dict[st
     return rows[:150]
 
 
+@locked_repo
 def confirm_artifact(repo: Path, work_id: str, artifact_path: str, confirmed_by: str = "dashboard") -> dict[str, Any]:
     """Record an explicit human confirmation against the current file hash."""
     from scripts.cao import load_work, mark_artifact_confirmed
@@ -413,16 +422,13 @@ def preview_artifact(repo: Path, work_id: str, artifact_path: str) -> dict[str, 
     return {"ok": True, "work_item_id": work_id, "path": relative, "title": item.get("title"), "role": item.get("role"), "content": content, "size": size, "sha256": item.get("sha256"), "status": item.get("status")}
 
 def infer_execution_phase(work: dict[str, Any], artifact_catalog: list[dict[str, Any]]) -> dict[str, str]:
-    """Infer a dashboard phase from common CAO signals and native SDD artifact roles.
-
-    Explicit later CAO checkpoints win. If the stored step is stale at planning,
-    the presence of native task/story artifacts is a cross-provider signal that the
-    native workflow has reached implementation.
-    """
+    """Project CAO checkpoints and explicit native status; file existence is not progress."""
     execution = work.get("execution") if isinstance(work.get("execution"), dict) else {}
     step = str(execution.get("step") or "").lower()
-    if work.get("status") == "completed" or re.search(r"done|complete|closed", step):
+    if work.get("status") == "completed":
         return {"id": "done", "source": "cao-state"}
+    native_phases = {"native-sdd-workflow-selected": "planning", "native-sdd-workflow-executed": "implementation",
+                     "native-sdd-workflow-completed": "review"}
     if re.search(r"verif|test", step):
         return {"id": "verification", "source": "cao-state"}
     if re.search(r"review|audit", step):
@@ -430,19 +436,22 @@ def infer_execution_phase(work: dict[str, Any], artifact_catalog: list[dict[str,
     if re.search(r"implement|code|build|bugfix", step):
         return {"id": "implementation", "source": "cao-state"}
 
-    generated_roles = {
-        str(item.get("role") or "").lower()
-        for item in artifact_catalog
-        if item.get("exists") and item.get("status") in {"generated", "confirmed"}
-    }
+    native = (work.get("sdd") or {}).get("native_state") or {}
+    canonical = native.get("canonical")
+    if canonical in {"ready", "in_progress", "in_review", "completed"}:
+        return {"id": {"ready": "planning", "in_progress": "implementation", "in_review": "review", "completed": "review"}[canonical],
+                "source": "native-sdd-state"}
+    if step in native_phases:
+        return {"id": native_phases[step], "source": "cao-state"}
     workflow = ((work.get("sdd") or {}).get("workflow") or {})
-    if generated_roles.intersection({"tasks", "story"}) or workflow.get("status") == "completed":
-        return {"id": "implementation", "source": "native-sdd-artifacts"}
+    if workflow.get("status") == "completed":
+        return {"id": "review", "source": "native-sdd-workflow"}
     if not work.get("path_assessment"):
         return {"id": "path", "source": "cao-state"}
     return {"id": "planning", "source": "cao-state"}
 
 
+@locked_repo
 def build_dashboard_overview(repo: Path, stale_after_minutes: int = 30) -> dict[str, Any]:
     """Build a read-only projection from CAO's existing JSON state files."""
     from scripts.cao import (
@@ -451,6 +460,14 @@ def build_dashboard_overview(repo: Path, stale_after_minutes: int = 30) -> dict[
         WORK_DIR,
         SDD_CATALOG,
         config,
+        completion_status,
+        completion_next_instruction,
+        bound_verification_fresh,
+        gate_state,
+        sdd_acceptance_state,
+        light_spec_state,
+        provider_output_dirs,
+        verification_inputs,
         detect_sdd,
         empty_index,
         list_handoff_records,
@@ -459,7 +476,8 @@ def build_dashboard_overview(repo: Path, stale_after_minutes: int = 30) -> dict[
         load_json,
         path_assessment_state,
         reconcile_native_sdd_state,
-        rel,
+        native_sync_state,
+        native_route_state,
         session_activity,
         work_summary,
     )
@@ -508,6 +526,25 @@ def build_dashboard_overview(repo: Path, stale_after_minutes: int = 30) -> dict[
         resume = work.get("resume") or {}
         artifact_catalog = build_sdd_artifact_catalog(repo, work)
         current_phase = infer_execution_phase(work, artifact_catalog)
+        try:
+            completion = completion_status(repo, work)
+            if not completion["ready"]:
+                completion.setdefault("next", completion_next_instruction(repo, work, completion))
+        except (OSError, ValueError, KeyError, RuntimeError) as exc:
+            completion = {"ready": False, "reason": str(exc), "next": "Repair the evidence source, then run `cao verify`."}
+        fresh = None
+        if work.get("status") in {"active", "suspended"}:
+            try:
+                fresh = bound_verification_fresh(work, verification_inputs(repo, work, cfg)) if work.get("verification") else False
+            except (OSError, ValueError, KeyError, RuntimeError):
+                fresh = False
+        independent = sdd_acceptance_state(repo, work)
+        spec_state = (light_spec_state(repo, work, provider_output_dirs(sdd.get("provider")))
+                      if (assessment or {}).get("profile") == "light" else
+                      {"ready": True, "state": "not_applicable", "reason": None})
+        workflow = sdd.get("workflow") or {}
+        exceptions = {key: workflow[field] for key, field in (("entry", "unverified"), ("execution_failure", "failure_exception"))
+                      if workflow.get(field) and (field == "failure_exception" or workflow[field].get("allowed"))}
         work_items.append({
             "id": work["id"],
             "title": work.get("title") or work["id"],
@@ -516,7 +553,18 @@ def build_dashboard_overview(repo: Path, stale_after_minutes: int = 30) -> dict[
             "updated_at": timestamp_label(work.get("updated_at")),
             "started_at": timestamp_label(work.get("started_at")),
             "requirement": {"path": requirement.get("path"), "sha256": requirement.get("sha256")},
-            "sdd": {"provider": sdd.get("provider") or "none", "native_ref": sdd.get("native_ref"), "artifacts": sdd.get("artifacts") or []},
+            "sdd": {"provider": sdd.get("provider") or "none", "native_ref": sdd.get("native_ref"), "artifacts": sdd.get("artifacts") or [], "workflow": workflow,
+                    "spec_binding": sdd.get("spec_binding"), "acceptance": sdd.get("acceptance"),
+                    "route_decision": sdd.get("route_decision"), "route_history": sdd.get("route_history", []),
+                    "spec_approval": sdd.get("spec_approval")},
+            "implementation_state": native_route_state(repo, work),
+            "light_spec": spec_state,
+            "sdd_acceptance": independent,
+            "native_sync": native_sync_state(repo, work),
+            "completion": completion,
+            "gates": gate_state(work, bool(fresh), independent["ready"]),
+            "legacy_evidence": summary["legacy_evidence"],
+            "workflow_exception": exceptions or None,
             "execution": {
                 "step": execution.get("step") or "not recorded",
                 "next_action": execution.get("next_action") or {},
@@ -527,13 +575,14 @@ def build_dashboard_overview(repo: Path, stale_after_minutes: int = 30) -> dict[
             "path_state": assessment_state,
             "blockers": work.get("blockers") or [],
             "decisions": (work.get("decisions") or [])[-8:][::-1],
-            "verification": _verification_view(work),
+            "verification": _verification_view(work, fresh),
             "resume": {
                 "summary": resume.get("summary") or "暂无进度摘要",
                 "completed": resume.get("completed") or [],
                 "pending": resume.get("pending") or [],
                 "last_agent": resume.get("last_agent"),
                 "last_checkpoint_at": timestamp_label(resume.get("last_checkpoint_at")),
+                "last_native_sync_at": timestamp_label(resume.get("last_native_sync_at")),
             },
             "handoff_count": handoff_counts.get(work["id"], 0),
             "latest_handoff_id": (latest_by_work.get(work["id"]) or {}).get("id"),

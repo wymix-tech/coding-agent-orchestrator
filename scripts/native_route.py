@@ -1,0 +1,340 @@
+"""Work-bound native route decisions and host-observed specification approvals.
+
+CAO's quality profile and a provider's route are separate contracts. Route
+records never alter profiles/gates or certify workflow completion. Host input is
+an evidence boundary, not a security sandbox against a forged hook invocation.
+"""
+import hashlib
+import json
+import re
+
+from scripts.path_guard import repo_file, provider_artifact
+
+
+def digest(value):
+    return hashlib.sha256(json.dumps(value, ensure_ascii=False, sort_keys=True,
+                                     separators=(",", ":")).encode()).hexdigest()
+
+
+def file_hash(path):
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def text(value, error):
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(error)
+    return value.strip()
+
+
+def owned_file(repo, value, dirs):
+    # Reject linked source trees as well as escaped files.
+    safe = [d for d in dirs if (repo / d).resolve() == repo.resolve() / d]
+    path = provider_artifact(repo, text(value, "NATIVE_SOURCE_REQUIRED"), safe)
+    if not path.is_file():
+        raise ValueError("NATIVE_SOURCE_MISSING")
+    return path
+
+
+def intent_hash(path):
+    """BMAD locks intent, not mutable status, task checkboxes or review notes."""
+    content = path.read_text(encoding="utf-8-sig")
+    blocks = re.findall(r"<frozen-after-approval\b[^>]*>(.*?)</frozen-after-approval>",
+                        content, re.S)
+    if len(blocks) > 1:
+        raise ValueError("NATIVE_INTENT_AMBIGUOUS")
+    if blocks:
+        if not blocks[0].strip():
+            raise ValueError("NATIVE_INTENT_EMPTY")
+        return digest(blocks[0])
+    # Native status/checkbox progress is mutable; changing task text is not.
+    content = re.sub(r"\A---\s*\n(.*?)\n---(?:\n|$)",
+                     lambda m: "---\n" + re.sub(r"(?m)^status\s*:.*\n?", "", m[1]) + "\n---\n",
+                     content, count=1, flags=re.S)
+    content = re.sub(r"(?m)^(\s*[-*+]\s+)\[[ xX]\]", r"\1[ ]", content)
+    return digest(content)
+
+
+def build_route(path):
+    content = path.read_text(encoding="utf-8-sig")
+    front = re.match(r"\A---\s*\n(.*?)\n---(?:\n|$)", content, re.S)
+    if not front:
+        return None
+    entries = re.findall(r"(?m)^route\s*:\s*['\"]?([a-z-]+)['\"]?\s*(?:#.*)?$", front[1])
+    return entries[0] if len(entries) == 1 else None
+
+
+def open_questions(path):
+    content = path.read_text(encoding="utf-8-sig")
+    sections = re.findall(r"(?im)^##[ \t]+(?:Open Questions|开放问题|待确认问题)[ \t]*\n([\s\S]*?)(?=^##[ \t]+|\Z)", content)
+    return [body for section in sections
+            if (body := re.sub(r"<!--[\s\S]*?-->", "", section).strip())]
+
+
+def rule_source(repo, value, provider, skills):
+    path = repo_file(repo, value)
+    roots = {"bmad": ["_bmad"], "openspec": ["openspec"],
+             "speckit": [".specify"]}.get(provider, [])
+    allowed = any((repo / root).resolve() == repo.resolve() / root and
+                  path.is_relative_to(repo.resolve() / root) for root in roots)
+    for skill in skills:
+        source = repo_file(repo, skill["rel_path"])
+        if path == source:
+            allowed = True
+    if not allowed or not path.is_file():
+        raise ValueError("NATIVE_ROUTE_RULE_SOURCE_INVALID")
+    return path
+
+
+def normalize_decision(repo, work, raw, dirs, skills):
+    if not isinstance(raw, dict):
+        raise ValueError("NATIVE_ROUTE_DECLARATION_INVALID")
+    sdd = work.get("sdd") or {}
+    provider = sdd.get("provider")
+    assessment = work.get("path_assessment") or {}
+    requirement = work["requirement"]["sha256"]
+    if raw.get("provider") != provider or raw.get("requirement_sha256") != requirement:
+        raise ValueError("NATIVE_ROUTE_IDENTITY_MISMATCH")
+    if file_hash(repo / work["requirement"]["path"]) != requirement:
+        raise ValueError("NATIVE_ROUTE_REQUIREMENT_STALE")
+    if raw.get("profile", assessment.get("profile")) != assessment.get("profile"):
+        raise ValueError("NATIVE_ROUTE_PROFILE_CHANGE_REQUIRES_ASSESSMENT")
+    workflow = sdd.get("workflow") or {}
+    if not workflow and provider == "bmad" and assessment.get("profile") == "light":
+        workflow = {"name": "bmad-build", "entrypoint": "invoke skill bmad-build"}
+    if not workflow.get("name") or raw.get("workflow") != workflow.get("name"):
+        raise ValueError("NATIVE_ROUTE_WORKFLOW_MISMATCH")
+    route = text(raw.get("route"), "NATIVE_ROUTE_NAME_REQUIRED")
+    build = raw.get("build_route")
+    if provider == "bmad" and (route not in {"direct-build", "full-planning"}
+                               or build not in {"dispatch", "oneshot"}):
+        raise ValueError("NATIVE_ROUTE_NAME_INVALID")
+    rules = raw.get("rules")
+    if not isinstance(rules, list) or not rules:
+        raise ValueError("NATIVE_ROUTE_RULES_REQUIRED")
+    normalized = []
+    for rule in rules:
+        if not isinstance(rule, dict):
+            raise ValueError("NATIVE_ROUTE_RULE_INVALID")
+        path = rule_source(repo, rule.get("path"), provider, skills)
+        quote = text(rule.get("quote"), "NATIVE_ROUTE_RULE_QUOTE_REQUIRED")
+        sha = file_hash(path)
+        if rule.get("sha256") != sha or quote not in path.read_text(encoding="utf-8-sig"):
+            raise ValueError("NATIVE_ROUTE_RULE_EVIDENCE_MISMATCH")
+        normalized.append({"path": path.relative_to(repo).as_posix(), "sha256": sha,
+                           "quote": quote})
+    required = raw.get("required_artifacts")
+    if not isinstance(required, list) or not required:
+        raise ValueError("NATIVE_ROUTE_ARTIFACTS_REQUIRED")
+    artifacts = []
+    for item in required:
+        if not isinstance(item, dict):
+            raise ValueError("NATIVE_ROUTE_ARTIFACT_INVALID")
+        path = owned_file(repo, item.get("path"), dirs)
+        role = text(item.get("role"), "NATIVE_ROUTE_ARTIFACT_ROLE_REQUIRED")
+        if any(a["path"] == path.relative_to(repo).as_posix() for a in artifacts):
+            raise ValueError("NATIVE_ROUTE_DUPLICATE_ARTIFACT")
+        if role == "sprint" and path.name not in {"sprint-status.yaml", "sprint-status.yml"}:
+            raise ValueError("NATIVE_ROUTE_SPRINT_SOURCE_INVALID")
+        artifacts.append({"path": path.relative_to(repo).as_posix(), "role": role,
+                          "intent_sha256": intent_hash(path)})
+    primary = text(raw.get("primary_artifact"), "NATIVE_ROUTE_PRIMARY_REQUIRED")
+    primary = owned_file(repo, primary, dirs).relative_to(repo).as_posix()
+    if primary not in {a["path"] for a in artifacts}:
+        raise ValueError("NATIVE_ROUTE_PRIMARY_NOT_REQUIRED")
+    if provider == "bmad":
+        if build_route(repo / primary) != build:
+            raise ValueError("NATIVE_ROUTE_SPEC_ROUTE_MISMATCH")
+        if route == "full-planning" and not {"prd", "architecture", "epics", "sprint"}.issubset(
+                {a["role"] for a in artifacts}):
+            raise ValueError("NATIVE_ROUTE_FULL_PLANNING_ARTIFACTS_REQUIRED")
+    omitted = raw.get("omitted", [])
+    if not isinstance(omitted, list):
+        raise ValueError("NATIVE_ROUTE_OMISSIONS_INVALID")
+    omissions = []
+    for item in omitted:
+        if not isinstance(item, dict):
+            raise ValueError("NATIVE_ROUTE_OMISSIONS_INVALID")
+        replacement = text(item.get("replaced_by"), "NATIVE_ROUTE_REPLACEMENT_REQUIRED")
+        if replacement not in {a["path"] for a in artifacts}:
+            raise ValueError("NATIVE_ROUTE_REPLACEMENT_UNBOUND")
+        omissions.append({"name": text(item.get("name"), "NATIVE_ROUTE_OMISSION_NAME_REQUIRED"),
+                          "reason": text(item.get("reason"), "NATIVE_ROUTE_OMISSION_REASON_REQUIRED"),
+                          "replaced_by": replacement})
+    if provider == "bmad" and route == "direct-build" and not omissions:
+        raise ValueError("NATIVE_ROUTE_OMISSIONS_REQUIRED")
+    return {"provider": provider, "requirement_sha256": requirement,
+            "assessment_revision": assessment.get("revision"), "profile": assessment.get("profile"),
+            "required_gates": assessment.get("required_gates", []),
+            "workflow": workflow["name"], "entrypoint": workflow["entrypoint"],
+            "route": route, "build_route": build,
+            "reason": text(raw.get("reason"), "NATIVE_ROUTE_REASON_REQUIRED"),
+            "provider_version": text(raw.get("provider_version"), "NATIVE_ROUTE_VERSION_REQUIRED"),
+            "rules": normalized, "required_artifacts": artifacts,
+            "primary_artifact": primary, "omitted": omissions,
+            "approval_required": provider == "bmad" and build == "dispatch"}
+
+
+def route_state(repo, work, dirs, required=False):
+    sdd = work.get("sdd") or {}
+    record = sdd.get("route_decision")
+    def blocked(reason, next_step=None):
+        return {"ready": False, "reason": reason, "next": next_step or
+                "Read installed native routing rules and submit current evidence with `cao sdd route propose --declaration <route.json>`; do not restart intake."}
+    if not record:
+        return blocked("NATIVE_ROUTE_REQUIRED") if required else {"ready": True, "state": "not_applicable"}
+    assessment = work.get("path_assessment") or {}
+    workflow = sdd.get("workflow") or {}
+    if not workflow and sdd.get("provider") == "bmad" and assessment.get("profile") == "light":
+        workflow = {"name": "bmad-build", "entrypoint": "invoke skill bmad-build"}
+    if (record.get("requirement_sha256") != work["requirement"]["sha256"]
+            or record.get("assessment_revision") != assessment.get("revision")
+            or record.get("profile") != assessment.get("profile")
+            or record.get("required_gates") != assessment.get("required_gates", [])
+            or record.get("provider") != sdd.get("provider")
+            or record.get("workflow") != workflow.get("name")
+            or record.get("entrypoint") != workflow.get("entrypoint")):
+        return blocked("NATIVE_ROUTE_STALE")
+    try:
+        if file_hash(repo / work["requirement"]["path"]) != record["requirement_sha256"]:
+            return blocked("NATIVE_ROUTE_STALE")
+        for rule in record["rules"]:
+            if file_hash(repo_file(repo, rule["path"])) != rule["sha256"]:
+                return blocked("NATIVE_ROUTE_RULES_CHANGED")
+        for artifact in record["required_artifacts"]:
+            path = owned_file(repo, artifact["path"], dirs)
+            if artifact["role"] != "sprint" and intent_hash(path) != artifact["intent_sha256"]:
+                return blocked("NATIVE_ROUTE_INTENT_CHANGED")
+        if sdd.get("native_ref") != record["primary_artifact"]:
+            return blocked("NATIVE_ROUTE_SOURCE_CHANGED")
+        primary = owned_file(repo, record["primary_artifact"], dirs)
+        if record["provider"] == "bmad" and build_route(primary) != record["build_route"]:
+            return blocked("NATIVE_ROUTE_SPEC_ROUTE_MISMATCH")
+        questions = open_questions(primary) if record["provider"] == "bmad" else []
+        if questions:
+            return blocked("NATIVE_SPEC_CLARIFICATION_REQUIRED", "Follow the native planning step: ask the user to resolve the SPEC's Open Questions before requesting approval. Preserve the draft and current Work; incorporate answers and refresh affected route evidence, then request SPEC approval.")
+        if record["provider"] == "bmad" and record["route"] == "full-planning":
+            plans = (sdd.get("plan_scope") or {}).get("plans", [])
+            required_plans = {a["path"] for a in record["required_artifacts"] if a["role"] == "sprint"}
+            if not required_plans.issubset({p.get("path") for p in plans if p.get("item_ids")}):
+                return blocked("NATIVE_ROUTE_PLAN_SCOPE_REQUIRED", "Bind ALL current requirement stories/epics with `cao sdd plan bind --plan-item <sprint-status.yaml>#<id>`; do not adopt the whole shared project plan.")
+        if record["approval_required"]:
+            approval = sdd.get("spec_approval") or {}
+            if (approval.get("status") != "approved" or approval.get("work_item_id") != work["id"]
+                    or approval.get("path") != record["primary_artifact"]
+                    or approval.get("requirement_sha256") != record["requirement_sha256"]
+                    or approval.get("route_decision_id") != record["id"]
+                    or approval.get("intent_sha256") != intent_hash(primary)):
+                return blocked("NATIVE_SPEC_APPROVAL_REQUIRED", "Present the spec summary and request approval with `cao sdd approval request`; wait for explicit user approval through the host, then run `cao sdd sync`.")
+            if approval.get("stop_after_approval"):
+                return blocked("NATIVE_IMPLEMENTATION_PAUSED", "The user approved and stopped. Wait for their explicit instruction to continue implementation; preserve the approved spec.")
+    except (ValueError, OSError, KeyError, TypeError, RuntimeError):
+        return blocked("NATIVE_ROUTE_SOURCE_UNAVAILABLE")
+    return {"ready": True, "state": "accepted", "route": record["route"],
+            "build_route": record["build_route"], "decision_id": record["id"]}
+
+
+def request_context_matches(record, work_id, host, session_id, raw=None, event=None):
+    """A reply belongs to a request shown in this Work's host session."""
+    if record.get("work_item_id") != work_id or not session_id:
+        return False
+    if {"host": host, "session_id": session_id} not in record.get("contexts", []):
+        return False
+    if event == "post_tool":
+        call_id = (raw or {}).get("toolCallId") or (raw or {}).get("tool_call_id") or (raw or {}).get("tool_use_id")
+        binding = {"host": host, "session_id": session_id, "tool_call_id": call_id,
+                   "approval_id": record.get("id")}
+        return bool(call_id and binding in record.get("questions", []))
+    return True
+
+
+def bind_request_context(record, work_id, host, session_id):
+    if record.get("work_item_id") != work_id or not session_id:
+        return False
+    context = {"host": host, "session_id": session_id}
+    contexts = record.setdefault("contexts", [])
+    if context in contexts:
+        return False
+    contexts.append(context)
+    return True
+
+
+def bind_approval_question(record, work_id, raw, host, session_id):
+    """Capture the native tool-call identity before the question is answered."""
+    if ((raw.get("tool_name") or raw.get("toolName")) != "ask_user_question"
+            or not request_context_matches(record, work_id, host, session_id)):
+        return False
+    call_id = raw.get("toolCallId") or raw.get("tool_call_id") or raw.get("tool_use_id")
+    if not isinstance(call_id, str) or not call_id:
+        return False
+    binding = {"host": host, "session_id": session_id, "tool_call_id": call_id,
+               "approval_id": record["id"]}
+    questions = record.setdefault("questions", [])
+    if binding in questions:
+        return False
+    questions.append(binding)
+    record["questions"] = questions[-32:]
+    return True
+
+
+def approve_observed_response(repo, work, raw, event, host, session_id, dirs, timestamp):
+    """Accept only an explicit approval response after a Work-specific request."""
+    approval = (work.get("sdd") or {}).get("spec_approval") or {}
+    if (approval.get("status") not in {"pending", "approved"}
+            or not request_context_matches(approval, work["id"], host, session_id, raw, event)):
+        return None
+    replies = []
+    if event == "prompt_submit":
+        value = raw.get("prompt")
+        if isinstance(value, str):
+            replies.append(value)
+    elif event == "post_tool" and (raw.get("tool_name") or raw.get("toolName")) == "ask_user_question" and not raw.get("isError"):
+        response = raw.get("tool_response")
+        details = raw.get("details") or (response.get("details") if isinstance(response, dict) else {})
+        if isinstance(details, dict):
+            for answer in details.get("answers", []):
+                if isinstance(answer, dict):
+                    value = answer.get("answer") or answer.get("selectedLabel")
+                    if isinstance(value, str):
+                        replies.append(value)
+                    for value in answer.get("selectedOptions", []):
+                        if isinstance(value, str): replies.append(value)
+                        elif isinstance(value, dict) and isinstance(value.get("label"), str): replies.append(value["label"])
+    pattern = r"(?:批准(?:规格|并继续|并停止)?|同意(?:此|该|这份)?规格(?:并继续|并停止)?|approve(?: the)? spec(?:ification)?|approve and (?:continue|stop))"
+    if approval.get("status") == "approved":
+        if not approval.get("stop_after_approval"):
+            return None
+        pattern = r"(?:继续实现|开始实现|批准并继续|continue implementation|approve and continue)"
+    reply = next((v for v in replies if re.fullmatch(pattern + r"[。.!！\s]*", v.strip(), re.I)), None)
+    if reply is None:
+        return None
+    try:
+        path = owned_file(repo, approval["path"], dirs)
+        if (approval["intent_sha256"] != intent_hash(path)
+                or approval["requirement_sha256"] != work["requirement"]["sha256"]
+                or file_hash(repo / work["requirement"]["path"]) != approval["requirement_sha256"]
+                or approval["route_decision_id"] != (work["sdd"].get("route_decision") or {}).get("id")):
+            return None
+    except (ValueError, OSError, KeyError, RuntimeError):
+        return None
+    approval.update(status="approved", approved_at=timestamp, evidence={"host": host,
+                    "session_id": session_id, "work_item_id": work["id"], "approval_id": approval["id"],
+                    "tool_call_id": raw.get("toolCallId") or raw.get("tool_call_id") or raw.get("tool_use_id"),
+                    "event": event, "response": reply,
+                    "response_sha256": digest(reply)})
+    approval["stop_after_approval"] = bool(re.search(r"停止|\bstop\b", reply, re.I))
+    return approval
+
+
+def approve_baseline_response(work, raw, event, host, session_id, current_hash, timestamp):
+    review = work.get("verification_review") or {}
+    reply = raw.get("prompt")
+    if (event != "prompt_submit" or review.get("status") != "pending"
+            or not request_context_matches(review, work["id"], host, session_id)
+            or review.get("config_sha256") != current_hash or not isinstance(reply, str)
+            or not re.fullmatch(r"(?:批准验证基线|approve verification baseline)[。.!！\s]*", reply.strip(), re.I)):
+        return None
+    review.update(status="approved", approved_at=timestamp, evidence={"host": host,
+                  "session_id": session_id, "work_item_id": work["id"], "approval_id": review["id"],
+                  "event": event, "response": reply,
+                  "response_sha256": digest(reply)})
+    return review

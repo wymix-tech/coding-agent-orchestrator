@@ -2,6 +2,12 @@
 .orchestrator/*
 !.orchestrator/config.json
 
+# Isolated implementation worktrees
+.worktrees/
+
+# Node development dependencies
+node_modules/
+
 # Python bytecode and caches
 __pycache__/
 *.py[cod]

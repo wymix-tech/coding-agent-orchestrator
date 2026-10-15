@@ -1,11 +1,14 @@
 import argparse
 import json
+import os
 import pathlib
 import subprocess
 import sys
 import tempfile
 import unittest
 from unittest import mock
+
+from repair_helpers import HOST_KEYS
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 CAO = ROOT / "scripts" / "cao.py"
@@ -39,8 +42,9 @@ class RepairTests(unittest.TestCase):
 
     def test_bmad_requires_host_or_tools(self):
         args = argparse.Namespace(host=None, tools=None)
-        with self.assertRaises(ValueError):
-            cao.build_bmad_project_command(args, pathlib.Path("/tmp/demo"))
+        with mock.patch.dict(os.environ, {key: "" for key in HOST_KEYS}):
+            with self.assertRaises(ValueError):
+                cao.build_bmad_project_command(args, pathlib.Path("/tmp/demo"))
 
 
     def test_bmad_catalog_command_template_contains_required_non_interactive_flags(self):
@@ -128,7 +132,7 @@ class RepairTests(unittest.TestCase):
     def test_legacy_single_verification_command_is_migrated(self):
         cfg = {"verification": {"command": "mvn -q test"}}
         commands = cao.verification_scripts(cfg)
-        self.assertEqual(commands, [{"name": "default", "command": "mvn -q test", "required": True}])
+        self.assertEqual(commands, [{"name": "default", "command": "mvn -q test", "required": True, "gates": []}])
 
     def test_legacy_command_list_is_migrated_to_scripts(self):
         cfg = {

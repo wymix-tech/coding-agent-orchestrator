@@ -4,16 +4,19 @@
     "user": "zh-CN"
   },
   "verification": {
+    "timeout_seconds": 300,
     "scripts": [
       {
         "name": "unit-tests",
         "command": "./scripts/verify-unit-tests.sh",
-        "required": true
+        "required": true,
+        "gates": ["tests"]
       },
       {
         "name": "coverage",
         "command": "./scripts/verify-coverage.sh",
-        "required": true
+        "required": true,
+        "gates": []
       }
     ]
   },

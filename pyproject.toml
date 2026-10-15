@@ -29,7 +29,17 @@ cao = "scripts.cao:main"
 packages = ["scripts"]
 
 [tool.setuptools.data-files]
+"share/coding-agent-orchestrator" = ["package.json", "SKILL.md", "cao"]
 "share/coding-agent-orchestrator/templates" = ["templates/AGENTS.md", "templates/CLAUDE.md"]
+# Host adapters and the shared hook bridge must ship with the package: without
+# them `cao init` cannot wire any host, and no Session/Handoff/gate event is
+# ever delivered.
+"share/coding-agent-orchestrator/hooks" = ["hooks/host-event.sh"]
+"share/coding-agent-orchestrator/hosts/claude-code" = ["hosts/claude-code/settings.fragment.json"]
+"share/coding-agent-orchestrator/hosts/codex" = ["hosts/codex/hooks.json"]
+"share/coding-agent-orchestrator/hosts/pi" = ["hosts/pi/coding-orchestrator.ts"]
+
+"share/coding-agent-orchestrator/docs" = ["docs/native-route-contract.md"]
 
 [tool.setuptools.package-data]
 scripts = ["dashboard.html"]

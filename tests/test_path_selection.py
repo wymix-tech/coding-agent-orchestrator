@@ -4,6 +4,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from tests.helpers import configure_verification
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 CAO = ROOT / "scripts" / "cao.py"
@@ -37,6 +38,7 @@ class PathSelectionTests(unittest.TestCase):
         (repo / "requirements/change.md").write_text("Change the login behavior", encoding="utf-8")
         rc, _, _ = run(repo, "init")
         self.assertEqual(rc, 0)
+        configure_verification(repo)
         rc, _, _ = run(repo, "start", "--requirement", "requirements/change.md")
         self.assertEqual(rc, 0)
         return td, repo
@@ -114,14 +116,14 @@ class PathSelectionTests(unittest.TestCase):
             self.assertIn("major_ambiguity", out["path_assessment"]["risk_flags"])
             self.assertEqual(out["next_action"]["type"], "human")
 
-    def test_code_mutation_requires_path_assessment(self):
+    def test_code_mutation_requires_current_path_assessment(self):
+        """An accepted baseline alone cannot authorize business implementation."""
         td, repo = self.init_repo()
         with td:
             event = {"event": "pre_tool", "tool_name": "write", "tool_input": {"path": "src.py", "content": "x"}}
             rc, out, _ = run(repo, "host-event", "--host", "codex", input_text=json.dumps(event))
             self.assertEqual(rc, 0)
             self.assertEqual(out["hookSpecificOutput"]["permissionDecision"], "deny")
-            self.assertIn("cao path assess", out["hookSpecificOutput"]["permissionDecisionReason"])
 
     def test_cao_path_assess_shell_command_is_not_mistaken_for_product_code_mutation(self):
         td, repo = self.init_repo()

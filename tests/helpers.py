@@ -1,0 +1,114 @@
+"""Real, pre-start verification standards for CAO integration tests."""
+import json
+import os
+import pathlib
+import shlex
+import subprocess
+import sys
+import time
+
+
+def configure_verification(repo, command=None):
+    """Provision a genuine unittest, or an explicitly general verification script."""
+    repo = pathlib.Path(repo)
+    gates = []
+    if command is None:
+        tests = repo / "acceptance-tests"
+        tests.mkdir(exist_ok=True)
+        (tests / "test_acceptance.py").write_text(
+            "import unittest\nclass Acceptance(unittest.TestCase):\n"
+            "    def test_ok(self): self.assertEqual(1 + 1, 2)\n", encoding="utf-8")
+        argv = [sys.executable, "-m", "unittest", "discover", "-s", "acceptance-tests", "-v"]
+        command = subprocess.list2cmdline(argv) if os.name == "nt" else shlex.join(argv)
+        gates = ["tests"]
+    path = repo / ".orchestrator/config.json"
+    cfg = json.loads(path.read_text(encoding="utf-8"))
+    cfg.setdefault("verification", {})["scripts"] = [
+        {"name": "script-1", "command": command, "required": True, "gates": gates}
+    ]
+    cfg["verification"]["configured_at"] = int(time.time())
+    path.write_text(json.dumps(cfg, ensure_ascii=False), encoding="utf-8")
+
+
+def verify_via_config(repo, run):
+    """Execute the existing standard without altering it or fabricating its age."""
+    return run(repo, "verify")
+
+
+def bind_light_spec(repo, run, path, wid=None):
+    """Bind an explicit local-fixture criterion without native workflow registration."""
+    target = pathlib.Path(repo) / path
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text('# Fixture SPEC\nBounded local fixture.\n## Acceptance\n- The fixture check passes.\n', encoding='utf-8')
+    args = ['sdd', 'spec', 'bind', '--spec', path, '--criteria-section', 'Acceptance']
+    if wid:
+        args += ['--work', wid]
+    result = run(repo, *args)
+    assert result[0] == 0, result
+
+
+def complete_acceptance(repo, run, wid=None):
+    """Real CLI final acceptance for local fixtures, not a real provider/reviewer test.
+
+    Preserves previously observed manual reviews across the initial explicit anchor.
+    The executor runs the fixture unittest and reports its actual result.
+    """
+    repo = pathlib.Path(repo)
+    if wid is None:
+        wid = json.loads((repo / '.orchestrator/index.json').read_text())['active_work']
+    work = json.loads((repo / f'.orchestrator/work/{wid}.json').read_text())
+    provider = work['sdd']['provider']
+    directory = {'bmad': '_bmad-output', 'openspec': 'openspec', 'speckit': 'specs'}[provider]
+    def checked(*args):
+        result = run(repo, *args, '--work', wid)
+        assert result[0] == 0, result
+        return result[1]
+    if not work['sdd'].get('acceptance'):
+        spec = f'{directory}/fixture-acceptance.md'
+        (repo / directory).mkdir(exist_ok=True)
+        (repo / spec).write_text('# Local fixture acceptance\n- The fixture unittest passes.\n', encoding='utf-8')
+        script = 'fixture-final-acceptance.py'
+        (repo / script).write_text('''import json, os, subprocess, sys
+r = json.loads(os.environ['CAO_SDD_ACCEPTANCE_REQUEST'])
+p = subprocess.run([sys.executable, '-m', 'unittest', 'discover', '-s', 'acceptance-tests', '-v'], stdout=sys.stderr, stderr=sys.stderr)
+print(json.dumps({'run_id': r['run_id'], 'input_sha256': r['input_sha256'], 'provider': r['provider'], 'items': [{'id': 'AC-FIXTURE', 'status': 'passed' if p.returncode == 0 else 'failed', 'evidence': [{'path': 'acceptance-tests/test_acceptance.py', 'reason': 'Actual fixture unittest execution'}]}]}))
+sys.exit(p.returncode)
+''', encoding='utf-8')
+        argv = [sys.executable, script]
+        command = subprocess.list2cmdline(argv) if os.name == 'nt' else shlex.join(argv)
+        declaration = {'spec': spec, 'criteria': [{'id': 'AC-FIXTURE', 'source': spec, 'kind': 'requirement', 'description': 'Fixture unittest passes'}], 'executor': {'mode': 'command', 'entrypoint': command}}
+        (repo / 'fixture-acceptance.json').write_text(json.dumps(declaration), encoding='utf-8')
+        checked('sdd', 'acceptance', 'configure', '--declaration', 'fixture-acceptance.json')
+        checked('reopen', '--reanchor', '--reason', 'Reviewed local fixture acceptance')
+        for gate, record in work.get('gate_status', {}).items():
+            if record.get('satisfied'):
+                checked('gate', 'satisfy', '--gate', gate, '--evidence', record['evidence'])
+    checked('verify')
+    checked('sdd', 'acceptance', 'run')
+
+
+def fixture_native_review(repo, run, wid=None):
+    """Recorded, independently executed local review fixture; not a real model review."""
+    import tempfile
+    repo = pathlib.Path(repo)
+    source = repo / '_bmad/render/cao-fixture/step-oneshot.md'
+    source.parent.mkdir(parents=True, exist_ok=True)
+    source.write_text('### Review\n#### Blind Hunter (`blind-hunter`)\nRun an independent fixture inspection.\n### Classify\nRecord each finding.\n### Commit\nCommit when Git is available.\n')
+    args = ['sdd','review','begin','--layer','blind-hunter','--model','fixture-model','--instructions',source.relative_to(repo).as_posix()]
+    if wid: args += ['--work',wid]
+    rc,out = run(repo,*args);assert rc==0,out
+    ticket=out['review'];directory=repo/'_bmad-output/review-fixture';directory.mkdir(parents=True,exist_ok=True)
+    with tempfile.TemporaryDirectory() as d:
+        script=pathlib.Path(d)/'reviewer.py'
+        script.write_text("from pathlib import Path\nimport sys\np=Path(sys.argv[1])\nassert p.is_dir()\nprint('- F1: Independently inspect the local fixture source and verification setup.')\n")
+        findings=subprocess.check_output([sys.executable,str(script),str(repo)],text=True)
+    raw=directory/'findings.md';raw.write_text(findings)
+    report=directory/'report.json'
+    report.write_text(json.dumps({'run_id':ticket['id'],'input_sha256':ticket['input_sha256'],
+        'reviewer':{'mode':'external-session','session_id':'independent-fixture-process','model':'fixture-model'},
+        'findings_file':raw.relative_to(repo).as_posix(),'findings':[{'id':'F1','verdict':'false','disposition':'reject',
+        'evidence':'A separate local Python process inspected the fixture directory; this fixture does not assert expert semantic review.'}]}))
+    args=['sdd','review','submit','--layer','blind-hunter','--report',report.relative_to(repo).as_posix()]
+    if wid:args+=['--work',wid]
+    rc,out=run(repo,*args);assert rc==0,out
+    return report

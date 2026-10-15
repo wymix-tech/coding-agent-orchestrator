@@ -5,6 +5,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from helpers import configure_verification
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 CAO = ROOT / "scripts" / "cao.py"
@@ -67,6 +68,7 @@ class SddBootstrapTests(unittest.TestCase):
             rc, out = run(repo, "bootstrap")
             self.assertEqual(rc, 0)
             self.assertEqual(out["mode"], "select")
+            self.assertFalse(out["verification_setup"]["ready"])
             self.assertEqual(out["sdd"]["selected"], "openspec")
             config = json.loads((repo / ".orchestrator/config.json").read_text(encoding="utf-8"))
             self.assertEqual(config["sdd"]["provider"], "openspec")
@@ -125,6 +127,7 @@ class SddBootstrapTests(unittest.TestCase):
             rc, out = run(repo, "bootstrap")
             self.assertEqual(rc, 0)
             self.assertEqual(out["mode"], "select")
+            self.assertFalse(out["verification_setup"]["ready"])
             self.assertEqual(out["sdd"]["selected"], "speckit")
             rc, out = run(repo, "start", "--requirement", "specs/001-login/spec.md")
             self.assertEqual(rc, 0)
@@ -157,6 +160,7 @@ class SddBootstrapTests(unittest.TestCase):
             (repo / "requirements").mkdir()
             (repo / "requirements/login.md").write_text("Add login", encoding="utf-8")
             run(repo, "init")
+            configure_verification(repo)
             rc, _, = run(repo, "start", "--requirement", "requirements/login.md")
             self.assertEqual(rc, 0)
             import shutil

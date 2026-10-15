@@ -15,6 +15,18 @@ CAO keeps a durable state for every requirement so work can survive:
 CAO does **not** replace the project's SDD. BMAD, OpenSpec, and other SDDs keep their own artifacts.
 CAO stores references to those artifacts and owns only execution continuity.
 
+### Path protection limits
+
+Direct edits to CAO-derived `.orchestrator/` state are denied; actual requirement documents remain writable.
+Targets are resolved, including `..`, symlinks, structured patch moves, Shell redirects and simple compound commands.
+Native workflow outputs must stay in the current provider's real output directories, even with `--allow-unverified`.
+That flag documents an entrypoint or failed-execution exception; it does not turn product files into SDD artifacts.
+Product writes require an active Work Item. Numbered requirement documents, native SDD outputs and CAO commands remain writable before Work creation; within an active Work, governance gaps yield reminders.
+
+This is **not a Shell sandbox**. Dynamic variables, command substitution, evaluated/nested scripts and unparseable
+commands cannot be reliably mapped to file targets. Without an active Work, unclassified mutations are denied; within an active Work, detectable dynamic cases receive a risk reminder. These checks are not a claim of isolation.
+Verification and installation commands are trusted project code and may have side effects.
+
 ## Installation
 
 CAO exposes a standard `cao` command through its Python package metadata. Python 3.10 or newer is required.
@@ -41,7 +53,9 @@ The repository also includes a `./cao` source-checkout launcher for shell-based 
 ## Core commands
 
 ```bash
-cao init
+cao init --host <claude-code|codex|pi>
+cao host install --host <host>
+cao host status
 cao bootstrap
 cao sdd list
 cao sdd install --provider openspec --yes
@@ -50,6 +64,11 @@ cao list
 cao start --requirement requirements/login.md --title "User login" --sdd-ref changes/add-login
 cao path assess --profile standard --reason "A small API change that needs a spec and integration tests"
 cao path show
+cao sdd workflow select --name "<native workflow>" --entrypoint "<native command or skill>"
+cao sdd workflow execute --command "<command actually run>" --exit-code 0
+cao sdd workflow complete --artifact _bmad-output/requirements.md
+cao gate satisfy --gate scope_review --evidence "Reviewed the requirement scope"
+cao gate show
 cao checkpoint --step implement-login-api --next "run integration tests" --summary "JWT endpoint implemented"
 cao decision --decision "Use Redis for refresh token" --reason "Supports revocation"
 cao block --reason "Need product confirmation" --suspend
@@ -97,9 +116,26 @@ on a trusted network. Press `Ctrl+C` to stop the server.
 ├── work/<work-id>.json
 ├── sessions/<session-internal-id>.json
 ├── lifecycle/events.jsonl             # append-only lifecycle event log
+├── requirements/
+│   └── 001-requirement-<slug>-<date>.md   # numbered requirement documents
 └── handoffs/
     └── <work-id>/<handoff-id>.json    # immutable handoff history
 ```
+
+Requirement documents stated inline must be landed here before a Work Item can be created. CAO owns the
+location and numbering; the Agent writes the content:
+
+```bash
+cao requirement next-id --title "用户登录"   # creates .orchestrator/requirements/001-requirement-用户登录-2026-10-10.md
+# edit that file with the requirement content, then:
+cao start --requirement .orchestrator/requirements/001-requirement-用户登录-2026-10-10.md
+cao requirement list                        # what already exists
+```
+
+Numbers are derived from existing files so they never collide. This directory is exempt from the
+PreToolUse mutation gate, because a requirement must exist before `cao start` can create a Work Item —
+blocking those writes deadlocks intake. The rest of `.orchestrator/` holds CAO state the Agent must not
+hand-edit.
 
 ### Session lifecycle and inspection
 
@@ -112,7 +148,16 @@ cao sessions list --stale-after-minutes 30
 cao sessions show --id <session-id> --host codex
 ```
 
-`recent` and `stale` are calculated from `last_event_at`; stale means “no recent event observed”, not “the Agent has ended”. Only an explicit end event closes a Session. Creating a Handoff alone does not end a Session; main-session stop events create a Handoff and then close that Session, while subagent stop events close only the subagent Session.
+`recent` and `stale` describe observed activity, not process liveness. Stop/turn_end (including Pi agent_end)
+may create a Handoff but keep the Session active. Only session_end or a distinct subagent_stop ends it;
+before_settle only reminds. Missing IDs produce diagnostics, never a shared default Session. Claude Code
+uses SessionEnd; Pi 1.1.0 uses session_shutdown. Codex has no verified native SessionEnd integration:
+use `cao handoff --host codex --session <id> --end-session` on actual exit, not each turn.
+
+Host adapters register Sessions through `host-event`, which only happens when the adapter is installed. As a
+fallback, `cao bootstrap` and `cao start` attach the runtime Session whenever the host and its native session
+id are visible (`CAO_HOST`, `CLAUDE_CODE_SESSION_ID`, `CODEX_THREAD_ID`, `PI_SESSION_ID`); otherwise CAO records
+nothing rather than inventing an `unknown` Session.
 
 ### SDD lifecycle reconciliation
 
@@ -139,6 +184,10 @@ and how the change can be verified. CAO does not use numeric scoring or a fact/e
 | `standard` | Ordinary feature or bug fix with limited design work | Scope/design as needed, tests, implementation review, verification |
 | `comprehensive` | High-risk, broad, materially ambiguous, or hard-to-reverse change | Requirements and design review, staged implementation, stronger verification |
 
+`light` needs a current provider-native SPEC, explicit nonempty acceptance criteria (or recognized BMAD oneshot Intent) and fresh configured project verification. It does not require workflow select/execute/complete, plans/no-plan or independent SDD acceptance. Standard/comprehensive retain native workflow and related plan/review gates and also require independent final SDD acceptance. Declared risks still upgrade the profile.
+
+CAO rejects placeholder workflow entrypoints and output paths outside the provider's directory. When installed agent Skills exist, use their actual SKILL.md and renderer instead of guessing CLI subcommands. Re-select after changing workflows. Explicit `--allow-unverified --reason "<why>"` exceptions are audited for select, execute and complete; they do not replace final SDD acceptance.
+
 Create or refresh the assessment:
 
 ```bash
@@ -151,11 +200,21 @@ Risk flags are intentionally few and deterministic. `security`, `data-migration`
 `multi-module`, and `compatibility` require at least `standard`. CAO upgrades a lower requested profile
 when needed and records the reason, required gates, requirement hash, and selected provider guidance.
 
-`major-ambiguity` pauses implementation until the user clarifies the material behavior and the Agent
-reassesses without that flag. Host Hooks deny code mutation while an assessment is missing/stale or a
-material ambiguity remains. A requirement-file change must follow CAO's re-anchor procedure before a
-new assessment. Provider-specific mapping remains guidance: BMAD, OpenSpec, and Spec Kit keep their
-native workflow and mandatory preconditions. Profiles do not waive configured Verification scripts.
+`major-ambiguity` asks the Agent to clarify behavior and reassess. Missing/stale assessments and material
+ambiguity cause **reminders, not blocked product writes**. Direct state edits and `cao done` remain hard
+constraints. Requirement changes need explicit re-anchoring before reassessment. Provider guidance does
+not replace native prerequisites or waive configured Verification scripts.
+
+Intake is exempt from this gate: writes inside a provider's native output directory
+(`_bmad-output/`, `openspec/`, `specs/`, `.specify/`) are allowed without an active Work Item, because a
+requirement/PRD must exist before `cao start` can create one — blocking those writes deadlocks intake.
+Product writes elsewhere are denied without an active Work Item. Missing/stale assessments within an active Work still produce reminders. Mixed native/product writes are denied without Work; copying a read-only input to a native output remains allowed.
+
+### Native state synchronization
+
+A current Work-bound `sdd spec bind` source takes precedence over filename matching and older native references. Chinese requirement titles and English SPEC names do not need to match. Native file status changes synchronize on host tool results and before context/handoff events; CLI and Dashboard reads repair older bound Work records. Source paths must remain provider-owned, missing or ambiguous sources are not replaced with another file, and plain artifact existence does not prove implementation.
+
+Dashboard task details show native synchronization separately: observed state/source, missing association, unavailable source, or unrecognized status. BMAD `in-progress` projects to implementation and `in-review`/`done` to review. OpenSpec/Spec Kit use the associated change/feature's actual tasks. Later verification checkpoints are retained; only explicit `cao done` closes Work. Synchronization does not refresh SPEC/criteria hashes, reanchor requirements, satisfy reviews or certify verification. Changed native input still requires explicit review/rebinding and fresh checks.
 
 ### Handoff history and inspection
 
@@ -203,8 +262,11 @@ SDD provider + task/domain skills
 ```
 
 `templates/AGENTS.md` and `templates/CLAUDE.md` are templates, not project-level instructions for
-this CAO source repository. On `cao bootstrap`, CAO copies either template into the target project
-root only when that file does not already exist. Existing user instructions are never overwritten.
+this CAO source repository. On `cao init`, CAO copies **only the template the provisioned host reads**
+(`CLAUDE.md` for Claude Code, `AGENTS.md` for Codex and Pi) into the target project root, and only when
+that file does not already exist, rendering the known host into the instructions. When no host can be
+detected, both are installed as a fallback. `cao bootstrap` re-checks them idempotently. Existing user
+instructions are never overwritten.
 The CAO package deliberately does not contain a nested `.agents/` tree because its installation
 directory is already the Skill directory.
 
@@ -217,10 +279,38 @@ and handoff. The SDD remains authoritative for its native artifacts and workflow
 
 The package includes host adapters for Claude Code, Codex, and Pi. All adapters invoke the same `cao` CLI entry point when installed, and fall back to the source-checkout launcher when used directly from a plugin checkout.
 
+### Host hooks are wired during `cao init`, not `cao bootstrap`
+
+Host hooks are **process-startup integrations**: Claude Code reads its settings file and Pi loads its
+extensions when the host process starts. Installing them from `cao bootstrap` is too late — that command
+already runs inside a session whose `SessionStart` hook was missed, so no host event would be delivered
+until the *next* session.
+
+`cao init` therefore wires the adapter as part of provisioning:
+
+```bash
+cao init --host claude-code      # -> .claude/settings.local.json
+cao init --host codex            # -> .codex/hooks.json
+cao init --host pi               # -> pi install --local <cao-package> (.pi/settings.json)
+cao host install --host <host>   # backfill an already-initialized project
+cao host status                  # inspect whether each adapter is wired
+```
+
+If no host can be determined, `cao init` still succeeds and reports `host_adapters.status: host_required`
+with the exact `cao host install --host ...` command. Initialization is never blocked by an unknown host.
+
+Installation is idempotent and non-destructive: existing host settings are deep-merged, never rewritten,
+and an already-registered CAO command is not added twice. Claude Code hooks go to `settings.local.json`
+(usually git-ignored) so teammates who do not use CAO are never forced to load them.
+
+Even with hooks installed, the current session cannot receive its own `SessionStart`. `cao bootstrap` and
+`cao start` therefore attach the runtime Session as a fallback whenever the host and its native session id
+are visible, which covers that first session. The two mechanisms are complementary, not alternatives.
+
 ## Why the core is intentionally small
 
-There is no Fact Resolver, evidence provenance graph, independent state-manager module, or provider-
-specific governance engine. The core state is plain JSON, and SDD compatibility is reference-driven.
+There is no Fact Resolver, evidence provenance graph, second state store, or provider-specific governance
+engine. `state_store.py` provides atomic JSON and repository transactions; SDD compatibility is reference-driven.
 The execution-path selector follows the same constraint: a short Agent assessment, a three-profile
 policy, a small hard-risk map, and Provider guidance. It does not add semantic scoring or evidence
 infrastructure.
@@ -292,8 +382,9 @@ Example:
 ```json
 {
   "verification": {
+    "timeout_seconds": 300,
     "scripts": [
-      {"name": "unit-tests", "command": "./scripts/verify-unit-tests.sh", "required": true},
+      {"name": "unit-tests", "command": "./scripts/verify-unit-tests.sh", "required": true, "gates": ["tests"]},
       {"name": "coverage", "command": "./scripts/verify-coverage.sh", "required": true},
       {"name": "security", "command": "./scripts/verify-security.sh", "required": true}
     ]
@@ -301,11 +392,12 @@ Example:
 }
 ```
 
-A unit-test script can enforce 100% success itself:
+A unit-test script can delegate to the project's strict build configuration. For Java/Jupiter, configure
+JUnit5-capable Surefire first; require failure on zero tests rather than treating an empty run as success:
 
 ```bash
 #!/usr/bin/env bash
-mvn -q test
+mvn -q -DfailIfNoTests=true test
 if [ $? -eq 0 ]; then
   echo "Unit tests passed: 100% success"
   exit 0
@@ -333,25 +425,61 @@ echo "Blocked: Redis is not running"
 exit 2
 ```
 
-CAO runs required scripts sequentially. Verification passes only when every required script returns
-`0`. Each result records the exit code, normalized status, reason, stdout tail, and stderr tail.
-Optional scripts (`required: false`) are still executed and recorded but do not fail the overall
-verification.
+CAO runs all scripts sequentially; all required scripts must pass. `gates: ["tests"]` explicitly declares
+test capability: command keywords, optional checks and manual `gate satisfy --gate tests` cannot supply it.
+Each script defaults to a 300-second deadline (`timeout_seconds`, finite and positive); timeout returns
+124/error and reclaims its process tree. Each output tail is bounded to 4000 UTF-8 bytes. These trusted
+commands are not sandboxed. Results also record `timed_out`; optional failures do not fail the overall run.
 
-Fresh projects start with an empty `verification.scripts` list. Use `--verify-script` repeatedly when
-initializing a project:
+### First-project verification setup
+
+Fresh projects have no verification scripts. After the SDD authorization checks, bootstrap first returns
+`mode: select` with concrete requirement/start instructions if no Work exists. Create or resume Work before verification scaffolding; empty verification configuration does not block `cao start`. With an existing Work, bootstrap returns `mode: verification_setup` when declarations are empty, invalid or optional-only. The Agent analyzes
+existing product manifests/source/tests/CI and reuses meaningful checks. For a new product it uses the
+user's specified stack or asks first, never inferring it from host/SDD tooling or caches. The Agent, not
+CAO, generates project-owned wrappers that fail/block on zero tests or missing tools/dependencies.
+Within an active Work, initial scaffolding and test creation are allowed before tests pass. Keep verification setup limited to build/test scaffolding and wrappers; follow path assessment and native SDD instructions before business implementation.
+
+Configure safely without resetting language, SDD, timeout, Host settings or Work:
 
 ```bash
-cao init --force \
-  --verify-script "./scripts/verify-unit-tests.sh" \
+cao verification configure \
+  --test-script "./scripts/verify-unit-tests.sh" \
   --verify-script "./scripts/verify-coverage.sh"
+cao bootstrap
 ```
+
+Repeat flags for multiple scripts; `--test-script` declares required tests, while `--verify-script`
+declares general checks without test capability. At least one valid required script makes configuration
+ready. Configuration readiness is not verification success: no scripts run during configuration.
+Identical normalized declarations return `unchanged` without rewriting. Different nonempty or invalid
+existing declarations require explicit `--replace`; malformed whole config files are not overwritten.
+Do not hand-edit derived config, use `init --force`, auto-install dependencies or overwrite project scripts.
+Existing Work is never automatically reanchored; `acceptance_review_required` instructs explicit review
+and `cao reopen --work <id> --reanchor --reason "Reviewed acceptance changes"` before fresh evidence.
+Previously generated project instructions are preserved; current Skill/Host context supplies the guidance.
 
 For a one-off verification run without changing project configuration:
 
 ```bash
 cao verify --script "./scripts/verify-unit-tests.sh"
 ```
+
+CLI overrides are engineering checks, not config-bound completion evidence. Run `cao verify` from the
+anchored config after stabilizing native artifacts. Changing scripts, required/tests capabilities or timeout
+requires `cao reopen --work <id> --reanchor --reason "Reviewed acceptance changes"`, then fresh assessment,
+workflow/gates as needed, and verification. Requirement changes use `cao start --requirement <path> --replace`;
+old evidence is invalidated, not copied forward. Legacy completed records remain historical, not recertified.
+First integrity upgrade preserves exact bytes under `.orchestrator/backups/integrity-v2/work/<id>.json`.
+
+Native completion checks execution exit code and artifact bytes/ownership. A nonzero run needs a **new**
+`--allow-unverified --reason` at complete; entry exceptions do not waive failed execution. Bind every related
+plan with repeatable `--plan <path>`; shared sprint stories need `--plan-item '<path>#<id>'`. Explicit
+`--no-plan` is audited; unresolved scope blocks done. Plans cannot silently narrow by deleting a binding.
+
+Code snapshots prune ignored trees before traversal, follow only repository-contained file links (hashed
+under lexical names), and never follow directory links. Read failures or external file links prevent freshness
+certification. Dashboard ready/review is not done: only the authoritative completed Work Item is closed.
 
 ### Work Item titles and SDD artifacts
 
@@ -385,4 +513,149 @@ make check
 make test
 ```
 
-The GitHub Actions workflow runs the unittest suite on Python 3.10 through 3.13. Generated bytecode, caches, and `.orchestrator/` runtime state are excluded from Git. The project-level `.orchestrator/config.json` remains trackable so teams can share verification and SDD settings.
+CI defines Ubuntu Python 3.10–3.13, three-platform state/runner checks, wheel smoke, and Pi contract/type
+checks on Node 22.18.0. Pi metadata is restricted to API 1.1.0; Node/TypeScript are development/host dependencies,
+not Python-core requirements. Run `npm ci --ignore-scripts`, `npm run check:pi`, and `npm run test:pi`.
+Configured CI is not proof of a successful remote run. See [repair validation](docs/repair-validation.md) for
+executed commands, compatibility steps and unverified real-host/browser/platform coverage. Generated bytecode,
+caches and runtime state are ignored; project `.orchestrator/config.json` remains trackable.
+
+## Profile-specific completion
+
+| Completion condition | light | standard / comprehensive |
+|---|---|---|
+| Current requirement/assessment, no blocker | Required | Required |
+| Native SPEC and explicit criteria | Bind directly | Bind through acceptance declaration |
+| Configured required project checks, fresh | Required | Required |
+| Native workflow and related plan/no-plan | Optional history | Required |
+| Independent final SDD acceptance | Not applicable | Required |
+
+Minimal light example (SPEC already contains a nonempty `验收标准` section):
+
+```bash
+cao sdd spec bind --spec _bmad-output/spec-login.md --criteria-section "验收标准"
+cao verify
+cao done
+```
+
+A separate criteria document may use `--criteria <provider-file.md>`; with no section selector its entire body is the criteria. Same-file criteria require an exact, unique Markdown heading. Content/requirement/provider changes invalidate the binding; review and bind with `--replace`, then verify. These are structural checks, not semantic proof that every user constraint is satisfied.
+
+Standard/comprehensive configure a native acceptance declaration, explicitly review its scope, then run project and final acceptance checks:
+
+```bash
+cao sdd acceptance configure --declaration acceptance-declaration.json
+cao reopen --reanchor --reason "已审阅原生规范和验收标准"
+cao verify
+cao sdd acceptance run
+cao done
+```
+
+Declaration example:
+
+```json
+{
+  "spec": "_bmad-output/spec-login.md",
+  "criteria": [{"id": "AC-1", "source": "_bmad-output/spec-login.md", "kind": "requirement", "description": "正确凭据创建会话"}],
+  "executor": {"mode": "command", "entrypoint": "python3 tools/bmad-acceptance.py", "timeout_seconds": 300},
+  "outputs": []
+}
+```
+
+The command is actually run outside the repository lock. It reads the frozen JSON request from `CAO_SDD_ACCEPTANCE_REQUEST` and prints one JSON report to stdout; diagnostics go to stderr. The report echoes `run_id`, `input_sha256`, `provider` and includes exactly one `items` result for every declared criterion: `id`, `status` (`passed`, `failed`, `blocked`) and nonempty `evidence` with repository `path` and `reason`. Exit 0 plus all passed items is required; 1 fails, 2 blocks, other nonzero exits/timeouts error. Evidence bytes and frozen inputs are rechecked before closure.
+
+For installed Skill executors, configure `mode: "skill"` and the real Skill name, use `cao sdd acceptance begin`, follow its complete instructions including independent reviewers, then `cao sdd acceptance submit --run <request-id> --report <registered-output.json>`. Skill reports are Agent-submitted evidence; CAO does not prove reviewer execution or natural-language correctness. A renderer or self-written findings cannot stand in for the required review.
+
+Declare exact new report paths under `<provider-output>/cao-acceptance/<work-id>/` in `outputs` before verification. Only those validated Work-owned paths are excluded from technical and SDD snapshots; creating an unregistered report changes inputs and yields stale. Existing inputs, source files, directory-wide exclusions and symlinked reports cannot be used as report outputs. Source/declaration changes require explicit reanchor and fresh checks. New failures never reuse old success. Inspect current state with `cao sdd acceptance show`.
+
+Historical completed work is not reopened or recertified. Existing active light work binds its SPEC/criteria and re-verifies; full profiles configure and execute current final acceptance. The Dashboard displays project verification and independent acceptance separately, with light acceptance marked not applicable. Only Work status `completed` means closed.
+
+## Native light paths and BMAD oneshot
+
+| Provider | Native light process | CAO binding |
+|---|---|---|
+| BMAD | Installed `bmad-build`; let it select `oneshot` when suitable and follow native reviewers | Recognized oneshot SPEC binds native Intent automatically; normal SPEC binds explicit criteria |
+| OpenSpec | Installed `/opsx:propose` → `/opsx:apply` → sync/archive after checks | Bind actual native spec/scenarios; active schema prerequisites still apply |
+| Spec Kit bug | Installed `speckit-bug-assess` → `speckit-bug-fix` → `speckit-bug-test` extension | Bind scoped assessment/expected behavior; no feature workflow required first |
+| Spec Kit new feature | Installed specify → plan → tasks → implement (converge where supported) | Keep native `plan.md` and `tasks.md`; CAO does not add plan-registration gates for light |
+
+BMAD oneshot deliberately deletes Tasks & Acceptance. CAO recognizes literal unique frontmatter `route: oneshot`, native execution status (`in-progress`, `in-review`, `done`), one nonempty `## Intent` and one `## Implementation Notes`. Only BMAD **light** with no explicit criteria selector uses this fallback:
+
+```bash
+cao sdd spec bind --spec _bmad-output/implementation-artifacts/spec-fix.md
+cao verify
+cao done
+```
+
+The binding stores `mode: bmad_oneshot`, Intent's source/section, current requirement hash and native file hash. CAO neither edits the SPEC nor creates a replacement acceptance document, workflow run or plan. It checks native build intent structurally and project verification, not an explicit checklist or semantic coverage of every requirement. Explicit `--criteria` / `--criteria-section` takes precedence. A source/route/requirement change invalidates evidence and needs review/rebinding and fresh verification; the ordinary binding behavior is unchanged.
+
+OpenSpec's default schema uses tasks and upstream artifacts before apply. `/opsx:ff` reduces interaction, not artifacts, and may require expanded commands to be enabled. A smaller workflow requires an explicitly selected, validated custom schema; do not delete default prerequisites to satisfy CAO light. Bind real scenarios/criteria; do not invent behavior changes for pure refactoring.
+
+Spec Kit feature implementation explicitly reads `plan.md` and `tasks.md`; keep them concise instead of skipping them. Bug fixing is a separate opt-in extension with assessment/fix/test reports in `.specify/bugs/<slug>/`. Check installation before invoking its skills, and preserve explicit expected behavior in the assessment. Do not install an extension automatically or use the bug route for a new feature. `openspec` / `specify` CLI setup, status and instruction retrieval are distinct from implementation Agent commands; discover the installed host syntax and assets rather than guessing terminal subcommands.
+
+Source contracts verified on 2026-10-13: [BMAD stable oneshot routing](https://github.com/bmad-code-org/BMAD-METHOD/blob/V6.12/src/bmm-skills/ship/bmad-build/step-02-plan.md), [OpenSpec workflow](https://github.com/Fission-AI/OpenSpec/blob/main/docs/workflows.md), [OpenSpec schema](https://github.com/Fission-AI/OpenSpec/blob/main/schemas/spec-driven/schema.yaml), [Spec Kit bug guide](https://github.github.com/spec-kit/guides/bugfix.html), [Spec Kit implement](https://github.com/github/spec-kit/blob/main/templates/commands/implement.md). Installed version instructions remain authoritative.
+
+
+BMAD requirement-wide verification: when a `sprint-status.yaml` or `.yml` exists, associate ALL stories belonging to the current requirement before `cao verify`:
+
+```sh
+cao sdd plan bind --plan-item _bmad-output/implementation-artifacts/sprint-status.yaml#epic-1 --plan-item _bmad-output/implementation-artifacts/sprint-status.yaml#epic-2
+```
+
+Repeat `--plan-item <path>#<story-id>` instead when an epic contains multiple requirements. A whole-epic selector includes future stories and retains the identities already bound, so deleting a bound story or completing just one story cannot reduce the scope. Only associated stories must be exactly `done`; unrelated epics and optional retrospectives do not block. Epic summary status itself is derived and is not counted twice. `in_process`, `in-progress`, `review`, backlog and unknown story states remain unfinished. Binding adds to prior scope without changing acceptance anchors or native files. `sdd workflow complete --plan-item` supports the same selectors and preserves prior associations.
+
+This check runs before either configured or CLI verification scripts, on light as well as full paths; an unresolved/missing/malformed source blocks rather than guessing all project items. It also applies at `cao done` and contributes selected plan states to verification freshness, so scope additions/regressions require a new successful verification. Aggregate sprint progress takes precedence over a single completed SPEC in native phase projection. Native oneshot/light without a sprint tracker needs no sprint binding. Direct developer tests and CAO/SDD artifact writes remain available while the plan is unfinished.
+
+
+OpenSpec / Spec Kit also require requirement-wide execution before CAO verification. Aggregate all task files associated with this Work, not only the currently selected change or first user story. Default `tasks.md` files derive from Work-bound native change/feature references; additional plans can be added with repeated `cao sdd plan bind --plan <native-task-file>`. OpenSpec custom schemas can bind their actual tracked Markdown outputs or a quoted change-scoped glob, including new shards. A Spec Kit quality checklist is not an implementation task plan.
+
+This gate precedes configured and CLI verification scripts and applies at completion on light/full paths. Only checked tasks are complete; nested/numbered/plus lists and unknown markers cannot disappear from counts. Missing/empty/unrecognized sources, removed known task IDs/counts and product symlinks block rather than certify completion. Associations persist and repeated binding adds scope; related plan changes invalidate earlier verification. Unrelated changes/features, direct developer tests, CAO/SDD artifact writes and genuinely plan-free native paths remain unaffected. See [official-source review and format validation](docs/provider-plan-verification.md) for the provider distinctions, pinned upstream sources and custom-schema boundary.
+
+
+Native oneshot omissions: host pre-tool checks now require a configured, explicitly accepted verification baseline before business writes. CAO/native artifacts, initial tests/wrappers/manifests and environment setup remain available with an active Work; no-Work restrictions remain intact. This supersedes older active-Work reminder-only setup behavior. Tests need not pass before feature implementation, and configuring scripts never silently reanchors.
+
+BMAD oneshot Review/Classify is recorded separately from full-profile final acceptance: `cao sdd review begin --layer <active-layer> --instructions <rendered-step-oneshot.md> --model <current-model>` freezes code/requirement/intent/native instructions; submit the preserved independent findings and complete triage through `cao sdd review submit --layer <active-layer> --report <native-report.json>`. Every active rendered layer must be current before verify/done. Tests, manual gates and SPEC done cannot replace review. Reports record evidence/provenance and validate structure/freshness, not cryptographic proof of who ran a model or proof of semantic correctness. Primary self-review must not be labeled independent. Native external-session fallback still requires actual returned findings. SPEC is not expanded with fake tasks/acceptance sections.
+
+When Git is available for native oneshot, done checks local uncommitted product/SPEC changes and requires the native commit; it never stages/commits/pushes on the user's behalf. CAO runtime-state churn and native installation/review assets do not create an endless commit requirement. A commit alone does not change verification content snapshots. HTTP smoke can be registered with `cao verification smoke --server-command '<foreground server using {port}>' --path /health`: fresh dynamic port, process liveness, expected status, owned-tree cleanup and no remaining HTTP service response. Fixed ports are rejected and a failed owned server process cannot yield success. Startup/manual scripts are not automatically enrolled; choose required endpoints and register them in the project's verification standard.
+
+
+## Verification integrity and recovery
+
+Formal `cao verify` runs only on active Work and requires an accepted configuration with at least
+one required script. Optional failures keep their optional meaning. `verify --script/--command` is
+engineering diagnosis and cannot grant `done` eligibility.
+
+A run is registered under the repository lock before execution. A new run supersedes the previous
+run; only the current run ID, input binding and execution generation may commit an authoritative
+result. Running or superseded results cannot complete Work. After a crash, rerun `cao verify`;
+CAO does not infer success from an abandoned process. Superseding does not kill the older trusted
+script, so allow it to finish or manage that process before rerunning scripts with external effects.
+Completed Work requires `cao reopen --work <id> --reason "<why>"`; suspended Work requires
+`cao resume --work <id> --reactivate` and resolution of remaining blockers. Reanchoring uses the
+existing `cao reopen --work <id> --reanchor --reason "<reviewed changes>"` command.
+
+BMAD epic selectors retain every associated Story observed by CAO, including a blocked verification.
+Deleting a known Story blocks completion. Restore its native entry and complete the actual work.
+For an intentional scope reduction, revise the requirement with the approved change and rationale,
+explicitly reanchor, reassess the execution path and rebind the revised native SPEC/plan. Ordinary
+querying/binding never removes known scope. Unobserved transient additions cannot be reconstructed.
+
+Snapshot format 3 (`v3:` hashes and `snapshot_format: 3`) binds bytes, file types, POSIX execution bits,
+link targets and internal directory-link content. Cycles, broken links, unsupported inputs and
+unregistered external business links block certification. Traversal is bounded to 100,000 entries
+and 100 lexical directory levels. Dependency caches remain excluded by their lexical directory name;
+a business source alias into such a directory is scanned. Windows binds content/type/link semantics,
+without claiming POSIX executable-bit equivalence. Legacy evidence remains readable and historical
+completed Work is preserved; active/reopened Work must rerun verification and any stale native review
+or independent acceptance. Ordinary Git commits and excluded caches do not invalidate snapshots.
+
+BMAD oneshot Commit additionally proves its SPEC is tracked, present in HEAD and unchanged in the
+index/worktree using Git content normalization. Ignored/untracked/staged-only/modified SPECs block
+with specific reasons. Inspect and explicitly stage/commit the intended changes; CAO never force-adds
+or rewrites `.gitignore`. No-Git and non-repository behavior retains the existing policy.
+
+Tool guards share bounded read/write/unknown analysis and use per-tool workdir/cwd before host cwd,
+then the known invocation directory. Shell `cd`, directory aliases, relative targets and structured
+edits use the same target normalization. Managed-state writes remain denied; unknown programs/variable targets cannot gain an exemption merely from a native directory. Explicit native helpers retain their dedicated policy. Unknown Shell analysis
+retains the existing risk policy and is not a sandbox guarantee.
+
+Detailed compatibility and regression mapping: [R1–R9 integrity repair](docs/2026-10-13-r1-r9-integrity-repair.md).

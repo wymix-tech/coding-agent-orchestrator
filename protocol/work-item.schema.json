@@ -5,16 +5,321 @@
   "required": ["version", "id", "title", "status", "requirement", "sdd", "execution", "resume", "decisions", "blockers"],
   "properties": {
     "version": {"type": "integer"},
+    "state_revision": {"type": "integer", "minimum": 0},
+    "integrity_version": {"type": "integer", "enum": [2]},
+    "pending_events": {"type": "array", "items": {"type": "object"}},
+    "acceptance": {
+      "type": "object",
+      "properties": {
+        "version": {"type": "integer", "enum": [2]},
+        "config_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+        "anchored_at": {"type": "integer"}
+      },
+      "required": ["version", "config_sha256"],
+      "additionalProperties": true
+    },
+    "gate_status": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "properties": {
+          "satisfied": {"type": "boolean"},
+          "evidence": {"type": "string"},
+          "requirement_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+          "assessment_revision": {"type": "integer", "minimum": 1}
+        },
+        "additionalProperties": true
+      }
+    },
     "id": {"type": "string", "minLength": 1},
     "title": {"type": "string", "minLength": 1},
     "status": {"enum": ["todo", "active", "suspended", "completed"]},
     "requirement": {"$ref": "./artifact-reference.schema.json"},
-    "sdd": {"type": "object"},
+    "sdd": {
+      "type": "object",
+      "properties": {
+        "route_decision": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "description": "Accepted native route, separate from quality profile; referenced version from append-only route_history.",
+          "required": [
+            "id",
+            "provider",
+            "requirement_sha256",
+            "profile",
+            "route",
+            "rules",
+            "required_artifacts",
+            "primary_artifact",
+            "approval_required"
+          ],
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "provider": {
+              "type": "string"
+            },
+            "route": {
+              "type": "string"
+            },
+            "build_route": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "profile": {
+              "enum": [
+                "light",
+                "standard",
+                "comprehensive"
+              ]
+            },
+            "approval_required": {
+              "type": "boolean"
+            },
+            "rules": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "object",
+                "required": [
+                  "path",
+                  "sha256",
+                  "quote"
+                ]
+              }
+            },
+            "required_artifacts": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "object",
+                "required": [
+                  "path",
+                  "role",
+                  "intent_sha256"
+                ]
+              }
+            }
+          },
+          "additionalProperties": true
+        },
+        "route_history": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          },
+          "description": "Preserved native route decisions including superseded evidence."
+        },
+        "implementation_state": {
+          "type": "object",
+          "required": [
+            "ready"
+          ],
+          "properties": {
+            "ready": {
+              "type": "boolean"
+            },
+            "reason": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": true
+        },
+        "spec_approval": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "required": [
+            "id",
+            "status",
+            "path",
+            "intent_sha256",
+            "requirement_sha256",
+            "route_decision_id",
+            "work_item_id",
+            "contexts",
+            "questions"
+          ],
+          "properties": {
+            "work_item_id": {"type": "string", "minLength": 1},
+            "contexts": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["host", "session_id"],
+                "properties": {
+                  "host": {"type": "string", "minLength": 1},
+                  "session_id": {"type": "string", "minLength": 1}
+                },
+                "additionalProperties": false
+              }
+            },
+            "questions": {
+              "type": "array",
+              "maxItems": 32,
+              "items": {
+                "type": "object",
+                "required": ["host", "session_id", "tool_call_id", "approval_id"],
+                "properties": {
+                  "host": {"type": "string", "minLength": 1},
+                  "session_id": {"type": "string", "minLength": 1},
+                  "tool_call_id": {"type": "string", "minLength": 1},
+                  "approval_id": {"type": "string", "minLength": 1}
+                },
+                "additionalProperties": false
+              }
+            },
+            "status": {
+              "enum": [
+                "pending",
+                "approved"
+              ]
+            },
+            "evidence": {
+              "type": "object",
+              "required": [
+                "host",
+                "session_id",
+                "event",
+                "response",
+                "response_sha256"
+              ]
+            }
+          },
+          "additionalProperties": true
+        },
+        "spec_task_scope": {
+          "type": "object",
+          "description": "Observed Direct Build task descriptions retained for the current route.",
+          "additionalProperties": {
+            "type": "object",
+            "required": ["descriptions"],
+            "properties": {
+              "descriptions": {"type": "array", "items": {"type": "string"}}
+            },
+            "additionalProperties": false
+          }
+        },
+        "spec_binding": {
+          "type": ["object", "null"],
+          "properties": {
+            "version": {"const": 1},
+            "requirement_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+            "provider": {"type": "string"},
+            "spec": {
+              "type": "object",
+              "properties": {"path": {"type": "string", "minLength": 1}, "sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"}},
+              "required": ["path", "sha256"],
+              "additionalProperties": true
+            },
+            "criteria": {
+              "type": "object",
+              "properties": {"path": {"type": "string", "minLength": 1}, "sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"}},
+              "required": ["path", "sha256"],
+              "additionalProperties": true
+            },
+            "criteria_section": {"type": ["string", "null"]},
+            "mode": {"enum": ["bmad_oneshot"], "description": "BMAD light binds native oneshot Intent; no separate acceptance checklist is asserted."}
+          },
+          "required": ["version", "requirement_sha256", "provider", "spec", "criteria", "criteria_section"],
+          "additionalProperties": false
+        },
+        "acceptance": {
+          "type": ["object", "null"],
+          "description": "Work-scoped independent final acceptance; required for current full-profile closure, optional in historical records.",
+          "properties": {
+            "version": {"const": 1},
+            "declaration": {
+              "type": "object",
+              "properties": {
+                "spec": {"type": "string", "minLength": 1},
+                "sources": {"type": "array", "items": {"type": "string"}},
+                "outputs": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
+                "criteria": {
+                  "type": "array",
+                  "minItems": 1,
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "id": {"type": "string", "minLength": 1},
+                      "source": {"type": "string", "minLength": 1},
+                      "kind": {"enum": ["requirement", "design"]},
+                      "description": {"type": "string", "minLength": 1}
+                    },
+                    "required": ["id", "source", "kind", "description"]
+                  }
+                },
+                "executor": {
+                  "type": "object",
+                  "properties": {
+                    "mode": {"enum": ["command", "skill"]},
+                    "entrypoint": {"type": "string", "minLength": 1},
+                    "timeout_seconds": {"type": "number", "exclusiveMinimum": 0}
+                  },
+                  "required": ["mode", "entrypoint", "timeout_seconds"]
+                }
+              },
+              "required": ["spec", "sources", "outputs", "criteria", "executor"]
+            },
+            "declaration_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+            "anchor_sha256": {"type": ["string", "null"]},
+            "anchor_sources": {"type": "object", "additionalProperties": {"type": "string", "pattern": "^[a-f0-9]{64}$"}},
+            "owned_outputs": {"type": "object", "additionalProperties": {"type": "string", "pattern": "^[a-f0-9]{64}$"}},
+            "run": {
+              "type": ["object", "null"],
+              "properties": {
+                "id": {"type": "string", "minLength": 1},
+                "status": {"enum": ["running", "passed", "failed", "blocked", "stale", "error"]},
+                "inputs": {"type": "object"},
+                "input_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+                "results": {"type": "array", "items": {"type": "object"}},
+                "evidence_hashes": {"type": "object", "additionalProperties": {"type": "string", "pattern": "^[a-f0-9]{64}$"}},
+                "output_hashes": {"type": "object", "additionalProperties": {"type": "string", "pattern": "^[a-f0-9]{64}$"}},
+                "execution": {"type": "object"}
+              },
+              "required": ["id", "status", "inputs", "input_sha256", "results", "evidence_hashes", "output_hashes"],
+              "additionalProperties": true
+            }
+          },
+          "required": ["version", "declaration", "declaration_sha256", "anchor_sha256", "anchor_sources", "run", "owned_outputs"],
+          "additionalProperties": true
+        },
+        "plan_scope": {
+          "type": "object",
+          "properties": {
+            "version": {"type": "integer", "enum": [1]},
+            "mode": {"enum": ["bound", "none", "unresolved"]},
+            "plans": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "path": {"type": "string", "minLength": 1},
+                  "item_ids": {"type": "array", "items": {"type": "string", "minLength": 1}, "uniqueItems": true}
+                },
+                "required": ["path", "item_ids"],
+                "additionalProperties": false
+              }
+            }
+          },
+          "required": ["version", "mode", "plans"],
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": true
+    },
     "execution": {"type": "object"},
     "path_assessment": {
       "type": ["object", "null"],
       "properties": {
         "policy_version": {"type": "integer"},
+        "revision": {"type": "integer", "minimum": 1},
         "requested_profile": {"enum": ["light", "standard", "comprehensive"]},
         "profile": {"enum": ["light", "standard", "comprehensive"]},
         "reason": {"type": "string", "minLength": 1},
@@ -34,7 +339,38 @@
     "resume": {"type": "object"},
     "decisions": {"type": "array", "items": {"type": "object"}},
     "blockers": {"type": "array", "items": {"type": "object"}},
-    "verification": {"type": ["object", "null"]}
+    "verification": {
+      "type": ["object", "null"],
+      "description": "Optional legacy records remain readable; only bound, fresh config evidence can satisfy completion.",
+      "properties": {
+        "status": {"type": "string"},
+        "run_status": {"type": "string", "description": "Execution outcome retained when concurrent input changes mark status stale."},
+        "requirement_sha256": {"type": "string"},
+        "code_snapshot": {"type": "string"},
+        "rules_snapshot": {"type": "string"},
+        "verification_config_sha256": {"type": "string", "description": "Normalized scripts, required/tests capabilities, and timeout_seconds."},
+        "assessment_revision": {"type": ["integer", "null"], "minimum": 1},
+        "results": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {"type": "string"},
+              "command": {"type": "string"},
+              "required": {"type": "boolean"},
+              "gates": {"type": "array", "items": {"enum": ["tests"]}, "uniqueItems": true},
+              "exit_code": {"type": "integer"},
+              "timed_out": {"type": "boolean"},
+              "status": {"type": "string"},
+              "stdout_tail": {"type": "string"},
+              "stderr_tail": {"type": "string"}
+            },
+            "additionalProperties": true
+          }
+        }
+      },
+      "additionalProperties": true
+    }
   },
   "additionalProperties": true
 }
