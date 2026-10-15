@@ -121,6 +121,10 @@ class RouteSync(unittest.TestCase):
 
     def test_technical_answers_and_continue_are_not_spec_approval(self):
         self.propose(); self.run_cli("sdd", "approval", "request")
+        self.hook("prompt_submit", prompt="批准并继续\n仅适用于本夹具")
+        self.assertEqual("pending", self.work()["sdd"]["spec_approval"]["status"])
+        hint = self.run_cli("sdd", "approval", "show")["next"]
+        self.assertIn("standalone", hint)
         self.hook("post_tool", tool_name="ask_user_question", details={"answers": [{"answer": "HS256 (推荐)"}]})
         self.hook("prompt_submit", prompt="继续")
         self.assertEqual("pending", self.work()["sdd"]["spec_approval"]["status"])

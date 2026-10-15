@@ -52,6 +52,7 @@ from scripts.sdd_acceptance_files import source_hashes, output_paths, report_has
 from scripts.sdd_acceptance_runtime import acceptance_status, reanchor_record
 from scripts.verification_setup import (
     configured_scripts, setup_state, declared_scripts, prepare_config, setup_instruction, verification_setup_context,
+    SCAFFOLD_ROOTS, SCAFFOLD_MANIFESTS, scaffold_instruction,
 )
 
 
@@ -754,8 +755,25 @@ def host_adapter_status(repo: Path, host: str, root: Path | None = None) -> dict
             settings = load_json(target, {}) or {}
         except (OSError, ValueError):
             settings = {}
-        packages = [str(p) for p in (settings.get("packages") or [])]
-        installed = any("coding-agent-orchestrator" in p for p in packages)
+        entries = settings.get("packages") or []
+        packages = [str(p) for p in entries]
+        sources = [p if isinstance(p, str) else str(p.get("source", ""))
+                   for p in entries if isinstance(p, (str, dict))]
+        installed = any("coding-agent-orchestrator" in source for source in sources)
+        # A local Pi package records its checkout path, whose folder need not
+        # share the package name (for example a checkout named `cao`).
+        if root and not installed:
+            for source in sources:
+                try:
+                    candidate = Path(source).expanduser()
+                    if not candidate.is_absolute():
+                        # Pi resolves local package entries relative to .pi/.
+                        candidate = target.parent / candidate
+                    installed = candidate.resolve() == root.resolve()
+                except (OSError, ValueError, RuntimeError):
+                    continue
+                if installed:
+                    break
         return {**info, "installed": installed, "target": meta["target"], "packages": packages}
     if root is None:
         return {**info, "installed": False, "target": meta["target"], "reason": "adapter files unavailable"}
@@ -792,17 +810,20 @@ def install_host_adapter(repo: Path, host: str) -> dict[str, Any]:
                 "host": host,
                 "status": "skipped",
                 "reason": "`pi` CLI not found on PATH",
-                "next": "pi install --local <path-to-coding-agent-orchestrator>",
+                "next": "pi install --local <path-to-coding-agent-orchestrator> --approve",
             }
         result = subprocess.run(
-            ["pi", "install", "--local", str(root)],
+            # `host install` explicitly requests this local adapter registration.
+            # Pi 1.1 needs command-scoped approval to write local package config;
+            # this does not persist global project trust.
+            ["pi", "install", "--local", str(root), "--approve"],
             cwd=repo, text=True, capture_output=True, timeout=120,
         )
         return {
             "host": host,
             "status": "installed" if result.returncode == 0 else "error",
             "target": meta["target"],
-            "command": f"pi install --local {root}",
+            "command": f"pi install --local {shlex.quote(str(root))} --approve",
             "exit_code": result.returncode,
             "stderr": result.stderr.strip()[-500:] or None,
         }
@@ -2314,7 +2335,7 @@ def cmd_sdd_approval(args: argparse.Namespace) -> int:
     approval = work["sdd"].get("spec_approval") or {}
     next_step = ("Approval is recorded; follow the native workflow from its current stage and synchronize progress."
                  if approval.get("status") == "approved" else
-                 "Resolve native Open Questions first. Present the complete spec summary and path. Ask the user to choose 批准并继续 / 批准并停止 (Approve and continue / Approve and stop), or review. The host records the actual reply; answering implementation options is not approval.")
+                 "Resolve native Open Questions first. Present the complete spec summary and path. Ask the user to choose 批准并继续 / 批准并停止 (Approve and continue / Approve and stop), or review. Send the approval phrase as a standalone message without appended explanations. The host records the actual reply; answering implementation options is not approval.")
     if approval.get("stop_after_approval"):
         next_step = "The user approved and stopped; wait for explicit continuation of implementation."
     print(json.dumps({"ok": True, "approval": approval or None, "next": next_step}, ensure_ascii=False)); return 0
@@ -6155,16 +6176,14 @@ def verification_baseline_state(repo: Path, work: dict) -> dict:
 def verification_scaffold_write(repo: Path, raw: dict) -> bool:
     analysis = tool_effect(raw, repo)
     targets = [] if analysis["diagnostics"] else analysis["targets"]
-    setup_roots = ("tests", "test", "acceptance-tests", "src/test", "scripts/verification", ".venv", "venv")
-    manifests = {"requirements.txt", "requirements-dev.txt", "pyproject.toml", "pytest.ini", "setup.cfg", "uv.lock", "package.json", "package-lock.json", "pom.xml", "build.gradle", "build.gradle.kts", "settings.gradle", "settings.gradle.kts", "tsconfig.json", "Makefile"}
     if targets:
         valid = True
         for value in targets:
             try:
                 path = repo_file(repo, value)
                 relative = path.relative_to(repo.resolve()).as_posix()
-                allowed = relative in manifests or any(inside(path, repo.resolve() / root) and
-                          (repo.resolve() / root).resolve() == repo.resolve() / root for root in setup_roots)
+                allowed = relative in SCAFFOLD_MANIFESTS or any(inside(path, repo.resolve() / root) and
+                          (repo.resolve() / root).resolve() == repo.resolve() / root for root in SCAFFOLD_ROOTS)
                 valid = valid and allowed
             except (ValueError, OSError, RuntimeError):
                 valid = False
@@ -6374,6 +6393,29 @@ def readonly_shell(command: str) -> bool:
         return False
 
 
+def _readonly_checksum_tokens(tokens: list[str]) -> bool:
+    """Recognize literal SHA probes without accepting arbitrary runner flags."""
+    algorithms = {"1", "224", "256", "384", "512", "512224", "512256"}
+    options = {"-b", "--binary", "-t", "--text", "--tag", "-z", "--zero", "--help", "--version"}
+    shasum = Path(tokens[0]).name.lower() == "shasum"
+    i = 1
+    while i < len(tokens):
+        token = tokens[i]
+        if token == "--":
+            return True  # Remaining literal arguments are filenames.
+        if shasum and token in {"-a", "--algorithm"}:
+            i += 1
+            if i >= len(tokens) or tokens[i] not in algorithms:
+                return False
+        elif shasum and token.startswith("--algorithm="):
+            if token.partition("=")[2] not in algorithms:
+                return False
+        elif token.startswith("-") and token not in options:
+            return False
+        i += 1
+    return True
+
+
 def _readonly_tokens(tokens: list[str]) -> bool:
     operators = {">", ">>", "<", "<<", "<>", ">|", "&>", ">&", "<&", ";", "&", "|", "&&", "||", "(", ")", "$", "`"}
     if not tokens or any(token in operators for token in tokens):
@@ -6386,8 +6428,15 @@ def _readonly_tokens(tokens: list[str]) -> bool:
         return True
     if name == "command" and len(tokens) > 1 and tokens[1] in {"-v", "-V"}:
         return True
-    if len(tokens) == 2 and tokens[1] in {"--version", "-version", "-v"} and name in {"java", "javac", "mvn", "gradle", "node", "npm", "uv", "python", "python3"}:
-        return True
+    probe_name = Path(tokens[0]).name.lower()
+    python_probe = re.fullmatch(r"python(?:3(?:\.\d+)?)?(?:\.exe)?", probe_name)
+    if len(tokens) == 2:
+        if python_probe and tokens[1] in {"--version", "-V"}:
+            return True
+        if probe_name in {"java", "javac", "mvn", "gradle", "node", "npm", "uv"} and tokens[1] in {"--version", "-version", "-v"}:
+            return True
+    if probe_name in {"sha256sum", "shasum"}:
+        return _readonly_checksum_tokens(tokens)
     if name == "git":
         args = tokens[1:]
         while len(args) >= 2 and args[0] == "-C": args = args[2:]
@@ -6402,11 +6451,18 @@ def _readonly_tokens(tokens: list[str]) -> bool:
         return True
     # Standalone CAO commands own their state mutations; their arguments are not hand edits.
     command_tokens = tokens
-    if tokens[0] == "python" or re.fullmatch(r"python3(?:\.\d+)?", tokens[0]):
-        script_index = next((i for i, token in enumerate(tokens[1:], 1) if Path(token).as_posix().endswith("scripts/cao.py")), None)
-        if script_index is None or script_index + 1 >= len(tokens):
+    if python_probe:
+        runner = tokens[1:]
+        while runner and runner[0] in {"-u", "-B", "-E", "-I", "-s", "-S"}:
+            runner = runner[1:]
+        if len(runner) < 2:
             return False
-        command_tokens = tokens[script_index + 1:]
+        try:
+            if Path(runner[0]).resolve() != Path(__file__).resolve():
+                return False
+        except (OSError, ValueError, RuntimeError):
+            return False
+        command_tokens = runner[1:]
     elif tokens[0] == "./cao":
         command_tokens = tokens[1:]
     elif tokens[0] == "cao":
@@ -6432,7 +6488,7 @@ def _readonly_tokens(tokens: list[str]) -> bool:
     safe_control_commands = {
         "init", "bootstrap", "sdd", "start", "path", "list", "status", "next", "resume",
         "checkpoint", "decision", "block", "unblock", "handoff", "sessions", "verify", "done",
-        "context", "artifact", "host-event", "requirement", "language", "gate", "reopen", "verification",
+        "context", "artifact", "host", "host-event", "requirement", "language", "gate", "reopen", "verification",
     }
     return bool(command_tokens and command_tokens[0] in safe_control_commands)
 
@@ -6559,7 +6615,7 @@ def host_event(args: argparse.Namespace) -> int:
                 if not verification_scaffold_write(repo, raw):
                     preflight = implementation_preflight(repo, work)
                     if not preflight["ready"]:
-                        return respond({"decision": "deny", "reason": str(preflight["reason"]) + ": " + preflight["next"]})
+                        return respond({"decision": "deny", "reason": str(preflight["reason"]) + ": " + preflight["next"] + " " + scaffold_instruction()})
                 path_state = path_assessment_state(repo, work)
                 if not path_state["ready"]:
                     next_step = path_assessment_instruction(work)

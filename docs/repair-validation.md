@@ -440,3 +440,34 @@ Pi **15 项零失败/跳过**与 TypeScript 通过，日志 `/tmp/cao-omissions-
 源码与已安装包的四个变更运行时模块 SHA-256 一致；Skill 校验、compileall、Shell 语法及 diff 检查通过。
 临时分组运行器首次漏设源码导入路径导致加载失败，补正 sys.path 后重新执行完整四组；Pi 的 8 秒严格断言未放宽，先前并发负载导致的超时失败在最终检查通过。
 这些结果是本机 Linux、实际安装 CLI、模拟 Host 与本地 Provider/独立进程夹具验证；未声称真实在线原生 reviewer 或 Windows 冒烟验收。
+
+## 2026-10-15：真实 Pi 会话暴露的首次接入问题
+
+依据当天持久 Pi / BMAD 全流程测试的实际失败记录修复首次安装及交互阻力。原测试的
+standard / Direct Build / dispatch 已走到 completed；本轮针对其中暴露的 CAO 问题修复，
+没有修改已完成的测试 Work，也没有重复 intake。
+
+- 将 `host` 纳入 CAO 控制命令，未创建 Work 和空验证基线阶段仍可执行安装/状态查询；
+  CAO 状态重定向、混合产品写入和任意 Python 脚本不会因此获得豁免。
+- 实际调用 Pi 1.1 的本地安装暴露了命令级 trust 要求，安装器为此次明确请求的包登记传入
+  `--approve`，不持久化全局项目信任。识别改名的本地 checkout、相对于 `.pi/` 的包路径和对象式 source。
+- 允许版本化/绝对 Python 解释器的 `--version`、`-V`，以及受限的 sha256sum/shasum 参数；
+  不把 Python `-v` 当作版本查询。Python 调用 CAO 的豁免必须指向真实核心脚本，不能用 `-c` 或同名后缀伪装。
+- 脚手架路径与清单集中为常量，setup/拒绝信息明确推荐 `scripts/verification/`，
+  同步两种宿主模板。原允许目录、业务写入和软链接边界没有放宽。
+- 明确批准短语需独立成条发送，解析规则不放宽；模板提醒先完成原生 Classify 并记录每条 verdict，再做评审驱动的 patch。
+  此项为宿主指引改进，不声称 CAO 能强制证明 Agent 自然语言分类的实际先后顺序。
+
+新增 `tests/test_pi_bootstrap_repairs.py` 5 项实际 CLI/host-event 回归，包含无 Work/空基线、
+四种真实 CAO 调用入口、只读探测与夹带写入、路径提示及改名/相对/对象包源识别。
+原生审批用例补充多行输入仍 pending 与独立消息提示。Pi adapter 增加实际本地安装的双阶段回归。
+
+最终 Python 全量按文件互斥四组执行：**683 项通过**（170/169/172/172），无失败/跳过；
+最后的只读参数收紧另重跑定向 5 项通过。原先串行运行已中止，不计为通过证据。
+Pi **18 项零失败/跳过**，TypeScript、compileall、Shell 语法及 diff 检查通过。
+日志为 `/tmp/cao-pi-final-group-{0,1,2,3}.log`、`/tmp/cao-pi-bootstrap-targeted.log`、`/tmp/cao-pi-final-node.log`。
+
+另在新临时项目中实际执行 `cao host install --host pi`，然后启动全新 Pi 1.1 RPC 进程：
+仅靠 `.pi/settings.json` 包登记就自动加载扩展并记录 `session_start`，不使用 `-e` 绕行；
+只发送 get_state，没有模型请求。该检查证明首次安装与新进程加载路径，
+不冒称本轮再次执行完整 BMAD 业务流程或覆盖 Windows/macOS。
