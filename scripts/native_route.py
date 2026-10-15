@@ -224,7 +224,7 @@ def route_state(repo, work, dirs, required=False):
                     or approval.get("requirement_sha256") != record["requirement_sha256"]
                     or approval.get("route_decision_id") != record["id"]
                     or approval.get("intent_sha256") != intent_hash(primary)):
-                return blocked("NATIVE_SPEC_APPROVAL_REQUIRED", "Present the spec summary and request approval with `cao sdd approval request`; wait for explicit user approval through the host, then run `cao sdd sync`.")
+                return blocked("NATIVE_SPEC_APPROVAL_REQUIRED", "Present the spec summary and request approval with `cao sdd approval request`; wait for the user's standalone approval message (批准并继续 / 批准并停止, or Approve and continue / Approve and stop) without appended explanations, then run `cao sdd sync`.")
             if approval.get("stop_after_approval"):
                 return blocked("NATIVE_IMPLEMENTATION_PAUSED", "The user approved and stopped. Wait for their explicit instruction to continue implementation; preserve the approved spec.")
     except (ValueError, OSError, KeyError, TypeError, RuntimeError):

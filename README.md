@@ -291,13 +291,19 @@ until the *next* session.
 ```bash
 cao init --host claude-code      # -> .claude/settings.local.json
 cao init --host codex            # -> .codex/hooks.json
-cao init --host pi               # -> pi install --local <cao-package> (.pi/settings.json)
+cao init --host pi               # -> pi install --local <cao-package> --approve (.pi/settings.json)
 cao host install --host <host>   # backfill an already-initialized project
 cao host status                  # inspect whether each adapter is wired
 ```
 
 If no host can be determined, `cao init` still succeeds and reports `host_adapters.status: host_required`
 with the exact `cao host install --host ...` command. Initialization is never blocked by an unknown host.
+
+Host installation and status are CAO control commands and remain available before a Work or verification
+baseline exists. Pi 1.1 local installation uses command-scoped `--approve` for the requested package
+registration; it does not persist global project trust. A local checkout can have a different folder name
+from the package. Literal Python version probes (including versioned/absolute interpreters), `sha256sum`
+and `shasum -a 256` also remain readable; redirections and mixed commands are still checked for writes.
 
 Installation is idempotent and non-destructive: existing host settings are deep-merged, never rewritten,
 and an already-registered CAO command is not added twice. Claude Code hooks go to `settings.local.json`

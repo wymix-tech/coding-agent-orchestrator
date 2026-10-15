@@ -5,6 +5,20 @@ from typing import Any
 from scripts.completion_policy import normalize_scripts, required_entries
 
 
+SCAFFOLD_ROOTS = ("tests", "test", "acceptance-tests", "src/test", "scripts/verification", ".venv", "venv")
+SCAFFOLD_MANIFESTS = frozenset({
+    "requirements.txt", "requirements-dev.txt", "pyproject.toml", "pytest.ini", "setup.cfg", "uv.lock",
+    "package.json", "package-lock.json", "pom.xml", "build.gradle", "build.gradle.kts", "settings.gradle",
+    "settings.gradle.kts", "tsconfig.json", "Makefile",
+})
+
+
+def scaffold_instruction() -> str:
+    return ("Put new verification wrappers in scripts/verification/; scripts/ alone is not an allowed scaffold root. "
+            "Allowed setup-only roots: " + ", ".join(root + "/" for root in SCAFFOLD_ROOTS) +
+            "; supported build/test manifests also remain writable. These exceptions require an active Work. ")
+
+
 def configured_scripts(cfg: dict[str, Any]) -> list[dict[str, Any]]:
     if not isinstance(cfg, dict):
         raise ValueError("VERIFICATION_CONFIG_INVALID")
@@ -50,7 +64,9 @@ def setup_instruction(command: str) -> str:
         "For an existing project, analyze product manifests, source, tests and CI; reuse meaningful verification. "
         "Do not infer the product tech stack from .orchestrator derived state, .agents, .pi, host assets, SDD tools/outputs or caches; current user requirements remain relevant. "
         "For a new project, use the tech stack already specified by the user; otherwise ask the user for language/framework/build/test choices and wait. Do not guess a stack if unable to ask. "
-        "Generate project-owned verification scripts or reuse suitable existing scripts. Zero tests, missing tools or missing dependencies must fail/block, not echo/true a pass. Preserve the user's selected framework and test runner; do not replace JUnit 5 with a main program when dependencies are missing. For Java/Jupiter use JUnit5-capable Surefire and fail on zero tests. "
+        "Generate project-owned verification scripts or reuse suitable existing scripts. "
+        + scaffold_instruction() +
+        "Zero tests, missing tools or missing dependencies must fail/block, not echo/true a pass. Preserve the user's selected framework and test runner; do not replace JUnit 5 with a main program when dependencies are missing. For Java/Jupiter use JUnit5-capable Surefire and fail on zero tests. "
         f'Configure through `{command} verification configure --test-script "<actual project test wrapper>" --verify-script "<actual general check>"` using only applicable scripts; register a combined general/tests wrapper once as a test script; do not hand-edit config or use init --force. '
         "Do not overwrite existing scripts or install dependencies automatically. Configuration readiness is not verification success: within an active Work, initial scaffolding/tests may be written before tests pass. Do not expand verification setup into business implementation; configure wrappers, rerun bootstrap and follow the path assessment/native SDD instructions first. "
         "Rerun bootstrap after configuration; if an active Work already has an acceptance anchor, review and explicitly reanchor instead of silently changing it."

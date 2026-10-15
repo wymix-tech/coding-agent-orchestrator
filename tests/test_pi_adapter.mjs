@@ -106,6 +106,42 @@ test('real core blocks Pi business writes without Work and preserves CAO/native 
   } finally {f.close();}
 });
 
+test('real Pi hooks permit host installation and literal probes before Work and baseline setup', posix, async () => {
+  const f = realCoreFixture();
+  try {
+    mkdirSync(path.join(f.dir, '_bmad'));
+    f.cli('init', '--host', 'codex', '--sdd', 'bmad');
+    assert.equal(f.cli('host', 'status', '--host', 'pi').hosts[0].installed, false);
+    for (const hasWork of [false, true]) {
+      if (hasWork) {
+        const requirement = f.cli('requirement', 'next-id', '--title', 'Install regression').path;
+        writeFileSync(path.join(f.dir, requirement), '# Install regression\nPython stdlib fixture.');
+        f.cli('start', '--requirement', requirement);
+      }
+      const ctx = f.context(hasWork ? 'empty-baseline-pi' : 'no-work-pi');
+      for (const command of ['cao host install --host pi', 'cao host status --host pi',
+        'python3.12 --version', 'sha256sum _bmad-output/spec.md', 'shasum -a 256 spec.md']) {
+        assert.equal(await f.handlers.get('tool_call')({toolName: 'bash', input: {command}}, ctx), undefined);
+      }
+      // Execute the actual local Pi package install; no network/model call is needed.
+      f.cli('host', 'install', '--host', 'pi');
+      assert.equal(f.cli('host', 'status', '--host', 'pi').hosts[0].installed, true);
+      for (const command of ['cao host install --host pi > .orchestrator/index.json',
+        'sha256sum spec.md > product.py', 'python3.12 --version && touch product.py']) {
+        assert.equal((await f.handlers.get('tool_call')({toolName: 'bash', input: {command}}, ctx)).block, true);
+      }
+      if (hasWork) {
+        const denied = await f.handlers.get('tool_call')({toolName: 'write', input: {
+          path: 'scripts/check.py', content: 'raise SystemExit(1)'}}, ctx);
+        assert.equal(denied.block, true);
+        assert.match(denied.reason, /scripts\/verification\//);
+        assert.equal(await f.handlers.get('tool_call')({toolName: 'write', input: {
+          path: 'scripts/verification/check.py', content: 'raise SystemExit(1)'}}, ctx), undefined);
+      }
+    }
+  } finally {f.close();}
+});
+
 test('real Python core handles Pi tool_result with null verification', posix, async () => {
   const f = realCoreFixture();
   try {
