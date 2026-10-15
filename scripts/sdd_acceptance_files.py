@@ -5,7 +5,7 @@ from pathlib import Path
 import re
 
 from scripts.path_guard import provider_artifact, repo_file
-from scripts.sdd_acceptance_policy import normalize_declaration
+from scripts.sdd_acceptance_policy import normalize_declaration, AcceptanceValidationError
 
 MAX_REPORT_BYTES = 1024 * 1024
 
@@ -92,20 +92,25 @@ def output_paths(repo: Path, declaration: dict, provider_dirs: list[str],
             result.add(relative)
         return result
     except (OSError, ValueError, RuntimeError) as exc:
-        raise ValueError("SDD_ACCEPTANCE_OUTPUT_INVALID") from exc
+        raise AcceptanceValidationError("SDD_ACCEPTANCE_OUTPUT_INVALID", "$.declaration.outputs",
+            "new .md/.json/.txt files under <provider>/cao-acceptance/<work-id>/; existing files need matching CAO ownership") from exc
 
 
 def report_hashes(repo: Path, results: list[dict], outputs: list[str]) -> dict[str, str]:
-    try:
-        paths = set(outputs)
-        for item in results:
-            paths.update(ref["path"] for ref in item["evidence"])
-        hashes = {}
-        for relative in sorted(paths):
+    references = [(relative, f"$.declaration.outputs[{index}]") for index, relative in enumerate(outputs)]
+    for index, item in enumerate(results):
+        references.extend((ref["path"], f"$.items[{index}].evidence[{ref_index}].path")
+                          for ref_index, ref in enumerate(item["evidence"]))
+    hashes = {}
+    for relative, field in references:
+        if relative in hashes:
+            continue
+        try:
             path = repo_file(repo, relative)
             if not path.is_file():
                 raise ValueError("SDD_ACCEPTANCE_EVIDENCE_INVALID")
             hashes[relative] = _file_hash(path)
-        return hashes
-    except (OSError, ValueError, RuntimeError) as exc:
-        raise ValueError("SDD_ACCEPTANCE_EVIDENCE_INVALID") from exc
+        except (OSError, ValueError, RuntimeError) as exc:
+            raise AcceptanceValidationError("SDD_ACCEPTANCE_EVIDENCE_INVALID", field,
+                f"an existing repository file: {relative}; declared outputs must be written before the executor exits") from exc
+    return hashes

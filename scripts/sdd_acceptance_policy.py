@@ -9,6 +9,13 @@ DECLARATION_INVALID = "SDD_ACCEPTANCE_DECLARATION_INVALID"
 RESULT_INVALID = "SDD_ACCEPTANCE_RESULT_INVALID"
 
 
+class AcceptanceValidationError(ValueError):
+    """Keep stable error codes while supplying an actionable JSON field path."""
+    def __init__(self, code, field, expected):
+        super().__init__(code)
+        self.diagnostic = {"field": field, "expected": expected}
+
+
 def digest(value: object) -> str:
     payload = json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
@@ -75,35 +82,49 @@ def declaration_hash(declaration: dict) -> str:
 
 def normalize_report(raw: dict, declaration: dict, run_id: str, input_sha256: str, provider: str) -> list[dict]:
     if not isinstance(raw, dict):
-        raise ValueError(RESULT_INVALID)
+        raise AcceptanceValidationError(RESULT_INVALID, "$", "one report object")
     if any(raw.get(key) != value for key, value in
            (("run_id", run_id), ("input_sha256", input_sha256), ("provider", provider))):
-        raise ValueError("SDD_ACCEPTANCE_RESULT_IDENTITY")
+        raise AcceptanceValidationError("SDD_ACCEPTANCE_RESULT_IDENTITY", "$.run_id/input_sha256/provider", "echo the current frozen request identity")
     items = raw.get("items")
     if not isinstance(items, list):
-        raise ValueError(RESULT_INVALID)
+        raise AcceptanceValidationError(RESULT_INVALID, "$.items", "an array with exactly one result for each declared criterion")
     expected = [item["id"] for item in normalize_declaration(declaration)["criteria"]]
     results = {}
-    for item in items:
+    for index, item in enumerate(items):
+        field = f"$.items[{index}]"
         if not isinstance(item, dict):
-            raise ValueError(RESULT_INVALID)
-        identity = _text(item.get("id"), RESULT_INVALID)
+            raise AcceptanceValidationError(RESULT_INVALID, field, "an object with id, status and evidence")
+        try:
+            identity = _text(item.get("id"), RESULT_INVALID)
+        except ValueError as exc:
+            raise AcceptanceValidationError(RESULT_INVALID, field + ".id", "a nonempty declared criterion ID") from exc
         if identity in results or identity not in expected:
-            raise ValueError("SDD_ACCEPTANCE_RESULT_COVERAGE")
-        status = _text(item.get("status"), RESULT_INVALID)
+            raise AcceptanceValidationError("SDD_ACCEPTANCE_RESULT_COVERAGE", field + ".id", "each declared criterion ID exactly once")
+        status = item.get("status")
         evidence = item.get("evidence")
-        if status not in {"passed", "failed", "blocked"} or not isinstance(evidence, list) or not evidence:
-            raise ValueError(RESULT_INVALID)
+        if not isinstance(status, str) or status not in {"passed", "failed", "blocked"}:
+            raise AcceptanceValidationError(RESULT_INVALID, field + ".status", "passed, failed or blocked")
+        if not isinstance(evidence, list) or not evidence:
+            raise AcceptanceValidationError(RESULT_INVALID, field + ".evidence", "a nonempty array: [{path: <repo-file>, reason: <what was checked>}]")
         refs = []
-        for ref in evidence:
+        for ref_index, ref in enumerate(evidence):
+            ref_field = f"{field}.evidence[{ref_index}]"
             if not isinstance(ref, dict):
-                raise ValueError(RESULT_INVALID)
-            refs.append({"path": _relative(ref.get("path"), RESULT_INVALID),
-                         "reason": _text(ref.get("reason"), RESULT_INVALID)})
+                raise AcceptanceValidationError(RESULT_INVALID, ref_field, "an object with path and reason")
+            try:
+                path = _relative(ref.get("path"), RESULT_INVALID)
+            except ValueError as exc:
+                raise AcceptanceValidationError(RESULT_INVALID, ref_field + ".path", "a repository-relative evidence file") from exc
+            try:
+                reason = _text(ref.get("reason"), RESULT_INVALID)
+            except ValueError as exc:
+                raise AcceptanceValidationError(RESULT_INVALID, ref_field + ".reason", "a nonempty description of the actual check") from exc
+            refs.append({"path": path, "reason": reason})
         results[identity] = {"id": identity, "status": status, "evidence": refs}
     # Exact coverage is authoritative; an overall claim cannot fill missing items.
     if set(results) != set(expected):
-        raise ValueError("SDD_ACCEPTANCE_RESULT_COVERAGE")
+        raise AcceptanceValidationError("SDD_ACCEPTANCE_RESULT_COVERAGE", "$.items", "exact criterion coverage; missing: " + ", ".join(sorted(set(expected) - set(results))))
     return [results[identity] for identity in expected]
 
 

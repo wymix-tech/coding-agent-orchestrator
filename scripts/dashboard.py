@@ -178,6 +178,11 @@ def build_sdd_artifact_catalog(repo: Path, work: dict[str, Any]) -> list[dict[st
     if root:
         try:
             root_rel = root.resolve().relative_to(repo).as_posix()
+            parts = Path(root_rel).parts
+            if provider == "openspec" and parts[:2] == ("openspec", "changes") and len(parts) >= 3:
+                length = 4 if parts[2] == "archive" else 3
+                root = repo.joinpath(*parts[:length])
+                root_rel = root.relative_to(repo).as_posix()
         except ValueError:
             root = None
 
@@ -427,6 +432,12 @@ def infer_execution_phase(work: dict[str, Any], artifact_catalog: list[dict[str,
     step = str(execution.get("step") or "").lower()
     if work.get("status") == "completed":
         return {"id": "done", "source": "cao-state"}
+    if execution.get("phase"):
+        from scripts.cao import execution_phase
+        phase = execution_phase(execution)
+        if phase in {"planning", "ready", "implementation", "review", "verification", "audit", "release"}:
+            return {"id": {"ready": "planning", "audit": "review", "release": "verification"}.get(phase, phase),
+                    "source": "cao-state"}
     native_phases = {"native-sdd-workflow-selected": "planning", "native-sdd-workflow-executed": "implementation",
                      "native-sdd-workflow-completed": "review"}
     if re.search(r"verif|test", step):
@@ -474,6 +485,7 @@ def build_dashboard_overview(repo: Path, stale_after_minutes: int = 30) -> dict[
         list_sessions,
         load_index,
         load_json,
+        load_work,
         path_assessment_state,
         reconcile_native_sdd_state,
         native_sync_state,
@@ -490,7 +502,7 @@ def build_dashboard_overview(repo: Path, stale_after_minutes: int = 30) -> dict[
     work_root = repo / WORK_DIR
     if work_root.is_dir():
         for path in work_root.glob("*.json"):
-            value = load_json(path, None)
+            value = load_work(repo, path.stem)
             if isinstance(value, dict) and isinstance(value.get("id"), str):
                 if value.get("status") in {"active", "suspended"} and reconcile_native_sdd_state(repo, value):
                     value = load_json(path, value)
