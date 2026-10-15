@@ -330,6 +330,8 @@ Current built-in providers are OpenSpec, BMad Method, and GitHub Spec Kit. `cao 
 `cao sdd install --provider <provider> --yes` performs provider installation/initialization and records
 the selected provider only after the provider is detected in the project.
 
+OpenSpec reuses an existing CLI when its version probe succeeds; project initialization does not force another global npm install. To explicitly upgrade it, use `cao sdd install --provider openspec --host pi --yes --upgrade`. Initial machine installs respect npm's configured prefix (including `NPM_CONFIG_PREFIX`).
+
 ## GitHub Spec Kit
 
 GitHub Spec Kit is supported as a first-class SDD provider. CAO detects a Spec Kit project through `.specify/`, installs the `specify` CLI with `uv tool install specify-cli`, and initializes the current repository with the selected Spec Kit agent integration. Spec Kit supports Claude Code (`claude`), Codex CLI (`codex`), Pi (`pi`), GitHub Copilot (`copilot`), and other integrations.
@@ -567,7 +569,9 @@ Declaration example:
 }
 ```
 
-The command is actually run outside the repository lock. It reads the frozen JSON request from `CAO_SDD_ACCEPTANCE_REQUEST` and prints one JSON report to stdout; diagnostics go to stderr. The report echoes `run_id`, `input_sha256`, `provider` and includes exactly one `items` result for every declared criterion: `id`, `status` (`passed`, `failed`, `blocked`) and nonempty `evidence` with repository `path` and `reason`. Exit 0 plus all passed items is required; 1 fails, 2 blocks, other nonzero exits/timeouts error. Evidence bytes and frozen inputs are rechecked before closure.
+The command is actually run outside the repository lock. `CAO_SDD_ACCEPTANCE_REQUEST` contains the frozen **JSON string, not a file path**. Iterate `request.declaration.criteria`; print one JSON report to stdout and send diagnostics to stderr. Echo `run_id`, `input_sha256`, `provider`; return exactly one `items` result per criterion with `id`, `status` (`passed`, `failed`, `blocked`) and a nonempty **array** `evidence: [{"path": "<repo-file>", "reason": "<actual check>"}]`. Write every declared output file before exiting, or use `outputs: []` for stdout-only reports. Exit 0 plus all passed items is required; 1 fails, 2 blocks, other nonzero exits/timeouts error. Evidence bytes and frozen inputs are rechecked before closure.
+
+Use `cao sdd acceptance protocol` for machine-readable request/report schemas, complete examples and a standalone command executor template. See [the protocol and archive recovery guide](docs/sdd-acceptance-protocol.md). The template blocks unmapped criteria; it does not manufacture passing results.
 
 For installed Skill executors, configure `mode: "skill"` and the real Skill name, use `cao sdd acceptance begin`, follow its complete instructions including independent reviewers, then `cao sdd acceptance submit --run <request-id> --report <registered-output.json>`. Skill reports are Agent-submitted evidence; CAO does not prove reviewer execution or natural-language correctness. A renderer or self-written findings cannot stand in for the required review.
 

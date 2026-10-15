@@ -50,6 +50,7 @@ from scripts.light_spec_policy import make_binding, binding_digest, light_spec_s
 from scripts.sdd_acceptance_policy import digest as acceptance_digest
 from scripts.sdd_acceptance_files import source_hashes, output_paths, report_hashes
 from scripts.sdd_acceptance_runtime import acceptance_status, reanchor_record
+from scripts.openspec_archive import relocate as relocate_openspec_archive, relocate_acceptance_sources
 from scripts.verification_setup import (
     configured_scripts, setup_state, declared_scripts, prepare_config, setup_instruction, verification_setup_context,
     SCAFFOLD_ROOTS, SCAFFOLD_MANIFESTS, scaffold_instruction,
@@ -1035,7 +1036,11 @@ def sdd_prerequisite_check(provider: str) -> dict[str, Any]:
     return {"provider": provider, "ok": all(c["ok"] for c in checks), "checks": checks, "declared": meta["install"].get("prerequisite")}
 
 
-def choose_external_install_command(provider: str) -> list[str] | None:
+def choose_external_install_command(provider: str, upgrade: bool = False) -> list[str] | None:
+    if provider == "openspec" and not upgrade and command_exists("openspec"):
+        rc, out, err = command_output(["openspec", "--version"])
+        if rc == 0 and version_tuple(out or err):
+            return None
     for candidate in SDD_CATALOG[provider]["install"].get("external_commands") or []:
         if candidate and command_exists(candidate[0]):
             return candidate
@@ -1881,6 +1886,12 @@ def load_work(repo: Path, work_id: str) -> dict[str, Any] | None:
     work = _read_work(repo, work_id)
     if work and work.get("pending_events"):
         drain_events(repo, work)
+    if work:
+        for migration in relocate_openspec_archive(repo, work, now()):
+            queue_event(work, {"event": "sdd.native_paths.relocated", "source": "openspec",
+                               "work_item_id": work["id"], **migration})
+        if work.get("pending_events"):
+            save_work(repo, work)
     return work
 
 
@@ -2028,7 +2039,9 @@ def _native_candidates(repo: Path, provider: str, work: dict[str, Any], native_r
             if ref_path.is_relative_to(feature_root):
                 parts = ref_path.relative_to(feature_root).parts
                 if len(parts) >= 2:
-                    parent = feature_root / parts[0]
+                    parent = (feature_root / parts[0] / parts[1]
+                              if provider == "openspec" and parts[0] == "archive" and len(parts) >= 3
+                              else feature_root / parts[0])
             return _native_md_files(repo, provider, parent, recursive=False), parent
         if ref_path.is_dir():
             return _native_md_files(repo, provider, ref_path), ref_path
@@ -2405,6 +2418,16 @@ def list_lifecycle_events(repo: Path, work_id: str | None = None, limit: int = 1
     return events[-max(1, limit):][::-1]
 
 
+def execution_phase(execution: dict) -> str | None:
+    """Machine phase is independent of an Agent's free-form checkpoint label."""
+    known = {"verification": "verification", "review": "review", "implementation": "implementation",
+             "done": "done", "ready-for-dev": "ready", "reopened": "planning",
+             "path-selected": "planning", "planning": "planning", "path-assessment": "planning",
+             "native-sdd-workflow-selected": "planning", "native-sdd-workflow-executed": "implementation",
+             "native-sdd-workflow-completed": "review"}
+    return known.get(execution.get("step")) or execution.get("phase")
+
+
 @locked_repo
 def reconcile_native_sdd_state(repo: Path, work: dict[str, Any]) -> bool:
     """Reconcile a Work Item with its work-specific native SDD evidence and emit durable events.
@@ -2517,22 +2540,26 @@ def reconcile_native_sdd_state(repo: Path, work: dict[str, Any]) -> bool:
     if canonical is not None:
         execution = work.setdefault("execution", {})
         current_step = str(execution.get("step") or "").lower()
-        later_checkpoint = bool(re.search(r"verif|test|review|audit|release", current_step)) or current_step == "done"
+        phase = execution_phase(execution)
+        later_checkpoint = phase in {"verification", "review", "audit", "release", "done"}
         aggregate_pending_review = plan["state"] == "pending" and current_step == "review"
         if aggregate_pending_review:
             later_checkpoint = False  # A single completed SPEC cannot finish the whole requirement.
         if canonical == "ready" and (current_step in {"reopened", "path-selected", "planning", "plan-selected", "sdd-planning", "native-sdd-workflow-selected"} or aggregate_pending_review):
             execution["step"] = "ready-for-dev"
+            execution["phase"] = "ready"
             execution["next_action"] = action("agent", f"Native {provider} work is ready; begin implementation using the bound native work item.")
             work.setdefault("resume", {})["summary"] = f"Native SDD reports ready for implementation ({provider})."
             changed = True
         elif canonical == "in_progress" and current_step != "implementation" and not later_checkpoint:
             execution["step"] = "implementation"
+            execution["phase"] = "implementation"
             execution["next_action"] = action("agent", f"Continue implementation using the native {provider} work item; phase synchronized from explicit native status/task progress.")
             work.setdefault("resume", {})["summary"] = f"Native SDD reports implementation in progress ({provider}); CAO phase reconciled."
             changed = True
         elif canonical in {"completed", "in_review"} and not later_checkpoint:
             execution["step"] = "review"
+            execution["phase"] = "review"
             execution["next_action"] = action("agent", "Native implementation is ready for review; complete implementation review and CAO verification before closing the Work Item.")
             work.setdefault("resume", {})["summary"] = f"Native SDD reports review/implementation completion ({provider}); CAO moved to review, not closed."
             changed = True
@@ -2985,8 +3012,6 @@ def path_assessment_instruction(work: dict[str, Any] | None = None) -> str:
 # and Spec Kit keep checkbox lists in `tasks.md`. A Work Item is a single unit,
 # so without reading these an Agent can finish one story of thirteen and close
 # the requirement as complete (demo11 did exactly that).
-PLAN_ARCHIVE_MARKERS = ("/archive/",)
-
 SPRINT_DONE_STATES = frozenset({"done"})
 SPRINT_STATUS_NAMES = ("sprint-status.yaml", "sprint-status.yml")
 
@@ -3114,6 +3139,11 @@ def _associated_task_roots(repo: Path, work: dict) -> set[Path]:
             parts = path.relative_to(root).parts
             if parts and parts[0] != "archive":
                 roots.add(root / parts[0])
+            elif len(parts) >= 2:
+                for migration in sdd.get("archive_relocations", []):
+                    moved = repo.resolve() / migration["archive_root"]
+                    if path.is_relative_to(moved):
+                        roots.add(moved)
     return roots
 
 
@@ -3197,6 +3227,8 @@ def bind_plan_scope(repo: Path, work: dict, plan_paths: list[str],
         for field in ("task_ids", "minimum_tasks"):
             if field in previous:
                 plan[field] = previous[field]
+        if sdd.get("provider") == "openspec":
+            plan["sha256"] = sha256_file(path)
         plans.append(plan)
     scope = {"version": 1, "mode": "bound", "plans": plans}
     if patterns:
@@ -3219,8 +3251,6 @@ def provider_pending_plan_items(repo: Path, work: dict) -> list[str]:
             raise ValueError("PLAN_SOURCE_INVALID: " + plan["path"]) from exc
         if not path.is_file():
             raise ValueError("PLAN_SOURCE_MISSING: " + relative)
-        if any(marker in f"/{relative}" for marker in PLAN_ARCHIVE_MARKERS):
-            continue
         if path.name in SPRINT_STATUS_NAMES:
             ids = plan.get("item_ids") or []
             if not ids:
@@ -3368,7 +3398,8 @@ def provider_verification_plan_state(repo: Path, work: dict) -> dict:
             if set(previous.get("task_ids") or []) - set(ids) or len(tasks) < int(previous.get("minimum_tasks") or 0):
                 raise ValueError("PLAN_TASK_REMOVED: " + relative)
             plans.append({"path": relative, "item_ids": [], "task_ids": sorted(set(ids)),
-                          "minimum_tasks": max(len(tasks), int(previous.get("minimum_tasks") or 0))})
+                          "minimum_tasks": max(len(tasks), int(previous.get("minimum_tasks") or 0)),
+                          **({"sha256": sha256_file(path)} if provider == "openspec" else {})})
             observations[relative] = {"sha256": hashlib.sha256(content.encode("utf-8")).hexdigest(),
                                       "total": len(tasks), "checked": sum(task["done"] for task in tasks)}
             pending.extend(f"{relative}:{task['line']}: {task['description'] or 'unnamed task'}"
@@ -3471,6 +3502,12 @@ def sdd_acceptance_state(repo: Path, work: dict) -> dict:
     profile = (work.get("path_assessment") or {}).get("profile")
     if profile == "light":
         return {"ready": True, "state": "not_applicable", "reason": None}
+    if work.get("status") == "completed":
+        run = ((work.get("sdd") or {}).get("acceptance") or {}).get("run") or {}
+        status = run.get("status", "unconfigured")
+        return {"ready": status == "passed", "state": status, "historical": True,
+                "run_id": run.get("id"), "reason": run.get("reason"),
+                "note": "Frozen result at completion; not certification of current repository inputs."}
     try:
         if not ((work.get("sdd") or {}).get("acceptance") or {}).get("declaration"):
             state = {"ready": False, "state": "unconfigured", "reason": "SDD acceptance is not configured"}
@@ -4249,7 +4286,7 @@ def cmd_sdd_install(args: argparse.Namespace) -> int:
         return 2
 
     detected = detect_sdd(repo, provider)
-    if detected["installed"]:
+    if detected["installed"] and not getattr(args, "upgrade", False):
         select_sdd_provider(repo, provider)
         try:
             language_configuration = apply_provider_language(repo, provider)
@@ -4265,7 +4302,7 @@ def cmd_sdd_install(args: argparse.Namespace) -> int:
         return 2
 
     meta = SDD_CATALOG[provider]["install"]
-    external = choose_external_install_command(provider)
+    external = choose_external_install_command(provider, getattr(args, "upgrade", False))
     plan = []
     if external:
         plan.append({"scope": "machine", "command": shlex.join(external)})
@@ -5056,7 +5093,7 @@ def cmd_list(args: argparse.Namespace) -> int:
     index = load_index(repo)
     items: list[dict[str, Any]] = []
     for p in sorted((repo / WORK_DIR).glob("*.json")):
-        work = load_json(p, None)
+        work = load_work(repo, p.stem)
         if work:
             if work.get("status") in {"active", "suspended"} and reconcile_native_sdd_state(repo, work):
                 work = load_work(repo, work.get("id")) or work
@@ -5280,7 +5317,11 @@ def cmd_checkpoint(args: argparse.Namespace) -> int:
     if not work or work.get("status") not in {"active", "suspended"}:
         print(json.dumps({"ok": False, "error": "NO_ACTIVE_WORK_ITEM"}, ensure_ascii=False, indent=2)); return 2
     if args.step:
-        work.setdefault("execution", {})["step"] = args.step
+        execution = work.setdefault("execution", {})
+        phase = execution_phase({"step": args.step}) or execution_phase(execution)
+        if phase:
+            execution["phase"] = phase
+        execution["step"] = args.step
     if args.next:
         work.setdefault("execution", {})["next_action"] = action(args.next_type, args.next, command=args.command) if args.next_type != "none" else action("none", args.next)
     if args.summary:
@@ -5622,6 +5663,7 @@ def commit_verification(repo, wid, inputs, scripts, results, source, started, ru
         work["verification"] = verification
         if not changed:
             work["execution"]["step"] = "verification"
+            work["execution"]["phase"] = "verification"
             completion = completion_status(repo, work) if status == "passed" else None
             instruction = ("Run `cao done`." if completion and completion["ready"] else
                            (completion.get("next") or completion_next_instruction(repo, work, completion)) if completion else
@@ -5763,6 +5805,7 @@ def cmd_reopen(args: argparse.Namespace) -> int:
     if _activation_denied(repo, work["id"]):
         return 2
     previous_execution = json.loads(json.dumps(work.get("execution") or {}))
+    relocate_acceptance_sources(work.get("sdd") or {})
     if reanchored:
         review = work.get("verification_review") or {}
         cfg = config(repo)
@@ -6284,6 +6327,13 @@ def native_intake_shell(repo: Path, raw: dict[str, Any]) -> bool:
                 continue
             if tokens[:3] == ["openspec", "new", "change"] and detect_sdd(repo, "openspec")["installed"]:
                 continue
+            if (tokens[:2] == ["openspec", "archive"]
+                    and (repo / "openspec").is_dir()
+                    and (repo / "openspec").resolve() == repo.resolve() / "openspec"
+                    and len([arg for arg in tokens[2:] if not arg.startswith("-")]) == 1
+                    and all(arg in {"--yes", "-y", "--json", "--skip-specs"}
+                            or re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9_-]*", arg) for arg in tokens[2:])):
+                continue
             identities = workflow_command_identities(shlex.join(tokens))
             if Path(tokens[0]).stem.lower() in {"pwsh", "powershell"} and len(tokens) > 2 and tokens[1].lower() == "-file":
                 identities.append(tokens[2])
@@ -6417,11 +6467,49 @@ def _readonly_checksum_tokens(tokens: list[str]) -> bool:
 
 
 def _readonly_tokens(tokens: list[str]) -> bool:
+    tokens = list(tokens)
+    # Literal output to the real null device cannot modify project files. Keep
+    # every other redirection visible, and never remove the command itself.
+    if Path("/dev/null").is_char_device():
+        index = 1
+        while index + 1 < len(tokens):
+            if tokens[index] in {">", ">>"} and tokens[index + 1] == "/dev/null":
+                start = index - 1 if index > 1 and tokens[index - 1] in {"1", "2"} else index
+                del tokens[start:index + 2]
+                index = max(1, start)
+            else:
+                index += 1
     operators = {">", ">>", "<", "<<", "<>", ">|", "&>", ">&", "<&", ";", "&", "|", "&&", "||", "(", ")", "$", "`"}
     if not tokens or any(token in operators for token in tokens):
         return False
     name = tokens[0].lower()
     if any(char in token for token in tokens for char in "$`"): return False
+    if re.fullmatch(r"NPM_CONFIG_PREFIX=.+", tokens[0]):
+        # Only a literal npm prefix on the real CAO installer is exempt. Never
+        # accept interpreter/preload/PATH overrides or arbitrary assigned commands.
+        rest = tokens[1:]
+        return bool(rest and rest[1:3] == ["sdd", "install"] and _readonly_tokens(rest))
+    if tokens in (["true"], ["false"]):
+        return True
+    if tokens in (["set", "-o", "pipefail"], ["set", "-e"], ["set", "-u"], ["set", "-euo", "pipefail"]):
+        return True
+    if name == "sort":
+        safe = {"--", "-r", "-n", "-u", "-f", "-b", "-R", "-V", "-h", "--reverse",
+                "--numeric-sort", "--unique", "--ignore-case"}
+        return all(not token.startswith("-") or token in safe for token in tokens[1:])
+    if name == "npm" and (tokens[1:] in (["root"], ["root", "-g"], ["root", "--global"])
+                          or (tokens[1:3] == ["config", "get"] and len(tokens) == 4
+                              and tokens[3] in {"prefix", "cache", "registry"})):
+        return True
+    if name == "openspec":
+        if tokens[1:] in (["--help"], ["-h"], ["--version"], ["-V"]):
+            return True
+        if len(tokens) == 3 and tokens[1] in {"archive", "init", "new", "status", "instructions", "validate", "list", "show"} and tokens[2] in {"--help", "-h"}:
+            return True
+        if (len(tokens) > 1 and tokens[1] in {"status", "instructions", "list", "show", "validate", "context", "schemas"}
+                and not any(token in {"--output", "--out", "--output-dir", "-o"}
+                            or token.startswith(("--output=", "--out=", "--output-dir=")) for token in tokens)):
+            return True
     if name == "find":
         return not any(token in {"-delete", "-exec", "-execdir", "-ok", "-okdir", "-fprint", "-fprint0", "-fprintf"} for token in tokens)
     if name in {"ls", "dir", "cat", "type", "pwd", "grep", "rg", "head", "tail", "echo", "printf", "cd", "exit", "which", "file", "stat", "wc"}:
@@ -6784,7 +6872,7 @@ def build_parser() -> argparse.ArgumentParser:
         sp.set_defaults(fn=cmd_sdd_review)
     acceptance = sdd_sub.add_parser("acceptance", help="Independent SDD final acceptance for full paths")
     acceptance_sub = acceptance.add_subparsers(dest="acceptance_action", required=True)
-    for name in ("configure", "show", "run", "begin", "submit"):
+    for name in ("configure", "show", "run", "begin", "submit", "protocol"):
         sp = acceptance_sub.add_parser(name)
         sp.add_argument("--repo", default="."); sp.add_argument("--work")
         if name == "configure":
@@ -6808,6 +6896,7 @@ def build_parser() -> argparse.ArgumentParser:
     sp = sdd_sub.add_parser("list"); sp.add_argument("--repo", default="."); sp.set_defaults(fn=cmd_sdd_list)
     sp = sdd_sub.add_parser("select"); sp.add_argument("--repo", default="."); sp.add_argument("--provider", required=True, choices=sorted(SDD_CATALOG)); sp.set_defaults(fn=cmd_sdd_select)
     sp = sdd_sub.add_parser("install"); sp.add_argument("--repo", default="."); sp.add_argument("--provider", choices=sorted(SDD_CATALOG)); sp.add_argument("--tools", default=None, help="OpenSpec init tool ids, or all/none"); sp.add_argument("--host", choices=["claude-code", "codex", "pi"], default=None, help="Current coding-agent host; used by Spec Kit to select its integration"); sp.add_argument("--integration", default=None, help="Spec Kit integration key, e.g. claude, codex, pi, copilot"); sp.add_argument("--integration-options", default=None, help="Spec Kit integration options passed through as one value"); sp.add_argument("--yes", action="store_true", help="Confirm installation of external/project software"); sp.set_defaults(fn=cmd_sdd_install)
+    sp.add_argument("--upgrade", action="store_true", help="Explicitly upgrade the machine CLI instead of reusing an installed OpenSpec CLI")
     workflow = sdd_sub.add_parser("workflow", help="Record and enforce native SDD workflow execution")
     workflow_sub = workflow.add_subparsers(dest="workflow_action", required=True)
     sp = workflow_sub.add_parser("select", help="Record the provider-native workflow before executing it")

@@ -68,12 +68,13 @@ def _finish(repo, wid, request, report, execution, error, core):
         current_run = record.get("run") or {}
         if current_run.get("id") != request["run_id"] or current_run.get("status") != "running":
             raise ValueError("SDD_ACCEPTANCE_RUN_CHANGED")
-        hashes = {}
+        hashes, diagnostic = {}, None
         try:
             results = normalize_report(report, record["declaration"], request["run_id"], request["input_sha256"], work["sdd"]["provider"])
             hashes = report_hashes(repo, results, record["declaration"]["outputs"])
         except (ValueError, OSError, KeyError, TypeError) as exc:
             error = error or str(exc)
+            diagnostic = getattr(exc, "diagnostic", None)
             # A failed run may still own reports it actually wrote; record only
             # already registered, bounded Work-scoped output paths.
             try:
@@ -88,6 +89,8 @@ def _finish(repo, wid, request, report, execution, error, core):
         saved_execution = {**execution, "stdout_tail": execution.get("stdout_tail", "")[-4000:],
                            "stderr_tail": execution.get("stderr_tail", "")[-4000:]}
         run = finish_run(work, request["run_id"], inputs, report, saved_execution, hashes, error)
+        if diagnostic:
+            run["diagnostic"] = diagnostic
         core.queue_event(work, {"event": "sdd.acceptance.finished", "source": "cao", "work_item_id": wid,
                                "run_id": run["id"], "status": run["status"], "occurred_at": core.now()})
         core.save_work(repo, work)
@@ -100,6 +103,9 @@ def _finish(repo, wid, request, report, execution, error, core):
 def dispatch(args, core) -> int:
     try:
         action = args.acceptance_action
+        if action == "protocol":
+            from scripts.sdd_acceptance_protocol import protocol
+            return _emit({"ok": True, **protocol()})
         if action == "configure":
             with core.repo_transaction(core.repo_root(args.repo)):
                 repo, work = _work(args, core)
@@ -159,4 +165,6 @@ def dispatch(args, core) -> int:
                 return _finish(repo, work["id"], request, report, {"exit_code": args.exit_code, "source": "agent_skill_submission"}, error, core)
         raise ValueError("SDD_ACCEPTANCE_ACTION_INVALID")
     except (ValueError, OSError, RuntimeError) as exc:
-        return _emit({"ok": False, "error": str(exc), "next": "Inspect `cao sdd acceptance show` and follow its current scope/verification guidance."}, 2)
+        return _emit({"ok": False, "error": str(exc),
+                      **({"diagnostic": exc.diagnostic} if hasattr(exc, "diagnostic") else {}),
+                      "next": "Read `cao sdd acceptance protocol` for the JSON request/report contract; inspect `cao sdd acceptance show` for current scope."}, 2)

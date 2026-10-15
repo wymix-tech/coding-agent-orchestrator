@@ -86,6 +86,17 @@ sys.exit(rc)
         rc, out = self.run_cli("sdd", "acceptance", "run"); self.assertEqual(rc, 2, out)
         self.assertNotEqual(out["run"]["status"], "passed")
 
+    def test_bad_evidence_reports_an_actionable_field_without_weakening_validation(self):
+        self.setup_acceptance()
+        script = self.repo / "bmad-acceptance.py"
+        script.write_text(script.read_text().replace("'evidence':[{'path':'acceptance-tests/test_acceptance.py','reason':'Actual unittest run'}]",
+                                                    "'evidence':{'path':'acceptance-tests/test_acceptance.py','reason':'wrong shape'}"))
+        self.run_cli("verify")
+        rc, out = self.run_cli("sdd", "acceptance", "run")
+        self.assertEqual(rc, 2, out)
+        self.assertEqual(out["run"]["status"], "blocked")
+        self.assertEqual(out["run"]["diagnostic"]["field"], "$.items[0].evidence")
+
 
     def test_skill_registered_report_passes_and_cannot_be_replayed(self):
         self.setup_acceptance(mode="skill")
