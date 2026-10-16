@@ -11,6 +11,59 @@ import re
 from scripts.path_guard import repo_file, provider_artifact
 
 
+class RouteValidationError(ValueError):
+    """Keep legacy error codes while identifying every invalid rule field."""
+    def __init__(self, diagnostics):
+        super().__init__(diagnostics[0]["code"])
+        self.diagnostics = diagnostics
+        self.diagnostic = diagnostics[0]
+
+
+def rule_text(content):
+    """Match the existing UTF-8-sig/universal-newline reader on every platform."""
+    return content.decode("utf-8-sig").replace("\r\n", "\n").replace("\r", "\n")
+
+
+def normalize_rules(repo, provider, rules, skills):
+    if not isinstance(rules, list) or not rules:
+        raise RouteValidationError([{"code": "NATIVE_ROUTE_RULES_REQUIRED", "field": "$.rules",
+                                     "expected": "a nonempty array of actual native rule evidence"}])
+    normalized, errors = [], []
+    for index, rule in enumerate(rules):
+        field = f"$.rules[{index}]"
+        if not isinstance(rule, dict):
+            errors.append({"code": "NATIVE_ROUTE_RULE_INVALID", "field": field, "expected": "an object with path, sha256 and quote"})
+            continue
+        try:
+            path = rule_source(repo, rule.get("path"), provider, skills)
+            content = path.read_bytes()
+            source = rule_text(content)
+        except (ValueError, OSError, RuntimeError, TypeError) as exc:
+            errors.append({"code": str(exc) if isinstance(exc, ValueError) and not isinstance(exc, UnicodeError) else "NATIVE_ROUTE_RULE_SOURCE_INVALID",
+                           "field": field + ".path", "path": rule.get("path"),
+                           "expected": "an existing readable installed native rule file inside this repository"})
+            continue
+        relative = path.relative_to(repo.resolve()).as_posix()
+        sha = hashlib.sha256(content).hexdigest()
+        identity = {"code": "NATIVE_ROUTE_RULE_EVIDENCE_MISMATCH", "path": relative}
+        if rule.get("sha256") != sha:
+            errors.append({**identity, "field": field + ".sha256", "expected": sha,
+                           "actual": str(rule.get("sha256"))[:160]})
+        try:
+            quote = text(rule.get("quote"), "NATIVE_ROUTE_RULE_QUOTE_REQUIRED")
+        except ValueError:
+            errors.append({**identity, "code": "NATIVE_ROUTE_RULE_QUOTE_REQUIRED", "field": field + ".quote",
+                           "expected": "a nonempty verbatim contiguous excerpt"})
+            continue
+        if quote not in source:
+            errors.append({**identity, "field": field + ".quote", "sha256_matches": rule.get("sha256") == sha,
+                           "expected": "a verbatim contiguous excerpt, preserving Markdown, paths and internal line breaks; no summaries or ellipses"})
+        normalized.append({"path": relative, "sha256": sha, "quote": quote})
+    if errors:
+        raise RouteValidationError(errors)
+    return normalized
+
+
 def digest(value):
     return hashlib.sha256(json.dumps(value, ensure_ascii=False, sort_keys=True,
                                      separators=(",", ":")).encode()).hexdigest()
@@ -108,20 +161,7 @@ def normalize_decision(repo, work, raw, dirs, skills):
     if provider == "bmad" and (route not in {"direct-build", "full-planning"}
                                or build not in {"dispatch", "oneshot"}):
         raise ValueError("NATIVE_ROUTE_NAME_INVALID")
-    rules = raw.get("rules")
-    if not isinstance(rules, list) or not rules:
-        raise ValueError("NATIVE_ROUTE_RULES_REQUIRED")
-    normalized = []
-    for rule in rules:
-        if not isinstance(rule, dict):
-            raise ValueError("NATIVE_ROUTE_RULE_INVALID")
-        path = rule_source(repo, rule.get("path"), provider, skills)
-        quote = text(rule.get("quote"), "NATIVE_ROUTE_RULE_QUOTE_REQUIRED")
-        sha = file_hash(path)
-        if rule.get("sha256") != sha or quote not in path.read_text(encoding="utf-8-sig"):
-            raise ValueError("NATIVE_ROUTE_RULE_EVIDENCE_MISMATCH")
-        normalized.append({"path": path.relative_to(repo).as_posix(), "sha256": sha,
-                           "quote": quote})
+    normalized = normalize_rules(repo, provider, raw.get("rules"), skills)
     required = raw.get("required_artifacts")
     if not isinstance(required, list) or not required:
         raise ValueError("NATIVE_ROUTE_ARTIFACTS_REQUIRED")

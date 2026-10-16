@@ -83,7 +83,8 @@ require reanchoring. Any input change can require fresh reviews/bindings/verific
 - CAO owns Work, execution state, next actions, decisions, blockers, sessions, handoffs and evidence
   freshness. The selected SDD owns PRD/spec/design/tasks/stories and native workflow. Store native
   references; do not copy artifacts just to make their format uniform.
-- Everything under `.orchestrator/` except `requirements/` is CAO-derived state. Never edit config,
+- Agent-authored CAO inputs are `requirements/` and only the active Work's exact
+  `.orchestrator/inputs/WORK_ID/route.json` returned by `next`. Other `.orchestrator/` files are derived state. Never edit config,
   index, Work, sessions, handoffs or lifecycle files by hand; use their CAO commands.
 - Respect the current user's instructions and language. Read `language.user` through `cao language
   show`; apply an ongoing changed preference with `cao language set --language <locale>`. Write

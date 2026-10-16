@@ -16,6 +16,8 @@ Wait for a host-observed standalone message `批准并继续` / `批准并停止
 same message is not a standalone approval. Pi can also observe an actual
 structured `ask_user_question` result. Generic continue, technology-choice answers,
 Agent statements, CLI reasons and edited status fields cannot approve.
+Answering Open Questions does not approve the completed SPEC or authorize marking
+it ready-for-dev as if approved. Follow the native approval checkpoint separately.
 Approve-and-stop keeps implementation paused until explicit `继续实现`.
 
 ## Session and freshness

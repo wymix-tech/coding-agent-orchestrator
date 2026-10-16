@@ -15,17 +15,47 @@ Light follows the installed native workflow without manufacturing full-profile
 records. Automatic Build route prerequisites apply to installed BMAD Build;
 other Providers retain their own native prerequisites.
 
-Write the declaration to the Work-specific `declaration_path` returned by
-`cao next`, using its actual Work ID. Confirm the write succeeded. Then run:
+## Prepare a CAO input
+
+Run `cao sdd route prepare` after native preparation. It creates or preserves
+`.orchestrator/inputs/WORK_ID/route.json`, using the actual Work ID. This is
+Agent-authored CAO input, not a BMAD/native artifact or an accepted decision.
+Only this active Work's exact input file is writable; config, Work, sessions and
+other derived state remain protected. Never put product files in this directory.
+The draft copies known identity/SPEC metadata; blank version/route/reason and
+missing obligations must be filled from real native evidence, not guessed.
+Repeated prepare preserves edits. To copy an old declaration without destroying
+it, use `cao sdd route prepare --from <existing-declaration-file>`.
+
+Generate evidence from actual file lines, preserving Markdown and internal line
+breaks. Never summarize, insert ellipses or reconstruct a hash manually:
 
 ```bash
-cao sdd route propose --declaration <existing-declaration-file>
+cao sdd route rule --source <installed-native-rule-file> --start-line <first> --end-line <last>
+cao sdd route check
+cao sdd route propose --declaration .orchestrator/inputs/WORK_ID/route.json
 cao sdd route show
 cao sdd sync
 ```
 
-`--declaration` accepts a file path, not inline JSON. Keep new declarations in
-Provider-owned output directories, never invent a project-root write exception.
+Line numbers are inclusive and one-based. `rule` replaces the same source path
+or appends; use `--index <zero-based-index>` to repair a named existing entry.
+It writes the source's actual hash and literal excerpt into the draft. Select
+rules that actually justify the route; file existence alone is not evidence.
+`check` validates without accepting decisions or refreshing gates. `propose`
+accepts an existing file path, not inline JSON. Existing legacy declaration
+paths remain readable; new drafts use the CAO input path returned by `next`.
+
+## Repair evidence errors
+
+Inspect ALL `diagnostics`, not only the first `diagnostic`: each names its
+`field` (e.g. `$.rules[1].quote`) and source path. Hash mismatches return the
+actual file hash; quote mismatches say whether the hash already matches.
+Repair every named entry with `rule`, then check again. Correcting a later entry
+cannot fix an earlier invalid rule. Do not resubmit unchanged evidence, keep
+recomputing already-correct hashes, add unrelated rules or change native source
+text to make an invented quote match. If the source really changed, reread it
+and regenerate its evidence. Preparation and validation do not approve a SPEC.
 
 ## Declaration fields
 

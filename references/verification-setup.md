@@ -38,6 +38,10 @@ Put new verification wrappers in `scripts/verification/`; `scripts/` alone is no
 
 Register a combined tests/general wrapper only once as a test script. For security checks use `cao verification configure --security-script <wrapper>`; the same exact command can declare both tests and security without duplicate execution. Same-path wrapper content changes require baseline review too. Installed BMAD Build requires host-observed `批准验证基线` (approve verification baseline); Agent reanchor reason text is not approval. Repeating configuration can request the current approval; only then reanchor. Active reanchor preserves business phase and decisions.
 
+For an existing verification wrapper, a literal `chmod +x scripts/verification/<wrapper>`
+is allowed during active Work setup. Recursive/reference permission operations and product/state
+targets are not setup exceptions.
+
 ### Script contract
 
 CAO does not define project-specific quality metrics and does not parse tool-specific reports. Put the
