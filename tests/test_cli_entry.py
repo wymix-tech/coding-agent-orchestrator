@@ -91,6 +91,8 @@ class CliEntryTests(unittest.TestCase):
             with self.subTest(document=name):
                 for claim in stale_claims:
                     self.assertNotIn(claim, text)
+                if name == "SKILL.md":
+                    text += "\n" + "\n".join(path.read_text(encoding="utf-8") for path in (ROOT / "references").glob("*.md"))
                 for term in ("--test-script", "--plan-item", "--no-plan", "--reanchor", "timeout_seconds"):
                     self.assertIn(term, text)
 

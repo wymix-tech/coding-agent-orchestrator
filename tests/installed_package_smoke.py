@@ -29,6 +29,8 @@ def main():
         base = Path(td)
         modules = ("import json; from scripts import cao, state_store, completion_policy, path_guard, verification_runner, verification_setup, windows_supervisor, dashboard, light_spec_policy, sdd_acceptance_runtime, sdd_acceptance_commands, native_route, native_progress; "
                    "root=cao.package_root_dir(); "
+                   "from scripts.skill_guidance import STAGE_FILES, PROVIDER_FILES; "
+                   "assert all((root/p).is_file() for p in {*STAGE_FILES.values(), *PROVIDER_FILES.values()}); "
                    "assert all((root/p).is_file() for p in ['hosts/pi/coding-orchestrator.ts','hooks/host-event.sh','hosts/claude-code/settings.fragment.json','hosts/codex/hooks.json','SKILL.md','docs/native-route-contract.md']); "
                    "assert cao.overall_verification_status([{'required':False,'status':'failed'}]) == 'blocked'; "
                    "assert dashboard.dashboard_html_path().is_file(); print(json.dumps({'runner':verification_runner.__file__,'invocation':cao.cao_invocation()}))")
@@ -60,7 +62,13 @@ def main():
                 tests.mkdir()
                 (tests / "test_acceptance.py").write_text("import unittest\nclass Acceptance(unittest.TestCase):\n    def test_pass(self): self.assertEqual(2+2,4)\n", encoding="utf-8")
                 cli("init", "--host", "codex", "--sdd", provider)
-                assert cli("bootstrap")["mode"] == "select"
+                bootstrap = cli("bootstrap")
+                assert bootstrap["mode"] == "select"
+                assert bootstrap["guidance"]["ready"]
+                assert Path(bootstrap["guidance"]["skill"]).is_file()
+                assert all(Path(p).is_file() for p in bootstrap["guidance"]["read_before_action"])
+                assert cli("next")["guidance"]["read_before_action"] == bootstrap["guidance"]["read_before_action"]
+                assert cli("instructions", "update", "--host", "codex")["files"][0]["status"] == "unchanged"
                 setup_context = event("prompt_submit")
                 context = setup_context.get("additional_context") or setup_context.get("hookSpecificOutput", {}).get("additionalContext", "")
                 assert "start --requirement" in context, setup_context

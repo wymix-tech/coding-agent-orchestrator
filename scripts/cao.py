@@ -53,6 +53,8 @@ from scripts.native_obligations import (
 )
 from scripts.smoke_runner import run_smoke
 from scripts.provider_preparation import bmad_preparation
+from scripts.skill_guidance import guidance as resolve_skill_guidance
+from scripts.instruction_updates import update_instructions
 from scripts.light_spec_policy import make_binding, binding_digest, light_spec_state
 from scripts.sdd_acceptance_policy import digest as acceptance_digest
 from scripts.sdd_acceptance_files import source_hashes, output_paths, report_hashes
@@ -645,14 +647,7 @@ def install_project_instruction_templates(repo: Path, host: str | None = None) -
         try:
             target.parent.mkdir(parents=True, exist_ok=True)
             with target.open("x", encoding="utf-8", newline="\n") as stream:
-                content = source.read_text(encoding="utf-8")
-                # Resolve the host placeholder when provisioning knows the host,
-                # so the Agent never has to guess it.
-                if host:
-                    content = content.replace("--host <host>", f"--host {host}")
-                # Render the real CAO invocation so the Agent never invents a path.
-                content = content.replace("{{CAO_COMMAND}}", cao_invocation()["command"])
-                stream.write(content)
+                stream.write(render_project_instruction(source, host))
             result["installed"].append(name)
         except FileExistsError:
             result["skipped_existing"].append(name)
@@ -664,7 +659,36 @@ def install_project_instruction_templates(repo: Path, host: str | None = None) -
             result["status"] = "installed"
         elif result["skipped_existing"]:
             result["status"] = "already_present"
+    if result["skipped_existing"]:
+        rendered = {name: render_project_instruction(template_dir / name, host)
+                    for name in result["skipped_existing"]}
+        preview = update_instructions(repo, rendered)
+        updates = [item["file"] for item in preview["files"] if item["status"] == "preview"]
+        if updates:
+            result["upgrade_available"] = updates
+            host_arg = f" --host {host}" if host else ""
+            result["upgrade_command"] = f"{cao_invocation()['command']} instructions update{host_arg}"
     return result
+
+
+def render_project_instruction(source: Path, host: str | None) -> str:
+    content = source.read_text(encoding="utf-8")
+    if host:
+        content = content.replace("--host <host>", f"--host {host}")
+    return content.replace("{{CAO_COMMAND}}", cao_invocation()["command"])
+
+
+@locked_command
+def cmd_instructions_update(args: argparse.Namespace) -> int:
+    template_dir = instruction_template_dir()
+    if template_dir is None:
+        raise RuntimeError("INSTRUCTION_TEMPLATES_UNAVAILABLE")
+    host = args.host or detect_current_host()
+    rendered = {name: render_project_instruction(template_dir / name, host)
+                for name in instruction_templates_for_host(host)}
+    out = update_instructions(repo_root(args.repo), rendered, args.apply)
+    print(json.dumps(out, ensure_ascii=False, indent=2))
+    return 0
 
 
 # Host adapters are process-startup integrations: Claude Code reads its settings
@@ -3825,15 +3849,51 @@ def work_intake_instruction(work: dict[str, Any] | None = None) -> str:
     )
 
 
+def agent_guidance(repo: Path, work: dict[str, Any] | None, mode: str | None = None) -> dict[str, Any]:
+    """Route to stage documents using existing state predicates, never new gates."""
+    provider = str(((work or {}).get("sdd") or {}).get("provider") or "")
+    if mode in {"sdd_select", "sdd_install_required", "language_configuration_failed"}:
+        stage = "startup"
+    elif mode == "verification_setup":
+        stage = "verification_setup"
+    elif not work:
+        status = sdd_status(repo)
+        stage = "startup" if (not status["installed"] or
+                              (status["selected"] == "auto" and len(status["installed"]) > 1)) else "intake"
+    elif not work_sdd_ready(repo, work)[0]:
+        stage = "startup"
+    elif work.get("status") == "completed":
+        stage = "completed"
+    elif work.get("status") in {"todo", "suspended"}:
+        stage = "intake"
+    elif work.get("blockers"):
+        stage = "recovery"
+    elif not verification_baseline_state(repo, work)["ready"]:
+        stage = "verification_setup"
+    else:
+        assessment = path_assessment_state(repo, work)
+        if not assessment["ready"]:
+            stage = "recovery" if assessment.get("reason") == "requirement changed since work started" else "path_assessment"
+        elif (work.get("verification") or {}).get("status") in {"failed", "running"}:
+            stage = "recovery"
+        elif execution_phase(work.get("execution") or {}) in {"review", "verification", "done"}:
+            stage = "completion"
+        else:
+            stage = "execution"
+    return resolve_skill_guidance(package_root_dir(), cao_invocation()["command"], stage, provider)
+
+
 def render_context(repo: Path, work: dict[str, Any] | None, *, session_id: str | None = None, host: str | None = None) -> str:
     inspection = setup_state(config(repo))
+    navigation = "## Read before acting\n" + json.dumps(agent_guidance(repo, work), ensure_ascii=False)
     if not work or work.get("status") in {"todo", "suspended", "completed"}:
-        return "# Coding Agent Orchestrator Work Intake\n" + work_intake_instruction(work)
+        return "# Coding Agent Orchestrator Work Intake\n" + navigation + "\n" + work_intake_instruction(work)
     baseline = verification_baseline_state(repo, work)
     if not baseline["ready"]:
         # Preserve continuity without calculating completion from invalid declarations.
         return "\n".join([
             "# Coding Agent Orchestrator Verification Setup",
+            navigation,
             baseline["next"],
             json.dumps({"verification_setup": inspection, "work": verification_setup_context(work),
                         "session_id": session_id, "host": host}, ensure_ascii=False),
@@ -3842,6 +3902,7 @@ def render_context(repo: Path, work: dict[str, Any] | None, *, session_id: str |
     e = p["execution"] or {}
     lines = [
         "# Coding Agent Orchestrator Resume Context",
+        navigation,
         f"Work Item: {p['work_item']['title']} ({p['work_item']['id']})",
         f"Status: {p['work_item']['status']}",
         f"Requirement: {p['requirement']['path']}",
@@ -4113,6 +4174,7 @@ def cmd_bootstrap(args: argparse.Namespace) -> int:
             "next": action("human", f"SDD `{work_provider}` is not installed in this project. Run `{sdd_install_instruction(work_provider, getattr(args, 'host', None))}`, then run `cao bootstrap` again."),
         }
         next_out["project_instructions"] = project_instructions
+        next_out["guidance"] = agent_guidance(repo, work, next_out["mode"])
         print(json.dumps(next_out, ensure_ascii=False, indent=2))
         return 0
 
@@ -4128,6 +4190,7 @@ def cmd_bootstrap(args: argparse.Namespace) -> int:
             "next": action("human", "HARD STOP: no SDD is installed and no provider is authorized. Ask the user to explicitly choose OpenSpec, BMad Method, or GitHub Spec Kit and wait for their answer. Do not infer a choice from recommendations, popularity, existing global CLIs, Agent preference, or task type. Do not run any provider install/select command before the user answers. After an explicit answer only, run `cao sdd install --provider <chosen-provider> --yes`. The installer must detect the active host from the current Agent runtime and install only that host's integration. If detection is unavailable or ambiguous, stop and request `--host` (or a provider-specific explicit integration/tools option); never use an all-hosts default. If the interaction channel cannot ask the user, stop with SDD_SELECTION_REQUIRED. Do not start or modify production code before installation completes."),
         }
         next_out["project_instructions"] = project_instructions
+        next_out["guidance"] = agent_guidance(repo, work, next_out["mode"])
         print(json.dumps(next_out, ensure_ascii=False, indent=2))
         return 0
 
@@ -4143,6 +4206,7 @@ def cmd_bootstrap(args: argparse.Namespace) -> int:
             "next": action("human", "Repair the reported SDD language configuration, then rerun `cao bootstrap`."),
             "project_instructions": project_instructions,
         }
+        failed["guidance"] = agent_guidance(repo, work, failed["mode"])
         print(json.dumps(failed, ensure_ascii=False, indent=2))
         return 2
 
@@ -4164,6 +4228,7 @@ def cmd_bootstrap(args: argparse.Namespace) -> int:
             "language_configuration": language_configuration,
         }
         next_out["project_instructions"] = project_instructions
+        next_out["guidance"] = agent_guidance(repo, work, next_out["mode"])
         print(json.dumps(next_out, ensure_ascii=False, indent=2))
         return 0
 
@@ -4226,6 +4291,7 @@ def cmd_bootstrap(args: argparse.Namespace) -> int:
             next_out["host_adapter"]["next"] = f"cao host install --host {adapter_host}  (takes effect from the next session)"
     next_out["language_configuration"] = language_configuration
     next_out["project_instructions"] = project_instructions
+    next_out["guidance"] = agent_guidance(repo, work, next_out["mode"])
     print(json.dumps(next_out, ensure_ascii=False, indent=2))
     return 0
 
@@ -5408,7 +5474,10 @@ def cmd_next(args: argparse.Namespace) -> int:
     repo = repo_root(args.repo); ensure_initialized(repo)
     index = load_index(repo); work = load_work(repo, args.work or index.get("active_work")) if (args.work or index.get("active_work")) else None
     if not work:
-        out = {"ok": True, "action": action("agent", "Select a requirement and run `cao start --requirement <path>`."), "work_item": None}
+        navigation = agent_guidance(repo, work)
+        instruction = (f"Run `{cao_invocation()['command']} bootstrap` and resolve SDD selection/installation before creating Work."
+                       if navigation["stage"] == "startup" else work_intake_instruction())
+        out = {"ok": True, "action": action("agent", instruction), "work_item": None, "guidance": navigation}
         print(json.dumps(out, ensure_ascii=False, indent=2)); return 0
     if reconcile_native_sdd_state(repo, work):
         work = load_work(repo, work["id"]) or work
@@ -5421,6 +5490,9 @@ def cmd_next(args: argparse.Namespace) -> int:
         out = {"ok": True, "action": action("none", "Work item is completed."), "work_item": work_summary(work)}
     elif work.get("blockers"):
         out = {"ok": True, "action": action("human", "Resolve the active blocker before continuing."), "work_item": work_summary(work)}
+    elif not verification_baseline_state(repo, work)["ready"]:
+        baseline = verification_baseline_state(repo, work)
+        out = {"ok": True, "action": action("agent", baseline["next"]), "work_item": work_summary(work)}
     elif not path_assessment_state(repo, work)["ready"]:
         path_state = path_assessment_state(repo, work)
         if path_state["reason"] == "major requirement ambiguity requires clarification":
@@ -5441,6 +5513,7 @@ def cmd_next(args: argparse.Namespace) -> int:
         else:
             nxt = configured or action("agent", "Continue implementation and update progress with `cao checkpoint`.")
         out = {"ok": True, "action": nxt, "work_item": work_summary(work)}
+    out["guidance"] = agent_guidance(repo, work)
     print(json.dumps(out, ensure_ascii=False, indent=2)); return 0
 
 
@@ -6733,7 +6806,7 @@ def _readonly_tokens(tokens: list[str]) -> bool:
     safe_control_commands = {
         "init", "bootstrap", "sdd", "start", "path", "list", "status", "next", "resume",
         "checkpoint", "decision", "block", "unblock", "handoff", "sessions", "verify", "done",
-        "context", "artifact", "host", "host-event", "requirement", "language", "gate", "reopen", "verification",
+        "context", "artifact", "host", "host-event", "requirement", "language", "gate", "reopen", "verification", "instructions",
     }
     return bool(command_tokens and (command_tokens[0] in safe_control_commands or command_tokens in (["--help"], ["-h"])))
 
@@ -7126,6 +7199,11 @@ def build_parser() -> argparse.ArgumentParser:
     sp = artifact_sub.add_parser("refresh"); sp.add_argument("--repo", default="."); sp.add_argument("--work"); sp.add_argument("--path"); sp.set_defaults(fn=cmd_artifact_refresh)
     sp = sub.add_parser("list"); sp.add_argument("--repo", default="."); sp.set_defaults(fn=cmd_list)
     sp = sub.add_parser("status"); sp.add_argument("--repo", default="."); sp.add_argument("--work"); sp.set_defaults(fn=cmd_status)
+    instructions = sub.add_parser("instructions", help="Preview or apply a safe CAO project-instruction upgrade")
+    instructions_sub = instructions.add_subparsers(dest="instructions_command", required=True)
+    sp = instructions_sub.add_parser("update", help="Preview managed/known legacy instructions; --apply backs up and replaces only CAO content")
+    sp.add_argument("--repo", default="."); sp.add_argument("--host", choices=["claude-code", "codex", "pi"])
+    sp.add_argument("--apply", action="store_true"); sp.set_defaults(fn=cmd_instructions_update)
     sp = sub.add_parser("next"); sp.add_argument("--repo", default="."); sp.add_argument("--work"); sp.set_defaults(fn=cmd_next)
     sp = sub.add_parser("resume"); sp.add_argument("--repo", default="."); sp.add_argument("--work"); sp.add_argument("--host", default="unknown"); sp.add_argument("--session"); sp.add_argument("--reactivate", action="store_true"); sp.set_defaults(fn=cmd_resume)
     sp = sub.add_parser("checkpoint"); sp.add_argument("--repo", default="."); sp.add_argument("--work"); sp.add_argument("--session"); sp.add_argument("--host", choices=["claude-code", "codex", "pi"]); sp.add_argument("--step"); sp.add_argument("--next"); sp.add_argument("--next-type", choices=sorted(ACTION_TYPES), default="agent"); sp.add_argument("--command"); sp.add_argument("--summary"); sp.add_argument("--completed"); sp.add_argument("--pending"); sp.set_defaults(fn=cmd_checkpoint)

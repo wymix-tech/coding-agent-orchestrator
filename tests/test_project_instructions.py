@@ -20,9 +20,7 @@ HOST_ENV_KEYS = (
 )
 NO_HOST_ENV = {key: "" for key in HOST_ENV_KEYS}
 
-# The clauses that encode the hardened native-workflow contract. If a template
-# edit drops one of these, the instructions injected into projects go stale and
-# Agents fall back to the pre-hardening workflow.
+# Native contracts belong to the phase guide reached through the thin entrypoint.
 CONTRACT_COMMANDS = (
     "path assess --profile",
     "sdd workflow select",
@@ -142,26 +140,30 @@ class InitInstallsTemplates(unittest.TestCase):
 
 class TemplateContentStaysCurrent(unittest.TestCase):
     def test_templates_encode_the_native_workflow_contract(self):
-        for name, text in every_template_text().items():
-            for command in CONTRACT_COMMANDS:
-                self.assertIn(command, text, f"{name} is missing `{command}`")
+        text = (ROOT / "references/execution.md").read_text(encoding="utf-8")
+        for command in CONTRACT_COMMANDS:
+            self.assertIn(command, text)
+        for text in every_template_text().values():
+            self.assertIn("guidance.read_before_action", text)
+            self.assertLessEqual(len(text.splitlines()), 40)
+            self.assertLess(len(text.encode()), 3000)
 
     def test_templates_state_light_minimal_completion_contract(self):
-        for name, text in every_template_text().items():
-            self.assertIn("sdd spec bind", text, name)
-            self.assertIn("are optional", text, name)
+        text = (ROOT / "references/execution.md").read_text(encoding="utf-8")
+        self.assertIn("sdd spec bind", text)
+        self.assertIn("do not manufacture", text)
 
 
     def test_templates_forbid_placeholder_entrypoints_and_fake_artifacts(self):
-        for name, text in every_template_text().items():
-            self.assertIn("placeholder entrypoint", text, name)
-            self.assertIn("product source files", text, name)
+        text = (ROOT / "references/execution.md").read_text(encoding="utf-8")
+        self.assertIn("placeholder entrypoint", text)
+        self.assertIn("product source files", text)
 
 
     def test_templates_teach_the_numbered_requirement_convention(self):
-        for name, text in every_template_text().items():
-            self.assertIn("requirement next-id", text, f"{name} omits requirement numbering")
-            self.assertIn(".orchestrator/requirements/", text, f"{name} omits the requirements directory")
+        text = (ROOT / "references/work-intake.md").read_text(encoding="utf-8")
+        self.assertIn("requirement next-id", text)
+        self.assertIn(".orchestrator/requirements/", text)
 
 
     def test_templates_list_every_supported_host(self):
@@ -201,7 +203,7 @@ class CaoPathIsNeverGuessed(unittest.TestCase):
             if prefix != "cao":
                 # No bare `cao ...` command may remain once the prefix is resolved.
                 self.assertNotIn("`cao ", text, f"{name} still contains an unprefixed command")
-            for command in CONTRACT_COMMANDS:
+            for command in ("bootstrap", "next", "done", "instructions update"):
                 self.assertIn(f"{prefix} {command}", text, f"{name}: `{command}` is not prefixed")
 
 

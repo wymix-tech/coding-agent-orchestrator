@@ -50,6 +50,27 @@ make test
 
 The repository also includes a `./cao` source-checkout launcher for shell-based development and Agent plugin integrations. The generated `cao` command is the preferred interface for regular use. When invoking the implementation directly from a checkout, use `python scripts/cao.py ...`.
 
+## Agent guidance and upgrades
+
+Project `AGENTS.md` / `CLAUDE.md` contains a short CAO entrypoint. `SKILL.md` provides
+the dependency flow and a direct index of stage/Provider references. Read only the current
+stage and selected Provider; installed native instructions remain authoritative for native steps.
+`cao bootstrap` and `cao next` return `guidance` with the real command, Skill path,
+stage, absolute `read_before_action` paths, missing-resource diagnostics and return command.
+Resume/host contexts include the same navigation. Links do not automatically load documents.
+
+Existing project instructions are preserved by init/bootstrap. To upgrade known standalone
+legacy CAO templates or replace only a marked CAO block while retaining surrounding custom rules:
+
+```bash
+cao instructions update --host pi          # Preview proposed content; no instruction writes
+cao instructions update --host pi --apply  # Back up exact bytes and apply eligible changes
+```
+
+Use the actual host. Unrecognized custom files and symlinks are preserved for manual merging.
+Backups are under `.orchestrator/backups/instructions/`; restart the host to load changed instructions.
+If `guidance.ready` is false, repair the installed package's missing resources before proceeding.
+
 ## Core commands
 
 ```bash
