@@ -54,7 +54,7 @@ from scripts.native_obligations import (
 )
 from scripts.smoke_runner import run_smoke
 from scripts.provider_preparation import bmad_preparation
-from scripts.skill_guidance import guidance as resolve_skill_guidance
+from scripts.skill_guidance import guidance as resolve_skill_guidance, action_files, CONTRACT_FILES
 from scripts.instruction_updates import update_instructions
 from scripts.provider_restart import require_restart, observe_start, restart_state
 from scripts.technology_guidance import technology_instruction
@@ -3982,24 +3982,37 @@ def agent_guidance(repo: Path, work: dict[str, Any] | None, mode: str | None = N
     provider = str(((work or {}).get("sdd") or {}).get("provider") or "")
     if mode in {"sdd_select", "sdd_install_required", "language_configuration_failed", "host_restart_required"} or not restart_state(repo, detect_current_host())["ready"]:
         stage = "startup"
+        next_action = None
     elif mode == "verification_setup":
         stage = "verification_setup"
+        next_action = None
     else:
         next_action = next_action or current_work_action(repo, work, check_completion=False)
         stage = next_action.get("stage", "execution")
-    navigation = resolve_skill_guidance(package_root_dir(), cao_invocation()["command"], stage, provider)
-    if next_action and next_action.get("reason", "").startswith("NATIVE_"):
-        root = package_root_dir()
+    root = package_root_dir()
+    navigation = resolve_skill_guidance(root, cao_invocation()["command"], stage, provider)
+    reason = (next_action or {}).get("reason", "")
+    contracts = action_files(reason, work)
+    for name in contracts:
         if root:
-            contract = root / "docs/native-route-contract.md"
-            navigation["read_before_action"].append(str(contract.resolve()))
-            if not contract.is_file():
-                navigation["missing_resources"].append("docs/native-route-contract.md")
-        selected = workflow_skill_identity(repo, provider, ((work or {}).get("sdd", {}).get("workflow") or {}).get("entrypoint") or "")
+            navigation["read_before_action"].append(str((root / name).resolve()))
+        if root is None or not (root / name).is_file():
+            navigation["missing_resources"].append(name)
+    skill_acceptance = CONTRACT_FILES["acceptance_skill"] in contracts
+    if reason.startswith("NATIVE_") or skill_acceptance:
+        sdd = (work or {}).get("sdd") or {}
+        if skill_acceptance:
+            executor = (((sdd.get("acceptance") or {}).get("declaration") or {}).get("executor") or {})
+            entrypoint = executor.get("entrypoint")
+        else:
+            entrypoint = (sdd.get("workflow") or {}).get("entrypoint")
+        selected = workflow_skill_identity(repo, provider, entrypoint or "")
         for skill in provider_native_skills(repo, provider):
-            if skill["name"] == (selected or "bmad-build"):
+            if skill["name"] == (selected or ("bmad-build" if not skill_acceptance else None)):
                 navigation["read_before_action"].append(str((repo / skill["rel_path"]).resolve()))
-        navigation["ready"] = not navigation["missing_resources"]
+    navigation["ready"] = not navigation["missing_resources"]
+    if not navigation["ready"]:
+        navigation["instruction"] = "Repair the CAO installation: required guidance resources are missing. Do not bypass workflow gates."
     return navigation
 
 

@@ -72,6 +72,9 @@ class NativeOmissionTests(RepairCase):
         self.run_cli('gate','satisfy','--gate','implementation_review','--evidence','Self reviewed')
         self.assertEqual(self.run_cli('verify')[1]['error'],'NATIVE_REVIEW_REQUIRED')
         self.assertEqual(self.run_cli('done')[1]['reason'],'NATIVE_REVIEW_REQUIRED')
+        out = self.run_cli('next')[1]
+        self.assertIn('review submit', out['action']['instruction'])
+        self.assertNotIn('review resolve', out['action']['instruction'])
 
     def test_fresh_independent_report_allows_verify_and_non_git_done(self):
         self.setup_oneshot();before=self.spec.read_bytes();self.review()

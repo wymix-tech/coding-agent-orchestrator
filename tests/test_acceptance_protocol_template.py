@@ -2,17 +2,43 @@
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 import sys
 import tempfile
 import unittest
 
 from scripts import acceptance_executor
-from scripts.sdd_acceptance_policy import AcceptanceValidationError, normalize_report
+from scripts.sdd_acceptance_policy import AcceptanceValidationError, normalize_declaration, normalize_report
 from scripts.sdd_acceptance_protocol import protocol
 
 
 class AcceptanceProtocolTests(unittest.TestCase):
+    def test_documented_examples_match_protocol_and_runtime_validation(self):
+        root = Path(__file__).resolve().parents[1]
+        text = (root / "references/sdd-acceptance-protocol.md").read_text()
+        request, report = [json.loads(block) for block in re.findall(r"```json\n(.*?)\n```", text, re.S)]
+        machine = protocol()
+        self.assertEqual(request, machine["request_example"])
+        self.assertEqual(report, machine["report_example"])
+        identity = machine["request_schema"]["properties"]["input_sha256"]["pattern"]
+        self.assertRegex(request["input_sha256"], identity)
+        declaration = normalize_declaration(request["declaration"])
+        results = normalize_report(report, declaration, request["run_id"], request["input_sha256"], request["provider"])
+        self.assertEqual(results[0]["status"], "blocked")
+        # Validate real evidence files as well as JSON fields. Sample output is
+        # deliberately blocked; it must never be usable as a claimed passed run.
+        from scripts.sdd_acceptance_files import report_hashes
+        with tempfile.TemporaryDirectory() as td:
+            repo = Path(td)
+            source = repo / request["declaration"]["spec"]
+            source.parent.mkdir(parents=True)
+            source.write_text("Illustrative native source; no acceptance was executed.")
+            self.assertTrue(report_hashes(repo, results, []))
+        # The same shared report contract also accepts the Skill declaration.
+        declaration["executor"] = {"mode": "skill", "entrypoint": "native-acceptance"}
+        self.assertEqual(normalize_report(report, declaration, request["run_id"], request["input_sha256"], request["provider"]), results)
+
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)

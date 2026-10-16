@@ -280,6 +280,8 @@ CAO
 
 The repository uses a three-level loading model:
 
+`references/` contains the runtime stage guides and contracts consumed by CAO Agents, including native route declarations and acceptance protocols. `docs/` is reserved for development/design material for CAO itself; runtime guidance does not load it and published wheel/npm packages do not ship it. A full Git checkout retains development documents. Read only the references required by the current action.
+
 ```text
 Project bootstrap instructions (installed from templates/)
   ├─ AGENTS.md            -> Codex / compatible hosts
@@ -606,7 +608,7 @@ Declaration example:
 
 The command is actually run outside the repository lock. `CAO_SDD_ACCEPTANCE_REQUEST` contains the frozen **JSON string, not a file path**. Iterate `request.declaration.criteria`; print one JSON report to stdout and send diagnostics to stderr. Echo `run_id`, `input_sha256`, `provider`; return exactly one `items` result per criterion with `id`, `status` (`passed`, `failed`, `blocked`) and a nonempty **array** `evidence: [{"path": "<repo-file>", "reason": "<actual check>"}]`. Write every declared output file before exiting, or use `outputs: []` for stdout-only reports. Exit 0 plus all passed items is required; 1 fails, 2 blocks, other nonzero exits/timeouts error. Evidence bytes and frozen inputs are rechecked before closure.
 
-Use `cao sdd acceptance protocol` for machine-readable request/report schemas, complete examples and a standalone command executor template. See [the protocol and archive recovery guide](docs/sdd-acceptance-protocol.md). The template blocks unmapped criteria; it does not manufacture passing results.
+Use `cao sdd acceptance protocol` for machine-readable request/report schemas, complete examples and a standalone command executor template. See [the protocol and archive recovery guide](references/sdd-acceptance-protocol.md). The template blocks unmapped criteria; it does not manufacture passing results.
 
 For installed Skill executors, configure `mode: "skill"` and the real Skill name, use `cao sdd acceptance begin`, follow its complete instructions including independent reviewers, then `cao sdd acceptance submit --run <request-id> --report <registered-output.json>`. Skill reports are Agent-submitted evidence; CAO does not prove reviewer execution or natural-language correctness. A renderer or self-written findings cannot stand in for the required review.
 

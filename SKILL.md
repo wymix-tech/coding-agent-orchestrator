@@ -33,8 +33,13 @@ description: Coordinate non-trivial repository coding work across sessions and a
 | Current Provider is Spec Kit and native workflow action is needed | [Spec Kit](references/provider-speckit.md) |
 | Review/verification/final acceptance/close | [Completion](references/completion.md) |
 | Blockers, requirement changes, stale evidence, missing sources or abandoned runs | [Recovery](references/recovery.md) |
-| Need route declaration, BMAD approval or review report fields | [Native route contract](docs/native-route-contract.md) |
-| Need independent acceptance declaration or report fields | [Acceptance protocol](docs/sdd-acceptance-protocol.md) |
+| Declare/repair a native route (`NATIVE_ROUTE_*`); not workflow/SPEC preparation | [Native route contract](references/native-route-contract.md) |
+| BMAD dispatch Open Questions, approval or paused implementation | [BMAD approval](references/bmad-approval.md) |
+| BMAD dispatch review/Classify/Resolve action | [BMAD dispatch review](references/bmad-review-dispatch.md) |
+| BMAD oneshot review/submit action | [BMAD oneshot review](references/bmad-review-oneshot.md) |
+| Configure/repair independent acceptance fields, any Provider | [Acceptance protocol](references/sdd-acceptance-protocol.md) |
+| Acceptance executor mode is `command` | [Command acceptance](references/sdd-acceptance-command.md) |
+| Acceptance executor mode is `skill` | [Skill acceptance](references/sdd-acceptance-skill.md) |
 
 Read the relevant file completely when entering its stage. Do not preload unrelated Providers,
 all references, source scripts, README or historical repair notes. Links are navigation, not automatic

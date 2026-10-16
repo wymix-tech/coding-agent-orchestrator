@@ -8,7 +8,7 @@ from unittest.mock import patch
 
 from scripts import cao
 from scripts.instruction_updates import legacy_template, update_instructions
-from scripts.skill_guidance import guidance, STAGE_FILES, PROVIDER_FILES
+from scripts.skill_guidance import guidance, STAGE_FILES, PROVIDER_FILES, CONTRACT_FILES
 from tests.repair_helpers import RepairCase, ROOT
 
 
@@ -18,11 +18,15 @@ class ResourceContracts(unittest.TestCase):
         self.assertLessEqual(len(skill.splitlines()), 180)
         self.assertLess(len(skill.encode()), 10000)
         links = re.findall(r"\]\(([^)]+)\)", skill)
-        for name in {*STAGE_FILES.values(), *PROVIDER_FILES.values()}:
+        for name in {*STAGE_FILES.values(), *PROVIDER_FILES.values(), *CONTRACT_FILES.values()}:
             self.assertIn(name, links)
         for name in links:
             self.assertTrue((ROOT / name).is_file(), name)
-        for path in (ROOT / "references").glob("*.md"):
+            text = (ROOT / name).read_text(encoding="utf-8")
+            if len(text.splitlines()) > 100:
+                self.assertIn("Contents:", text, name)
+        for name in {*STAGE_FILES.values(), *PROVIDER_FILES.values()}:
+            path = ROOT / name
             text = path.read_text(encoding="utf-8")
             for section in ("## Enter when", "## Execute", "## Exit when", "## If blocked"):
                 self.assertIn(section, text, path.name)
@@ -39,6 +43,83 @@ class ResourceContracts(unittest.TestCase):
 
 
 class RuntimeNavigation(RepairCase):
+    def test_contracts_follow_current_operation_and_provider(self):
+        work = self.read_work(self.start())
+        cases = [
+            ("NATIVE_WORKFLOW_SELECTION_REQUIRED", []),
+            ("NATIVE_SPEC_PREPARATION_REQUIRED", []),
+            ("NATIVE_ROUTE_REQUIRED", ["native_route"]),
+            ("NATIVE_ROUTE_RULES_CHANGED", ["native_route"]),
+            ("NATIVE_SPEC_APPROVAL_REQUIRED", ["bmad_approval"]),
+            ("NATIVE_SPEC_CLARIFICATION_REQUIRED", ["bmad_approval"]),
+            ("NATIVE_IMPLEMENTATION_PAUSED", ["bmad_approval"]),
+            ("NATIVE_IMPLEMENTATION_HANDOFF_REQUIRED", []),
+            ("NATIVE_PLANNING_NOT_FINAL", []),
+            ("NATIVE_REVIEW_REQUIRED", ["bmad_oneshot_review"]),
+        ]
+        for reason, expected in cases:
+            with self.subTest(reason=reason):
+                nav = cao.agent_guidance(self.repo, work, next_action={"stage": "execution", "reason": reason})
+                contracts = [path for path in nav["read_before_action"] if path in {str(ROOT / p) for p in CONTRACT_FILES.values()}]
+                self.assertEqual(contracts, [str(ROOT / CONTRACT_FILES[key]) for key in expected])
+                self.assertTrue(nav["ready"], nav)
+        work["sdd"]["route_decision"] = {"provider": "bmad", "build_route": "dispatch"}
+        for reason in ("NATIVE_REVIEW_REQUIRED", "NATIVE_REVIEW_CLASSIFY_REQUIRED", "NATIVE_REVIEW_LOOPBACK_REQUIRED", "NATIVE_REVIEW_TRIAGE_STALE"):
+            nav = cao.agent_guidance(self.repo, work, next_action={"stage": "completion", "reason": reason})
+            self.assertIn(str(ROOT / CONTRACT_FILES["bmad_dispatch_review"]), nav["read_before_action"])
+            self.assertNotIn(str(ROOT / CONTRACT_FILES["bmad_oneshot_review"]), nav["read_before_action"])
+            self.assertNotIn(str(ROOT / CONTRACT_FILES["native_route"]), nav["read_before_action"])
+        for provider in ("openspec", "speckit"):
+            work["sdd"]["provider"] = provider
+            nav = cao.agent_guidance(self.repo, work, next_action={"stage": "completion", "reason": "NATIVE_REVIEW_REQUIRED"})
+            self.assertFalse(any(Path(p).name.startswith("bmad-") for p in nav["read_before_action"]))
+
+    def test_acceptance_loads_shared_contract_then_only_declared_mode(self):
+        work = self.read_work(self.start())
+        current = {"stage": "completion", "reason": "SDD acceptance is not configured"}
+        nav = cao.agent_guidance(self.repo, work, next_action=current)
+        self.assertIn(str(ROOT / CONTRACT_FILES["acceptance"]), nav["read_before_action"])
+        self.assertNotIn(str(ROOT / CONTRACT_FILES["acceptance_command"]), nav["read_before_action"])
+        self.assertNotIn(str(ROOT / CONTRACT_FILES["acceptance_skill"]), nav["read_before_action"])
+        for provider in PROVIDER_FILES:
+            work["sdd"]["provider"] = provider
+            for mode, other in (("command", "skill"), ("skill", "command")):
+                work["sdd"]["acceptance"] = {"declaration": {"executor": {"mode": mode, "entrypoint": "native-acceptance"}}}
+                skill = {"name": "native-acceptance", "rel_path": "native/acceptance/SKILL.md"}
+                with patch.object(cao, "workflow_skill_identity", return_value=skill["name"]), \
+                     patch.object(cao, "provider_native_skills", return_value=[skill]):
+                    nav = cao.agent_guidance(self.repo, work, next_action=current)
+                self.assertIn(str(ROOT / CONTRACT_FILES["acceptance_" + mode]), nav["read_before_action"])
+                self.assertNotIn(str(ROOT / CONTRACT_FILES["acceptance_" + other]), nav["read_before_action"])
+                self.assertEqual(str(self.repo / skill["rel_path"]) in nav["read_before_action"], mode == "skill")
+
+    def test_setup_priority_does_not_load_pending_native_contracts(self):
+        work = self.read_work(self.start())
+        for mode, stage in (("host_restart_required", "startup"), ("verification_setup", "verification_setup")):
+            nav = cao.agent_guidance(self.repo, work, mode, next_action={"stage": "execution", "reason": "NATIVE_ROUTE_REQUIRED"})
+            self.assertEqual(nav["stage"], stage)
+            self.assertEqual(nav["read_before_action"], [str(ROOT / STAGE_FILES[stage])])
+
+    def test_native_contract_uses_references_and_does_not_fall_back_to_developer_docs(self):
+        wid = self.start()
+        work = self.read_work(wid)
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            (root / "SKILL.md").write_text("Installed Skill")
+            for name in (STAGE_FILES["execution"], PROVIDER_FILES["bmad"], "docs/native-route-contract.md"):
+                path = root / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text("Fixture resource")
+            current = {"stage": "execution", "reason": "NATIVE_ROUTE_REQUIRED"}
+            with patch.object(cao, "package_root_dir", return_value=root):
+                out = cao.agent_guidance(self.repo, work, next_action=current)
+                self.assertFalse(out["ready"])
+                self.assertEqual(out["missing_resources"], [CONTRACT_FILES["native_route"]])
+                self.assertIn(str(root / CONTRACT_FILES["native_route"]), out["read_before_action"])
+                self.assertNotIn(str(root / "docs/native-route-contract.md"), out["read_before_action"])
+                (root / CONTRACT_FILES["native_route"]).write_text("Runtime contract")
+                self.assertTrue(cao.agent_guidance(self.repo, work, next_action=current)["ready"])
+
     def assert_guides(self, out, stage, expected):
         guide = out["guidance"]
         self.assertTrue(guide["ready"], guide)

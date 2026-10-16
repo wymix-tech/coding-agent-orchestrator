@@ -12,6 +12,35 @@ STAGE_FILES = {
     "recovery": "references/recovery.md",
 }
 PROVIDER_FILES = {name: f"references/provider-{name}.md" for name in ("bmad", "openspec", "speckit")}
+CONTRACT_FILES = {
+    "native_route": "references/native-route-contract.md",
+    "bmad_approval": "references/bmad-approval.md",
+    "bmad_dispatch_review": "references/bmad-review-dispatch.md",
+    "bmad_oneshot_review": "references/bmad-review-oneshot.md",
+    "acceptance": "references/sdd-acceptance-protocol.md",
+    "acceptance_command": "references/sdd-acceptance-command.md",
+    "acceptance_skill": "references/sdd-acceptance-skill.md",
+}
+
+
+def action_files(reason: str, work: dict | None) -> list[str]:
+    """Select contracts by the current operation, not a whole native namespace."""
+    sdd = (work or {}).get("sdd") or {}
+    keys = []
+    if reason.startswith("NATIVE_ROUTE_"):
+        keys.append("native_route")
+    if sdd.get("provider") == "bmad":
+        if reason in {"NATIVE_SPEC_APPROVAL_REQUIRED", "NATIVE_SPEC_CLARIFICATION_REQUIRED", "NATIVE_IMPLEMENTATION_PAUSED"}:
+            keys.append("bmad_approval")
+        if reason.startswith("NATIVE_REVIEW_"):
+            route = sdd.get("route_decision") or {}
+            keys.append("bmad_dispatch_review" if route.get("build_route") == "dispatch" else "bmad_oneshot_review")
+    if reason.startswith(("SDD acceptance", "SDD_ACCEPTANCE_")):
+        keys.append("acceptance")
+        mode = (((sdd.get("acceptance") or {}).get("declaration") or {}).get("executor") or {}).get("mode")
+        if mode in {"command", "skill"}:
+            keys.append("acceptance_" + mode)
+    return [CONTRACT_FILES[key] for key in keys]
 
 
 def guidance(root: Path | None, command: str, stage: str, provider: str = "") -> dict:

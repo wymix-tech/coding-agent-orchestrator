@@ -240,7 +240,7 @@ test('real Pi route preparation follows baseline, assessment, native workflow an
     const native = await result('cao path assess');
     assert.match(native, /NATIVE_WORKFLOW_SELECTION_REQUIRED/);
     assert.ok(native.includes(path.join(f.dir, skill)));
-    assert.match(native, /native-route-contract.md/);
+    assert.doesNotMatch(native, /references\/native-route-contract\.md/);
     f.cli('sdd', 'workflow', 'select', '--name', 'bmad-build', '--entrypoint', 'bmad-build');
     assert.match(await result('cao sdd workflow select'), /NATIVE_SPEC_PREPARATION_REQUIRED/);
     const target = f.cli('next').action.declaration_path;
