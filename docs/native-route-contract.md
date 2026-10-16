@@ -103,6 +103,7 @@ Direct Build 检查路线绑定的 SPEC `Tasks & Acceptance`，全部任务完�
 重新提交证据。未关联的历史项目 sprint 文件不阻塞独立 Direct Build，显式绑定的
 sprint 或路线声明的 sprint 仍按当前需求的所有 story 聚合检查。
 oneshot 的独立审查与本地 Git 提交义务按实际 Build route 启用，适用于所有 CAO 档位。
+dispatch 也必须登记当前渲染快照的全部原生审查层，不能用手工 implementation_review 替代。
 原生阻塞解除时只清除 `native-sdd-state` 自动 blocker，保留人工 blocker 并记录解除事件。
 
 修改需求、规则、路线或 frozen intent 必须重新评估/批准；单纯状态及任务勾选不使
@@ -114,3 +115,63 @@ oneshot 的独立审查与本地 Git 提交义务按实际 Build route 启用，
 已有基线修改继续要求显式审核/重锚定；安装了 BMAD Build 时，须由宿主观察到用户
 `批准验证基线`（approve verification baseline），不能仅靠 Agent 填写理由通过。active reanchor 保留业务阶段及开始时间，
 清除旧验证证据并重算原生下一步。
+
+## Pi 本地实验回归约束
+
+合法的 CAO bootstrap/list/help、描述符重定向 `2>&1`、`echo "EXIT=$?"` 和受限 Git rev-parse
+不需要先建立 Work。附带产品写入或写 CAO 托管状态仍会拒绝。门禁不是通用 Shell 沙箱。
+BMAD 准备脚本只按受限身份、参数与路径放行：配置解析、原生 memlog、架构 lint、sprint 计划；
+输出限制在 `_bmad-output`。不要因某个 helper 失败就宣告所有原生脚本禁用。
+
+验证基线包含直接项目 wrapper 的内容指纹。同路径修改也属于标准变化；再次运行相同
+`verification configure` 可建立新的审核请求，按宿主观察的 `批准验证基线` 重锚。
+安全风险需显式声明能力，例如：
+
+```sh
+cao verification configure --test-script scripts/verification/test.sh --security-script scripts/verification/test.sh --replace
+```
+
+相同 wrapper 合并执行一次，覆盖 tests 与 security_verification；配置声明不证明其语义正确。
+
+dispatch 审查流程：先为当前快照的每层 begin，全部返回后 classify，全部分类后才允许产品补丁，
+原生检查通过后逐层 resolve。begin 的 instructions 使用真实 `step-04-review.md`：
+
+```sh
+cao sdd review begin --layer blind-hunter --instructions _bmad/render/<实际快照>/step-04-review.md --model <当前模型>
+cao sdd review classify --layer blind-hunter --report _bmad-output/reviews/blind-triage.json
+cao sdd review resolve --layer blind-hunter --report _bmad-output/reviews/blind-resolved.json
+```
+
+对渲染出的所有活动层重复操作，不得删掉活动层缩小义务。零发现提交空数组，不编造问题。
+classify 报告形状：
+
+```json
+{
+  "run_id": "<begin 返回的 id>",
+  "input_sha256": "<begin 返回的 input_sha256>",
+  "reviewer": {"mode": "subagent", "session_id": "<独立会话>", "model": "<当前模型>"},
+  "findings_file": "_bmad-output/reviews/blind-raw.json",
+  "findings": [{"id": "BH-001", "verdict": "medium", "disposition": "patch", "evidence": "实际核对的引用与结果"}]
+}
+```
+
+原始 findings_file 是 JSON 数组，每项有唯一非空 id 和原始发现内容；分类必须逐一覆盖，
+先裁决再去重。defer 只允许 `scope: outside-intent` 且 `violates_frozen_intent: false`；
+违反冻结意图应显式标 `violates_frozen_intent: true` 并走 intent_gap/bad_spec 回环，不能直接延期。
+这仍需审查者做语义判断；字段不能代替真实核对。
+resolve 报告为 `{"run_id":"...","resolved_ids":["BH-001"]}`，列出该层全部 patch ID；
+CAO 保留原始发现、分类和解决记录的指纹，并绑定修复后的代码。review round 不等于 loopback 次数。
+
+安装的 step-03 默认要求子代理时，Pi 先观察完整读取原生步骤，再观察真正实现子会话的产品写入；
+主代理不能直接替代可用的实现 handoff。SPEC 必须有 in-progress 和 baseline_commit（HEAD 或 NO_VCS）。
+宿主报告无子代理能力时允许原生 fallback，定制 handoff 按实际渲染规则执行。
+无法还原历史执行时使用已有 `--allow-unverified --reason` 审计例外，不能制造历史。
+renderer 只加载指令，不能作为 workflow execute 的命令；会话运行记录实际 `invoke skill <name>`，
+不得添加 `-> step-01..05` 之类伪终端指令。
+
+full-planning 的 PRD/架构文档需完成原生 Finalize，不得用 draft 产物关闭；按安装能力保留 memlog
+和 comprehensive 架构 review 文件。SPEC 与 sprint 进展不一致会显示冲突；真实 in-progress/in-review
+可反映执行阶段，但不允许把未完成的绑定计划升级为完成，也不会自动改写其他 Story。
+
+Pi 根据宿主 session header 的 parentSession 关联父子会话。子会话不参与主审批，也不生成主交接；
+父会话文件不可读时仍保留 child 身份。

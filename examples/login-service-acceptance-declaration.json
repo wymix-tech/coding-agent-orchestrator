@@ -1,0 +1,79 @@
+{
+  "spec": "_bmad-output/implementation-artifacts/spec-1-login-service-hot-reload.md",
+  "sources": [
+    "_bmad-output/implementation-artifacts/spec-1-login-service-hot-reload.md",
+    "_bmad-output/planning-artifacts/prds/prd-demo-2026-10-15/prd.md",
+    "_bmad-output/planning-artifacts/architecture/architecture-demo-2026-10-15/ARCHITECTURE-SPINE.md"
+  ],
+  "criteria": [
+    {
+      "id": "AC-1",
+      "source": "_bmad-output/implementation-artifacts/spec-1-login-service-hot-reload.md",
+      "kind": "requirement",
+      "description": "正确凭据调用登录接口返回 200 且响应体包含会话令牌"
+    },
+    {
+      "id": "AC-2",
+      "source": "_bmad-output/implementation-artifacts/spec-1-login-service-hot-reload.md",
+      "kind": "requirement",
+      "description": "密码错误与用户名不存在返回完全一致的 401，不泄露用户名是否存在"
+    },
+    {
+      "id": "AC-3",
+      "source": "_bmad-output/implementation-artifacts/spec-1-login-service-hot-reload.md",
+      "kind": "requirement",
+      "description": "运行中向配置文件新增用户后 2 秒内可登录，且不重启进程"
+    },
+    {
+      "id": "AC-4",
+      "source": "_bmad-output/implementation-artifacts/spec-1-login-service-hot-reload.md",
+      "kind": "requirement",
+      "description": "删除用户后当前密码登录失败，既有会话失效"
+    },
+    {
+      "id": "AC-5",
+      "source": "_bmad-output/implementation-artifacts/spec-1-login-service-hot-reload.md",
+      "kind": "requirement",
+      "description": "修改密码后旧密码失败、新密码成功，既有会话失效"
+    },
+    {
+      "id": "AC-6",
+      "source": "_bmad-output/implementation-artifacts/spec-1-login-service-hot-reload.md",
+      "kind": "requirement",
+      "description": "非法配置被整份拒绝，服务继续可用并沿用上一份有效配置"
+    },
+    {
+      "id": "AC-7",
+      "source": "_bmad-output/implementation-artifacts/spec-1-login-service-hot-reload.md",
+      "kind": "requirement",
+      "description": "非法配置恢复为合法内容后自动重新生效，无需重启"
+    },
+    {
+      "id": "AC-8",
+      "source": "_bmad-output/implementation-artifacts/spec-1-login-service-hot-reload.md",
+      "kind": "requirement",
+      "description": "日志不出现密码明文、失败请求密码和完整哈希"
+    },
+    {
+      "id": "AC-9",
+      "source": "_bmad-output/implementation-artifacts/spec-1-login-service-hot-reload.md",
+      "kind": "requirement",
+      "description": "bcrypt 哈希生成入口可用且不启动 HTTP 容器"
+    },
+    {
+      "id": "AC-10",
+      "source": "_bmad-output/implementation-artifacts/spec-1-login-service-hot-reload.md",
+      "kind": "design",
+      "description": "配置文件缺失时服务拒绝启动，不进入无人可登录的降级状态"
+    }
+  ],
+  "executor": {
+    "mode": "command",
+    "entrypoint": "bash scripts/verification/acceptance.sh",
+    "timeout_seconds": 300
+  },
+  "outputs": [
+    "_bmad-output/cao-acceptance/001-requirement---2026-10-15-9aa1ec2b/run-log.txt",
+    "_bmad-output/cao-acceptance/001-requirement---2026-10-15-9aa1ec2b/session-tests.txt"
+  ]
+}
