@@ -12,6 +12,10 @@ STAGE_FILES = {
     "recovery": "references/recovery.md",
 }
 PROVIDER_FILES = {name: f"references/provider-{name}.md" for name in ("bmad", "openspec", "speckit")}
+CONTRACT_FILES = {
+    "native_route": "references/native-route-contract.md",
+    "acceptance": "references/sdd-acceptance-protocol.md",
+}
 
 
 def guidance(root: Path | None, command: str, stage: str, provider: str = "") -> dict:

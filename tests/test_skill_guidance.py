@@ -8,7 +8,7 @@ from unittest.mock import patch
 
 from scripts import cao
 from scripts.instruction_updates import legacy_template, update_instructions
-from scripts.skill_guidance import guidance, STAGE_FILES, PROVIDER_FILES
+from scripts.skill_guidance import guidance, STAGE_FILES, PROVIDER_FILES, CONTRACT_FILES
 from tests.repair_helpers import RepairCase, ROOT
 
 
@@ -18,11 +18,12 @@ class ResourceContracts(unittest.TestCase):
         self.assertLessEqual(len(skill.splitlines()), 180)
         self.assertLess(len(skill.encode()), 10000)
         links = re.findall(r"\]\(([^)]+)\)", skill)
-        for name in {*STAGE_FILES.values(), *PROVIDER_FILES.values()}:
+        for name in {*STAGE_FILES.values(), *PROVIDER_FILES.values(), *CONTRACT_FILES.values()}:
             self.assertIn(name, links)
         for name in links:
             self.assertTrue((ROOT / name).is_file(), name)
-        for path in (ROOT / "references").glob("*.md"):
+        for name in {*STAGE_FILES.values(), *PROVIDER_FILES.values()}:
+            path = ROOT / name
             text = path.read_text(encoding="utf-8")
             for section in ("## Enter when", "## Execute", "## Exit when", "## If blocked"):
                 self.assertIn(section, text, path.name)
@@ -39,6 +40,26 @@ class ResourceContracts(unittest.TestCase):
 
 
 class RuntimeNavigation(RepairCase):
+    def test_native_contract_uses_references_and_does_not_fall_back_to_developer_docs(self):
+        wid = self.start()
+        work = self.read_work(wid)
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            (root / "SKILL.md").write_text("Installed Skill")
+            for name in (STAGE_FILES["execution"], PROVIDER_FILES["bmad"], "docs/native-route-contract.md"):
+                path = root / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text("Fixture resource")
+            current = {"stage": "execution", "reason": "NATIVE_ROUTE_REQUIRED"}
+            with patch.object(cao, "package_root_dir", return_value=root):
+                out = cao.agent_guidance(self.repo, work, next_action=current)
+                self.assertFalse(out["ready"])
+                self.assertEqual(out["missing_resources"], [CONTRACT_FILES["native_route"]])
+                self.assertIn(str(root / CONTRACT_FILES["native_route"]), out["read_before_action"])
+                self.assertNotIn(str(root / "docs/native-route-contract.md"), out["read_before_action"])
+                (root / CONTRACT_FILES["native_route"]).write_text("Runtime contract")
+                self.assertTrue(cao.agent_guidance(self.repo, work, next_action=current)["ready"])
+
     def assert_guides(self, out, stage, expected):
         guide = out["guidance"]
         self.assertTrue(guide["ready"], guide)

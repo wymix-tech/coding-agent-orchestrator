@@ -93,7 +93,7 @@ class PiRouteGuidance(RepairCase):
         assessed = self.assess()
         self.assertEqual(assessed["next_action"]["reason"], "NATIVE_WORKFLOW_SELECTION_REQUIRED")
         self.assertIn(str(self.repo / self.skill), assessed["guidance"]["read_before_action"])
-        self.assertTrue(any(path.endswith("docs/native-route-contract.md") for path in assessed["guidance"]["read_before_action"]))
+        self.assertTrue(any(path.endswith("references/native-route-contract.md") for path in assessed["guidance"]["read_before_action"]))
         self.assert_current("NATIVE_WORKFLOW_SELECTION_REQUIRED")
         self.run_cli("sdd", "workflow", "select", "--name", "bmad-build", "--entrypoint", "bmad-build")
         self.assert_current("NATIVE_SPEC_PREPARATION_REQUIRED")

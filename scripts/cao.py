@@ -54,7 +54,7 @@ from scripts.native_obligations import (
 )
 from scripts.smoke_runner import run_smoke
 from scripts.provider_preparation import bmad_preparation
-from scripts.skill_guidance import guidance as resolve_skill_guidance
+from scripts.skill_guidance import guidance as resolve_skill_guidance, CONTRACT_FILES
 from scripts.instruction_updates import update_instructions
 from scripts.provider_restart import require_restart, observe_start, restart_state
 from scripts.technology_guidance import technology_instruction
@@ -3991,10 +3991,10 @@ def agent_guidance(repo: Path, work: dict[str, Any] | None, mode: str | None = N
     if next_action and next_action.get("reason", "").startswith("NATIVE_"):
         root = package_root_dir()
         if root:
-            contract = root / "docs/native-route-contract.md"
+            contract = root / CONTRACT_FILES["native_route"]
             navigation["read_before_action"].append(str(contract.resolve()))
             if not contract.is_file():
-                navigation["missing_resources"].append("docs/native-route-contract.md")
+                navigation["missing_resources"].append(CONTRACT_FILES["native_route"])
         selected = workflow_skill_identity(repo, provider, ((work or {}).get("sdd", {}).get("workflow") or {}).get("entrypoint") or "")
         for skill in provider_native_skills(repo, provider):
             if skill["name"] == (selected or "bmad-build"):
