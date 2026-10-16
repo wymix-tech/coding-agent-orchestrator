@@ -88,13 +88,14 @@ class UserLanguageTests(unittest.TestCase):
             base = cfg.read_text(encoding="utf-8")
             user = (bmad / "config.user.toml").read_text(encoding="utf-8")
             custom_user = (bmad / "custom" / "config.user.toml").read_text(encoding="utf-8")
-            # Team/base config remains untouched; CAO writes only a high-priority user override.
-            self.assertIn('communication_language = "English"', base)
+            # All installed layers agree on CAO's two managed language keys.
+            self.assertIn('communication_language = "Chinese"', base)
             self.assertIn('project_name = "demo"', base)
             self.assertIn('user_skill_level = "advanced"', base)
             self.assertIn('user_name = "Dev"', user)
-            self.assertIn('communication_language = "Simplified Chinese"', custom_user)
-            self.assertIn('document_output_language = "Simplified Chinese"', custom_user)
+            for text in (base, user, custom_user):
+                self.assertIn('communication_language = "Chinese"', text)
+                self.assertIn('document_output_language = "Chinese"', text)
 
     def test_bmad_legacy_yaml_config_uses_user_language(self):
         temp, repo = self.init_repo()
@@ -107,6 +108,37 @@ class UserLanguageTests(unittest.TestCase):
             text = bmad_config.read_text(encoding="utf-8")
             self.assertIn('communication_language: "Japanese"', text)
             self.assertIn('document_output_language: "Japanese"', text)
+
+    def test_bmad_bootstrap_synchronizes_all_layers_and_legacy_config_idempotently(self):
+        temp, repo = self.init_repo("zh-cn")
+        with temp:
+            bmad = repo / "_bmad"
+            (bmad / "custom").mkdir(parents=True)
+            paths = [bmad / "config.toml", bmad / "config.user.toml",
+                     bmad / "custom/config.toml", bmad / "custom/config.user.toml"]
+            for path in paths:
+                path.write_text('[core]\nproject_name = "demo"\ncommunication_language = "English"\n'
+                                'document_output_language = "English"\n\n[modules.custom]\n'
+                                'communication_language = "Keep module setting"\n', encoding="utf-8")
+            legacy = bmad / "bmm/config.yaml"
+            legacy.parent.mkdir()
+            legacy.write_text("project_name: demo\ncommunication_language: English\n"
+                              "document_output_language: English\n", encoding="utf-8")
+            code, payload = run(repo, "bootstrap")
+            self.assertEqual(code, 0, payload)
+            for path in paths:
+                text = path.read_text(encoding="utf-8")
+                self.assertIn('communication_language = "Chinese"', text)
+                self.assertIn('document_output_language = "Chinese"', text)
+                self.assertIn('project_name = "demo"', text)
+                self.assertIn('communication_language = "Keep module setting"', text)
+            self.assertIn('communication_language: "Chinese"', legacy.read_text())
+            self.assertIn('document_output_language: "Chinese"', legacy.read_text())
+            before = {path: path.read_bytes() for path in [*paths, legacy]}
+            code, payload = run(repo, "bootstrap")
+            self.assertEqual(code, 0, payload)
+            self.assertEqual(payload["language_configuration"]["results"][0]["changed_files"], [])
+            self.assertEqual(before, {path: path.read_bytes() for path in before})
 
     def test_speckit_constitution_managed_section_preserves_existing_principles(self):
         temp, repo = self.init_repo()

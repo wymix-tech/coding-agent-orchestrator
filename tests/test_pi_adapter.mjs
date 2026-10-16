@@ -78,6 +78,33 @@ function realCoreFixture() {
   return {...f, python, cli};
 }
 
+test('real Pi hooks stop after provider installation and acknowledge host resource reload', posix, async () => {
+  const f = realCoreFixture();
+  try {
+    f.cli('init', '--host', 'pi');
+    const ctx = f.context('same-conversation');
+    await f.handlers.get('session_start')({reason: 'startup'}, ctx);
+    mkdirSync(path.join(f.dir, '_bmad'));
+    // Installation state fixture; hook replies come from the real Python core.
+    writeFileSync(path.join(f.dir, '.orchestrator/provider-restarts.json'),
+      JSON.stringify([{provider: 'bmad', host: 'pi'}]));
+    const event = {toolName: 'bash', input: {command: 'cao sdd install --provider bmad --host pi --yes'},
+      content: [{type: 'text', text: 'installed'}], details: {restart_required: true}};
+    const original = structuredClone(event);
+    assert.equal(await f.handlers.get('tool_result')(event, ctx), undefined);
+    assert.deepEqual(event, original);
+    assert.match(f.sent.at(-1)[0].content, /HOST_RESTART_REQUIRED/);
+    assert.equal(f.cli('bootstrap', '--host', 'pi').mode, 'host_restart_required');
+    assert.equal((await f.handlers.get('tool_call')({toolName: 'write',
+      input: {path: '_bmad-output/SPEC.md', content: 'planning'}}, ctx)).block, true);
+    assert.equal(await f.handlers.get('agent_before_settle')(settle(true), ctx), undefined);
+    await f.handlers.get('session_start')({reason: 'new'}, f.context('different-conversation'));
+    assert.equal(f.cli('bootstrap', '--host', 'pi').mode, 'host_restart_required');
+    await f.handlers.get('session_start')({reason: 'reload'}, ctx);
+    assert.equal(f.cli('bootstrap', '--host', 'pi').mode, 'select');
+  } finally { f.close(); }
+});
+
 test('real core blocks Pi business writes without Work and preserves CAO/native intake', posix, async () => {
   const f = realCoreFixture();
   try {
