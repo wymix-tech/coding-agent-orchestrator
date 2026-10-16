@@ -14,6 +14,11 @@ CAO 的 `light / standard / comprehensive` 决定质量门禁。BMAD 的完整�
 6. 原生状态转换后 `cao sdd sync`。宿主 post-tool、状态查询、恢复及仪表盘也执行同步。
 7. 完成全部原生实现与审查后，按现有 workflow execute/complete、verify 和验收接口关闭。
 
+运行时 `bootstrap`、`next`、start/评估响应与宿主提醒共用当前动作的前置顺序：先恢复 Work、
+处理 blocker/验证基线，再评估路径，最后准备原生工作流、SPEC 和路线。`NATIVE_ROUTE_REQUIRED`
+表示业务实现仍受门禁约束，不代表必须跳过工作流/SPEC 准备直接提交一个声明。
+`guidance.read_before_action` 返回当前阶段指南、契约和实际已安装的 native Skill 路径；应先读取再执行。
+
 BMAD light 无须为了路线声明制造完整 workflow 记录；默认原生工作流身份为
 `bmad-build` / `invoke skill bmad-build`。其他 provider 也可以主动记录自己的路线声明；
 当前自动强制路线协商的能力检测针对已安装的 `bmad-build`。
@@ -61,13 +66,26 @@ BMAD light 无须为了路线声明制造完整 workflow 记录；默认原生�
 `cao sdd plan bind --plan-item <path>#<id>` 绑定；不能由路线声明猜测全部项目属于当前需求。
 版本值是执行者声明，规则文件路径和内容指纹是可验证证据；CAO 不声称自动判断理由的语义正确性。
 
+`--declaration` 只接受**已存在的 JSON 文件路径**，不是 JSON 字符串。先执行 `cao next`，
+使用当前动作返回的 `declaration_path`：BMAD 为 `_bmad-output/cao/WORK_ID/route.json`
+（将 WORK_ID 替换为实际 Work ID）；其他 provider 使用其原生输出目录内的同类 Work 路径。
+这些文件由 Agent 撰写，不属于 CAO 托管状态；原生输出写入在业务实现被拦截时仍可进行。
+根目录的 `route.json` 不享有此准备通路。写入失败不代表文件已创建，必须检查工具返回值。
+现有合法声明文件仍可按原路径读取；此次不扩大项目根目录 JSON 的写入权限。
+
 ```bash
-cao sdd route propose --declaration route.json
+cao next
+# 使用 next 返回的真实文件路径，替换下例的 WORK_ID；先成功写入完整声明：
+cao sdd route propose --declaration _bmad-output/cao/WORK_ID/route.json
 cao sdd route show
 cao sdd approval request
 cao sdd approval show
 cao sdd sync
 ```
+
+BMAD `route` 仅为 `direct-build` / `full-planning`，`build_route` 仅为 `dispatch` / `oneshot`。
+`backend-api`、`full-stack-web-app` 不是原生路线名。路径正确也不代表声明有效：需求身份、
+原生 workflow、真实规则引用/指纹以及已生成产物都必须通过既有校验。
 
 ## 决策与审批证据
 

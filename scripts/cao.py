@@ -34,6 +34,7 @@ if __package__ in (None, ""):
 from scripts.state_store import atomic_json, backup_once, repo_transaction
 from scripts.native_route import (
     normalize_decision as normalize_route_decision, route_state, intent_hash,
+    build_route as native_build_route,
     owned_file as native_owned_file, approve_observed_response, approve_baseline_response,
     bind_request_context, bind_approval_question,
 )
@@ -2239,6 +2240,59 @@ def native_route_state(repo: Path, work: dict) -> dict:
     return route_state(repo, work, provider_output_dirs(provider), required)
 
 
+def route_declaration_path(work: dict) -> str:
+    """Keep agent-authored route input in the provider's writable native outputs."""
+    dirs = provider_output_dirs((work.get("sdd") or {}).get("provider"))
+    if not dirs:
+        raise ValueError("NATIVE_ROUTE_PROVIDER_OUTPUT_REQUIRED")
+    return f"{dirs[0].rstrip('/')}/cao/{work['id']}/route.json"
+
+
+def route_preparation_action(repo: Path, work: dict, state: dict) -> dict:
+    command = cao_invocation()["command"]
+    provider = (work.get("sdd") or {}).get("provider")
+    target = route_declaration_path(work)
+    common = {"stage": "execution", "reason": state["reason"], "declaration_path": target}
+    if state["reason"] != "NATIVE_ROUTE_REQUIRED":
+        kind = "human" if state["reason"] in {"NATIVE_SPEC_APPROVAL_REQUIRED", "NATIVE_SPEC_CLARIFICATION_REQUIRED", "NATIVE_IMPLEMENTATION_PAUSED"} else "agent"
+        return action(kind, state["next"], **common)
+    skills = provider_native_skills(repo, provider)
+    workflow = (work.get("sdd") or {}).get("workflow") or {}
+    selected = workflow_skill_identity(repo, provider, workflow.get("entrypoint") or "")
+    skill = next((item for item in skills if item["name"] == (selected or "bmad-build")), None)
+    instruction = (f"Read the complete installed Skill `{repo / skill['rel_path']}`; invoke `{skill['name']}` "
+                   "and use its exact renderer only when required. Renderer success loads instructions, not completed execution. "
+                   if skill else "Read the selected provider's installed native workflow instructions. ")
+    if (work.get("path_assessment") or {}).get("profile") != "light" and not workflow.get("name"):
+        common["reason"] = "NATIVE_WORKFLOW_SELECTION_REQUIRED"
+        entry = skill["name"] if skill else "<installed-native-workflow>"
+        instruction += (f'Select the actual workflow with `{command} sdd workflow select --name "{entry}" '
+                        f'--entrypoint "{entry}" --work {work["id"]}` before preparing the route. ')
+    else:
+        ref = (work.get("sdd") or {}).get("native_ref")
+        try:
+            source = native_owned_file(repo, ref, provider_output_dirs(provider)) if ref else None
+            has_spec = bool(source and source.is_file() and
+                            (provider != "bmad" or native_build_route(source) in {"dispatch", "oneshot"}))
+        except (ValueError, OSError, RuntimeError):
+            has_spec = False
+        if not has_spec:
+            common["reason"] = "NATIVE_SPEC_PREPARATION_REQUIRED"
+            instruction += (f"Continue the selected native workflow `{workflow.get('name') or 'bmad-build'}` and its planning prerequisites; "
+                            "do not switch workflows merely because the route is missing. Execute only native planning/spec preparation now, "
+                            "then immediately bind the actual primary Build SPEC "
+                            f"with `{command} sdd artifact bind --artifact <actual-native-spec.md>`. ")
+        else:
+            instruction += f"Review the bound native SPEC `{ref}` and actual routing evidence. "
+    instruction += (f"Once the workflow and SPEC/rule evidence exist, write the declaration JSON to `{target}` "
+                    f"(provider-native output, writable while product writes are blocked), then run "
+                    f"`{command} sdd route propose --declaration {target}`. --declaration is a file path, not inline JSON. "
+                    "Read the bundled native route contract for all fields; for BMAD route is direct-build/full-planning "
+                    "and build_route is dispatch/oneshot. Do not guess route names, rules or artifacts. "
+                    "Do not begin business implementation or restart intake.")
+    return action("agent", instruction, **common)
+
+
 def implementation_preflight(repo: Path, work: dict) -> dict:
     restart = restart_state(repo, detect_current_host())
     if not restart["ready"]:
@@ -2252,7 +2306,8 @@ def implementation_preflight(repo: Path, work: dict) -> dict:
             if state.get("reason") == "requirement changed since work started":
                 next_step = completion_next_instruction(repo, work, state) + " " + next_step
             return {**state, "next": next_step}
-    return native_route_state(repo, work)
+    route = native_route_state(repo, work)
+    return {**route, "next": route_preparation_action(repo, work, route)["instruction"]} if not route["ready"] else route
 
 
 def observe_implementation_read(repo: Path, work: dict, raw: dict, session_id: str) -> None:
@@ -2357,10 +2412,14 @@ def cmd_sdd_route(args: argparse.Namespace) -> int:
                           "history": (work.get("sdd") or {}).get("route_history", []),
                           "state": native_route_state(repo, work)}, ensure_ascii=False)); return 0
     try:
+        if args.declaration.lstrip().startswith(("{", "[")):
+            raise ValueError("NATIVE_ROUTE_DECLARATION_PATH_REQUIRED")
         if not path_assessment_state(repo, work)["ready"]:
             raise ValueError("PATH_ASSESSMENT_REQUIRED")
         declaration = repo_file(repo, args.declaration)
-        raw = json.loads(declaration.read_text(encoding="utf-8"))
+        if not declaration.is_file():
+            raise ValueError("NATIVE_ROUTE_DECLARATION_FILE_MISSING")
+        raw = json.loads(declaration.read_text(encoding="utf-8-sig"))
         provider = work["sdd"]["provider"]
         decision = normalize_route_decision(repo, work, raw, provider_output_dirs(provider),
                                             provider_native_skills(repo, provider))
@@ -2398,7 +2457,20 @@ def cmd_sdd_route(args: argparse.Namespace) -> int:
         print(json.dumps({"ok": True, "route": decision, "implementation": state,
                           "next": state.get("next") or "Follow the accepted native route; synchronize progress with `cao sdd sync`."}, ensure_ascii=False)); return 0
     except (ValueError, OSError, KeyError, TypeError, RuntimeError) as exc:
-        print(json.dumps({"ok": False, "error": str(exc)}, ensure_ascii=False)); return 2
+        code = "NATIVE_ROUTE_DECLARATION_JSON_INVALID" if isinstance(exc, json.JSONDecodeError) else str(exc)
+        current = current_work_action(repo, work, check_completion=False)
+        result = {"ok": False, "error": code, "next": current["instruction"],
+                  "guidance": agent_guidance(repo, work, next_action=current)}
+        if code.startswith("NATIVE_ROUTE_DECLARATION_"):
+            result["reason"] = ("--declaration expects a path to an existing JSON file, not inline JSON. "
+                                "Write valid declaration JSON in provider-native output after native preparation; "
+                                "a rejected write did not create the file.")
+        if work["sdd"]["provider"] in SDD_CATALOG:
+            result["declaration_path"] = route_declaration_path(work)
+        if code == "NATIVE_ROUTE_NAME_INVALID":
+            result["allowed_routes"] = ["direct-build", "full-planning"]
+            result["allowed_build_routes"] = ["dispatch", "oneshot"]
+        print(json.dumps(result, ensure_ascii=False)); return 2
 
 
 @locked_command
@@ -2706,8 +2778,7 @@ def reconcile_native_sdd_state(repo: Path, work: dict[str, Any]) -> bool:
         sdd["implementation_state"] = route
         changed = True
     if not route["ready"]:
-        nxt = action("human" if route["reason"] in {"NATIVE_SPEC_APPROVAL_REQUIRED", "NATIVE_SPEC_CLARIFICATION_REQUIRED", "NATIVE_IMPLEMENTATION_PAUSED"} else "agent",
-                     route["next"], reason=route["reason"])
+        nxt = work_prerequisite_action(repo, work) or route_preparation_action(repo, work, route)
         if work.setdefault("execution", {}).get("next_action") != nxt:
             work["execution"]["next_action"] = nxt
             changed = True
@@ -3798,13 +3869,16 @@ def completion_status(repo: Path, work: dict[str, Any] | None) -> dict[str, Any]
     }
 
 
-def resume_payload(repo: Path, work: dict[str, Any], session_id: str | None = None, host: str | None = None) -> dict[str, Any]:
+def resume_payload(repo: Path, work: dict[str, Any], session_id: str | None = None, host: str | None = None, *, next_action: dict | None = None) -> dict[str, Any]:
     c = completion_status(repo, work)
+    current = next_action or current_work_action(repo, work, completion=c)
+    summary = work_summary(work)
+    summary["next_action"] = current
     handoff = latest_handoff(repo, work["id"]) or {}
     return {
-        "work_item": work_summary(work),
+        "work_item": summary,
         "requirement": work.get("requirement"),
-        "execution": work.get("execution"),
+        "execution": {**(work.get("execution") or {}), "next_action": current},
         "path_assessment": work.get("path_assessment"),
         "path_assessment_state": path_assessment_state(repo, work),
         "native_sync": native_sync_state(repo, work),
@@ -3837,38 +3911,94 @@ def work_intake_instruction(work: dict[str, Any] | None = None) -> str:
     )
 
 
-def agent_guidance(repo: Path, work: dict[str, Any] | None, mode: str | None = None) -> dict[str, Any]:
+def work_prerequisite_action(repo: Path, work: dict | None) -> dict | None:
+    """One prerequisite order for CLI navigation, synchronization and host reminders."""
+    command = cao_invocation()["command"]
+    restart = restart_state(repo, detect_current_host())
+    if not restart["ready"]:
+        return action("human", restart["next"], stage="startup", reason=restart["reason"])
+    if not work:
+        status = sdd_status(repo)
+        startup = not status["installed"] or status["selected"] == "auto" and len(status["installed"]) > 1
+        return action("agent", f"Run `{command} bootstrap` and resolve SDD selection/installation first." if startup else work_intake_instruction(),
+                      stage="startup" if startup else "intake", reason="SDD_SELECTION_REQUIRED" if startup else "WORK_REQUIRED")
+    if work.get("status") == "completed":
+        return action("none", "Work item is completed.", stage="completed")
+    if not work_sdd_ready(repo, work)[0]:
+        return action("human", f"Restore the Work's selected SDD, then run `{command} bootstrap`; do not restart intake.", stage="startup", reason="SDD_NOT_INSTALLED")
+    if work.get("status") in {"todo", "suspended"}:
+        return action("agent", f"Resume this work item with `{command} resume --work {work['id']} --reactivate`.", stage="intake", reason="WORK_NOT_ACTIVE")
+    if work.get("blockers"):
+        return action("human", "Resolve the active blocker before continuing.", stage="recovery", reason="active blocker exists")
+    baseline = verification_baseline_state(repo, work)
+    if not baseline["ready"]:
+        return action("agent", baseline["next"], stage="verification_setup", reason=baseline["reason"])
+    assessment = path_assessment_state(repo, work)
+    if not assessment["ready"]:
+        reason = assessment["reason"]
+        if reason in {"requirement changed since work started", "requirement file missing"}:
+            return action("human", completion_next_instruction(repo, work, assessment), stage="recovery", reason=reason)
+        if reason == "major requirement ambiguity requires clarification":
+            return action("human", "Clarify the material requirement ambiguity, then rerun `cao path assess` without `--risk-flag major-ambiguity`.", stage="path_assessment", reason=reason)
+        return action("agent", path_assessment_instruction(work), stage="path_assessment", reason=reason)
+    return None
+
+
+def current_work_action(repo: Path, work: dict | None, *, check_completion: bool = True, completion: dict | None = None) -> dict:
+    prerequisite = work_prerequisite_action(repo, work)
+    if prerequisite:
+        return prerequisite
+    route = native_route_state(repo, work)
+    if not route["ready"]:
+        return route_preparation_action(repo, work, route)
+    phase = execution_phase(work.get("execution") or {})
+    stage = "completion" if phase in {"review", "verification", "done"} else "execution"
+    verification = (work.get("verification") or {}).get("status")
+    if verification == "running":
+        return action("agent", "Wait for the current verification, or supersede an abandoned run with `cao verify` after managing its process.", stage="recovery", reason="VERIFICATION_RUNNING")
+    if verification == "failed":
+        return action("agent", "Fix the verification failure, then run `cao verify`.", stage="recovery", reason="VERIFICATION_FAILED")
+    if check_completion:
+        completion = completion if completion is not None else completion_status(repo, work)
+        if completion["ready"]:
+            return action("agent", "Run `cao done` to close the work item.", stage="completion")
+        if stage == "completion" and completion.get("next"):
+            return action("agent", completion["next"], stage=stage, reason=completion["reason"])
+    configured = dict((work.get("execution") or {}).get("next_action") or
+                      action("agent", "Continue the current native workflow and record a checkpoint."))
+    configured.setdefault("stage", stage)
+    return configured
+
+
+def agent_guidance(repo: Path, work: dict[str, Any] | None, mode: str | None = None, *, next_action: dict | None = None) -> dict[str, Any]:
     """Route to stage documents using existing state predicates, never new gates."""
     provider = str(((work or {}).get("sdd") or {}).get("provider") or "")
     if mode in {"sdd_select", "sdd_install_required", "language_configuration_failed", "host_restart_required"} or not restart_state(repo, detect_current_host())["ready"]:
         stage = "startup"
     elif mode == "verification_setup":
         stage = "verification_setup"
-    elif not work:
-        status = sdd_status(repo)
-        stage = "startup" if (not status["installed"] or
-                              (status["selected"] == "auto" and len(status["installed"]) > 1)) else "intake"
-    elif not work_sdd_ready(repo, work)[0]:
-        stage = "startup"
-    elif work.get("status") == "completed":
-        stage = "completed"
-    elif work.get("status") in {"todo", "suspended"}:
-        stage = "intake"
-    elif work.get("blockers"):
-        stage = "recovery"
-    elif not verification_baseline_state(repo, work)["ready"]:
-        stage = "verification_setup"
     else:
-        assessment = path_assessment_state(repo, work)
-        if not assessment["ready"]:
-            stage = "recovery" if assessment.get("reason") == "requirement changed since work started" else "path_assessment"
-        elif (work.get("verification") or {}).get("status") in {"failed", "running"}:
-            stage = "recovery"
-        elif execution_phase(work.get("execution") or {}) in {"review", "verification", "done"}:
-            stage = "completion"
-        else:
-            stage = "execution"
-    return resolve_skill_guidance(package_root_dir(), cao_invocation()["command"], stage, provider)
+        next_action = next_action or current_work_action(repo, work, check_completion=False)
+        stage = next_action.get("stage", "execution")
+    navigation = resolve_skill_guidance(package_root_dir(), cao_invocation()["command"], stage, provider)
+    if next_action and next_action.get("reason", "").startswith("NATIVE_"):
+        root = package_root_dir()
+        if root:
+            contract = root / "docs/native-route-contract.md"
+            navigation["read_before_action"].append(str(contract.resolve()))
+            if not contract.is_file():
+                navigation["missing_resources"].append("docs/native-route-contract.md")
+        selected = workflow_skill_identity(repo, provider, ((work or {}).get("sdd", {}).get("workflow") or {}).get("entrypoint") or "")
+        for skill in provider_native_skills(repo, provider):
+            if skill["name"] == (selected or "bmad-build"):
+                navigation["read_before_action"].append(str((repo / skill["rel_path"]).resolve()))
+        navigation["ready"] = not navigation["missing_resources"]
+    return navigation
+
+
+def runtime_action_context(repo: Path, work: dict | None, current: dict) -> str:
+    return (f"{current.get('reason') or 'CURRENT_ACTION'}: {current['instruction']}\n"
+            "Read before acting: " + json.dumps(agent_guidance(repo, work, next_action=current), ensure_ascii=False))
 
 
 def render_context(repo: Path, work: dict[str, Any] | None, *, session_id: str | None = None, host: str | None = None) -> str:
@@ -3876,7 +4006,8 @@ def render_context(repo: Path, work: dict[str, Any] | None, *, session_id: str |
     if not restart["ready"]:
         return restart["reason"] + ": " + restart["next"]
     inspection = setup_state(config(repo))
-    navigation = "## Read before acting\n" + json.dumps(agent_guidance(repo, work), ensure_ascii=False)
+    current = current_work_action(repo, work)
+    navigation = "## Read before acting\n" + json.dumps(agent_guidance(repo, work, next_action=current), ensure_ascii=False)
     if not work or work.get("status") in {"todo", "suspended", "completed"}:
         return "# Coding Agent Orchestrator Work Intake\n" + navigation + "\n" + work_intake_instruction(work)
     baseline = verification_baseline_state(repo, work)
@@ -3889,7 +4020,7 @@ def render_context(repo: Path, work: dict[str, Any] | None, *, session_id: str |
             json.dumps({"verification_setup": inspection, "work": verification_setup_context(work),
                         "session_id": session_id, "host": host}, ensure_ascii=False),
         ])
-    p = resume_payload(repo, work, session_id=session_id, host=host)
+    p = resume_payload(repo, work, session_id=session_id, host=host, next_action=current)
     e = p["execution"] or {}
     lines = [
         "# Coding Agent Orchestrator Resume Context",
@@ -3918,7 +4049,7 @@ def render_context(repo: Path, work: dict[str, Any] | None, *, session_id: str |
     lines.extend([
         "",
         "## Next Action",
-        json.dumps(e.get("next_action") or action("none", "No next action recorded."), ensure_ascii=False),
+        json.dumps(current, ensure_ascii=False),
         "",
         "## Verification",
         json.dumps(p.get("verification") or {"status": "pending"}, ensure_ascii=False),
@@ -4236,55 +4367,17 @@ def cmd_bootstrap(args: argparse.Namespace) -> int:
         return 0
 
     inspection = setup_state(cfg)
-    baseline = verification_baseline_state(repo, work) if work else {"ready": True}
-    if work and not baseline["ready"]:
-        next_out = {
-            "ok": True, "mode": "verification_setup",
-            "work_item": work_summary(work) if work else None,
-            "sdd": sdd_status(repo), "context": verification_setup_context(work),
-            "next": action("agent", baseline["next"]),
-        }
-    elif work:
-        next_out = {
-            "ok": True,
-            "mode": "resume",
-            "work_item": work_summary(work),
-            "sdd": sdd_status(repo),
-            "context": resume_payload(repo, work),
-            "next": None,
-        }
-        execution = work.get("execution") or {}
-        configured = execution.get("next_action")
-        completion = completion_status(repo, work)
-        if work.get("status") in {"todo", "suspended"}:
-            next_out["next"] = action("agent", f"Resume this work item with `cao resume --work {work['id']}`.")
-        elif work.get("status") == "completed":
-            next_out["next"] = action("none", "Work item is completed.")
-        elif work.get("blockers"):
-            next_out["next"] = action("human", "Resolve the active blocker before continuing.")
-        elif not path_assessment_state(repo, work)["ready"]:
-            path_state = path_assessment_state(repo, work)
-            if path_state["reason"] == "major requirement ambiguity requires clarification":
-                next_out["next"] = action("human", "Clarify the material requirement ambiguity, then rerun `cao path assess` without `--risk-flag major-ambiguity`.")
-            elif path_state["reason"] == "requirement changed since work started":
-                next_out["next"] = action("human", completion_next_instruction(repo, work, {"ready": False, "reason": path_state["reason"]}))
-            else:
-                next_out["next"] = action("agent", path_assessment_instruction(work))
-        elif (work.get("verification") or {}).get("status") == "failed":
-            next_out["next"] = action("agent", "Fix the verification failure, then run `cao verify`.")
-        elif completion["ready"]:
-            next_out["next"] = action("agent", "Run `cao done` to close the work item.")
-        else:
-            next_out["next"] = configured or action("agent", "Continue the current work and record a checkpoint before changing requirements or switching agents.")
-    else:
-        next_out = {
-            "ok": True,
-            "mode": "select",
-            "work_item": None,
-            "sdd": sdd_status(repo),
-            "context": None,
-            "next": action("agent", work_intake_instruction()),
-        }
+    current = current_work_action(repo, work)
+    mode = "verification_setup" if current.get("stage") == "verification_setup" else "resume" if work else "select"
+    next_out = {
+        "ok": True, "mode": mode,
+        "work_item": work_summary(work) if work else None,
+        "sdd": sdd_status(repo),
+        "context": verification_setup_context(work) if mode == "verification_setup" else resume_payload(repo, work, next_action=current) if work else None,
+        "next": current,
+    }
+    if next_out["work_item"]:
+        next_out["work_item"]["next_action"] = current
     next_out["verification_setup"] = inspection
     if bootstrap_session:
         next_out["session"] = bootstrap_session
@@ -4294,7 +4387,7 @@ def cmd_bootstrap(args: argparse.Namespace) -> int:
             next_out["host_adapter"]["next"] = f"cao host install --host {adapter_host}  (takes effect from the next session)"
     next_out["language_configuration"] = language_configuration
     next_out["project_instructions"] = project_instructions
-    next_out["guidance"] = agent_guidance(repo, work, next_out["mode"])
+    next_out["guidance"] = agent_guidance(repo, work, next_out["mode"], next_action=current)
     print(json.dumps(next_out, ensure_ascii=False, indent=2))
     return 0
 
@@ -5302,7 +5395,11 @@ def cmd_start(args: argparse.Namespace) -> int:
         work = load_work(repo, wid)
         if work is None:
             raise RuntimeError("WORK_ITEM_NOT_FOUND")
-        out = {"ok": True, "action": "ASSESS_PATH", "work_item": work_summary(work), "next_action": work.get("execution", {}).get("next_action"), "sdd": native}
+        current = current_work_action(repo, work)
+        summary = work_summary(work)
+        summary["next_action"] = current
+        out = {"ok": True, "action": "VERIFICATION_SETUP" if current.get("stage") == "verification_setup" else "ASSESS_PATH", "work_item": summary, "next_action": current,
+               "guidance": agent_guidance(repo, work, next_action=current), "sdd": native}
         if session:
             out["session"] = load_session(repo, session["id"]) or session
         out["verification_setup"] = setup_state(config(repo))
@@ -5405,7 +5502,11 @@ def cmd_path_assess(args: argparse.Namespace) -> int:
             provider=provider,
         )
     save_work(repo, work)
-    print(json.dumps({"ok": True, "work_item": work_summary(work), "path_assessment": assessment, "next_action": execution["next_action"]}, ensure_ascii=False, indent=2))
+    current = current_work_action(repo, work)
+    summary = work_summary(work)
+    summary["next_action"] = current
+    print(json.dumps({"ok": True, "work_item": summary, "path_assessment": assessment, "next_action": current,
+                      "guidance": agent_guidance(repo, work, next_action=current)}, ensure_ascii=False, indent=2))
     return 0
 
 
@@ -5497,54 +5598,13 @@ def cmd_gate(args: argparse.Namespace) -> int:
 def cmd_next(args: argparse.Namespace) -> int:
     repo = repo_root(args.repo); ensure_initialized(repo)
     index = load_index(repo); work = load_work(repo, args.work or index.get("active_work")) if (args.work or index.get("active_work")) else None
-    restart = restart_state(repo, detect_current_host())
-    if not restart["ready"]:
-        next_action = action("human", restart["next"], reason=restart["reason"], stage="startup")
-        print(json.dumps({"ok": True, "action": next_action,
-                          "work_item": {**work_summary(work), "next_action": next_action} if work else None,
-                          "guidance": agent_guidance(repo, work, "host_restart_required")}, ensure_ascii=False, indent=2))
-        return 0
-    if not work:
-        navigation = agent_guidance(repo, work)
-        instruction = (f"Run `{cao_invocation()['command']} bootstrap` and resolve SDD selection/installation before creating Work."
-                       if navigation["stage"] == "startup" else work_intake_instruction())
-        out = {"ok": True, "action": action("agent", instruction), "work_item": None, "guidance": navigation}
-        print(json.dumps(out, ensure_ascii=False, indent=2)); return 0
-    if reconcile_native_sdd_state(repo, work):
+    if work and restart_state(repo, detect_current_host())["ready"] and reconcile_native_sdd_state(repo, work):
         work = load_work(repo, work["id"]) or work
-    if not work_sdd_ready(repo, work)[0]:
-        provider = ((work.get("sdd") or {}).get("provider") or "auto")
-        out = {"ok": True, "action": action("human", f"Install the work item's SDD `{provider}` before continuing: `cao sdd install --provider {provider} --yes`."), "work_item": work_summary(work)}
-    elif work.get("status") in {"todo", "suspended"}:
-        out = {"ok": True, "action": action("agent", "Resume this work item with `cao resume --work %s`." % work["id"]), "work_item": work_summary(work)}
-    elif work.get("status") == "completed":
-        out = {"ok": True, "action": action("none", "Work item is completed."), "work_item": work_summary(work)}
-    elif work.get("blockers"):
-        out = {"ok": True, "action": action("human", "Resolve the active blocker before continuing."), "work_item": work_summary(work)}
-    elif not verification_baseline_state(repo, work)["ready"]:
-        baseline = verification_baseline_state(repo, work)
-        out = {"ok": True, "action": action("agent", baseline["next"]), "work_item": work_summary(work)}
-    elif not path_assessment_state(repo, work)["ready"]:
-        path_state = path_assessment_state(repo, work)
-        if path_state["reason"] == "major requirement ambiguity requires clarification":
-            nxt = action("human", "Clarify the material requirement ambiguity, then rerun `cao path assess` without `--risk-flag major-ambiguity`.")
-        elif path_state["reason"] == "requirement changed since work started":
-            nxt = action("human", completion_next_instruction(repo, work, {"ready": False, "reason": path_state["reason"]}))
-        else:
-            nxt = action("agent", path_assessment_instruction(work))
-        out = {"ok": True, "action": nxt, "work_item": work_summary(work)}
-    else:
-        execution = work.get("execution") or {}
-        configured = execution.get("next_action")
-        c = completion_status(repo, work)
-        if (work.get("verification") or {}).get("status") == "failed":
-            nxt = action("agent", "Fix the verification failure, then run `cao verify`.")
-        elif c["ready"]:
-            nxt = action("agent", "Run `cao done` to close the work item.")
-        else:
-            nxt = configured or action("agent", "Continue implementation and update progress with `cao checkpoint`.")
-        out = {"ok": True, "action": nxt, "work_item": work_summary(work)}
-    out["guidance"] = agent_guidance(repo, work)
+    current = current_work_action(repo, work)
+    out = {"ok": True, "action": current, "work_item": work_summary(work) if work else None,
+           "guidance": agent_guidance(repo, work, next_action=current)}
+    if out["work_item"]:
+        out["work_item"]["next_action"] = current
     print(json.dumps(out, ensure_ascii=False, indent=2)); return 0
 
 
@@ -5966,6 +6026,8 @@ def sdd_transition(repo: Path, target: str) -> dict[str, Any] | None:
 def completion_next_instruction(repo: Path, work: dict[str, Any] | None, completion: dict[str, Any]) -> str:
     """Return a concrete, executable next step for a blocked completion."""
     reason = str(completion.get("reason") or "")
+    if completion.get("next"):
+        return completion["next"]
     if not work:
         return "Start a work item first: `cao start --requirement <path>`."
     wid = work["id"]
@@ -7039,9 +7101,13 @@ def host_event(args: argparse.Namespace) -> int:
             save_work(repo, work)
         if work:
             reconcile_native_sdd_state(repo, work)
-        state = native_route_state(repo, work) if work else {"ready": True}
-        return respond({"decision": "allow", **({"additional_context": state["reason"] + ": " + state["next"]}
-                                                if not state["ready"] else {})})
+        if work:
+            prerequisite = work_prerequisite_action(repo, work)
+            route = native_route_state(repo, work)
+            if prerequisite or not route["ready"]:
+                current = prerequisite or route_preparation_action(repo, work, route)
+                return respond({"decision": "allow", "additional_context": runtime_action_context(repo, work, current)})
+        return respond({"decision": "allow"})
 
     if event in {"session_end", "subagent_stop"}:
         if session and session.get("status") != "ended":
@@ -7053,13 +7119,10 @@ def host_event(args: argparse.Namespace) -> int:
     if event in {"stop", "turn_end", "before_settle"}:
         if event != "before_settle" and work and session and session.get("kind") != "subagent":
             create_handoff(repo, work, host_session_id, args.host, reason=event)
-        completion = completion_status(repo, work)
         result = {"decision": "allow"}
         if work and work.get("status") == "active":
-            result["additional_context"] = (
-                f"CAO completion reminder: {completion['reason']}. Next: {completion_next_instruction(repo, work, completion)}"
-                if not completion["ready"] else "CAO acceptance is ready; close the work explicitly with `cao done`."
-            )
+            current = current_work_action(repo, work)
+            result["additional_context"] = "CAO completion reminder: " + runtime_action_context(repo, work, current)
         return respond(result)
 
     return respond({"decision": "allow"})
@@ -7128,7 +7191,7 @@ def build_parser() -> argparse.ArgumentParser:
     for name in ("propose", "show"):
         sp = route_sub.add_parser(name)
         sp.add_argument("--repo", default="."); sp.add_argument("--work")
-        if name == "propose": sp.add_argument("--declaration", required=True)
+        if name == "propose": sp.add_argument("--declaration", required=True, metavar="JSON_FILE", help="Existing route declaration JSON file path, not inline JSON; use the Work-specific provider output path returned by next")
         sp.set_defaults(fn=cmd_sdd_route)
     artifact = sdd_sub.add_parser("artifact", help="Bind a running native artifact without certifying completion")
     artifact_sub = artifact.add_subparsers(dest="artifact_action", required=True)
