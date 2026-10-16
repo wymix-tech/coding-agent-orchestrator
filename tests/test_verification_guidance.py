@@ -14,19 +14,16 @@ class VerificationGuidanceDocuments(unittest.TestCase):
         for name in ("AGENTS.md", "CLAUDE.md"):
             with self.subTest(template=name):
                 text = (ROOT / "templates" / name).read_text(encoding="utf-8")
-                self.assertIn("mode: verification_setup", text)
-                self.assertLess(text.index("mode: sdd_select"), text.index("mode: verification_setup"))
-                self.assertLess(text.index("start --requirement"), text.index("mode: verification_setup"))
-                for token in ("product manifests", "user's explicit", "ask the user", "Zero tests",
-                              "missing tools", "missing dependencies", "JUnit5", "Surefire",
-                              "{{CAO_COMMAND}} verification configure", "init --force", "reanchor",
-                              "not verification success", ".agents", ".pi", "requirements remain relevant"):
-                    self.assertIn(token, text)
+                self.assertIn("mode: sdd_select", text)
+                self.assertIn("wait for explicit selection", text)
+                self.assertIn("guidance.read_before_action", text)
+                self.assertIn("failing tests do not prevent start", text)
 
     def test_skill_explains_work_before_setup_and_no_false_pass(self):
         text = (ROOT / "SKILL.md").read_text(encoding="utf-8")
-        self.assertIn("mode: verification_setup", text)
-        self.assertLess(text.index("### Landing"), text.index("mode: verification_setup"))
+        self.assertIn("references/verification-setup.md", text)
+        text = (ROOT / "references/verification-setup.md").read_text(encoding="utf-8")
+        self.assertIn("active Work exists", text)
         for token in ("product manifests", "ask the user", "Zero tests", "JUnit5", "Surefire",
                       "verification configure", "--replace", "init --force", "reanchor",
                       "not verification success", "existing scripts", "requirements remain relevant"):

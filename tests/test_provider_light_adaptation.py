@@ -131,11 +131,12 @@ class ProviderGuidance(RepairCase):
 
     def test_docs_define_oneshot_and_native_light_preconditions(self):
         from tests.repair_helpers import ROOT
-        for name in ('README.md', 'SKILL.md', 'templates/AGENTS.md', 'templates/CLAUDE.md'):
+        for name in ('README.md', 'references/provider-bmad.md'):
             text = (ROOT/name).read_text()
             self.assertIn('oneshot', text, name)
             self.assertIn('Intent', text, name)
-            self.assertIn('/opsx:propose', text, name)
-            self.assertIn('bug-assess', text, name)
-            self.assertIn('plan.md', text, name)
-            self.assertIn('tasks.md', text, name)
+        openspec = (ROOT/'references/provider-openspec.md').read_text()
+        self.assertIn('/opsx:propose', openspec)
+        speckit = (ROOT/'references/provider-speckit.md').read_text()
+        for token in ('bug-assess', 'plan.md', 'tasks.md'):
+            self.assertIn(token, speckit)
