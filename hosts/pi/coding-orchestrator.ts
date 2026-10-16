@@ -2,6 +2,7 @@ import type { AgentEndEvent, ExtensionAPI, ExtensionContext } from "@earendil-wo
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
+import { openSync, readSync, closeSync } from "node:fs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 type CaoReply = { decision?: "allow" | "deny"; additional_context?: string; reason?: string; diagnostic?: string };
@@ -76,12 +77,33 @@ function nativeSessionId(ctx: ExtensionContext): string {
   return ctx.sessionManager.getSessionId();
 }
 
+function sessionLineage(ctx: ExtensionContext): { kind: "primary" | "subagent"; parent_session_id?: string; subagent_id?: string } {
+  // Read host session metadata, never the prompt or the agent's task text.
+  const manager = ctx.sessionManager as unknown as { getHeader?: () => { parentSession?: string } | null };
+  const parentFile = manager.getHeader?.()?.parentSession;
+  if (!parentFile) return { kind: "primary" };
+  let parent: string | undefined;
+  let fd: number | undefined;
+  try {
+    fd = openSync(path.resolve(ctx.cwd, parentFile), "r");
+    const buffer = Buffer.alloc(8192);
+    const count = readSync(fd, buffer, 0, buffer.length, 0);
+    const header = JSON.parse(buffer.subarray(0, count).toString("utf8").split("\n", 1)[0]);
+    if (header.type === "session" && typeof header.id === "string") parent = header.id;
+  } catch { /* Still a child when a parent archive is missing; never upgrade it. */ }
+  finally { if (fd !== undefined) closeSync(fd); }
+  return { kind: "subagent", subagent_id: nativeSessionId(ctx), ...(parent ? { parent_session_id: parent } : {}) };
+}
+
 export default function (pi: ExtensionAPI) {
   const diagnostics = new Set<string>(), reminders = new Set<string>(), continued = new Set<string>();
 
   async function request(event: string, payload: object, ctx: ExtensionContext): Promise<CaoReply> {
     const id = nativeSessionId(ctx);
-    const result = await callCao(event, { ...payload, session_id: id }, ctx.cwd);
+    const lineage = sessionLineage(ctx);
+    const mapped = lineage.kind === "subagent" ? ({ session_start: "subagent_start", session_end: "subagent_stop" } as Record<string, string>)[event] || event : event;
+    const hostTools = typeof pi.getAllTools === "function" ? pi.getAllTools().map(tool => tool.name) : undefined;
+    const result = await callCao(mapped, { ...payload, ...lineage, session_id: id, host_tools: hostTools }, ctx.cwd);
     if (result.diagnostic) {
       const key = JSON.stringify([id, result.diagnostic]);
       if (!diagnostics.has(key)) {

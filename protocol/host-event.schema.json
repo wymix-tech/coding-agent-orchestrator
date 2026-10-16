@@ -17,6 +17,8 @@
     "thread_id": {"type": "string"},
     "agent_id": {"type": "string"},
     "subagent_id": {"type": "string"},
+    "kind": {"enum": ["primary", "subagent"], "description": "Host-observed session lineage, not an agent task declaration."},
+    "host_tools": {"type": "array", "items": {"type": "string"}, "description": "Actual host tool inventory; used only for native implementation fallback."},
     "parent_session_id": {"type": "string"},
     "parentSessionId": {"type": "string"}
   },

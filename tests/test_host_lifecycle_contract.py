@@ -23,7 +23,7 @@ class HostLifecycleTests(RepairCase):
         self.assertIn("null", verification["type"])
         result = verification["properties"]["results"]["items"]["properties"]
         self.assertEqual(result["timed_out"]["type"], "boolean")
-        self.assertEqual(result["gates"]["items"]["enum"], ["tests"])
+        self.assertEqual(result["gates"]["items"]["enum"], ["tests", "security_verification"])
         wid = self.start()
         work = cao.load_work(self.repo, wid)
         work["path_assessment"] = None

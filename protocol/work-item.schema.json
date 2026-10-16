@@ -358,7 +358,7 @@
               "name": {"type": "string"},
               "command": {"type": "string"},
               "required": {"type": "boolean"},
-              "gates": {"type": "array", "items": {"enum": ["tests"]}, "uniqueItems": true},
+              "gates": {"type": "array", "items": {"enum": ["tests", "security_verification"]}, "uniqueItems": true},
               "exit_code": {"type": "integer"},
               "timed_out": {"type": "boolean"},
               "status": {"type": "string"},

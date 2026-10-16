@@ -41,11 +41,18 @@ from scripts.native_progress import direct_build_decision, spec_task_state, merg
 from scripts.path_guard import inside, repo_file, provider_artifact, patch_targets
 from scripts.completion_policy import (
     acceptance_hash, anchor_acceptance, reset_requirement, evidence_matches,
-    verification_fresh as bound_verification_fresh, normalize_scripts, tests_satisfied, workflow_ready, normalize_timeout, required_verification_status,
+    verification_fresh as bound_verification_fresh, normalize_scripts, tests_satisfied, capability_satisfied, workflow_ready, normalize_timeout, required_verification_status,
 )
 from scripts.verification_runner import run_script
-from scripts.native_obligations import review_state as native_review_state, review_inputs, submit_review, commit_state as native_commit_state, digest as native_digest
+from scripts.native_obligations import (
+    review_state as native_review_state, review_inputs, submit_review, commit_state as native_commit_state,
+    digest as native_digest, dispatch as dispatch_review, active_layers, classify_review, resolve_review,
+    dispatch_patch_state,
+    planning_state,
+    implementation_contract, implementation_state,
+)
 from scripts.smoke_runner import run_smoke
+from scripts.provider_preparation import bmad_preparation
 from scripts.light_spec_policy import make_binding, binding_digest, light_spec_state
 from scripts.sdd_acceptance_policy import digest as acceptance_digest
 from scripts.sdd_acceptance_files import source_hashes, output_paths, report_hashes
@@ -528,6 +535,8 @@ def gate_state(work: dict[str, Any], verification_fresh: bool, sdd_ready: bool =
             ok = bool(sdd_ready)
         elif gate == "tests":
             ok = bool(verification_fresh and tests_satisfied(work.get("verification") or {}))
+        elif gate == "security_verification":
+            ok = bool(verification_fresh and capability_satisfied(work.get("verification") or {}, gate))
         elif gate_is_auto_derived(gate):
             ok = bool(verification_fresh)
         else:
@@ -1722,8 +1731,26 @@ def verification_timeout(cfg: dict[str, Any]) -> float:
     return normalize_timeout((cfg.get("verification") or {}).get("timeout_seconds", 300.0))
 
 
-def verification_snapshot(cfg: dict[str, Any]) -> str:
-    return acceptance_hash(verification_scripts(cfg), verification_timeout(cfg))
+def verification_snapshot(cfg: dict[str, Any], repo: Path | None = None) -> str:
+    config_hash = acceptance_hash(verification_scripts(cfg), verification_timeout(cfg))
+    files = {}
+    if repo is not None:
+        for script in verification_scripts(cfg):
+            for identity in workflow_command_identities(script["command"]):
+                path = Path(identity)
+                path = path if path.is_absolute() else repo / path
+                # Executable wrappers are standards; their test data and business
+                # dependencies remain covered by the ordinary code snapshot.
+                if path.is_file() and path.resolve().is_relative_to(repo.resolve()):
+                    files[path.relative_to(repo).as_posix()] = sha256_file(path)
+                elif path.suffix in {".sh", ".py", ".ps1", ".cmd", ".bat"} and path.is_relative_to(repo):
+                    files[path.relative_to(repo).as_posix()] = "missing"
+    return native_digest({"config": config_hash, "wrappers": files}) if files else config_hash
+
+
+def anchor_verification(repo: Path, work: dict, cfg: dict) -> None:
+    anchor_acceptance(work, verification_scripts(cfg), verification_timeout(cfg))
+    work["acceptance"]["config_sha256"] = verification_snapshot(cfg, repo)
 
 
 def rules_snapshot(repo: Path, cfg: dict[str, Any]) -> str:
@@ -2156,9 +2183,10 @@ def native_sync_state(repo: Path, work: dict[str, Any]) -> dict[str, Any]:
     if plan["state"] != "not_applicable":
         if plan["state"] == "blocked":
             return {"state": "source_unavailable", "source": None, "next": plan["next"], "verification_plan": plan}
+        progress = bmad_progress_observation(repo, work, plan)
         return {"state": "observed" if plan["canonical"] else "status_unavailable", "source": ", ".join(plan["observations"]),
                 "raw": plan["raw"], "canonical": plan["canonical"],
-                "next": plan.get("next"), "verification_plan": plan}
+                "next": plan.get("next"), "verification_plan": plan, **progress}
     candidates, _ = _native_candidates(repo, provider, work, str(sdd.get("native_ref") or ""))
     if not candidates:
         explicit = sdd.get("spec_binding") is not None or bool(sdd.get("native_ref"))
@@ -2170,6 +2198,29 @@ def native_sync_state(repo: Path, work: dict[str, Any]) -> dict[str, Any]:
     return {"state": "observed" if canonical else "status_unavailable", "source": path,
             "raw": raw, "canonical": canonical,
             "next": None if canonical else "Follow the installed provider's native status/task conventions; do not infer execution from file existence."}
+
+
+def bmad_progress_observation(repo: Path, work: dict, plan: dict) -> dict:
+    decision = (work.get('sdd') or {}).get('route_decision') or {}
+    if decision.get('provider') != 'bmad' or not decision.get('primary_artifact'):
+        return {}
+    try:
+        path = native_owned_file(repo, decision['primary_artifact'], ['_bmad-output'])
+    except (ValueError, OSError, RuntimeError):
+        return {'progress_conflict': {'reason': 'bound SPEC unavailable'},
+                'next': 'Restore the bound native SPEC; do not adopt another file or infer execution from plan state.'}
+    raw, source, sha, counts = _read_native_status('bmad', [path])
+    canonical = _canonical_native_state(raw)
+    if canonical and plan.get('canonical') and canonical != plan['canonical']:
+        result = {'progress_conflict': {'spec': decision['primary_artifact'], 'spec_state': canonical,
+                                       'plan_state': plan['canonical']},
+                  'next': 'Synchronize the active SPEC and this requirement\'s current Story using the native status steps; preserve other Stories. Plan completion still requires ALL bound items done.'}
+        # Show actual native implementation/review activity without promoting an
+        # unfinished plan to completion or rewriting any provider-owned file.
+        if canonical in {'in_progress', 'in_review'} and plan['canonical'] in {'ready', 'completed'}:
+            result.update(canonical=canonical, raw=raw)
+        return result
+    return {}
 
 
 def native_route_state(repo: Path, work: dict) -> dict:
@@ -2193,6 +2244,56 @@ def implementation_preflight(repo: Path, work: dict) -> dict:
                 next_step = completion_next_instruction(repo, work, state) + " " + next_step
             return {**state, "next": next_step}
     return native_route_state(repo, work)
+
+
+def observe_implementation_read(repo: Path, work: dict, raw: dict, session_id: str) -> None:
+    if _event_key(raw, 'tool_name', 'toolname', 'name').lower() != 'read' or raw.get('isError'):
+        return
+    try:
+        contract = implementation_contract(repo, work)
+    except (ValueError, OSError, RuntimeError):
+        return
+    if not contract:
+        return
+    content = '\n'.join(_collect_values_for_keys(raw.get('content') or [], {'text'}))
+    source = repo / contract['path']
+    if source.read_text().strip() not in content:
+        return  # A partial read is not evidence of loading the complete native step.
+    targets = _collect_path_strings(raw.get('input') or raw.get('tool_input') or {})
+    if not any((Path(value) if Path(value).is_absolute() else repo / value).resolve() == source for value in targets):
+        return
+    work['sdd']['implementation_preparation'] = {'contract': contract, 'route_id': work['sdd']['route_decision']['id'],
+                                               'session_id': session_id, 'observed_at': now()}
+    save_work(repo, work)
+
+
+def implementation_write_guard(repo: Path, work: dict, raw: dict, session_id: str, kind: str) -> dict:
+    state = implementation_state(repo, work)
+    if state['ready']:
+        return state
+    if state['reason'] != 'NATIVE_IMPLEMENTATION_HANDOFF_REQUIRED':
+        return state
+    contract = implementation_contract(repo, work)
+    preparation = work['sdd'].get('implementation_preparation') or {}
+    if preparation.get('contract') != contract or preparation.get('route_id') != work['sdd']['route_decision']['id']:
+        return state
+    spec = native_owned_file(repo, work['sdd']['route_decision']['primary_artifact'], ['_bmad-output'])
+    text = spec.read_text()
+    status, _, _, _ = _read_native_status('bmad', [spec])
+    if status not in {'in_progress', 'in_review', 'done'} or not re.search(r'(?m)^baseline_commit:\s*\S+', text):
+        return {'ready': False, 'reason': 'NATIVE_IMPLEMENTATION_STATUS_REQUIRED',
+                'next': 'Before product implementation, use native step-03 to set SPEC in-progress and baseline_commit (HEAD or NO_VCS), and synchronize the current Story.'}
+    tools = raw.get('host_tools')
+    unavailable = isinstance(tools, list) and not {'subagent', 'subagents_enable'}.intersection(tools)
+    mode = 'subagent' if kind == 'subagent' else 'fallback' if unavailable else 'native-override' if not contract['subagent_default'] else None
+    if mode is None:
+        return state
+    work['sdd']['native_implementation'] = {'contract': contract, 'route_id': work['sdd']['route_decision']['id'],
+        'requirement_sha256': work['requirement']['sha256'], 'session_id': session_id, 'mode': mode, 'observed_at': now()}
+    queue_event(work, {'event': 'sdd.implementation.observed', 'work_item_id': work['id'],
+                       'mode': mode, 'session_id': session_id, 'occurred_at': now()})
+    save_work(repo, work)
+    return {'ready': True}
 
 
 def approval_request_contexts(repo: Path, work: dict, host: str | None = None) -> list[dict[str, str]]:
@@ -2222,7 +2323,7 @@ def expose_approval_context(repo: Path, work: dict | None, host: str, session_id
 
 def ensure_verification_review(repo: Path, work: dict, cfg: dict) -> dict:
     """Reuse only a current Work-bound request; legacy approval is not transferable."""
-    current_hash = verification_snapshot(cfg)
+    current_hash = verification_snapshot(cfg, repo)
     review = work.get("verification_review") or {}
     if (review.get("config_sha256") != current_hash or review.get("work_item_id") != work["id"]
             or "contexts" not in review):
@@ -2491,6 +2592,16 @@ def reconcile_native_sdd_state(repo: Path, work: dict[str, Any]) -> bool:
                         for item in plan["observations"].values())
             task_counts = {"total": total, "checked": total - len(plan["pending_plan_items"]),
                            "unchecked": len(plan["pending_plan_items"])}
+            progress = bmad_progress_observation(repo, work, plan)
+            if progress.get('canonical'):
+                raw_state, canonical = progress['raw'], progress['canonical']
+                evidence_hash = binding_digest({'plan': plan['observations'], 'spec': sha256_file(repo / work['sdd']['route_decision']['primary_artifact'])})
+            if progress.get('progress_conflict') != sdd.get('progress_conflict'):
+                if progress.get('progress_conflict'):
+                    sdd['progress_conflict'] = progress['progress_conflict']
+                else:
+                    sdd.pop('progress_conflict', None)
+                changed = True
     old_native = sdd.get("native_state") if isinstance(sdd.get("native_state"), dict) else {}
     old_canonical = old_native.get("canonical")
     new_snapshot = {
@@ -3533,7 +3644,7 @@ def verification_inputs(repo: Path, work: dict, cfg: dict) -> dict:
     inputs = {"snapshot_format": SNAPSHOT_FORMAT, "requirement_sha256": sha256_file(repo / work["requirement"]["path"]),
             "code_snapshot": code_snapshot(repo, {work["requirement"]["path"]}),
             "rules_snapshot": rules_snapshot(repo, cfg),
-            "verification_config_sha256": verification_snapshot(cfg),
+            "verification_config_sha256": verification_snapshot(cfg, repo),
             "assessment_revision": (work.get("path_assessment") or {}).get("revision")}
     binding = (work.get("sdd") or {}).get("spec_binding")
     if binding:
@@ -3600,6 +3711,9 @@ def completion_status(repo: Path, work: dict[str, Any] | None) -> dict[str, Any]
     review = native_review_state(repo, work, code_snapshot)
     if not review["ready"]:
         return review
+    planning = planning_state(repo, work)
+    if not planning["ready"]:
+        return planning
     if provider in SDD_CATALOG and profile in {"standard", "comprehensive"}:
         workflow = sdd.get("workflow") or {}
         if workflow.get("status") == "completed":
@@ -4463,6 +4577,9 @@ def cmd_sdd_workflow(args: argparse.Namespace) -> int:
         command = str(getattr(args, "command", "") or "").strip()
         if not command:
             print(json.dumps({"ok": False, "error": "WORKFLOW_COMMAND_REQUIRED", "reason": "Record the command that was actually executed."}, ensure_ascii=False, indent=2)); return 2
+        if re.search(r'\s->\s', command) or any(Path(identity).name == 'render_skill.py' for identity in workflow_command_identities(command)):
+            print(json.dumps({'ok': False, 'error': 'RENDERER_IS_NOT_WORKFLOW_EXECUTION',
+                              'next': 'A renderer only loads instructions. Follow the native workflow; record its actual session invocation (invoke skill <installed skill>) without explanatory pseudo-shell suffixes. Native review and artifacts are checked separately.'})); return 2
         selected_skill = workflow_skill_identity(repo, provider, str(workflow["entrypoint"]))
         executed_skill = workflow_skill_identity(repo, provider, command)
         if executed_skill and selected_skill != executed_skill:
@@ -4497,6 +4614,9 @@ def cmd_sdd_workflow(args: argparse.Namespace) -> int:
         work.setdefault("execution", {})["step"] = "native-sdd-workflow-executed"
         work["execution"]["next_action"] = action("agent", f"Record the real output files produced by `{workflow.get('name')}` with `cao sdd workflow complete --work {work['id']} --artifact <repo-relative-file>` (repeat --artifact for each file).")
     elif args.workflow_action == "complete":
+        planning = planning_state(repo, work)
+        if not planning['ready']:
+            print(json.dumps({'ok': False, 'error': planning['reason'].split(':', 1)[0], **planning})); return 2
         workflow = sdd.get("workflow") or {}
         if not workflow.get("name") or not workflow.get("entrypoint"):
             print(json.dumps({"ok": False, "error": "NATIVE_WORKFLOW_NOT_SELECTED", "next": f"Run `cao sdd workflow select --name \"<workflow name>\" --entrypoint \"<native workflow command or skill>\" --work {work['id']}` first."}, ensure_ascii=False, indent=2)); return 2
@@ -4624,13 +4744,22 @@ def cmd_sdd_review(args: argparse.Namespace) -> int:
             if not args.model.strip():
                 raise ValueError("NATIVE_REVIEW_MODEL_REQUIRED")
             path = repo_file(repo, args.instructions)
-            if path.name != "step-oneshot.md" or not inside(path, repo / "_bmad/render") or (repo / "_bmad/render").resolve() != repo / "_bmad/render" or not path.is_file():
+            expected_name = "step-04-review.md" if dispatch_review(work) else "step-oneshot.md"
+            if path.name != expected_name or not inside(path, repo / "_bmad/render") or (repo / "_bmad/render").resolve() != repo / "_bmad/render" or not path.is_file():
                 raise ValueError("NATIVE_REVIEW_INSTRUCTIONS_INVALID")
             content = path.read_text()
             layers = sorted(set(re.findall(r"(?m)^####[^\n]*\(`?([a-z][a-z0-9-]*)`?\)", content)))
             if not layers or args.layer not in layers:
                 raise ValueError("NATIVE_REVIEW_LAYER_NOT_ACTIVE")
+            if dispatch_review(work) and layers != active_layers(repo, work):
+                raise ValueError("NATIVE_REVIEW_CONTRACT_MISMATCH")
             records["_contract"] = {"sources": [path.relative_to(repo).as_posix()], "layers": layers}
+            if any(record.get('model') != args.model for key, record in records.items() if key != '_contract'):
+                # A model change starts a new review round; never mix layers
+                # from two capability levels while retaining their old passes.
+                for key in list(records):
+                    if key != '_contract':
+                        records.pop(key)
             inputs = review_inputs(repo, work, code_snapshot)
             primary_ids = [session.get("host_session_id") for session in list_sessions(repo)
                            if session.get("work_item_id") == work["id"] and session.get("kind") == "primary"]
@@ -4640,6 +4769,11 @@ def cmd_sdd_review(args: argparse.Namespace) -> int:
             records[args.layer] = run
             output = {"ok": True, "review": run, "active_layers": layers,
                       "next": "Launch EVERY active native reviewer as directed by the rendered instructions, at the current model level. Preserve each independent reviewer's returned Markdown in a provider-owned file; submit a JSON report with run_id, input_sha256, reviewer {mode: subagent|external-session, session_id, model}, findings_file, and findings [{id, verdict: high|medium|low|false|maybe-false, disposition: patch|defer|reject, evidence, resolved: true for patch}]. If subagents are unavailable, stop for the native external-session fallback; never fabricate findings or label primary self-review as independent."}
+        elif args.review_action == "classify":
+            output = {"ok": True, "review": classify_review(repo, work, args.layer, args.report, code_snapshot),
+                      "next": "Classify EVERY layer before product patches. Preserve raw JSON findings with stable IDs, including zero findings. After patches and native checks, resolve every layer with run_id and resolved_ids."}
+        elif args.review_action == "resolve":
+            output = {"ok": True, "review": resolve_review(repo, work, args.layer, args.report, code_snapshot)}
         else:
             output = {"ok": True, "review": submit_review(repo, work, args.layer, args.report, code_snapshot)}
         queue_event(work, {"event": "sdd.native_review." + args.review_action,
@@ -4840,7 +4974,7 @@ def cmd_verification_configure(args: argparse.Namespace) -> int:
     scripts = []
     raw = {}
     try:
-        scripts = declared_scripts(args.verify_script or [], args.test_script or [])
+        scripts = declared_scripts(args.verify_script or [], args.test_script or [], getattr(args, 'security_script', None) or [])
         raw = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
         candidate, changed = prepare_config(raw, scripts, args.replace, now())
         effective = json.loads(json.dumps(DEFAULT_CONFIG))
@@ -4851,11 +4985,11 @@ def cmd_verification_configure(args: argparse.Namespace) -> int:
         work = _read_work(repo, wid) if wid else None
         initial_baseline = bool(work and work.get("status") == "active" and
             not setup_state(config(repo))["ready"] and
-            (work.get("acceptance") or {}).get("config_sha256") == verification_snapshot(config(repo)) and
+            (work.get("acceptance") or {}).get("config_sha256") == verification_snapshot(config(repo), repo) and
             not work.get("verification") and not work.get("gate_status"))
         review = bool(work and work.get("status") == "active" and
                       not initial_baseline and
-                      (work.get("acceptance") or {}).get("config_sha256") != verification_snapshot(effective))
+                      (work.get("acceptance") or {}).get("config_sha256") != verification_snapshot(effective, repo))
     except ValueError as exc:
         error = "VERIFICATION_CONFIG_INVALID" if isinstance(exc, json.JSONDecodeError) else str(exc).split(":", 1)[0]
         out = {"ok": False, "error": error, "reason": str(exc)}
@@ -4867,7 +5001,7 @@ def cmd_verification_configure(args: argparse.Namespace) -> int:
     if changed:
         save_json(path, candidate)
     if initial_baseline and setup_state(effective)["ready"]:
-        anchor_acceptance(work, verification_scripts(effective), verification_timeout(effective))
+        anchor_verification(repo, work, effective)
         queue_event(work, {"event": "verification.baseline.established", "work_item_id": work["id"],
                            "source": "cao", "acceptance": work["acceptance"], "occurred_at": now()})
         save_work(repo, work)
@@ -5037,7 +5171,7 @@ def _prepare_start(args: argparse.Namespace):
             work["sdd"]["artifacts"] = []
     if is_new_work or changed:
         cfg = config(repo)
-        anchor_acceptance(work, verification_scripts(cfg), verification_timeout(cfg))
+        anchor_verification(repo, work, cfg)
     if not isinstance(work.get("path_assessment"), dict):
         work.setdefault("execution", {})["step"] = "path-assessment"
         work.setdefault("execution", {})["next_action"] = action("agent", path_assessment_instruction(work))
@@ -5584,6 +5718,9 @@ def _prepare_verification(args: argparse.Namespace):
     review = native_review_state(repo, work, code_snapshot)
     if not review["ready"]:
         print(json.dumps({"ok": False, "error": review["reason"], "native_review": review, "next": review.get("next")}, ensure_ascii=False)); return 2
+    planning = planning_state(repo, work)
+    if not planning['ready']:
+        print(json.dumps({'ok': False, 'error': planning['reason'].split(':', 1)[0], **planning})); return 2
 
     cfg = config(repo)
     cfg_scripts = verification_scripts(cfg)
@@ -5606,6 +5743,10 @@ def _prepare_verification(args: argparse.Namespace):
         if not baseline["ready"]:
             print(json.dumps({"ok": False, "error": baseline["reason"], "next": baseline["next"]})); return 2
         required_gates = ((work.get("path_assessment") or {}).get("required_gates")) or []
+        if "security_verification" in required_gates and not any(item['required'] and 'security_verification' in item['gates'] for item in scripts):
+            print(json.dumps({'ok': False, 'error': 'VERIFICATION_GATE_UNBOUND',
+                              'reason': 'security_verification needs a required script declaring that capability.',
+                              'next': 'Use verification configure --security-script <actual security checks>; the same test wrapper may also declare --test-script. Review and reanchor changed standards.'})); return 2
         if "tests" in required_gates and not any(item["required"] and "tests" in item["gates"] for item in scripts):
             print(json.dumps({
                 "ok": False, "error": "VERIFICATION_GATE_UNBOUND",
@@ -5809,7 +5950,7 @@ def cmd_reopen(args: argparse.Namespace) -> int:
     if reanchored:
         review = work.get("verification_review") or {}
         cfg = config(repo)
-        current_hash = verification_snapshot(cfg)
+        current_hash = verification_snapshot(cfg, repo)
         if ((work.get("acceptance") or {}).get("config_sha256") != current_hash
                 and (review or work["sdd"].get("native_route_required"))):
             review = ensure_verification_review(repo, work, cfg)
@@ -5822,7 +5963,7 @@ def cmd_reopen(args: argparse.Namespace) -> int:
             print(json.dumps({"ok": False, "error": "REQUIREMENT_FILE_MISSING"}, ensure_ascii=False)); return 2
         reset_requirement(work, requirement_evidence(repo, p))
         cfg = config(repo)
-        anchor_acceptance(work, verification_scripts(cfg), verification_timeout(cfg))
+        anchor_verification(repo, work, cfg)
         work["reanchored_at"] = now()
         record = work["sdd"].get("acceptance") or {}
         if record.get("declaration") and (work.get("path_assessment") or {}).get("profile") != "light":
@@ -6015,7 +6156,7 @@ def _event_key(raw: Any, *keys: str) -> str:
         return ""
     lowered = {str(key).lower(): value for key, value in raw.items()}
     for key in keys:
-        value = lowered.get(key)
+        value = lowered.get(key.lower())
         if isinstance(value, str) and value.strip():
             return value.strip()
     return ""
@@ -6210,7 +6351,7 @@ def verification_baseline_state(repo: Path, work: dict) -> dict:
     if not state["ready"]:
         return {"ready": False, "reason": "VERIFICATION_BASELINE_REQUIRED", "next": setup_instruction(cao_invocation()["command"])}
     anchor = work.get("acceptance") or {}
-    if anchor.get("version") != 2 or anchor.get("config_sha256") != verification_snapshot(cfg):
+    if anchor.get("version") != 2 or anchor.get("config_sha256") != verification_snapshot(cfg, repo):
         return {"ready": False, "reason": "VERIFICATION_STANDARD_CHANGED",
                 "next": f'Review the configured scripts, then `cao reopen --work {work["id"]} --reanchor --reason "Reviewed verification baseline"` before feature implementation. Tests need not pass yet.'}
     return {"ready": True}
@@ -6324,6 +6465,8 @@ def native_intake_shell(repo: Path, raw: dict[str, Any]) -> bool:
                 if not write_targets_native_sdd_output(repo, {"tool_name": "write", "tool_input": {"path": output}}):
                     return False
             if tokens[:2] in (["openspec", "status"], ["openspec", "instructions"], ["openspec", "list"], ["openspec", "show"], ["openspec", "validate"]):
+                continue
+            if bmad_preparation(repo, tokens):
                 continue
             if tokens[:3] == ["openspec", "new", "change"] and detect_sdd(repo, "openspec")["installed"]:
                 continue
@@ -6468,6 +6611,18 @@ def _readonly_checksum_tokens(tokens: list[str]) -> bool:
 
 def _readonly_tokens(tokens: list[str]) -> bool:
     tokens = list(tokens)
+    # Descriptor duplication has no filesystem target. Keep arbitrary redirects
+    # and substitutions visible to the write-target guard.
+    index = 1
+    while index + 2 < len(tokens):
+        if tokens[index:index + 3] in (["2", ">&", "1"], ["1", ">&", "2"]):
+            del tokens[index:index + 3]
+        else:
+            index += 1
+    # Exit status expansion is data, not command substitution. Restrict it to
+    # diagnostic echo; do not broadly exempt dollar expansions.
+    if tokens and tokens[0] == "echo":
+        tokens = [token.replace("$?", "STATUS") for token in tokens]
     # Literal output to the real null device cannot modify project files. Keep
     # every other redirection visible, and never remove the command itself.
     if Path("/dev/null").is_char_device():
@@ -6528,6 +6683,8 @@ def _readonly_tokens(tokens: list[str]) -> bool:
     if name == "git":
         args = tokens[1:]
         while len(args) >= 2 and args[0] == "-C": args = args[2:]
+        if args and args[0] == "rev-parse":
+            return bool(args[1:]) and all(token in {"--show-toplevel", "--is-inside-work-tree", "--git-dir", "--show-prefix", "--verify", "HEAD"} for token in args[1:])
         if args and args[0] in {"status", "diff", "log", "show", "branch"}:
             unsafe = {"--ext-diff", "--textconv", "-d", "-D", "-m", "-M", "-c", "-C", "--delete", "--move", "--copy"}
             return not git_output_targets(tokens) and not any(token in unsafe for token in args[1:]) and (args[0] != "branch" or all(token.startswith("-") for token in args[1:]))
@@ -6578,7 +6735,7 @@ def _readonly_tokens(tokens: list[str]) -> bool:
         "checkpoint", "decision", "block", "unblock", "handoff", "sessions", "verify", "done",
         "context", "artifact", "host", "host-event", "requirement", "language", "gate", "reopen", "verification",
     }
-    return bool(command_tokens and command_tokens[0] in safe_control_commands)
+    return bool(command_tokens and (command_tokens[0] in safe_control_commands or command_tokens in (["--help"], ["-h"])))
 
 
 @locked_command
@@ -6600,7 +6757,10 @@ def host_event(args: argparse.Namespace) -> int:
     index = load_index(repo) if (repo / CONFIG_REL).exists() else empty_index()
     wid = index.get("active_work")
     work = load_work(repo, wid) if wid else None
-    kind = "subagent" if event in {"subagent_start", "subagent_stop"} else "primary"
+    candidate_id = _event_key(raw, "subagent_id", "agent_id", "session_id", "sessionId", "thread_id")
+    known_session = load_session(repo, candidate_id, host=args.host) if candidate_id else None
+    kind = "subagent" if (event in {"subagent_start", "subagent_stop"} or raw.get("kind") == "subagent"
+                           or (known_session or {}).get("kind") == "subagent") else "primary"
     if work and event in {"session_start", "subagent_start", "prompt_submit", "pre_tool", "stop", "turn_end", "before_settle"}:
         # Refresh before exposing context or writing a handoff, including edits
         # performed outside this host. Derived observations never reanchor input hashes.
@@ -6646,12 +6806,12 @@ def host_event(args: argparse.Namespace) -> int:
         return respond(result)
 
     if event == "prompt_submit":
-        if work:
+        if work and kind == "primary":
             review = None
             if work.get("verification_review"):
                 try:
                     review = approve_baseline_response(work, raw, event, args.host, host_session_id,
-                                                      verification_snapshot(config(repo)), now())
+                                                      verification_snapshot(config(repo), repo), now())
                 except ValueError:
                     pass  # Invalid setup must remain recoverable through host context.
             if review:
@@ -6669,7 +6829,7 @@ def host_event(args: argparse.Namespace) -> int:
         return respond({"decision": "allow", "additional_context": render_context(repo, work, session_id=host_session_id, host=args.host)})
 
     if event == "pre_tool":
-        if work:
+        if work and kind == "primary":
             approval = (work.get("sdd") or {}).get("spec_approval") or {}
             if ((approval.get("status") == "pending" or approval.get("stop_after_approval"))
                     and bind_approval_question(approval, work["id"], raw, args.host, host_session_id)):
@@ -6704,6 +6864,12 @@ def host_event(args: argparse.Namespace) -> int:
                     preflight = implementation_preflight(repo, work)
                     if not preflight["ready"]:
                         return respond({"decision": "deny", "reason": str(preflight["reason"]) + ": " + preflight["next"] + " " + scaffold_instruction()})
+                    implementation = implementation_write_guard(repo, work, raw, host_session_id, kind)
+                    if not implementation['ready']:
+                        return respond({'decision': 'deny', 'reason': implementation['reason'] + ': ' + implementation['next']})
+                review_patches = dispatch_patch_state(repo, work, code_snapshot)
+                if not review_patches["ready"]:
+                    return respond({"decision": "deny", "reason": review_patches["reason"] + ": classify every active native layer before patching; follow native loopback for intent/spec gaps."})
                 path_state = path_assessment_state(repo, work)
                 if not path_state["ready"]:
                     next_step = path_assessment_instruction(work)
@@ -6743,6 +6909,8 @@ def host_event(args: argparse.Namespace) -> int:
 
     if event in {"post_tool", "file_changed"}:
         if work:
+            observe_implementation_read(repo, work, raw, host_session_id)
+        if work and kind == "primary":
             approval = approve_observed_response(repo, work, raw, event, args.host, host_session_id,
                 provider_output_dirs(work["sdd"]["provider"]), now())
             if approval:
@@ -6859,9 +7027,9 @@ def build_parser() -> argparse.ArgumentParser:
         sp.set_defaults(fn=cmd_sdd_approval)
     sp = sdd_sub.add_parser("sync", help="Synchronize native progress and implementation blockers")
     sp.add_argument("--repo", default="."); sp.add_argument("--work"); sp.set_defaults(fn=cmd_sdd_sync)
-    review = sdd_sub.add_parser("review", help="Record fresh independent native oneshot reviews")
+    review = sdd_sub.add_parser("review", help="Record independent native reviews and pre-patch dispatch classification")
     review_sub = review.add_subparsers(dest="review_action", required=True)
-    for name in ("begin", "submit"):
+    for name in ("begin", "submit", "classify", "resolve"):
         sp = review_sub.add_parser(name)
         sp.add_argument("--repo", default="."); sp.add_argument("--work")
         sp.add_argument("--layer", required=True)
@@ -6981,6 +7149,7 @@ def build_parser() -> argparse.ArgumentParser:
     sp = verification_sub.add_parser("configure", help="Declare required project scripts without installing or executing anything")
     sp.add_argument("--work", help="Work to inspect for reanchor; scripts remain project-wide")
     sp.add_argument("--repo", default="."); sp.add_argument("--test-script", action="append"); sp.add_argument("--verify-script", action="append")
+    sp.add_argument("--security-script", action="append", help="Required security checks; reuse the same test wrapper to declare both capabilities without running it twice")
     sp.add_argument("--replace", action="store_true", help="Explicitly replace different existing verification declarations")
     sp.set_defaults(fn=cmd_verification_configure)
     sp = sub.add_parser("verify"); sp.add_argument("--repo", default="."); sp.add_argument("--work"); sp.add_argument("--script", action="append", help="Engineering diagnostic only, never grants done eligibility; repeat for multiple scripts"); sp.add_argument("--command", action="append", help=argparse.SUPPRESS); sp.set_defaults(fn=cmd_verify)

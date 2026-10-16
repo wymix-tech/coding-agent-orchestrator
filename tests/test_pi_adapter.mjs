@@ -263,6 +263,30 @@ test('Pi native session and assistant payloads', posix, async () => {
   } finally {f.close();}
 });
 
+test('host parentSession metadata keeps reviewer events separate from primary', posix, async () => {
+  const f = fixture();
+  try {
+    const parent = path.join(f.dir, 'parent.jsonl');
+    writeFileSync(parent, JSON.stringify({type: 'session', id: 'primary-native'}) + '\n');
+    const ctx = f.context('reviewer-native');
+    ctx.sessionManager.getHeader = () => ({parentSession: parent});
+    await f.handlers.get('session_start')({type: 'session_start'}, ctx);
+    await f.handlers.get('before_agent_start')({prompt: 'review'}, ctx);
+    await f.handlers.get('session_shutdown')({reason: 'quit'}, ctx);
+    const rows = f.rows();
+    assert.equal(rows[0].event, 'subagent_start');
+    assert.equal(rows[2].event, 'subagent_stop');
+    for (const row of rows) {
+      assert.equal(row.kind, 'subagent');
+      assert.equal(row.parent_session_id, 'primary-native');
+      assert.equal(row.subagent_id, 'reviewer-native');
+    }
+    ctx.sessionManager.getHeader = () => ({parentSession: path.join(f.dir, 'missing-parent.jsonl')});
+    await f.handlers.get('session_start')({type: 'session_start'}, ctx);
+    assert.equal(f.rows().at(-1).kind, 'subagent');
+  } finally { f.close(); }
+});
+
 test('CLI bridge does not block Pi event loop', posix, async () => {
   const f = fixture();
   let ticks = 0;

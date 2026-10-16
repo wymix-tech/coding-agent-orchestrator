@@ -25,7 +25,7 @@ def normalize_scripts(raw: list) -> list[dict]:
         gates = item.get("gates", [])
         if not command or not name or name in names or not isinstance(required, bool):
             raise ValueError("VERIFICATION_SCRIPT_INVALID")
-        if not isinstance(gates, list) or any(not isinstance(gate, str) or gate != "tests" for gate in gates):
+        if not isinstance(gates, list) or any(not isinstance(gate, str) or gate not in {"tests", "security_verification"} for gate in gates):
             raise ValueError("VERIFICATION_GATE_INVALID")
         names.add(name)
         result.append({"name": name, "command": command, "required": required,
@@ -47,8 +47,12 @@ def required_verification_status(results: list[dict]) -> str:
 
 
 def tests_satisfied(verification: dict) -> bool:
+    return capability_satisfied(verification, 'tests')
+
+
+def capability_satisfied(verification: dict, capability: str) -> bool:
     results = [result for result in verification.get("results", [])
-               if result.get("required") and "tests" in result.get("gates", [])]
+               if result.get("required") and capability in result.get("gates", [])]
     return bool(results) and all(result.get("status") == "passed" for result in results)
 
 

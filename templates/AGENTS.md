@@ -67,3 +67,21 @@ observed Story ID, including those observed by failed verify. Restore missing en
 revise/reanchor the requirement and rebind approved scope. New snapshot formats, permissions and
 source-link changes require fresh verification. BMAD oneshot Commit requires the actual SPEC
 in HEAD and a clean SPEC index/worktree; never force-add or change ignore policy automatically.
+
+For BMAD dispatch, use the installed step-03 implementation handoff after loading it fully;
+set SPEC in-progress and baseline_commit first. Host-observed child execution is distinct from
+primary self-implementation. Record EVERY active step-04 reviewer with `{{CAO_COMMAND}} sdd review begin`,
+then `classify` every layer BEFORE product patches and `resolve` after native checks.
+Keep raw JSON findings with unique IDs and one classification per ID, including zero findings.
+Frozen-intent violations require native intent_gap/bad_spec loopback; defer only evidence-backed
+outside-intent work. See the package's docs/native-route-contract.md for report shapes.
+Full-planning PRD/architecture must finish native Finalize, memlog and required reviews.
+Rendering only loads instructions; record the actual `invoke skill <name>` session execution,
+never a renderer plus a `-> step-01..05` pseudo-command.
+Verification baseline identity includes direct wrapper content. Same-path changes require review;
+rerun verification configure to request approval and reanchor through the documented host path.
+Security verification needs an explicit `--security-script`; it may reuse the exact test wrapper
+declared with `--test-script`, so the command runs once with both capabilities.
+Acceptance must preserve the complete criterion, establish its precondition, use isolated fixtures
+and preserve redacted run evidence. A wrong old password cannot prove user deletion; check the
+current credential and associate existing-token invalidation with its concrete test evidence.

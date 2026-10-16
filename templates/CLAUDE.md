@@ -67,3 +67,15 @@ observed Story ID, including those observed by failed verify. Restore missing en
 revise/reanchor the requirement and rebind approved scope. New snapshot formats, permissions and
 source-link changes require fresh verification. BMAD oneshot Commit requires the actual SPEC
 in HEAD and a clean SPEC index/worktree; never force-add or change ignore policy automatically.
+
+BMAD dispatch also requires recorded independent reviews: begin EVERY active step-04 layer,
+classify all raw findings before product patches, then resolve after native checks. Use unique
+Finding IDs with one classification per raw ID; frozen-intent violations need native loopback.
+Follow the installed step-03 implementation handoff, and finish native planning Finalize/audits.
+Renderer success is instruction loading, never workflow completion. See docs/native-route-contract.md
+for the evidence shapes and the audited recovery path when host execution cannot be observed.
+Direct verification wrapper content is part of the accepted baseline, even at the same path.
+Use verification configure --security-script for actual security checks; reuse the test wrapper
+to declare tests and security_verification without duplicate execution.
+Acceptance must use current valid credentials to establish deletion preconditions, preserve token
+invalidation criteria, isolate mutable fixtures and retain redacted actual run evidence.

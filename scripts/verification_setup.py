@@ -45,13 +45,19 @@ def setup_state(cfg: dict[str, Any]) -> dict[str, Any]:
             "tests_bound": any(script["required"] and "tests" in script["gates"] for script in scripts)}
 
 
-def declared_scripts(general: list[str], tests: list[str]) -> list[dict[str, Any]]:
-    if not general and not tests:
+def declared_scripts(general: list[str], tests: list[str], security: list[str] | None = None) -> list[dict[str, Any]]:
+    if not general and not tests and not security:
         raise ValueError("VERIFICATION_SCRIPT_REQUIRED")
     items = [{"name": f"script-{i}", "command": command, "required": True}
              for i, command in enumerate(general, 1)]
     items += [{"name": f"test-{i}", "command": command, "required": True, "gates": ["tests"]}
               for i, command in enumerate(tests, 1)]
+    for i, command in enumerate(security or [], 1):
+        existing = next((item for item in items if item['command'].strip() == command.strip()), None)
+        if existing is not None:
+            existing.setdefault('gates', []).append('security_verification')
+        else:
+            items.append({'name': f'security-{i}', 'command': command, 'required': True, 'gates': ['security_verification']})
     return normalize_scripts(items)
 
 
