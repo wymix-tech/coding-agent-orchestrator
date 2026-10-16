@@ -103,6 +103,9 @@ test('real Pi hooks stop after provider installation and acknowledge host resour
     f.cli('init', '--host', 'pi');
     const ctx = f.context('same-conversation');
     await f.handlers.get('session_start')({reason: 'startup'}, ctx);
+    const initial = await f.handlers.get('before_agent_start')({prompt: '开发一个登录系统'}, ctx);
+    assert.match(initial.message.content, /Ask technology-stack questions only AFTER/);
+    assert.doesNotMatch(initial.message.content, /ONE bundled question/);
     mkdirSync(path.join(f.dir, '_bmad'));
     // Installation state fixture; hook replies come from the real Python core.
     writeFileSync(path.join(f.dir, '.orchestrator/provider-restarts.json'),
@@ -119,8 +122,14 @@ test('real Pi hooks stop after provider installation and acknowledge host resour
     assert.equal(await f.handlers.get('agent_before_settle')(settle(true), ctx), undefined);
     await f.handlers.get('session_start')({reason: 'new'}, f.context('different-conversation'));
     assert.equal(f.cli('bootstrap', '--host', 'pi').mode, 'host_restart_required');
-    await f.handlers.get('session_start')({reason: 'reload'}, ctx);
-    assert.equal(f.cli('bootstrap', '--host', 'pi').mode, 'select');
+    const restarted = f.context('restarted-conversation');
+    await f.handlers.get('session_start')({reason: 'reload'}, restarted);
+    const resumed = await f.handlers.get('before_agent_start')({prompt: '继续'}, restarted);
+    const bootstrap = f.cli('bootstrap', '--host', 'pi');
+    assert.equal(bootstrap.mode, 'select');
+    assert.equal(bootstrap.pending_request.prompt, '开发一个登录系统');
+    assert.match(resumed.message.content, /开发一个登录系统/);
+    assert.match(resumed.message.content, /TECH_STACK_CLARIFICATION_REQUIRED/);
   } finally { f.close(); }
 });
 

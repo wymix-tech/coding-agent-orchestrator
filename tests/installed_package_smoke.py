@@ -192,7 +192,7 @@ def main():
                     git('init', '-q')
                     excludes = repo / '.git/info/exclude'
                     excludes.write_text('.orchestrator/\n_bmad-output/\n')
-                    fixture_native_review(repo, lambda _repo, *argv: (0, cli(*argv)), native_id)
+                    fixture_native_review(repo, lambda _repo, *argv: (0, cli(*argv)), native_id, reviewer_cli=args.cao)
                     cli("verify")
                     git('add', '-A'); git('-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.test', 'commit', '-qm', 'Installed business fixture')
                     assert cli('done', expected=2)['reason'] == 'NATIVE_SPEC_IGNORED'

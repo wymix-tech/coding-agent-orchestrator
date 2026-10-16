@@ -51,6 +51,10 @@ Spec Kit, or another provider's own commands, artifacts, and mandatory precondit
 invent a duplicate SDD lifecycle. Reassess only when scope, requirement, or risk materially changes.
 The profile never bypasses the project's configured Verification scripts or provider-native gates.
 
+Immediately after assessment, bind any required security-verification capability through the verification setup guide. Plan and review verification wrappers together so a known security risk does not cause a late extra approval cycle.
+
+For BMAD Build, read the applicable dispatch/oneshot review contract before entering native review. Create every active layer's ticket before launching reviewers and pass each returned `reviewer_start` command to its new independent session. Do not perform native review and patches first and then retrofit CAO tickets at `cao verify`.
+
 ### Workflow evidence
 
 For **standard/comprehensive** profiles with an installed SDD provider, selecting a

@@ -81,6 +81,8 @@ def review_state(repo, work, code_snapshot):
                          'then `cao sdd review submit --layer <active-layer> --report <native-report.json>`. Fix/triage findings, review changed code again, then `cao verify`.')
         if run.get('status') != 'passed':
             return {'ready': False, 'state': 'pending', 'reason': 'NATIVE_REVIEW_REQUIRED', 'next': next_step}
+        if any(not (records.get(layer) or {}).get('execution_binding') for layer in layers):
+            return {'ready': False, 'state': 'stale', 'reason': 'NATIVE_REVIEW_EXECUTION_UNBOUND', 'next': next_step}
         if any((records.get(layer) or {}).get('inputs') != inputs for layer in layers) or any(hashlib.sha256(repo_file(repo, path).read_bytes()).hexdigest() != sha
                                              for layer in layers for path, sha in (records.get(layer) or {}).get('evidence_hashes', {}).items()):
             return {'ready': False, 'state': 'stale', 'reason': 'NATIVE_REVIEW_STALE', 'next': next_step}
@@ -260,6 +262,10 @@ def validate_reviewer(run, report):
             or not str(reviewer.get('session_id') or '').strip() or reviewer.get('session_id') in run.get('primary_session_ids', [])
             or reviewer.get('model') != run.get('model')):
         raise ValueError('NATIVE_REVIEW_INDEPENDENT_MODEL_REQUIRED')
+    binding = run.get('execution_binding') or {}
+    if (binding.get('reviewer') != reviewer
+            or binding.get('input_sha256') != run.get('input_sha256')):
+        raise ValueError('NATIVE_REVIEW_EXECUTION_UNBOUND')
 
 
 def resolve_review(repo, work, layer, report_path, code_snapshot):
@@ -294,13 +300,8 @@ def submit_review(repo, work, layer, report_path, code_snapshot):
             or report.get('input_sha256') != digest(run.get('inputs'))
             or run.get('inputs') != review_inputs(repo, work, code_snapshot)):
         raise ValueError('NATIVE_REVIEW_RUN_STALE_OR_MISMATCH')
-    reviewer = report.get('reviewer') or {}
-    if not isinstance(reviewer, dict):
-        raise ValueError('NATIVE_REVIEW_REPORT_INVALID')
-    if (reviewer.get('mode') not in {'subagent', 'external-session'} or not str(reviewer.get('session_id') or '').strip()
-            or reviewer.get('session_id') in run.get('primary_session_ids', [])
-            or reviewer.get('model') != run.get('model')):
-        raise ValueError('NATIVE_REVIEW_INDEPENDENT_MODEL_REQUIRED')
+    validate_reviewer(run, report)
+    reviewer = report['reviewer']
     findings_file = provider_artifact(repo, str(report.get('findings_file') or ''), ['_bmad-output'])
     if findings_file == report_file or not findings_file.read_text().strip():
         raise ValueError('NATIVE_REVIEW_FINDINGS_REQUIRED')

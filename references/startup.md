@@ -6,6 +6,8 @@ Bootstrap reports `sdd_select`, `sdd_install_required`, `host_restart_required`,
 
 ## Execute
 
+For a new project, use this order: select SDD → install → restart the host → restore the original request → clarify the technology stack once. Ask only for the provider before installing; do not bundle language/framework/build/test/storage questions into that question or ask them while restart is pending. User-specified choices in the original request remain valid. Host `prompt_submit` preserves the original request before Work intake; bootstrap exposes `pending_request` after restart. If hooks were unavailable, preserve the request with the existing conversation/handoff rather than inventing it, and state when it cannot be recovered.
+
 1. Use the actual CAO command from project instructions or CLI `guidance.command`; `cao` in these guides is shorthand for that invocation.
 2. For `mode: sdd_select`, ask the user to explicitly choose the provider and wait. Recommendations, task type, popularity, global CLIs and `auto` are not authorization. If the channel cannot ask, report `SDD_SELECTION_REQUIRED` and stop.
 3. After the explicit choice, run `cao sdd install --provider <chosen-provider> --yes`, or `cao sdd select --provider <chosen-provider>` for an installed provider. For Spec Kit pass the actual `--host` or explicitly selected `--integration`; never default to all hosts. For `sdd_install_required`, repair only the Work's already-selected provider.

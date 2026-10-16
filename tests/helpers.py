@@ -87,7 +87,27 @@ sys.exit(p.returncode)
     checked('sdd', 'acceptance', 'run')
 
 
-def fixture_native_review(repo, run, wid=None):
+def bind_fixture_reviewer(repo, ticket, layer, model, reviewer_cli=None):
+    """Exercise the real attach CLI in a newly registered independent process session."""
+    import uuid
+    session_id = 'fixture-reviewer-' + uuid.uuid4().hex
+    env = {**os.environ, 'CAO_HOST': 'pi', 'PI_SESSION_ID': session_id, 'PI_MODEL': model}
+    launcher = ([str(reviewer_cli)] if reviewer_cli else
+                [sys.executable, str(pathlib.Path(__file__).resolve().parents[1] / 'scripts/cao.py')])
+    def invoke(*args, payload=None):
+        result = subprocess.run([*launcher, *args, '--repo', str(repo)],
+                                input=json.dumps(payload) if payload else None,
+                                text=True, capture_output=True, env=env, timeout=30)
+        assert result.returncode == 0, (result.stdout, result.stderr)
+        return json.loads(result.stdout)
+    invoke('host-event', '--host', 'pi', payload={'event': 'subagent_start',
+           'session_id': 'fixture-parent', 'subagent_id': session_id})
+    out = invoke('sdd', 'review', 'attach', '--layer', layer, '--run', ticket['id'],
+                 '--input-sha256', ticket['input_sha256'], '--model', model)
+    return out['review']['execution_binding']['reviewer']
+
+
+def fixture_native_review(repo, run, wid=None, reviewer_cli=None):
     """Recorded, independently executed local review fixture; not a real model review."""
     import tempfile
     repo = pathlib.Path(repo)
@@ -98,6 +118,7 @@ def fixture_native_review(repo, run, wid=None):
     if wid: args += ['--work',wid]
     rc,out = run(repo,*args);assert rc==0,out
     ticket=out['review'];directory=repo/'_bmad-output/review-fixture';directory.mkdir(parents=True,exist_ok=True)
+    reviewer = bind_fixture_reviewer(repo, ticket, 'blind-hunter', 'fixture-model', reviewer_cli)
     with tempfile.TemporaryDirectory() as d:
         script=pathlib.Path(d)/'reviewer.py'
         script.write_text("from pathlib import Path\nimport sys\np=Path(sys.argv[1])\nassert p.is_dir()\nprint('- F1: Independently inspect the local fixture source and verification setup.')\n")
@@ -105,7 +126,7 @@ def fixture_native_review(repo, run, wid=None):
     raw=directory/'findings.md';raw.write_text(findings)
     report=directory/'report.json'
     report.write_text(json.dumps({'run_id':ticket['id'],'input_sha256':ticket['input_sha256'],
-        'reviewer':{'mode':'external-session','session_id':'independent-fixture-process','model':'fixture-model'},
+        'reviewer':reviewer,
         'findings_file':raw.relative_to(repo).as_posix(),'findings':[{'id':'F1','verdict':'false','disposition':'reject',
         'evidence':'A separate local Python process inspected the fixture directory; this fixture does not assert expert semantic review.'}]}))
     args=['sdd','review','submit','--layer','blind-hunter','--report',report.relative_to(repo).as_posix()]
