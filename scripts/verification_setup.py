@@ -3,6 +3,7 @@ from copy import deepcopy
 from typing import Any
 
 from scripts.completion_policy import normalize_scripts, required_entries
+from scripts.technology_guidance import technology_instruction
 
 
 SCAFFOLD_ROOTS = ("tests", "test", "acceptance-tests", "src/test", "scripts/verification", ".venv", "venv")
@@ -69,7 +70,7 @@ def setup_instruction(command: str) -> str:
         "an empty verification configuration does not prevent cao start. "
         "For an existing project, analyze product manifests, source, tests and CI; reuse meaningful verification. "
         "Do not infer the product tech stack from .orchestrator derived state, .agents, .pi, host assets, SDD tools/outputs or caches; current user requirements remain relevant. "
-        "For a new project, use the tech stack already specified by the user; otherwise ask the user for language/framework/build/test choices and wait. Do not guess a stack if unable to ask. "
+        + technology_instruction(command) +
         "Generate project-owned verification scripts or reuse suitable existing scripts. "
         + scaffold_instruction() +
         "Zero tests, missing tools or missing dependencies must fail/block, not echo/true a pass. Preserve the user's selected framework and test runner; do not replace JUnit 5 with a main program when dependencies are missing. For Java/Jupiter use JUnit5-capable Surefire and fail on zero tests. "

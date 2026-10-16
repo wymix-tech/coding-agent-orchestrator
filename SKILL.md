@@ -52,7 +52,7 @@ flowchart TD
     B -->|No| C["Obtain required choice or repair selected installation"]
     C --> A
     B -->|Yes| D{"Current Work exists?"}
-    D -->|No| E["Resume existing Work or allocate and start new requirement"]
+    D -->|No| E["Restore Work or clarify scope/technology and register requirement"]
     E --> A
     D -->|Yes| F{"Verification baseline accepted?"}
     F -->|No| G["Configure or review baseline; approve and reanchor when required"]
@@ -85,6 +85,7 @@ require reanchoring. Any input change can require fresh reviews/bindings/verific
   native artifacts in that language while preserving code/API names, commands and required tokens.
 - Create/resume Work before product code, configuration, tests or verification scaffolding. New
   inline requirements use `cao requirement next-id`; use an existing requirement file directly.
+- Confirm material technology choices before stack-dependent planning/scaffolding. Preserve the existing product stack or explicit user choices/delegation; ask and wait for missing choices. Agent-written requirements/SPECs alone do not authorize choices. Restore recorded choices after restart; see the intake guide.
 - Establish an accepted required verification baseline before business implementation, then assess
   the path and satisfy native prerequisites. Initial build/test scaffolding may fail; passing tests
   are not a prerequisite to creating Work or beginning implementation after its prerequisites.

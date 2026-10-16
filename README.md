@@ -404,6 +404,8 @@ BMAD maps `zh-CN`/`zh-Hans` to `Chinese` for both `communication_language` and `
 
 ## Verification configuration
 
+Before selecting a product stack, intake and runtime guidance require the Agent to distinguish user-specified choices, an established repository stack, explicit scoped delegation, and pending proposals. Ask one bundled question about missing material choices and wait before stack-dependent native plans or scaffolding; selecting an SDD provider or saying “continue” is not delegation. Agent-generated requirements/SPECs/manifests cannot establish authorization. Record actual source wording or pre-existing product paths with `cao decision --scope technology` and restore them after restart. See [technology clarification](references/work-intake.md#technology-clarification-before-planning-or-scaffolding). This is Agent guidance, not an automatic natural-language authorization check; the CLI does not certify a choice merely because a document or decision calls it confirmed.
+
 CAO only orchestrates project verification. The project owns the actual verification logic by
 providing one or more scripts in `.orchestrator/config.json`. A script returns an exit code and a
 human-readable reason on stdout/stderr; CAO does not parse coverage, test reports, mutation reports,

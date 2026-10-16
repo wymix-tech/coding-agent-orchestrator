@@ -12,8 +12,7 @@ configuration is empty, invalid or optional-only. Before feature development:
 1. Existing project: analyze product manifests, source, tests and CI; reuse meaningful checks. Host assets,
    `.orchestrator` derived state, `.agents`, `.pi`, SDD tools/outputs and caches do not identify the product
    stack; current requirements remain relevant, including intake documents.
-2. New project: use the user's explicit stack; otherwise ask the user for language/framework/build/test
-   choices and wait. Do not guess a stack when the channel cannot ask.
+2. Apply [technology clarification](work-intake.md#technology-clarification-before-planning-or-scaffolding) before generating wrappers/manifests. New project: honor explicit choices or scoped delegation; otherwise ask the user about the remaining material language/framework/build/test choices and wait. Agent-written requirements, SPECs and newly generated manifests do not establish user authorization. Existing product evidence is different from scaffolding generated for this request. If unable to ask, report `TECH_STACK_CLARIFICATION_REQUIRED` and stop stack-dependent work. Restore recorded choices after restart instead of asking again.
 3. Generate project-owned wrappers or reuse existing scripts. Zero tests, missing tools or missing
    dependencies must fail/block, never produce a fake `echo`/`true` pass. Java/Jupiter requires
    JUnit5-capable Surefire and failure on zero tests. Do not overwrite scripts or install dependencies automatically.
