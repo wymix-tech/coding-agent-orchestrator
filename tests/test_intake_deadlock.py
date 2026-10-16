@@ -121,7 +121,8 @@ class IntakeDeadlock(unittest.TestCase):
 
             rc, out, _ = run(repo, "start", "--requirement", str(prd), env_extra=NO_HOST_ENV)
             self.assertEqual(rc, 0, f"start failed: {out}")
-            self.assertEqual(out.get("action"), "ASSESS_PATH")
+            self.assertEqual(out.get("action"), "VERIFICATION_SETUP")
+            self.assertEqual(out["next_action"]["reason"], "VERIFICATION_BASELINE_REQUIRED")
             self.assertTrue(out["work_item"]["id"])
 
             rc, out, _ = run(repo, "path", "assess", "--profile", "light", "--reason", "clear small change", env_extra=NO_HOST_ENV)

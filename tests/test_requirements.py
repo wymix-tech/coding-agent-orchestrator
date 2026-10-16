@@ -173,7 +173,8 @@ class RequirementWriteIsNotBlocked(unittest.TestCase):
 
             rc, out, _ = run(repo, "start", "--requirement", out["path"], env_extra=NO_HOST_ENV)
             self.assertEqual(rc, 0, f"start failed: {out}")
-            self.assertEqual(out.get("action"), "ASSESS_PATH")
+            self.assertEqual(out.get("action"), "VERIFICATION_SETUP")
+            self.assertEqual(out["next_action"]["reason"], "VERIFICATION_BASELINE_REQUIRED")
 
             rc, out, _ = run(repo, "path", "assess", "--profile", "light", "--reason", "clear small change", env_extra=NO_HOST_ENV)
             self.assertEqual(rc, 0, f"path assess failed: {out}")

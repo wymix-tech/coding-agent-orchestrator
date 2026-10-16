@@ -59,6 +59,14 @@ stage and selected Provider; installed native instructions remain authoritative 
 stage, absolute `read_before_action` paths, missing-resource diagnostics and return command.
 Resume/host contexts include the same navigation. Links do not automatically load documents.
 
+Runtime actions share prerequisite ordering across bootstrap, next, start/assessment responses,
+native synchronization and host reminders. A pending BMAD route first guides native workflow
+selection and SPEC preparation; it does not authorize business implementation. `guidance` includes
+the actual installed Skill path and route contract when needed. New route declarations use the
+Work-scoped `declaration_path` returned by next, inside provider-native outputs (BMAD:
+`_bmad-output/cao/WORK_ID/route.json`). Write the complete JSON file successfully before passing
+its path to `sdd route propose --declaration`; inline JSON is rejected with an explicit recovery message.
+
 Existing project instructions are preserved by init/bootstrap. To upgrade known standalone
 legacy CAO templates or replace only a marked CAO block while retaining surrounding custom rules:
 

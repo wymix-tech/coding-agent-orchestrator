@@ -158,8 +158,51 @@ test('real Python core handles Pi tool_result with null verification', posix, as
     writeFileSync(path.join(f.dir, 'src.py'), 'x');
     assert.equal(await f.handlers.get('tool_result')(event, f.context('native-pi', true)), undefined);
     assert.deepEqual(event, original, 'real-core guidance must not change tool result data');
-    assert.equal(f.notices.length, 0, JSON.stringify(f.notices));
+    assert.ok(f.notices.every(([, level]) => level === 'info'), JSON.stringify(f.notices));
+    assert.match(f.sent.at(-1)[0].content, /VERIFICATION_BASELINE_REQUIRED/);
     assert.equal(JSON.parse(readFileSync(workFile, 'utf8')).verification, null);
+  } finally {f.close();}
+});
+
+test('real Pi route preparation follows baseline, assessment, native workflow and SPEC', posix, async () => {
+  const f = realCoreFixture();
+  try {
+    mkdirSync(path.join(f.dir, '_bmad'));
+    const skill = '.agents/skills/bmad-build/SKILL.md';
+    mkdirSync(path.dirname(path.join(f.dir, skill)), {recursive: true});
+    writeFileSync(path.join(f.dir, skill), '---\nname: bmad-build\ndescription: Fixture\n---\nFollow the native renderer.');
+    f.cli('init', '--host', 'pi', '--sdd', 'bmad');
+    const req = f.cli('requirement', 'next-id', '--title', 'Login replay').path;
+    writeFileSync(path.join(f.dir, req), '# Fixture login\nPrepare real native evidence.');
+    const started = f.cli('start', '--requirement', req);
+    assert.equal(started.next_action.reason, 'VERIFICATION_BASELINE_REQUIRED');
+    const ctx = f.context('route-replay-pi');
+    async function result(command) {
+      const event = {toolName: 'bash', input: {command}, content: [{type: 'text', text: 'CLI result unchanged'}]};
+      const before = JSON.parse(JSON.stringify(event));
+      await f.handlers.get('tool_result')(event, ctx);
+      assert.deepEqual(event, before);
+      return f.sent.at(-1)[0].content;
+    }
+    assert.match(await result('cao start'), /VERIFICATION_BASELINE_REQUIRED/);
+    mkdirSync(path.join(f.dir, 'acceptance-tests'));
+    writeFileSync(path.join(f.dir, 'acceptance-tests/test_fixture.py'),
+      'import unittest\nclass Fixture(unittest.TestCase):\n def test_fixture(self): self.assertEqual(2+2,4)\n');
+    f.cli('verification', 'configure', '--test-script', JSON.stringify(f.python) + ' -m unittest discover -s acceptance-tests');
+    assert.match(await result('cao verification configure'), /path assess/);
+    f.cli('path', 'assess', '--profile', 'standard', '--reason', 'Native fixture preparation');
+    const native = await result('cao path assess');
+    assert.match(native, /NATIVE_WORKFLOW_SELECTION_REQUIRED/);
+    assert.ok(native.includes(path.join(f.dir, skill)));
+    assert.match(native, /native-route-contract.md/);
+    f.cli('sdd', 'workflow', 'select', '--name', 'bmad-build', '--entrypoint', 'bmad-build');
+    assert.match(await result('cao sdd workflow select'), /NATIVE_SPEC_PREPARATION_REQUIRED/);
+    const target = f.cli('next').action.declaration_path;
+    assert.equal(await f.handlers.get('tool_call')({toolName: 'write', input: {path: target, content: '{}'}}, ctx), undefined);
+    const denied = await f.handlers.get('tool_call')({toolName: 'write', input: {path: 'route-declaration.json', content: '{}'}}, ctx);
+    assert.equal(denied.block, true);
+    assert.match(denied.reason, /NATIVE_ROUTE_REQUIRED/);
+    assert.ok(denied.reason.includes(target));
   } finally {f.close();}
 });
 
