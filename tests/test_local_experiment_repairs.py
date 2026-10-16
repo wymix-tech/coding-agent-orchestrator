@@ -127,6 +127,9 @@ class DispatchReview(unittest.TestCase):
         self.inputs = native.review_inputs(self.repo, self.work, self.snapshot)
         for layer in native.active_layers(self.repo, self.work):
             self.work['sdd']['native_reviews'][layer] = {'id': layer, 'status': 'running', 'model': 'current',
+                                                        'input_sha256': native.digest(self.inputs),
+                                                        'execution_binding': {'input_sha256': native.digest(self.inputs),
+                                                            'reviewer': {'model': 'current', 'mode': 'subagent', 'session_id': layer + '-child'}},
                                                         'primary_session_ids': ['primary'], 'inputs': self.inputs}
 
     def classify(self, layer, findings=None, raw=None):

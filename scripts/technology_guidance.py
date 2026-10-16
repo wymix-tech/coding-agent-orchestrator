@@ -3,6 +3,8 @@
 
 def technology_instruction(command: str) -> str:
     return (
+        "For a new provider installation, choose/install the provider and restart the host BEFORE asking technology questions. "
+        "After restart restore the original request, then clarify only unknown stack choices once. "
         "Technology clarification comes BEFORE committing technology choices to requirements, native plans or scaffolding. "
         "Restore the existing Work, decisions and handoff after a host restart. Reuse choices whose original authorization is recorded; do not ask again merely because the host/session changed. "
         "Distinguish user-specified choices, an existing product stack supported by repository evidence, explicit user delegation, and an Agent proposal. "

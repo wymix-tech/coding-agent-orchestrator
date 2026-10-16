@@ -54,7 +54,7 @@ def restart_state(repo: Path, host: str | None = None) -> dict:
         "If CAO hooks are missing, install the matching adapter with `cao host install --host <host>` "
         "before restarting. The host's next primary SessionStart acknowledges resource loading "
         "(Pi: startup/reload only); "
-        "then run `cao bootstrap` to resume the existing Work. Repeating bootstrap, changing the "
+        "then run `cao bootstrap` to resume the existing Work or recover the original request before technology clarification. Repeating bootstrap, changing the "
         "session ID or starting a subagent does not acknowledge a restart."
     )
     return {"ready": False, "reason": "HOST_RESTART_REQUIRED", "next": instruction,

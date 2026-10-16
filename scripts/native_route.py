@@ -316,12 +316,10 @@ def bind_approval_question(record, work_id, raw, host, session_id):
     return True
 
 
-def approve_observed_response(repo, work, raw, event, host, session_id, dirs, timestamp):
-    """Accept only an explicit approval response after a Work-specific request."""
-    approval = (work.get("sdd") or {}).get("spec_approval") or {}
-    if (approval.get("status") not in {"pending", "approved"}
-            or not request_context_matches(approval, work["id"], host, session_id, raw, event)):
-        return None
+def observed_replies(record, work_id, raw, event, host, session_id):
+    """Extract replies only from the session/request or its bound question result."""
+    if not request_context_matches(record, work_id, host, session_id, raw, event):
+        return []
     replies = []
     if event == "prompt_submit":
         value = raw.get("prompt")
@@ -339,6 +337,17 @@ def approve_observed_response(repo, work, raw, event, host, session_id, dirs, ti
                     for value in answer.get("selectedOptions", []):
                         if isinstance(value, str): replies.append(value)
                         elif isinstance(value, dict) and isinstance(value.get("label"), str): replies.append(value["label"])
+    return replies
+
+
+def approve_observed_response(repo, work, raw, event, host, session_id, dirs, timestamp):
+    """Accept only an explicit approval response after a Work-specific request."""
+    approval = (work.get("sdd") or {}).get("spec_approval") or {}
+    if approval.get("status") not in {"pending", "approved"}:
+        return None
+    replies = observed_replies(approval, work['id'], raw, event, host, session_id)
+    if event == 'prompt_submit' and (work.get('verification_review') or {}).get('status') == 'pending':
+        replies = [reply for reply in replies if not re.fullmatch(r'(?:批准|同意|approve)[。.!！\s]*', reply.strip(), re.I)]
     pattern = r"(?:批准(?:规格|并继续|并停止)?|同意(?:此|该|这份)?规格(?:并继续|并停止)?|approve(?: the)? spec(?:ification)?|approve and (?:continue|stop))"
     if approval.get("status") == "approved":
         if not approval.get("stop_after_approval"):
@@ -367,14 +376,20 @@ def approve_observed_response(repo, work, raw, event, host, session_id, dirs, ti
 
 def approve_baseline_response(work, raw, event, host, session_id, current_hash, timestamp):
     review = work.get("verification_review") or {}
-    reply = raw.get("prompt")
-    if (event != "prompt_submit" or review.get("status") != "pending"
-            or not request_context_matches(review, work["id"], host, session_id)
-            or review.get("config_sha256") != current_hash or not isinstance(reply, str)
-            or not re.fullmatch(r"(?:批准验证基线|approve verification baseline)[。.!！\s]*", reply.strip(), re.I)):
+    if review.get('status') != 'pending' or review.get('config_sha256') != current_hash:
+        return None
+    replies = observed_replies(review, work['id'], raw, event, host, session_id)
+    # An unqualified approval is safe only when there is no competing SPEC request.
+    competing = ((work.get('sdd') or {}).get('spec_approval') or {}).get('status') == 'pending'
+    pattern = r'(?:批准验证基线|approve verification baseline)'
+    if not competing:
+        pattern = r'(?:批准验证基线|approve verification baseline|批准|同意|approve)'
+    reply = next((v for v in replies if re.fullmatch(pattern + r'[。.!！\s]*', v.strip(), re.I)), None)
+    if reply is None:
         return None
     review.update(status="approved", approved_at=timestamp, evidence={"host": host,
                   "session_id": session_id, "work_item_id": work["id"], "approval_id": review["id"],
                   "event": event, "response": reply,
+                  "tool_call_id": raw.get('toolCallId') or raw.get('tool_call_id') or raw.get('tool_use_id'),
                   "response_sha256": digest(reply)})
     return review

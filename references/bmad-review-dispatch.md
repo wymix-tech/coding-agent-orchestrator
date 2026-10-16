@@ -8,7 +8,7 @@ Read for a BMAD dispatch review action. Follow the actual rendered
 1. Begin EVERY active native layer for the current snapshot with
    `cao sdd review begin --layer <active-layer> --instructions <actual-step-04-review.md> --model <current-model>`.
 2. Launch the independent same-model reviewers required by the native prompt
-   (or its external-session fallback). Preserve raw JSON findings under
+   (or its external-session fallback). Pass each ticket's `reviewer_start` command to a NEW independent host session; that reviewer must execute it before reviewing. It binds the real native session and current code snapshot to the ticket. Never execute it in the primary session or reuse a pre-ticket review. Preserve raw JSON findings under
    `_bmad-output/`; each raw finding has a unique nonempty `id` and its content.
 3. Collect all layers and classify every raw ID exactly once, before applying
    product patches: `cao sdd review classify --layer <active-layer> --report <triage-file.json>`.

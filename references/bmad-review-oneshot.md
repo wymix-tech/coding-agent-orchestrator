@@ -1,5 +1,7 @@
 # BMAD oneshot review evidence
 
+After `review begin`, pass its `reviewer_start` command to a new independent same-model host session with a CAO adapter. The reviewer runs it before inspecting code, binding that real session to the ticket and frozen snapshot. Existing sessions and pre-ticket results cannot be reused. Use the host-native session ID returned by attach in the report; keep any separate subagent run ID as supplementary information.
+
 Read for a BMAD oneshot review action, for any CAO quality profile.
 Follow EVERY active Review layer and Classify step in the actual rendered
 `step-oneshot.md`; a route-bound primary SPEC also identifies these obligations.

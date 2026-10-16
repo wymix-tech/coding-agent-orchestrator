@@ -58,6 +58,9 @@ from scripts.provider_preparation import bmad_preparation
 from scripts.skill_guidance import guidance as resolve_skill_guidance, action_files, CONTRACT_FILES
 from scripts.instruction_updates import update_instructions
 from scripts.provider_restart import require_restart, observe_start, restart_state
+from scripts.startup_request import (ORDER as STARTUP_ORDER, capture_request, consume_request,
+                                     pending_request, request_context)
+from scripts.review_binding import attach_reviewer
 from scripts.technology_guidance import technology_instruction
 from scripts.light_spec_policy import make_binding, binding_digest, light_spec_state
 from scripts.sdd_acceptance_policy import digest as acceptance_digest
@@ -3952,7 +3955,8 @@ def work_prerequisite_action(repo: Path, work: dict | None) -> dict | None:
         return action("human", "Resolve the active blocker before continuing.", stage="recovery", reason="active blocker exists")
     baseline = verification_baseline_state(repo, work)
     if not baseline["ready"]:
-        return action("agent", baseline["next"], stage="verification_setup", reason=baseline["reason"])
+        return action("human" if baseline['reason'] == 'VERIFICATION_REVIEW_REQUIRED' else "agent",
+                      baseline["next"], stage="verification_setup", reason=baseline["reason"])
     assessment = path_assessment_state(repo, work)
     if not assessment["ready"]:
         reason = assessment["reason"]
@@ -3961,6 +3965,9 @@ def work_prerequisite_action(repo: Path, work: dict | None) -> dict | None:
         if reason == "major requirement ambiguity requires clarification":
             return action("human", "Clarify the material requirement ambiguity, then rerun `cao path assess` without `--risk-flag major-ambiguity`.", stage="path_assessment", reason=reason)
         return action("agent", path_assessment_instruction(work), stage="path_assessment", reason=reason)
+    capabilities = verification_capability_state(repo, work)
+    if not capabilities['ready']:
+        return action('agent', capabilities['next'], stage='verification_setup', reason=capabilities['reason'])
     return None
 
 
@@ -4006,6 +4013,11 @@ def agent_guidance(repo: Path, work: dict[str, Any] | None, mode: str | None = N
     navigation = resolve_skill_guidance(root, cao_invocation()["command"], stage, provider)
     reason = (next_action or {}).get("reason", "")
     contracts = action_files(reason, work)
+    sdd = (work or {}).get('sdd') or {}
+    if stage in {'execution', 'completion'} and sdd.get('provider') == 'bmad' and sdd.get('route_decision'):
+        review_contract = CONTRACT_FILES['bmad_dispatch_review' if dispatch_review(work) else 'bmad_oneshot_review']
+        if review_contract not in contracts:
+            contracts.append(review_contract)
     for name in contracts:
         if root:
             navigation["read_before_action"].append(str((root / name).resolve()))
@@ -4042,7 +4054,8 @@ def render_context(repo: Path, work: dict[str, Any] | None, *, session_id: str |
     current = current_work_action(repo, work)
     navigation = "## Read before acting\n" + json.dumps(agent_guidance(repo, work, next_action=current), ensure_ascii=False)
     if not work or work.get("status") in {"todo", "suspended", "completed"}:
-        return "# Coding Agent Orchestrator Work Intake\n" + navigation + "\n" + work_intake_instruction(work)
+        instruction = (STARTUP_ORDER if current.get('stage') == 'startup' else work_intake_instruction(work))
+        return "# Coding Agent Orchestrator Work Intake\n" + navigation + "\n" + instruction + request_context(repo)
     baseline = verification_baseline_state(repo, work)
     if not baseline["ready"]:
         # Preserve continuity without calculating completion from invalid declarations.
@@ -4171,6 +4184,10 @@ def create_handoff(repo: Path, work: dict[str, Any], session_id: str | None, hos
     session = load_session(repo, session_id, host=host) if session_id else None
     existing_records = list_handoff_records(repo, work["id"])
     sequence = max((int(item.get("sequence", 0) or 0) for item in existing_records), default=0) + 1
+    current = current_work_action(repo, work)
+    pending = list(work.get('resume', {}).get('pending', []))
+    if current.get('type') != 'none' and current.get('instruction') and current['instruction'] not in pending:
+        pending.append(current['instruction'])
     handoff = {
         "version": 1,
         "sequence": sequence,
@@ -4182,11 +4199,11 @@ def create_handoff(repo: Path, work: dict[str, Any], session_id: str | None, hos
         "reason": reason,
         "created_at": now(),
         "step": work.get("execution", {}).get("step"),
-        "next_action": work.get("execution", {}).get("next_action"),
+        "next_action": current,
         "path_assessment": work.get("path_assessment"),
         "summary": work.get("resume", {}).get("summary"),
         "completed": work.get("resume", {}).get("completed", []),
-        "pending": work.get("resume", {}).get("pending", []),
+        "pending": pending,
         "decisions": work.get("decisions", [])[-8:],
         "blockers": work.get("blockers", []),
         "verification": work.get("verification"),
@@ -4342,6 +4359,7 @@ def cmd_bootstrap(args: argparse.Namespace) -> int:
         }
         next_out["project_instructions"] = project_instructions
         next_out["guidance"] = agent_guidance(repo, work, next_out["mode"])
+        next_out['next']['instruction'] += ' ' + STARTUP_ORDER
         print(json.dumps(next_out, ensure_ascii=False, indent=2))
         return 0
 
@@ -4353,11 +4371,14 @@ def cmd_bootstrap(args: argparse.Namespace) -> int:
             "sdd": {"status": "not_installed", "selected": selected},
             "selection_required": True,
             "selection_policy": "explicit_user_choice_only",
+            "startup_order": STARTUP_ORDER,
+            "pending_request": pending_request(repo) or None,
             "options": sdd_options(status),
             "next": action("human", "HARD STOP: no SDD is installed and no provider is authorized. Ask the user to explicitly choose OpenSpec, BMad Method, or GitHub Spec Kit and wait for their answer. Do not infer a choice from recommendations, popularity, existing global CLIs, Agent preference, or task type. Do not run any provider install/select command before the user answers. After an explicit answer only, run `cao sdd install --provider <chosen-provider> --yes`. The installer must detect the active host from the current Agent runtime and install only that host's integration. If detection is unavailable or ambiguous, stop and request `--host` (or a provider-specific explicit integration/tools option); never use an all-hosts default. If the interaction channel cannot ask the user, stop with SDD_SELECTION_REQUIRED. Do not start or modify production code before installation completes."),
         }
         next_out["project_instructions"] = project_instructions
         next_out["guidance"] = agent_guidance(repo, work, next_out["mode"])
+        next_out['next']['instruction'] += ' ' + STARTUP_ORDER
         print(json.dumps(next_out, ensure_ascii=False, indent=2))
         return 0
 
@@ -4390,12 +4411,15 @@ def cmd_bootstrap(args: argparse.Namespace) -> int:
             "sdd": {"status": "multiple_installed", "selected": "auto"},
             "selection_required": True,
             "selection_policy": "explicit_user_choice_only",
+            "startup_order": STARTUP_ORDER,
+            "pending_request": pending_request(repo) or None,
             "options": sdd_options(status),
             "next": action("human", "HARD STOP: multiple SDDs are installed and no provider is authorized. Ask the user to explicitly choose one and wait for their answer. Do not infer a choice from recommendations, task type, or Agent preference. Only after the user answers, run `cao sdd select --provider <chosen-provider>` and bootstrap again. If unable to ask, stop with SDD_SELECTION_REQUIRED."),
             "language_configuration": language_configuration,
         }
         next_out["project_instructions"] = project_instructions
         next_out["guidance"] = agent_guidance(repo, work, next_out["mode"])
+        next_out['next']['instruction'] += ' ' + STARTUP_ORDER
         print(json.dumps(next_out, ensure_ascii=False, indent=2))
         return 0
 
@@ -4404,6 +4428,7 @@ def cmd_bootstrap(args: argparse.Namespace) -> int:
     mode = "verification_setup" if current.get("stage") == "verification_setup" else "resume" if work else "select"
     next_out = {
         "ok": True, "mode": mode,
+        "pending_request": pending_request(repo) if not work else None,
         "work_item": work_summary(work) if work else None,
         "sdd": sdd_status(repo),
         "context": verification_setup_context(work) if mode == "verification_setup" else resume_payload(repo, work, next_action=current) if work else None,
@@ -4981,10 +5006,33 @@ def cmd_sdd_review(args: argparse.Namespace) -> int:
                            if session.get("work_item_id") == work["id"] and session.get("kind") == "primary"]
             run = {"id": new_id("review"), "status": "running", "inputs": inputs,
                    "input_sha256": native_digest(inputs), "model": args.model,
+                   "existing_session_ids": [session['id'] for session in list_sessions(repo)],
                    "primary_session_ids": primary_ids}
             records[args.layer] = run
-            output = {"ok": True, "review": run, "active_layers": layers,
-                      "next": "Launch EVERY active native reviewer as directed by the rendered instructions, at the current model level. Preserve each independent reviewer's returned Markdown in a provider-owned file; submit a JSON report with run_id, input_sha256, reviewer {mode: subagent|external-session, session_id, model}, findings_file, and findings [{id, verdict: high|medium|low|false|maybe-false, disposition: patch|defer|reject, evidence, resolved: true for patch}]. If subagents are unavailable, stop for the native external-session fallback; never fabricate findings or label primary self-review as independent."}
+            output = {"ok": True, "review": run, "active_layers": layers}
+            output['reviewer_start'] = (f'{cao_invocation()["command"]} sdd review attach --work {work["id"]} '
+                f'--layer {args.layer} --run {run["id"]} --input-sha256 {run["input_sha256"]} --model {shlex.quote(args.model)}')
+            output['next'] = ('Begin ALL active layers before launching reviewers. Each new independent host session must first run reviewer_start '
+                'to acknowledge this ticket and frozen input, then inspect that exact code without product writes. '
+                + ('Preserve raw JSON findings for each layer; classify ALL layers before patches, then resolve ALL layers. '
+                   'Use `cao sdd review classify --layer <layer> --report <triage.json>`, then `cao sdd review resolve --layer <layer> --report <resolved.json>`.'
+                   if dispatch_review(work) else
+                   'Preserve raw Markdown findings and submit triage with `cao sdd review submit --layer <layer> --report <report.json>`.')
+                + ' If no subagent is available, use a new independent external host session with its CAO adapter. Never reuse results from before this ticket.')
+        elif args.review_action == 'attach':
+            run = records.get(args.layer) or {}
+            identity = host_session_identity(None)
+            session = load_session(repo, identity[1], host=identity[0]) if identity else None
+            if session and any(key != args.layer and (record.get('execution_binding') or {}).get('session_id') == session['id']
+                               for key, record in records.items() if key != '_contract'):
+                raise ValueError('NATIVE_REVIEW_SESSION_REUSED')
+            runtime_model = os.environ.get('PI_MODEL') if identity and identity[0] == 'pi' else None
+            if runtime_model and runtime_model != args.model:
+                raise ValueError('NATIVE_REVIEW_INDEPENDENT_MODEL_REQUIRED')
+            attached = attach_reviewer(run, review_inputs(repo, work, code_snapshot), identity, session,
+                                       args.model, args.run, args.input_sha256)
+            output = {'ok': True, 'review': attached,
+                      'next': 'Read the frozen review input and native instructions. Return actual findings; do not patch product code.'}
         elif args.review_action == "classify":
             output = {"ok": True, "review": classify_review(repo, work, args.layer, args.report, code_snapshot),
                       "next": "Classify EVERY layer before product patches. Preserve raw JSON findings with stable IDs, including zero findings. After patches and native checks, resolve every layer with run_id and resolved_ids."}
@@ -5429,6 +5477,7 @@ def cmd_start(args: argparse.Namespace) -> int:
         if work is None:
             raise RuntimeError("WORK_ITEM_NOT_FOUND")
         current = current_work_action(repo, work)
+        consume_request(repo, work['id'])
         summary = work_summary(work)
         summary["next_action"] = current
         out = {"ok": True, "action": "VERIFICATION_SETUP" if current.get("stage") == "verification_setup" else "ASSESS_PATH", "work_item": summary, "next_action": current,
@@ -6411,7 +6460,7 @@ def tool_effect(raw: dict, repo: Path | None = None) -> dict:
                     path = Path(tokens[1]); directory = path if path.is_absolute() else directory / path
                     if directory.is_absolute(): directory = directory.resolve()
                     continue
-                if _readonly_tokens(tokens): continue
+                if _readonly_tokens(tokens, directory): continue
                 operands = shell_write_operands(tokens)
                 redirects = any(token in {">", ">>", "&>", ">|", "<>"} for token in tokens)
                 known_command = tokens[0] in {"rm", "mv", "cp", "touch", "mkdir", "rmdir", "chmod", "tee", "find", "sed", "git", "echo", "printf", "cat", "head", "tail", "ls", "grep", "rg"}
@@ -6559,9 +6608,28 @@ def verification_baseline_state(repo: Path, work: dict) -> dict:
         return {"ready": False, "reason": "VERIFICATION_BASELINE_REQUIRED", "next": setup_instruction(cao_invocation()["command"])}
     anchor = work.get("acceptance") or {}
     if anchor.get("version") != 2 or anchor.get("config_sha256") != verification_snapshot(cfg, repo):
+        review = work.get('verification_review') or {}
+        if review.get('status') == 'pending' and review.get('config_sha256') == verification_snapshot(cfg, repo):
+            return {'ready': False, 'reason': 'VERIFICATION_REVIEW_REQUIRED', 'approval_id': review['id'],
+                    'next': f'Present the changed verification baseline for request {review["id"]}. '
+                    'Ask once through a bound ask_user_question or a direct user reply (批准验证基线 / approve verification baseline). '
+                    f'After approval run `cao reopen --work {work["id"]} --reanchor --reason "Reviewed verification baseline"`.'}
         return {"ready": False, "reason": "VERIFICATION_STANDARD_CHANGED",
                 "next": f'Review the configured scripts, then `cao reopen --work {work["id"]} --reanchor --reason "Reviewed verification baseline"` before feature implementation. Tests need not pass yet.'}
     return {"ready": True}
+
+
+def verification_capability_state(repo: Path, work: dict) -> dict:
+    required = (work.get('path_assessment') or {}).get('required_gates', [])
+    scripts = setup_state(config(repo))['scripts']
+    if 'security_verification' in required and not any(
+            script['required'] and 'security_verification' in script['gates'] for script in scripts):
+        return {'ready': False, 'reason': 'VERIFICATION_GATE_UNBOUND',
+                'next': 'The selected risk requires security verification before implementation. '
+                'Configure a real security check with `cao verification configure --security-script <wrapper>`; '
+                'preserve existing test/general declarations with --replace when needed. The same test wrapper may declare both capabilities. '
+                'Review and reanchor a changed baseline, then continue the existing native workflow.'}
+    return {'ready': True}
 
 
 def verification_scaffold_write(repo: Path, raw: dict) -> bool:
@@ -6802,9 +6870,15 @@ def _shell_segments(command: str) -> list[list[str]]:
     return [tokens for tokens in segments if tokens]
 
 
-def readonly_shell(command: str) -> bool:
+def readonly_shell(command: str, cwd: Path | None = None) -> bool:
     try:
-        return all(_readonly_tokens(tokens) for tokens in _shell_segments(command))
+        directory = cwd or Path.cwd()
+        for tokens in _shell_segments(command):
+            if not _readonly_tokens(tokens, directory):
+                return False
+            if tokens[0] == 'cd' and len(tokens) == 2:
+                directory = (directory / tokens[1]).resolve()
+        return True
     except ValueError:
         return False
 
@@ -6832,7 +6906,7 @@ def _readonly_checksum_tokens(tokens: list[str]) -> bool:
     return True
 
 
-def _readonly_tokens(tokens: list[str]) -> bool:
+def _readonly_tokens(tokens: list[str], cwd: Path | None = None) -> bool:
     tokens = list(tokens)
     # Descriptor duplication has no filesystem target. Keep arbitrary redirects
     # and substitutions visible to the write-target guard.
@@ -6931,15 +7005,13 @@ def _readonly_tokens(tokens: list[str]) -> bool:
         except (OSError, ValueError, RuntimeError):
             return False
         command_tokens = runner[1:]
-    elif tokens[0] == "./cao":
-        command_tokens = tokens[1:]
     elif tokens[0] == "cao":
         command_tokens = tokens[1:]
     else:
         # Templates and the Pi fallback use this package's absolute launcher.
         # A matching basename alone must not exempt an unrelated script.
         index = 1 if tokens[0] == "sh" else 0
-        if len(tokens) <= index or not Path(tokens[index]).is_absolute():
+        if len(tokens) <= index:
             return False
         root = package_root_dir()
         launchers = {str((root / "cao").resolve())} if root else set()
@@ -6947,7 +7019,7 @@ def _readonly_tokens(tokens: list[str]) -> bool:
         if console:
             launchers.add(str(Path(console).resolve()))
         try:
-            target = str(Path(tokens[index]).resolve())
+            target = str(((cwd or Path.cwd()) / tokens[index]).resolve())
         except (OSError, RuntimeError):
             return False
         if target not in launchers:
@@ -7023,6 +7095,9 @@ def host_event(args: argparse.Namespace) -> int:
         else:
             session = update_session_event(repo, host_session_id, args.host, event, work, kind=kind, parent_session_id=parent_id)
 
+    if event == 'prompt_submit' and not work and kind == 'primary' and (repo / CONFIG_REL).exists():
+        capture_request(repo, raw.get('prompt'), args.host, host_session_id)
+
     restart = restart_state(repo, args.host)
     if not restart["ready"] and event not in {"session_end", "subagent_stop"}:
         context = restart["reason"] + ": " + restart["next"]
@@ -7065,10 +7140,14 @@ def host_event(args: argparse.Namespace) -> int:
 
     if event == "pre_tool":
         if work and kind == "primary":
-            approval = (work.get("sdd") or {}).get("spec_approval") or {}
-            if ((approval.get("status") == "pending" or approval.get("stop_after_approval"))
-                    and bind_approval_question(approval, work["id"], raw, args.host, host_session_id)):
-                save_work(repo, work)
+            question_text = json.dumps(raw.get('tool_input') or raw.get('input') or raw.get('arguments') or {}, ensure_ascii=False).lower()
+            baseline_question = '验证基线' in question_text or 'verification baseline' in question_text
+            candidates = [work.get('verification_review') or {}] if baseline_question else [
+                (work.get('sdd') or {}).get('spec_approval') or {}]
+            for approval in candidates:
+                if ((approval.get("status") == "pending" or approval.get("stop_after_approval"))
+                        and bind_approval_question(approval, work["id"], raw, args.host, host_session_id)):
+                    save_work(repo, work)
         # No-Work product writes and hand edits to managed state are denied.
         result: dict[str, Any] = {"decision": "allow"}
         # CAO's own state narrow enough that it can never deadlock intake:
@@ -7093,7 +7172,9 @@ def host_event(args: argparse.Namespace) -> int:
                 advice_work = work
                 if not advice_work and session and session.get("work_item_id"):
                     advice_work = load_work(repo, session["work_item_id"])
-                return respond({"decision": "deny", "reason": "CAO: no active Work; product writes are blocked. " + work_intake_instruction(advice_work)})
+                startup = work_prerequisite_action(repo, advice_work)
+                instruction = (STARTUP_ORDER if startup and startup.get('stage') == 'startup' else work_intake_instruction(advice_work))
+                return respond({"decision": "deny", "reason": "CAO: no active Work; product writes are blocked. " + instruction})
             else:
                 baseline = verification_baseline_state(repo, work)
                 if not baseline["ready"] and not verification_scaffold_write(repo, raw):
@@ -7102,6 +7183,9 @@ def host_event(args: argparse.Namespace) -> int:
                     preflight = implementation_preflight(repo, work)
                     if not preflight["ready"]:
                         return respond({"decision": "deny", "reason": str(preflight["reason"]) + ": " + preflight["next"] + " " + scaffold_instruction()})
+                    capabilities = verification_capability_state(repo, work)
+                    if not capabilities['ready']:
+                        return respond({'decision': 'deny', 'reason': capabilities['reason'] + ': ' + capabilities['next']})
                     implementation = implementation_write_guard(repo, work, raw, host_session_id, kind)
                     if not implementation['ready']:
                         return respond({'decision': 'deny', 'reason': implementation['reason'] + ': ' + implementation['next']})
@@ -7149,6 +7233,17 @@ def host_event(args: argparse.Namespace) -> int:
         if work:
             observe_implementation_read(repo, work, raw, host_session_id)
         if work and kind == "primary":
+            review = None
+            if work.get('verification_review'):
+                try:
+                    review = approve_baseline_response(work, raw, event, args.host, host_session_id,
+                                                       verification_snapshot(config(repo), repo), now())
+                except ValueError:
+                    pass  # An invalid declaration must remain repairable through the host.
+            if review:
+                queue_event(work, {'event': 'verification.baseline.approved', 'work_item_id': work['id'],
+                                   'review': review, 'occurred_at': now()})
+                save_work(repo, work)
             approval = approve_observed_response(repo, work, raw, event, args.host, host_session_id,
                 provider_output_dirs(work["sdd"]["provider"]), now())
             if approval:
@@ -7274,12 +7369,15 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--repo", default="."); sp.add_argument("--work"); sp.set_defaults(fn=cmd_sdd_sync)
     review = sdd_sub.add_parser("review", help="Record independent native reviews and pre-patch dispatch classification")
     review_sub = review.add_subparsers(dest="review_action", required=True)
-    for name in ("begin", "submit", "classify", "resolve"):
+    for name in ("begin", "attach", "submit", "classify", "resolve"):
         sp = review_sub.add_parser(name)
         sp.add_argument("--repo", default="."); sp.add_argument("--work")
         sp.add_argument("--layer", required=True)
         if name == "begin":
             sp.add_argument("--model", required=True); sp.add_argument("--instructions", required=True)
+        elif name == 'attach':
+            sp.add_argument('--run', required=True); sp.add_argument('--input-sha256', required=True)
+            sp.add_argument('--model', required=True)
         else:
             sp.add_argument("--report", required=True)
         sp.set_defaults(fn=cmd_sdd_review)

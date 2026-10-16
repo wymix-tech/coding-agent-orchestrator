@@ -38,6 +38,8 @@ Put new verification wrappers in `scripts/verification/`; `scripts/` alone is no
 
 Register a combined tests/general wrapper only once as a test script. For security checks use `cao verification configure --security-script <wrapper>`; the same exact command can declare both tests and security without duplicate execution. Same-path wrapper content changes require baseline review too. Installed BMAD Build requires host-observed `批准验证基线` (approve verification baseline); Agent reanchor reason text is not approval. Repeating configuration can request the current approval; only then reanchor. Active reanchor preserves business phase and decisions.
 
+After path assessment, configure any required security capability before implementation, rather than discovering it during final verification. A baseline approval can be a direct user reply or a bound `ask_user_question` answer: create the current request first, show the changes, then ask once. Include “验证基线” or “verification baseline” in that question so it binds to the baseline instead of a SPEC request. A plain “批准” is accepted when no competing SPEC approval is pending; otherwise use the explicit baseline response. Results from questions asked before the request, replaced baselines, other Works, subagents or unrelated sessions cannot approve it.
+
 For an existing verification wrapper, a literal `chmod +x scripts/verification/<wrapper>`
 is allowed during active Work setup. Recursive/reference permission operations and product/state
 targets are not setup exceptions.
