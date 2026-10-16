@@ -70,9 +70,15 @@ def review_state(repo, work, code_snapshot):
                 break
         else:
             run = records.get(layers[-1]) or {}
-        next_step = ('Follow the rendered BMAD Review and Classify steps. Start `cao sdd review begin --layer <active-layer> --instructions <rendered-review-step.md> --model <current-model>`; '
-                     'run the native prompt in an independent same-model reviewer (or use its external-session fallback), preserve the returned findings, '
-                     'then `cao sdd review submit --layer blind-hunter --report <native-report.json>`. Fix/triage findings, review changed code again, then `cao verify`.')
+        if dispatch(work):
+            next_step = ('Follow the rendered step-04-review.md for EVERY active layer. Start `cao sdd review begin --layer <active-layer> --instructions <actual-step-04-review.md> --model <current-model>`; '
+                         'run the native independent same-model reviewers (or their external-session fallback) and preserve raw JSON findings. Collect ALL layers, then '
+                         '`cao sdd review classify --layer <active-layer> --report <triage.json>` for ALL layers before product patches. Apply actual patches and native checks, then '
+                         '`cao sdd review resolve --layer <active-layer> --report <resolved.json>` for every layer before `cao verify`. Follow intent_gap/bad_spec loopbacks when required.')
+        else:
+            next_step = ('Follow the rendered BMAD oneshot Review and Classify steps. Start `cao sdd review begin --layer <active-layer> --instructions <actual-step-oneshot.md> --model <current-model>`; '
+                         'run the native prompt in an independent same-model reviewer (or use its external-session fallback), preserve the returned raw Markdown findings, '
+                         'then `cao sdd review submit --layer <active-layer> --report <native-report.json>`. Fix/triage findings, review changed code again, then `cao verify`.')
         if run.get('status') != 'passed':
             return {'ready': False, 'state': 'pending', 'reason': 'NATIVE_REVIEW_REQUIRED', 'next': next_step}
         if any((records.get(layer) or {}).get('inputs') != inputs for layer in layers) or any(hashlib.sha256(repo_file(repo, path).read_bytes()).hexdigest() != sha

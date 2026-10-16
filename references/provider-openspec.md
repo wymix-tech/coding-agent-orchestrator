@@ -12,6 +12,22 @@ use installed `/opsx:propose` and `/opsx:apply` Agent commands; preserve active 
 
 Associate the current change and finish ALL native tasks before formal verification, even on light. Default task files beside associated changes are captured automatically; add split changes using repeated `cao sdd plan bind --plan <native-task-file>`. For custom schemas use tracked outputs in native apply instructions, optionally a quoted tracked-file glob for new shards. Do not use the global change list as requirement completion evidence. Preserve plan/task associations during refresh; native done/archive cannot close Work without CAO verification and done. Follow any native archive prerequisites from the installed instructions.
 
+### Archive ordering
+
+CAO recognizes a missing associated change only when exactly one matching native
+archive directory exists and all currently bound artifact hashes match. It records
+the old/new roots in `sdd.archive_relocations` and emits a lifecycle event. Known
+task IDs, minimum counts and split-change associations are preserved. Symlinks,
+changed artifacts, ambiguous archives and remaining tasks cannot certify closure.
+
+For active Work, path relocation changes frozen inputs: review the migrated
+sources, explicitly `cao reopen --reanchor --reason "Reviewed archived sources"`,
+rerun verification and acceptance, then close. Reconcile never invents passed runs.
+Completed Work retains its immutable acceptance result with `historical: true`;
+that result describes completion time, not current repository freshness. Native
+artifact references can still follow the recorded archive location. Reopening is
+an explicit new validation action and must check current inputs again.
+
 ## Exit when
 
 Current requirement tasks and applicable pre-verification obligations are complete; follow completion guidance and the native order for any remaining Commit/close steps. Standard/comprehensive retain workflow registration and independent final acceptance; light still honors native prerequisites.

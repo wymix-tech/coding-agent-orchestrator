@@ -1,91 +1,59 @@
-# Command acceptance request and report
+# Independent SDD acceptance contract
 
-Inspect the complete request/report JSON Schemas, examples and the installed
-executor template without an active Work:
+Read when configuring or repairing independent final acceptance for
+standard/comprehensive Work. This contract applies to all Providers; native
+review and archive rules remain in their Provider guides. Light does not need
+manufactured independent acceptance records.
 
-```bash
-cao sdd acceptance protocol
-```
+## Inspect the authoritative protocol
 
-`CAO_SDD_ACCEPTANCE_REQUEST` contains a **JSON string**, not a filename. Parse it
-once and iterate `request.declaration.criteria`. CAO freezes these inputs before
-launching the command. Echo the current run identity, never reuse an old report.
+Run `cao sdd acceptance protocol` without an active Work to obtain the current
+`request_schema`, `report_schema`, valid examples and installed `executor_template`.
+Use those schemas as the field authority. The example identity is illustrative;
+actual reports must echo the current run's identity.
 
-```json
-{
-  "run_id": "sdda-current-run",
-  "input_sha256": "64-character-sha256-from-the-current-request",
-  "provider": "openspec",
-  "inputs": {"work_id": "the-current-work", "snapshot_format": 3},
-  "declaration": {
-    "spec": "openspec/changes/add-demo/spec.md",
-    "sources": ["openspec/changes/add-demo/spec.md"],
-    "criteria": [{"id": "AC-1", "source": "openspec/changes/add-demo/spec.md", "kind": "requirement", "description": "The CLI returns the correct result"}],
-    "executor": {"mode": "command", "entrypoint": "python3 scripts/verification/acceptance.py --checks acceptance-checks.json", "timeout_seconds": 300},
-    "outputs": ["openspec/cao-acceptance/the-current-work/report.json"]
-  }
-}
-```
+## Configure a declaration
 
-Print exactly one report object to stdout. Diagnostics belong on stderr. `items`
-must cover every declared criterion exactly once, and `evidence` is a **nonempty
-array**, even for one file. Each referenced file must exist inside the repository.
+Use repository-relative paths and `cao sdd acceptance configure --declaration
+<existing-repo-json>`. Required fields are `spec`, nonempty `criteria` and
+`executor`. Each criterion has a unique `id`, real native `source`,
+`kind: requirement` or `kind: design`, and nonempty `description`. At least one
+criterion must be a requirement. Optional `sources` adds frozen native inputs.
 
-```json
-{
-  "run_id": "sdda-current-run",
-  "input_sha256": "64-character-sha256-from-the-current-request",
-  "provider": "openspec",
-  "items": [{
-    "id": "AC-1",
-    "status": "passed",
-    "evidence": [{"path": "tests/cli.test.js", "reason": "Executed the criterion-specific CLI test; exit code 0"}]
-  }]
-}
-```
+`executor.mode` is `command` or `skill`; `entrypoint` is the actual command or
+installed native Skill identity, respectively. `timeout_seconds` is positive.
+`outputs` lists the exact Provider-owned Work-scoped files that the executor will
+write, or `[]` for command stdout-only results. Do not overwrite unowned existing
+reports or register inputs as outputs. Review the declaration and sources,
+explicitly reanchor, then run `cao verify` before starting acceptance.
 
-This is a shape example, not a passing result to copy. Status must come from the
-actual check. Exit 0 plus all passed items is required; exit 1 fails, exit 2 blocks,
-and other nonzero exits indicate an execution error. Every file listed in
-`declaration.outputs` must be written before the command exits. If reports are
-only printed to stdout and stored in CAO, use `outputs: []`. Do not declare a file
-that the executor never creates. Existing report files need CAO-recorded ownership.
+## Request and report
 
-The `executor_template` path returned by `protocol` is a standalone Python file.
-Copy it to the project's verification directory. It executes argv arrays without
-a shell, checks each criterion independently, writes registered reports and emits
-the required JSON. An absent criterion mapping returns blocked. Populate a
-project-owned checks file with meaningful commands and evidence, for example:
+Both modes receive `{run_id, input_sha256, provider, inputs, declaration}`.
+`input_sha256` is the current 64-character lowercase hexadecimal digest.
+Evaluate every `request.declaration.criteria` entry against the frozen inputs.
+
+Return `{run_id, input_sha256, provider, items}` with the exact current identity
+and exactly one item per criterion. Each item needs `id`, `status` (`passed`,
+`failed`, `blocked`) and a nonempty `evidence` array of `{path, reason}` objects.
+Every evidence path must be a real repository file; explain the actual check.
+Never copy a sample passing result. Every declared output must really be written.
+
+Use the command or Skill guide selected for the declared executor mode. Source,
+code, checks and evidence changes can invalidate the snapshot; reanchor/reverify
+as directed. Submitting a well-formed report does not prove an independent
+reviewer ran. Preserve native independence and its human-return fallback.
+Malformed fields expose a stable error code and actionable `diagnostic`.
+
+## Illustrative request and blocked report
+
+These are schema-valid examples from `protocol`, not execution evidence. Replace
+sample identities/paths with the current request and actual evidence.
 
 ```json
-{
-  "AC-1": {
-    "command": ["node", "--test", "--test-name-pattern", "correct CLI result", "tests/cli.test.js"],
-    "evidence": ["tests/cli.test.js"],
-    "timeout_seconds": 60
-  }
-}
+{"run_id": "sdda-example", "input_sha256": "0000000000000000000000000000000000000000000000000000000000000000", "provider": "openspec", "inputs": {}, "declaration": {"spec": "openspec/changes/add-demo/spec.md", "sources": ["openspec/changes/add-demo/spec.md"], "criteria": [{"id": "AC-1", "source": "openspec/changes/add-demo/spec.md", "kind": "requirement", "description": "Real CLI behavior is correct"}], "executor": {"mode": "command", "entrypoint": "python3 scripts/verification/acceptance.py --checks acceptance-checks.json", "timeout_seconds": 300}, "outputs": ["openspec/cao-acceptance/<work-id>/report.json"]}}
 ```
 
-Ensure the selected command actually exercises its criterion and fails on zero
-tests; a command's exit code alone cannot establish semantic coverage. Review and
-configure the declaration, explicitly reanchor, run `cao verify`, then run
-`cao sdd acceptance run`. Changed scripts/check mappings require fresh verification.
-Errors include stable codes and, for malformed report fields, a `diagnostic`
-object such as `{"field":"$.items[0].evidence","expected":"a nonempty array..."}`.
-
-## OpenSpec archive ordering
-
-CAO recognizes a missing associated change only when exactly one matching native
-archive directory exists and all currently bound artifact hashes match. It records
-the old/new roots in `sdd.archive_relocations` and emits a lifecycle event. Known
-task IDs, minimum counts and split-change associations are preserved. Symlinks,
-changed artifacts, ambiguous archives and remaining tasks cannot certify closure.
-
-For active Work, path relocation changes frozen inputs: review the migrated
-sources, explicitly `cao reopen --reanchor --reason "Reviewed archived sources"`,
-rerun verification and acceptance, then close. Reconcile never invents passed runs.
-Completed Work retains its immutable acceptance result with `historical: true`;
-that result describes completion time, not current repository freshness. Native
-artifact references can still follow the recorded archive location. Reopening is
-an explicit new validation action and must check current inputs again.
+```json
+{"run_id": "sdda-example", "input_sha256": "0000000000000000000000000000000000000000000000000000000000000000", "provider": "openspec", "items": [{"id": "AC-1", "status": "blocked", "evidence": [{"path": "openspec/changes/add-demo/spec.md", "reason": "Example only; configure and execute a real check"}]}]}
+```

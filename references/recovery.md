@@ -37,6 +37,22 @@ Legacy completed history remains readable but is not automatically recertified. 
 
 Inspect sessions with `cao sessions list/show`, handoffs with `cao handoff list/show`, and native references with `cao artifact add/list/refresh/remove/confirm`. Confirmations bind current file hashes and do not replace verification. `cao dashboard --open` can inspect these records and preview bounded native artifacts; only loopback dashboards enable artifact confirmation.
 
+### Native host execution recovery
+
+For unavailable historical BMAD workflow/implementation observation, use only the
+existing audited `--allow-unverified --reason` exception where the CLI supports
+it; do not invent historical execution or use a renderer as workflow execution.
+Preserve Work progress while recording current reviewed evidence.
+
+Pi allows bounded CAO bootstrap/list/help, descriptor redirection and limited Git
+inspection before Work exists; associated product or managed-state writes remain
+gated. Native BMAD preparation helpers are allowed only by supported identity,
+arguments and output paths (configuration, memlog, architecture lint, sprint
+planning under `_bmad-output`). A failed helper does not mean all native scripts
+are forbidden; inspect its actual diagnostic. These gates are not a shell sandbox.
+Pi child sessions remain children even if the parent session file is unreadable;
+use the primary session for user approval and primary handoffs.
+
 ## Exit when
 
 The original Work is active with corrected scope and fresh applicable evidence; rerun bootstrap to select the next action.

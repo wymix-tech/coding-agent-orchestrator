@@ -142,7 +142,12 @@ class DispatchReview(unittest.TestCase):
         return native.classify_review(self.repo, self.work, layer, path.relative_to(self.repo), self.snapshot)
 
     def test_patches_require_all_layers_classified_then_resolution_binds_final_code(self):
-        self.assertFalse(native.review_state(self.repo, self.work, self.snapshot)['ready'])
+        state = native.review_state(self.repo, self.work, self.snapshot)
+        self.assertFalse(state['ready'])
+        self.assertIn('review classify', state['next'])
+        self.assertIn('review resolve', state['next'])
+        self.assertIn('ALL layers before product patches', state['next'])
+        self.assertNotIn('review submit', state['next'])
         self.assertFalse(native.dispatch_patch_state(self.repo, self.work, self.snapshot)['ready'])
         self.classify('blind-hunter')
         self.assertFalse(native.dispatch_patch_state(self.repo, self.work, self.snapshot)['ready'])
