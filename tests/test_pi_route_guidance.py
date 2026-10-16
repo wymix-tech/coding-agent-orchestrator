@@ -106,7 +106,7 @@ class PiRouteGuidance(RepairCase):
         self.assertEqual(out["action"]["reason"], "NATIVE_ROUTE_REQUIRED")
         self.assertTrue(any(path.endswith("references/native-route-contract.md") for path in out["guidance"]["read_before_action"]))
         declaration = out["action"]["declaration_path"]
-        self.assertEqual(declaration, f"_bmad-output/cao/{self.wid}/route.json")
+        self.assertEqual(declaration, f".orchestrator/inputs/{self.wid}/route.json")
         self.assert_current("NATIVE_ROUTE_REQUIRED")
         for value, expected in ((declaration, "allow"), ("route-declaration.json", "deny"),
                                 ("src/auth.py", "deny"), (".orchestrator/work/forged.json", "deny")):

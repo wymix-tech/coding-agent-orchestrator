@@ -23,7 +23,8 @@ Use CAO first for non-trivial repository coding work. Invoke its installed comma
 7. Record progress/decisions and explicit handoffs. Only successful `{{CAO_COMMAND}} done` closes
    Work; native done or passing tests alone cannot. Never push without authorization.
 
-Everything under `.orchestrator/` except `requirements/` is derived state (`config.json`, `index.json`,
+Everything under `.orchestrator/` except `requirements/` and the active Work's exact
+`inputs/WORK_ID/route.json` is derived state (`config.json`, `index.json`,
 `work/`, `sessions/`, `handoffs/`, `lifecycle/`); never edit those files by hand. Use CAO commands.
 Follow the user's explicit instructions and configured `language.user` for communication/documents.
 Hooks load at host startup: a missing adapter must be installed for the next session; meanwhile call

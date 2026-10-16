@@ -40,6 +40,7 @@ from scripts.native_route import (
 )
 from scripts.native_progress import direct_build_decision, spec_task_state, merge_plan_states
 from scripts.path_guard import inside, repo_file, provider_artifact, patch_targets
+from scripts.route_inputs import declaration_path as route_declaration_path, writable_input, read_declaration as read_route_declaration
 from scripts.completion_policy import (
     acceptance_hash, anchor_acceptance, reset_requirement, evidence_matches,
     verification_fresh as bound_verification_fresh, normalize_scripts, tests_satisfied, capability_satisfied, workflow_ready, normalize_timeout, required_verification_status,
@@ -2245,14 +2246,6 @@ def native_route_state(repo: Path, work: dict) -> dict:
     return route_state(repo, work, provider_output_dirs(provider), required)
 
 
-def route_declaration_path(work: dict) -> str:
-    """Keep agent-authored route input in the provider's writable native outputs."""
-    dirs = provider_output_dirs((work.get("sdd") or {}).get("provider"))
-    if not dirs:
-        raise ValueError("NATIVE_ROUTE_PROVIDER_OUTPUT_REQUIRED")
-    return f"{dirs[0].rstrip('/')}/cao/{work['id']}/route.json"
-
-
 def route_preparation_action(repo: Path, work: dict, state: dict) -> dict:
     command = cao_invocation()["command"]
     provider = (work.get("sdd") or {}).get("provider")
@@ -2289,8 +2282,11 @@ def route_preparation_action(repo: Path, work: dict, state: dict) -> dict:
                             f"with `{command} sdd artifact bind --artifact <actual-native-spec.md>`. ")
         else:
             instruction += f"Review the bound native SPEC `{ref}` and actual routing evidence. "
-    instruction += (f"Once the workflow and SPEC/rule evidence exist, write the declaration JSON to `{target}` "
-                    f"(provider-native output, writable while product writes are blocked), then run "
+    instruction += (f"Once the workflow and SPEC exist, run `{command} sdd route prepare` to create/reuse `{target}` "
+                    "(CAO input, separate from native artifacts and managed decisions). Fill the actual route, reason, version, artifacts and omissions. "
+                    f"Use `{command} sdd route rule --source <native-rule-file> --start-line <first> --end-line <last>` "
+                    "to write exact quotes and hashes; do not summarize or manually reconstruct evidence. "
+                    f"Run `{command} sdd route check --declaration {target}` and repair ALL diagnostic fields before "
                     f"`{command} sdd route propose --declaration {target}`. --declaration is a file path, not inline JSON. "
                     "Read the bundled native route contract for all fields; for BMAD route is direct-build/full-planning "
                     "and build_route is dispatch/oneshot. Do not guess route names, rules or artifacts. "
@@ -2417,6 +2413,11 @@ def cmd_sdd_route(args: argparse.Namespace) -> int:
                           "history": (work.get("sdd") or {}).get("route_history", []),
                           "state": native_route_state(repo, work)}, ensure_ascii=False)); return 0
     try:
+        if args.route_action in {"prepare", "rule"}:
+            from scripts.route_input_commands import dispatch
+            result = dispatch(args, sys.modules[__name__], repo, work)
+            print(json.dumps(result, ensure_ascii=False)); return 0
+        args.declaration = args.declaration or route_declaration_path(work)
         if args.declaration.lstrip().startswith(("{", "[")):
             raise ValueError("NATIVE_ROUTE_DECLARATION_PATH_REQUIRED")
         if not path_assessment_state(repo, work)["ready"]:
@@ -2424,10 +2425,13 @@ def cmd_sdd_route(args: argparse.Namespace) -> int:
         declaration = repo_file(repo, args.declaration)
         if not declaration.is_file():
             raise ValueError("NATIVE_ROUTE_DECLARATION_FILE_MISSING")
-        raw = json.loads(declaration.read_text(encoding="utf-8-sig"))
+        raw = read_route_declaration(declaration)
         provider = work["sdd"]["provider"]
         decision = normalize_route_decision(repo, work, raw, provider_output_dirs(provider),
                                             provider_native_skills(repo, provider))
+        if args.route_action == "check":
+            print(json.dumps({"ok": True, "status": "validated", "declaration_path": rel(declaration, repo),
+                              "decision": decision, "next": "Declaration fields are valid; propose it to record the decision. Native approval and execution remain required."}, ensure_ascii=False)); return 0
         old = work["sdd"].get("route_decision")
         if old and all(old.get(key) == value for key, value in decision.items()):
             print(json.dumps({"ok": True, "status": "unchanged", "route": old,
@@ -2466,9 +2470,18 @@ def cmd_sdd_route(args: argparse.Namespace) -> int:
         current = current_work_action(repo, work, check_completion=False)
         result = {"ok": False, "error": code, "next": current["instruction"],
                   "guidance": agent_guidance(repo, work, next_action=current)}
+        if getattr(exc, "diagnostic", None):
+            result["diagnostic"] = exc.diagnostic
+            result["diagnostics"] = exc.diagnostics
+            result["next"] = ("Repair every listed diagnostic field; hashes and quotes are checked independently. "
+                              "Use `cao sdd route prepare --from <existing-declaration>` for a legacy input, then "
+                              "`cao sdd route rule --source <actual-native-file> --start-line <first> --end-line <last> --index <rule-index>` "
+                              "to replace the named rule with literal source evidence. Run `cao sdd route check` before proposing again. "
+                              "Do not resubmit unchanged evidence or rewrite native rules to make a quote match.")
+            result["guidance"] = agent_guidance(repo, work, next_action={**current, "reason": "NATIVE_ROUTE_RULE_EVIDENCE_MISMATCH"})
         if code.startswith("NATIVE_ROUTE_DECLARATION_"):
             result["reason"] = ("--declaration expects a path to an existing JSON file, not inline JSON. "
-                                "Write valid declaration JSON in provider-native output after native preparation; "
+                                "Use the Work-specific CAO input path after native preparation; "
                                 "a rejected write did not create the file.")
         if work["sdd"]["provider"] in SDD_CATALOG:
             result["declaration_path"] = route_declaration_path(work)
@@ -6290,7 +6303,7 @@ def _collect_path_strings(node: Any, depth: int = 0) -> list[str]:
     return found
 
 
-def write_targets_protected_state(repo: Path, raw: dict[str, Any]) -> list[str]:
+def write_targets_protected_state(repo: Path, raw: dict[str, Any], work: dict | None = None) -> list[str]:
     """Protect both the lexical state link and its resolved destination."""
     repo = repo.resolve()
     state, requirements = repo / ORCH, repo / REQUIREMENT_DIR
@@ -6306,6 +6319,7 @@ def write_targets_protected_state(repo: Path, raw: dict[str, Any]) -> list[str]:
         writable = (inside(resolved, repo) and inside(resolved, requirements)
                     and inside(resolved, state)
                     and (lexical_state is None or lexical.is_relative_to(lexical_state / "requirements")))
+        writable = writable or writable_input(repo, target, work)
         if state_target and not writable and target not in hits:
             hits.append(target)
     return hits
@@ -6503,6 +6517,13 @@ def shell_write_operands(tokens: list[str]) -> list[str]:
         if token.startswith("-") or token in {"2", "&"}:
             continue
         operands.append(token)
+    if tokens[0] == "chmod":
+        # The symbolic/numeric mode is command data, not a write destination.
+        # Reference forms remain conservative; setup allows only literal modes.
+        mode = next((t for t in tokens[1:] if re.fullmatch(r"(?:[0-7]{3,4}|[ugoa]*[+=-][rwxXstugo]*(?:,[ugoa]*[+=-][rwxXstugo]*)*)", t)), None)
+        if not any(t.startswith("--reference") for t in tokens) and operands and operands[0] == mode:
+            operands = operands[1:]
+        return outputs + operands
     if tokens[0] == "cp":
         target_dir = next((tokens[i + 1] for i, token in enumerate(tokens[:-1])
                            if token in {"-t", "--target-directory"}), None)
@@ -6546,6 +6567,22 @@ def verification_baseline_state(repo: Path, work: dict) -> dict:
 def verification_scaffold_write(repo: Path, raw: dict) -> bool:
     analysis = tool_effect(raw, repo)
     targets = [] if analysis["diagnostics"] else analysis["targets"]
+    if _event_key(raw, "tool_name", "toolname", "tool", "name").lower() in SHELL_TOOLS:
+        try:
+            commands = _collect_values_for_keys(raw, {"command", "cmd"})
+            payload = raw.get("tool_input") or raw.get("input") or raw.get("arguments")
+            if isinstance(payload, str):
+                commands.append(payload)
+            for command in commands:
+                for tokens in _shell_segments(command):
+                    if tokens[0] == "chmod":
+                        if (len(tokens) < 3 or tokens[1] not in {"+x", "u+x", "a+x", "ug+x", "700", "750", "755"}
+                                or any(t.startswith("-") and t != "--" for t in tokens[2:])):
+                            return False
+                        if not all(repo_file(repo, p).is_file() for p in targets):
+                            return False
+        except (ValueError, OSError, RuntimeError):
+            return False
     if targets:
         valid = True
         for value in targets:
@@ -7037,7 +7074,7 @@ def host_event(args: argparse.Namespace) -> int:
         # CAO's own state narrow enough that it can never deadlock intake:
         # `requirements/` stays writable (the Agent authors those), and CAO
         # itself writes state through commands, not through this hook.
-        protected = write_targets_protected_state(repo, raw)
+        protected = write_targets_protected_state(repo, raw, work)
         if protected and tool_is_mutating(raw):
             result = {
                 "decision": "deny",
@@ -7047,7 +7084,10 @@ def host_event(args: argparse.Namespace) -> int:
                 ),
             }
             return respond(result)
-        native_write = write_targets_native_sdd_output(repo, raw) or native_intake_shell(repo, raw)
+        analysis = tool_effect(raw, repo)
+        route_input_write = (not analysis["diagnostics"] and bool(analysis["targets"])
+                             and all(writable_input(repo, target, work) for target in analysis["targets"]))
+        native_write = route_input_write or write_targets_native_sdd_output(repo, raw) or native_intake_shell(repo, raw)
         if tool_is_mutating(raw) and not native_write:
             if not work or work.get("status") != "active":
                 advice_work = work
@@ -7208,10 +7248,16 @@ def build_parser() -> argparse.ArgumentParser:
     sdd_sub = sdd.add_subparsers(dest="sdd_command", required=True)
     route = sdd_sub.add_parser("route", help="Record evidence-backed native routes separately from CAO quality profiles")
     route_sub = route.add_subparsers(dest="route_action", required=True)
-    for name in ("propose", "show"):
+    for name in ("propose", "show", "prepare", "rule", "check"):
         sp = route_sub.add_parser(name)
         sp.add_argument("--repo", default="."); sp.add_argument("--work")
-        if name == "propose": sp.add_argument("--declaration", required=True, metavar="JSON_FILE", help="Existing route declaration JSON file path, not inline JSON; use the Work-specific provider output path returned by next")
+        if name in {"propose", "check"}: sp.add_argument("--declaration", required=name == "propose", metavar="JSON_FILE", help="Existing declaration JSON path; new inputs use .orchestrator/inputs/WORK_ID/route.json")
+        if name == "prepare": sp.add_argument("--from", dest="from_declaration", metavar="JSON_FILE", help="Copy an existing declaration into the new input location without overwriting a current draft")
+        if name == "rule":
+            sp.add_argument("--source", required=True, help="Actual installed native rule file")
+            sp.add_argument("--start-line", required=True, type=int)
+            sp.add_argument("--end-line", required=True, type=int)
+            sp.add_argument("--index", type=int, help="Zero-based rule index to replace; default replaces the same source path or appends")
         sp.set_defaults(fn=cmd_sdd_route)
     artifact = sdd_sub.add_parser("artifact", help="Bind a running native artifact without certifying completion")
     artifact_sub = artifact.add_subparsers(dest="artifact_action", required=True)

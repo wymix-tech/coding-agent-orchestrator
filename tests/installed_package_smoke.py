@@ -27,7 +27,7 @@ def main():
     records = []
     with tempfile.TemporaryDirectory(prefix="cao-installed-smoke-") as td:
         base = Path(td)
-        modules = ("import json; from scripts import cao, state_store, completion_policy, path_guard, verification_runner, verification_setup, windows_supervisor, dashboard, light_spec_policy, sdd_acceptance_runtime, sdd_acceptance_commands, native_route, native_progress; "
+        modules = ("import json; from scripts import cao, state_store, completion_policy, path_guard, verification_runner, verification_setup, windows_supervisor, dashboard, light_spec_policy, sdd_acceptance_runtime, sdd_acceptance_commands, native_route, native_progress, route_inputs, route_input_commands; "
                    "root=cao.package_root_dir(); "
                    "from scripts.skill_guidance import STAGE_FILES, PROVIDER_FILES, CONTRACT_FILES; "
                    "assert all((root/p).is_file() for p in {*STAGE_FILES.values(), *PROVIDER_FILES.values(), *CONTRACT_FILES.values()}); "
@@ -163,6 +163,22 @@ def main():
                     before = oneshot.read_bytes()
                     bound = cli("sdd", "spec", "bind", "--spec", "_bmad-output/spec-oneshot.md")
                     assert bound["binding"]["mode"] == "bmad_oneshot", bound
+                    # Installed route input generation must work without the
+                    # checkout, while native review/Commit obligations remain.
+                    skill = repo / '.agents/skills/bmad-build/SKILL.md'
+                    skill.parent.mkdir(parents=True, exist_ok=True)
+                    skill.write_text('---\nname: bmad-build\ndescription: Explicit local fixture\n---\nUse the native oneshot route for this fixture.\n', encoding='utf-8')
+                    cli('sdd', 'artifact', 'bind', '--artifact', '_bmad-output/spec-oneshot.md')
+                    prepared = cli('sdd', 'route', 'prepare')
+                    route_path = prepared['declaration_path']
+                    assert route_path == f'.orchestrator/inputs/{native_id}/route.json'
+                    draft = prepared['declaration']
+                    draft.update(provider_version='local-fixture', route='direct-build', reason='Installed native fixture rule.',
+                                 omitted=[{'name':'separate planning', 'reason':'Bounded explicit fixture intent.', 'replaced_by':'_bmad-output/spec-oneshot.md'}])
+                    (repo / route_path).write_text(json.dumps(draft), encoding='utf-8')
+                    cli('sdd', 'route', 'rule', '--source', '.agents/skills/bmad-build/SKILL.md', '--start-line', '5', '--end-line', '5')
+                    assert cli('sdd', 'route', 'check')['status'] == 'validated'
+                    cli('sdd', 'route', 'propose', '--declaration', route_path)
                     sprint = repo / '_bmad-output/sprint-status.yml'
                     sprint.write_text('development_status:\n  epic-1: done\n  1-1-existing: done\n')
                     cli('sdd', 'plan', 'bind', '--plan-item', '_bmad-output/sprint-status.yml#epic-1')

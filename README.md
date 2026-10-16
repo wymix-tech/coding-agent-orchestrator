@@ -63,9 +63,11 @@ Runtime actions share prerequisite ordering across bootstrap, next, start/assess
 native synchronization and host reminders. A pending BMAD route first guides native workflow
 selection and SPEC preparation; it does not authorize business implementation. `guidance` includes
 the actual installed Skill path and route contract when needed. New route declarations use the
-Work-scoped `declaration_path` returned by next, inside provider-native outputs (BMAD:
-`_bmad-output/cao/WORK_ID/route.json`). Write the complete JSON file successfully before passing
-its path to `sdd route propose --declaration`; inline JSON is rejected with an explicit recovery message.
+Work-scoped `.orchestrator/inputs/WORK_ID/route.json` returned by next, separate from native artifacts.
+`cao sdd route prepare` creates/preserves the draft; `route rule --source <file> --start-line <first>
+--end-line <last>` extracts literal quotes and hashes. Fill actual route fields and run `route check`
+before `route propose --declaration <file>`. Diagnostics identify all invalid rule fields. Legacy
+declaration paths remain readable; preparation/checking never approves or executes native work.
 
 Existing project instructions are preserved by init/bootstrap. To upgrade known standalone
 legacy CAO templates or replace only a marked CAO block while retaining surrounding custom rules:
