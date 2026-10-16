@@ -78,6 +78,25 @@ function realCoreFixture() {
   return {...f, python, cli};
 }
 
+test('real Pi intake delivers technology clarification before authoring requirements after restart', posix, async () => {
+  const f = realCoreFixture();
+  try {
+    f.cli('init', '--host', 'pi');
+    mkdirSync(path.join(f.dir, '_bmad'));
+    writeFileSync(path.join(f.dir, '.orchestrator/provider-restarts.json'),
+      JSON.stringify([{provider: 'bmad', host: 'pi'}]));
+    const ctx = f.context('stack-clarification');
+    await f.handlers.get('session_start')({reason: 'startup'}, ctx);
+    const result = await f.handlers.get('before_agent_start')({prompt: '开发一个登录系统'}, ctx);
+    assert.match(result.message.content, /TECH_STACK_CLARIFICATION_REQUIRED/);
+    assert.match(result.message.content, /Offer a concrete recommendation as a proposal and WAIT/);
+    assert.match(result.message.content, /not user authorization/);
+    assert.equal(f.cli('list').work_items.length, 0);
+    const requirement = f.cli('requirement', 'next-id', '--title', 'Login');
+    assert.match(readFileSync(path.join(f.dir, requirement.path), 'utf8'), /待确认|pending/);
+  } finally { f.close(); }
+});
+
 test('real Pi hooks stop after provider installation and acknowledge host resource reload', posix, async () => {
   const f = realCoreFixture();
   try {

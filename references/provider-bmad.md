@@ -6,6 +6,8 @@ The current Work selects `bmad`. Read only this Provider guide and the installed
 
 ## Execute
 
+Before choosing a product stack or writing technology-dependent plans, apply [technology clarification](work-intake.md#technology-clarification-before-planning-or-scaffolding). BMAD routing, defaults and an Agent-written PRD/SPEC do not authorize technology choices; ask and wait for missing material choices unless the user explicitly delegated them.
+
 For a native Build route, use installed `bmad-build`; it selects `oneshot` for suitable small work. If a different native planning workflow is already selected, follow its required steps until an actual native transition calls for a different workflow. Follow the exact renderer and reviewers, not an invented `bmad quick-fix`. A recognized oneshot SPEC intentionally has only metadata, Intent and Implementation Notes. Bind with `cao sdd spec bind --spec <native-spec.md>` without criteria selectors: CAO binds native Intent and the current requirement, preserves the file unchanged and does not claim an explicit acceptance checklist. Normal SPECs or explicitly selected criteria keep the existing structural standard checks. Rebind changed bytes and re-verify; no separate workflow/plan/final-acceptance record is required for light.
 
 ### Route, approval and implementation

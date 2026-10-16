@@ -1,5 +1,7 @@
 # Execution path and native scope
 
+Before a native workflow selects or changes the product stack, apply [technology clarification](work-intake.md#technology-clarification-before-planning-or-scaffolding). Installed provider defaults and an Agent-written requirement/SPEC are not user authorization. Keep unknown choices pending and wait for the user before technology-dependent plans or scaffolding; preserve previously authorized choices across host restarts.
+
 Contents:
 
 - [Enter when](#enter-when)

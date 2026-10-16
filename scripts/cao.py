@@ -57,6 +57,7 @@ from scripts.provider_preparation import bmad_preparation
 from scripts.skill_guidance import guidance as resolve_skill_guidance
 from scripts.instruction_updates import update_instructions
 from scripts.provider_restart import require_restart, observe_start, restart_state
+from scripts.technology_guidance import technology_instruction
 from scripts.light_spec_policy import make_binding, binding_digest, light_spec_state
 from scripts.sdd_acceptance_policy import digest as acceptance_digest
 from scripts.sdd_acceptance_files import source_hashes, output_paths, report_hashes
@@ -1641,6 +1642,8 @@ def requirement_skeleton(title: str, number: str, date: str | None, cfg: dict[st
             f"- 创建日期: {day}\n"
             f"- 状态: draft\n\n"
             f"## 需求描述\n\n<!-- 在此描述需求。 -->\n\n"
+            "<!-- 技术选择只记录用户指定、仓库既有事实或用户明确授权代选的内容，并注明来源。\n"
+            "未明确的技术栈标记为待确认，先询问用户；模型建议不能写成用户已确认。 -->\n\n"
             f"## 验收标准\n\n<!-- 完成时必须满足的条件。 -->\n\n"
             f"## 范围外\n\n<!-- 明确不属于本次需求的内容（可选）。 -->\n"
         )
@@ -1650,6 +1653,8 @@ def requirement_skeleton(title: str, number: str, date: str | None, cfg: dict[st
         f"- Created: {day}\n"
         f"- Status: draft\n\n"
         f"## Description\n\n<!-- Describe the requirement here. -->\n\n"
+        "<!-- Record technology choices only with user, pre-existing repository or explicit delegation evidence.\n"
+        "Leave unspecified choices pending and ask the user; an Agent proposal is not user confirmation. -->\n\n"
         f"## Acceptance criteria\n\n<!-- What must be true when this is done. -->\n\n"
         f"## Out of scope\n\n<!-- What is explicitly not part of this requirement (optional). -->\n"
     )
@@ -2260,7 +2265,7 @@ def route_preparation_action(repo: Path, work: dict, state: dict) -> dict:
     workflow = (work.get("sdd") or {}).get("workflow") or {}
     selected = workflow_skill_identity(repo, provider, workflow.get("entrypoint") or "")
     skill = next((item for item in skills if item["name"] == (selected or "bmad-build")), None)
-    instruction = (f"Read the complete installed Skill `{repo / skill['rel_path']}`; invoke `{skill['name']}` "
+    instruction = technology_instruction(command) + (f"Read the complete installed Skill `{repo / skill['rel_path']}`; invoke `{skill['name']}` "
                    "and use its exact renderer only when required. Renderer success loads instructions, not completed execution. "
                    if skill else "Read the selected provider's installed native workflow instructions. ")
     if (work.get("path_assessment") or {}).get("profile") != "light" and not workflow.get("name"):
@@ -3192,6 +3197,7 @@ def path_assessment_instruction(work: dict[str, Any] | None = None) -> str:
     wid = (work or {}).get("id")
     work_arg = f" --work {wid}" if wid else ""
     return (
+        technology_instruction(cao_invocation()["command"]) +
         "Perform a lightweight scope/risk assessment, choose light, standard, or comprehensive, "
         "then record it with `cao path assess --profile <profile> --reason \"<short reason>\"" +
         " [--risk-flag <flag>]" + work_arg + "`. Do not build a separate evidence model or scorecard."
@@ -3900,6 +3906,7 @@ def work_intake_instruction(work: dict[str, Any] | None = None) -> str:
         "Create an active Work before product code, configuration, tests or verification scaffolding. "
         "Honor bootstrap's SDD authorization/install instructions first. "
         f"Inspect `{command} list` and resume existing suspended/todo work instead of repeating intake. "
+        + technology_instruction(command) +
         f'For an inline requirement run `{command} requirement next-id --title "<short title>"`, '
         "fill the returned numbered file with the user's confirmed requirement, "
         f"then run `{command} start --requirement <returned-path>`. "
