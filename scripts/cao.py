@@ -56,6 +56,7 @@ from scripts.smoke_runner import run_smoke
 from scripts.provider_preparation import bmad_preparation
 from scripts.skill_guidance import guidance as resolve_skill_guidance
 from scripts.instruction_updates import update_instructions
+from scripts.provider_restart import require_restart, observe_start, restart_state
 from scripts.light_spec_policy import make_binding, binding_digest, light_spec_state
 from scripts.sdd_acceptance_policy import digest as acceptance_digest
 from scripts.sdd_acceptance_files import source_hashes, output_paths, report_hashes
@@ -1276,37 +1277,16 @@ def _set_yaml_root_values(text: str, values: dict[str, str]) -> tuple[str, bool]
 
 
 def _set_toml_language_values(text: str, values: dict[str, str]) -> tuple[str, bool]:
-    """Update language keys where present and ensure canonical values in [core]."""
-    lines = text.splitlines()
-    changed = False
-    patterns = {key: re.compile(r"^(\s*)" + re.escape(key) + r"(\s*=).*$") for key in values}
-    out: list[str] = []
-    for line in lines:
-        updated = line
-        for key, pattern in patterns.items():
-            match = pattern.match(line)
-            if match:
-                updated = f"{match.group(1)}{key}{match.group(2)} {_toml_quote(values[key])}"
-                break
-        changed = changed or updated != line
-        out.append(updated)
-    interim = "\n".join(out) + ("\n" if text.endswith("\n") or out else "")
-    canonical, canonical_changed = _set_toml_table_values(interim, "core", values)
-    return canonical, changed or canonical_changed
+    """Update only BMAD's core language keys, preserving other tables."""
+    return _set_toml_table_values(text, "core", values)
 
 
 def configure_bmad_language(repo: Path, language: str) -> dict[str, Any]:
-    """Apply language with a high-precedence BMAD user override plus legacy YAML support.
-
-    Current BMAD merges central TOML layers. CAO writes only its two managed keys
-    to the highest-precedence custom user layer rather than rewriting team-owned
-    base config. Older installations that still use module YAML receive the same
-    two-key update in those legacy files.
-    """
+    """Synchronize CAO's two language keys across BMAD's installed config layers."""
     bmad_root = repo / "_bmad"
     if not bmad_root.is_dir():
         raise ValueError("BMAD is not installed: expected _bmad/ in the project")
-    label = language_label(language)
+    label = "Chinese" if language.lower() in {"zh-cn", "zh-hans"} else language_label(language)
     values = {"communication_language": label, "document_output_language": label}
 
     modern_candidates = [
@@ -1319,15 +1299,16 @@ def configure_bmad_language(repo: Path, language: str) -> dict[str, Any]:
     yaml_candidates = sorted(bmad_root.rglob("config.yaml")) + sorted(bmad_root.rglob("config.yml"))
     targets: list[tuple[Path, str]] = []
     if modern_installed:
-        # This is the highest-precedence supported layer; it overrides language
-        # defaults without mutating committed team configuration.
-        targets.append((bmad_root / "custom" / "config.user.toml", "toml"))
+        # Keep installer answers and existing overrides consistent. Only the two
+        # CAO-managed language keys change; all other project settings survive.
+        targets.extend((path, "toml") for path in modern_candidates
+                       if path.is_file() or path.name == "config.user.toml")
     elif yaml_candidates:
         targets.extend((path, "yaml") for path in yaml_candidates)
     else:
         # A partially initialized/new BMAD directory still gets a valid modern
         # user-level config rather than failing after installation.
-        targets.append((bmad_root / "custom" / "config.user.toml", "toml"))
+        targets.extend((path, "toml") for path in modern_candidates if path.name == "config.user.toml")
 
     # If a hybrid project contains both modern TOML and legacy YAML config files,
     # update the legacy files too so old module workflows don't fall back to English.
@@ -1347,7 +1328,8 @@ def configure_bmad_language(repo: Path, language: str) -> dict[str, Any]:
         else:
             unchanged.append(path.relative_to(repo).as_posix())
     return {"provider": "bmad", "language": language, "label": label,
-            "configured": True, "changed_files": changed, "unchanged_files": unchanged}
+            "configured": True, "language_values": values,
+            "changed_files": changed, "unchanged_files": unchanged}
 
 
 def _strip_managed_yaml_context(lines: list[str]) -> list[str]:
@@ -2312,6 +2294,9 @@ def route_preparation_action(repo: Path, work: dict, state: dict) -> dict:
 
 
 def implementation_preflight(repo: Path, work: dict) -> dict:
+    restart = restart_state(repo, detect_current_host())
+    if not restart["ready"]:
+        return restart
     if not work_sdd_ready(repo, work)[0]:
         provider = (work.get("sdd") or {}).get("provider")
         return {"ready": False, "reason": "SDD_NOT_INSTALLED", "next": f"Restore the Work's provider with `cao sdd install --provider {provider} --yes`; do not restart intake."}
@@ -3761,6 +3746,9 @@ def verification_inputs(repo: Path, work: dict, cfg: dict) -> dict:
 
 
 def completion_status(repo: Path, work: dict[str, Any] | None) -> dict[str, Any]:
+    restart = restart_state(repo, detect_current_host())
+    if not restart["ready"]:
+        return restart
     if not work:
         return {"ready": False, "reason": "no work item"}
     if work.get("status") != "active":
@@ -3926,6 +3914,9 @@ def work_intake_instruction(work: dict[str, Any] | None = None) -> str:
 def work_prerequisite_action(repo: Path, work: dict | None) -> dict | None:
     """One prerequisite order for CLI navigation, synchronization and host reminders."""
     command = cao_invocation()["command"]
+    restart = restart_state(repo, detect_current_host())
+    if not restart["ready"]:
+        return action("human", restart["next"], stage="startup", reason=restart["reason"])
     if not work:
         status = sdd_status(repo)
         startup = not status["installed"] or status["selected"] == "auto" and len(status["installed"]) > 1
@@ -3982,7 +3973,7 @@ def current_work_action(repo: Path, work: dict | None, *, check_completion: bool
 def agent_guidance(repo: Path, work: dict[str, Any] | None, mode: str | None = None, *, next_action: dict | None = None) -> dict[str, Any]:
     """Route to stage documents using existing state predicates, never new gates."""
     provider = str(((work or {}).get("sdd") or {}).get("provider") or "")
-    if mode in {"sdd_select", "sdd_install_required", "language_configuration_failed"}:
+    if mode in {"sdd_select", "sdd_install_required", "language_configuration_failed", "host_restart_required"} or not restart_state(repo, detect_current_host())["ready"]:
         stage = "startup"
     elif mode == "verification_setup":
         stage = "verification_setup"
@@ -4011,6 +4002,9 @@ def runtime_action_context(repo: Path, work: dict | None, current: dict) -> str:
 
 
 def render_context(repo: Path, work: dict[str, Any] | None, *, session_id: str | None = None, host: str | None = None) -> str:
+    restart = restart_state(repo, host or detect_current_host())
+    if not restart["ready"]:
+        return restart["reason"] + ": " + restart["next"]
     inspection = setup_state(config(repo))
     current = current_work_action(repo, work)
     navigation = "## Read before acting\n" + json.dumps(agent_guidance(repo, work, next_action=current), ensure_ascii=False)
@@ -4275,7 +4269,9 @@ def cmd_bootstrap(args: argparse.Namespace) -> int:
     # Bootstrap is a state-read boundary too. Reconcile native SDD state before
     # constructing a new-session context so a previous Agent's phase cursor
     # cannot remain stale after the native workflow has advanced.
-    if work and work.get("status") in {"active", "suspended"} and reconcile_native_sdd_state(repo, work):
+    if (work and work.get("status") in {"active", "suspended"}
+            and restart_state(repo, getattr(args, "host", None) or detect_current_host())["ready"]
+            and reconcile_native_sdd_state(repo, work)):
         work = load_work(repo, active_id) or work
 
     # Session continuity must not depend solely on the host adapter being
@@ -4288,6 +4284,16 @@ def cmd_bootstrap(args: argparse.Namespace) -> int:
     # bootstrap-time install could never deliver this session's SessionStart.
     adapter_host = identity[0] if identity else getattr(args, "host", None)
     bootstrap_adapter = host_adapter_status(repo, adapter_host) if adapter_host else None
+
+    restart = restart_state(repo, adapter_host or detect_current_host())
+    if not restart["ready"]:
+        next_action = action("human", restart["next"], reason=restart["reason"], stage="startup")
+        print(json.dumps({"ok": True, "mode": "host_restart_required", "restart": restart,
+                          "work_item": {**work_summary(work), "next_action": next_action} if work else None,
+                          "next": next_action,
+                          "host_adapter": bootstrap_adapter, "project_instructions": project_instructions,
+                          "guidance": agent_guidance(repo, work, "host_restart_required")}, ensure_ascii=False, indent=2))
+        return 0
 
     # Existing work owns its provider choice. A missing provider is repaired
     # before any resume/implementation action is exposed.
@@ -4548,6 +4554,24 @@ def build_speckit_project_command(args: argparse.Namespace) -> list[str]:
     return command
 
 
+def install_restart_hosts(args: argparse.Namespace, provider: str) -> list[str]:
+    explicit = getattr(args, "tools", None) or getattr(args, "integration", None)
+    if explicit:
+        meta = SDD_CATALOG[provider]["install"]
+        mapping = meta.get("integration_by_host") if provider == "speckit" else meta.get("tool_by_host")
+        targets = {value.strip() for value in explicit.split(",")}
+        return sorted(host for host, tool in (mapping or {}).items() if tool in targets)
+    host = getattr(args, "host", None) or detect_current_host()
+    return [host] if host else []
+
+
+def install_restart_result(repo: Path) -> dict:
+    restart = restart_state(repo)
+    return {"restart_required": not restart["ready"], "restart": restart,
+            **({"next": action("human", restart["next"], reason=restart["reason"]),
+                "guidance": agent_guidance(repo, None, "host_restart_required")} if not restart["ready"] else {})}
+
+
 def cmd_sdd_install(args: argparse.Namespace) -> int:
     repo = repo_root(args.repo); ensure_initialized(repo)
     provider = args.provider
@@ -4561,9 +4585,9 @@ def cmd_sdd_install(args: argparse.Namespace) -> int:
         try:
             language_configuration = apply_provider_language(repo, provider)
         except (OSError, UnicodeError, ValueError) as exc:
-            print(json.dumps({"ok": False, "error": "SDD_LANGUAGE_CONFIGURATION_FAILED", "provider": provider, "reason": str(exc)}, ensure_ascii=False, indent=2))
+            print(json.dumps({"ok": False, "error": "SDD_LANGUAGE_CONFIGURATION_FAILED", "provider": provider, "reason": str(exc), **install_restart_result(repo)}, ensure_ascii=False, indent=2))
             return 1
-        print(json.dumps({"ok": True, "status": "already_installed", "selected": provider, "sdd": detected, "language_configuration": language_configuration}, ensure_ascii=False, indent=2))
+        print(json.dumps({"ok": True, "status": "already_installed", "selected": provider, "sdd": detected, "language_configuration": language_configuration, **install_restart_result(repo)}, ensure_ascii=False, indent=2))
         return 0
 
     prereq = sdd_prerequisite_check(provider)
@@ -4632,12 +4656,15 @@ def cmd_sdd_install(args: argparse.Namespace) -> int:
         print(json.dumps({"ok": False, "error": "SDD_INSTALL_NOT_DETECTED", "provider": provider, "results": results, "status": final}, ensure_ascii=False, indent=2))
         return 1
     select_sdd_provider(repo, provider)
+    # Persist before language configuration: an installed provider still needs
+    # its host resources reloaded if the language update subsequently fails.
+    require_restart(repo, provider, install_restart_hosts(args, provider))
     try:
         language_configuration = apply_provider_language(repo, provider)
     except (OSError, UnicodeError, ValueError) as exc:
-        print(json.dumps({"ok": False, "error": "SDD_LANGUAGE_CONFIGURATION_FAILED", "provider": provider, "reason": str(exc), "sdd": final, "results": results}, ensure_ascii=False, indent=2))
+        print(json.dumps({"ok": False, "error": "SDD_LANGUAGE_CONFIGURATION_FAILED", "provider": provider, "reason": str(exc), "sdd": final, "results": results, **install_restart_result(repo)}, ensure_ascii=False, indent=2))
         return 1
-    print(json.dumps({"ok": True, "status": "installed", "selected": provider, "sdd": final, "results": results, "language_configuration": language_configuration}, ensure_ascii=False, indent=2))
+    print(json.dumps({"ok": True, "status": "installed", "selected": provider, "sdd": final, "results": results, "language_configuration": language_configuration, **install_restart_result(repo)}, ensure_ascii=False, indent=2))
     return 0
 
 
@@ -5571,7 +5598,7 @@ def cmd_gate(args: argparse.Namespace) -> int:
 def cmd_next(args: argparse.Namespace) -> int:
     repo = repo_root(args.repo); ensure_initialized(repo)
     index = load_index(repo); work = load_work(repo, args.work or index.get("active_work")) if (args.work or index.get("active_work")) else None
-    if work and reconcile_native_sdd_state(repo, work):
+    if work and restart_state(repo, detect_current_host())["ready"] and reconcile_native_sdd_state(repo, work):
         work = load_work(repo, work["id"]) or work
     current = current_work_action(repo, work)
     out = {"ok": True, "action": current, "work_item": work_summary(work) if work else None,
@@ -6900,7 +6927,7 @@ def host_event(args: argparse.Namespace) -> int:
     known_session = load_session(repo, candidate_id, host=args.host) if candidate_id else None
     kind = "subagent" if (event in {"subagent_start", "subagent_stop"} or raw.get("kind") == "subagent"
                            or (known_session or {}).get("kind") == "subagent") else "primary"
-    if work and event in {"session_start", "subagent_start", "prompt_submit", "pre_tool", "stop", "turn_end", "before_settle"}:
+    if work and restart_state(repo, args.host)["ready"] and event in {"session_start", "subagent_start", "prompt_submit", "pre_tool", "stop", "turn_end", "before_settle"}:
         # Refresh before exposing context or writing a handoff, including edits
         # performed outside this host. Derived observations never reanchor input hashes.
         reconcile_native_sdd_state(repo, work)
@@ -6928,12 +6955,24 @@ def host_event(args: argparse.Namespace) -> int:
         print(json.dumps(native_hook_output(args.host, event, result), ensure_ascii=False))
         return 0
 
+    if event == "session_start":
+        observe_start(repo, args.host, host_session_id, primary=kind == "primary",
+                      source=_event_key(raw, "reason", "source"))
+
     session = None
     if host_session_id:
         if event in {"session_start", "subagent_start"}:
             session = register_session(repo, work, host_session_id, args.host, event=event, kind=kind, parent_session_id=parent_id)
         else:
             session = update_session_event(repo, host_session_id, args.host, event, work, kind=kind, parent_session_id=parent_id)
+
+    restart = restart_state(repo, args.host)
+    if not restart["ready"] and event not in {"session_end", "subagent_stop"}:
+        context = restart["reason"] + ": " + restart["next"]
+        if event == "pre_tool" and tool_is_mutating(raw):
+            return respond({"decision": "deny", "reason": context, "additional_context": context})
+        # Allow settling: a restart reminder must never force another Agent turn.
+        return respond({"decision": "allow", "additional_context": context})
 
     if event in {"session_start", "subagent_start"}:
         if kind == "primary":
@@ -7312,6 +7351,24 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     try:
         args = build_parser().parse_args(argv)
+        # Lifecycle observation and repair/inspection remain usable while the
+        # installed host resources await reload. Work advancement must wait.
+        # Dispatch by handler: several existing subcommands also use the
+        # argparse destination `command` for a shell command or a list of them.
+        repair_or_read = args.fn in {
+            cmd_init, cmd_bootstrap, cmd_host, host_event, cmd_language_show,
+            cmd_language_set, cmd_language_apply, cmd_instructions_update,
+            cmd_list, cmd_status, cmd_next, cmd_context, cmd_sessions_list,
+            cmd_sessions_show, cmd_decision_list, cmd_handoff, cmd_dashboard,
+            cmd_sdd_list, cmd_sdd_install, cmd_sdd_select,
+        }
+        if not repair_or_read:
+            host = getattr(args, "host", None)
+            restart = restart_state(repo_root(args.repo), host if host in HOST_ADAPTER_META else detect_current_host())
+            if not restart["ready"]:
+                print(json.dumps({"ok": False, "error": restart["reason"], "restart": restart,
+                                  "next": action("human", restart["next"], reason=restart["reason"])}, ensure_ascii=False, indent=2))
+                return 2
         return int(args.fn(args))
     except (RuntimeError, ValueError, json.JSONDecodeError) as exc:
         result = {"ok": False, "error": str(exc)}

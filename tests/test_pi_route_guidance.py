@@ -5,8 +5,10 @@ from pathlib import Path
 import shlex
 import sys
 import tempfile
+from unittest.mock import patch
 
 from scripts import cao
+from scripts.provider_restart import require_restart
 from tests.repair_helpers import RepairCase
 
 
@@ -66,6 +68,24 @@ class PiRouteGuidance(RepairCase):
         self.configure()
         self.assert_current("NATIVE_WORKFLOW_SELECTION_REQUIRED")
         self.assertEqual(self.read_work(self.wid)["path_assessment"]["revision"], 1)
+
+    def test_host_restart_precedes_native_preparation_and_restores_its_current_action(self):
+        self.configure()
+        self.assess()
+        before = self.read_work(self.wid)
+        require_restart(self.repo, "bmad", ["pi"])
+        with patch.object(cao, "detect_current_host", return_value="pi"):
+            current = cao.current_work_action(self.repo, before)
+        self.assertEqual((current["reason"], current["type"], current["stage"]),
+                         ("HOST_RESTART_REQUIRED", "human", "startup"))
+        self.assert_current("HOST_RESTART_REQUIRED")
+        self.hook("session_start", reason="new")
+        self.assert_current("HOST_RESTART_REQUIRED")
+        self.hook("session_start", reason="reload")
+        self.assert_current("NATIVE_WORKFLOW_SELECTION_REQUIRED")
+        after = self.read_work(self.wid)
+        self.assertEqual(after["requirement"], before["requirement"])
+        self.assertEqual(after["path_assessment"], before["path_assessment"])
 
     def test_route_preparation_reaches_writable_work_scoped_declaration(self):
         self.configure()

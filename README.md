@@ -359,6 +359,8 @@ Current built-in providers are OpenSpec, BMad Method, and GitHub Spec Kit. `cao 
 `cao sdd install --provider <provider> --yes` performs provider installation/initialization and records
 the selected provider only after the provider is detected in the project.
 
+New provider installations and upgrades return `restart_required: true` and a human action with `HOST_RESTART_REQUIRED`. Stop the current turn and restart the selected coding-agent host in this project so it loads the new Skills and commands. If CAO hooks are missing, install its adapter before restarting. The corresponding primary SessionStart clears the persisted boundary, including when the host restarts into the same conversation ID. Pi requires native event reason `startup` or `reload`; session switches with `new`, `resume` or `fork` do not reload resources or clear this boundary. Rerun bootstrap afterward to resume the existing Work; repeated bootstrap, subagents and manually changing session IDs do not clear it. An unchanged `already_installed` result or selecting an existing provider creates no new boundary.
+
 OpenSpec reuses an existing CLI when its version probe succeeds; project initialization does not force another global npm install. To explicitly upgrade it, use `cao sdd install --provider openspec --host pi --yes --upgrade`. Initial machine installs respect npm's configured prefix (including `NPM_CONFIG_PREFIX`).
 
 ## GitHub Spec Kit
@@ -397,6 +399,8 @@ cao language apply
 ```
 
 The default is Simplified Chinese (`zh-CN`). `language.user` controls both user-facing communication and generated SDD documentation. CAO applies the preference through provider-native configuration: BMAD language config keys, OpenSpec `openspec/config.yaml` context, and Spec Kit `.specify/memory/constitution.md`. Bootstrap, provider selection, and installation reapply the configured preference. Managed language sections are idempotent and preserve unrelated project settings and content. Explicit user instructions to use another language for a specific scope take precedence.
+
+BMAD maps `zh-CN`/`zh-Hans` to `Chinese` for both `communication_language` and `document_output_language`. CAO synchronizes these two `[core]` keys in existing central TOML layers, the root and custom user overrides, and legacy module YAML files. Other settings and other TOML tables are preserved. Installation reports the configured language values and changed files.
 
 ## Verification configuration
 
