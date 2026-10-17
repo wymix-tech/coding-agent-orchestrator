@@ -7,9 +7,21 @@ Read for a BMAD dispatch review action. Follow the actual rendered
 
 1. Begin EVERY active native layer for the current snapshot with
    `cao sdd review begin --layer <active-layer> --instructions <actual-step-04-review.md> --model <current-model>`.
-2. Launch the independent same-model reviewers required by the native prompt
-   (or its external-session fallback). Pass each ticket's `reviewer_start` command to a NEW independent host session; that reviewer must execute it before reviewing. It binds the real native session and current code snapshot to the ticket. Never execute it in the primary session or reuse a pre-ticket review. Preserve raw JSON findings under
-   `_bmad-output/`; each raw finding has a unique nonempty `id` and its content.
+2. Inspect actual host tools and installed agent definitions before launching. Use an
+   available agent with shell access for `reviewer_start` and the CAO adapter loaded;
+   a read-only agent without shell cannot attach. Pi foreground children require
+   explicit child extensions: run `cao host install --host pi` before restarting to
+   register CAO in `subagents.defaultSubagentOnlyExtensions`. Preserve agent-specific
+   extension overrides; include CAO there too or use a capable external session.
+   Use the runtime model identity (`PI_MODEL`, optionally qualified by `PI_PROVIDER`);
+   independent means a different session with the same model capability.
+   Launch the independent same-model reviewers required by the native prompt
+    (or its external-session fallback). Pass each ticket's `reviewer_start` command to a NEW independent host session; that reviewer must execute it before reviewing. It binds the real native session and current code snapshot to the ticket. Never execute it in the primary session or reuse a pre-ticket review. Preserve the unmodified native findings under
+   `_bmad-output/`, in Markdown when the native prompt requests Markdown, or JSON
+   when it requests JSON. Never rewrite native prompts to satisfy a CAO format.
+   Run `cao sdd review findings --source <raw.md-or-json>` to inspect the ID mapping:
+   Markdown top-level findings get `finding-1`, `finding-2`, etc.; nested bullets
+   and fenced examples stay within their finding. JSON keeps its original IDs.
 3. Collect all layers and classify every raw ID exactly once, before applying
    product patches: `cao sdd review classify --layer <active-layer> --report <triage-file.json>`.
 4. Apply the classified patches and native checks, then resolve every layer:
@@ -17,6 +29,15 @@ Read for a BMAD dispatch review action. Follow the actual rendered
 
 Do not remove active layers. Zero findings use empty raw and classified arrays;
 never invent findings. Reuse no identity or hash from an older begin ticket.
+After interruption inspect the current action and reuse its tickets. `begin` is
+idempotent for a current running/classified dispatch ticket; use `--restart` only
+to explicitly replace a failed ticket. Classified is not resolved. If a worker or
+provider fails, inspect partial edits, resume the same worker (or apply the native
+fallback), rerun checks and resolve remaining layers. Do not restart all reviews
+or report old tests as validation of the partially patched tree.
+For a native intent_gap/bad_spec loopback, complete its clarification/design and
+code re-derivation first, then use `begin --restart` for all active layers. This
+starts the new review round rather than reusing the classified loopback tickets.
 
 ## Classify report fields
 
@@ -24,16 +45,26 @@ never invent findings. Reuse no identity or hash from an older begin ticket.
 | --- | --- |
 | `run_id`, `input_sha256` | Exact current begin ticket identity and input digest |
 | `reviewer` | `{mode, session_id, model}`; mode `subagent` or `external-session`, real independent session, same current model |
-| `findings_file` | Existing Provider-owned raw JSON array file |
+| `findings_file` | Existing Provider-owned, unmodified native Markdown list or JSON array |
 | `findings` | Array of `{id, verdict, disposition, evidence}` covering raw IDs exactly once |
 
 `verdict` is `high`, `medium`, `low`, `false` or `maybe-false`.
 `disposition` is `patch`, `defer`, `reject`, `bad_spec` or `intent_gap`.
-Supply nonempty evidence for each judgment. Do not reject verified high/medium/low
-findings. Classify before deduplicating. `defer` requires `scope: outside-intent`
-and `violates_frozen_intent: false`; a frozen-intent violation must explicitly
+Supply nonempty evidence for each judgment. Do not reject verified high/medium
+findings. A native low finding unlikely in everyday use whose fix adds complexity
+may be rejected with `reject_reason: unlikely-use-nontrivial-fix` and concrete evidence.
+Classify before deduplicating. `defer` requires `violates_frozen_intent: false` and
+`defer_reason: pre-existing|unverified|agent-context`; `unverified` requires verdict
+`maybe-false`. Missing from the plan/acceptance list, inconvenience or test changes
+alone are not deferral reasons. Verify claims against actual code/dependencies;
+do not promote a reviewer's untested library assumption to a confirmed defect.
+A frozen-intent violation must explicitly
 set `violates_frozen_intent: true` and use the native `intent_gap`/`bad_spec`
 loopback instead of postponement. Fields cannot replace actual semantic review.
+Check frozen constraints against each other and the I/O matrix. Include any known
+contradictions in `intent_conflicts: ["<contradiction and locations>"]`; this blocks
+patches/closure even when findings arrays are empty. A note in Implementation Notes
+does not resolve a contradiction. Use the native human clarification loopback.
 
 ## Resolve report fields
 

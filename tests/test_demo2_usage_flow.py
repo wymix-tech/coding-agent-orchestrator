@@ -179,7 +179,7 @@ class LiveWorkNavigation(unittest.TestCase):
         t.write('_bmad/render/bmad-build/step-04-review.md', '#### Blind (`blind-hunter`)\n')
         out = t.run_cli('sdd', 'review', 'begin', '--layer', 'blind-hunter', '--model', 'm',
                         '--instructions', '_bmad/render/bmad-build/step-04-review.md')
-        self.assertIn('raw JSON', out['next'])
+        self.assertIn('native Markdown/JSON', out['next'])
         self.assertIn('review classify', out['next'])
         self.assertNotIn('review submit', out['next'])
         self.assertNotIn('resolved: true', out['next'])

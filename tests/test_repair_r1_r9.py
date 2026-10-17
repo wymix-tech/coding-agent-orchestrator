@@ -35,7 +35,15 @@ class VerifyIntegrity(RepairCase):
         return wid
 
     def configure(self, code):
-        rc, out = self.run_cli('verification', 'configure', '--test-script', command(code), '--replace')
+        # cmd.exe splits multiline -c strings differently from POSIX shells.
+        # A real wrapper keeps the race fixture alive until its release marker
+        # on every platform instead of accidentally returning after p.touch().
+        script = self.repo / 'scripts/verification/integrity_fixture.py'
+        script.parent.mkdir(parents=True, exist_ok=True)
+        script.write_text(code, encoding='utf-8')
+        argv = [sys.executable, str(script)]
+        wrapper = subprocess.list2cmdline(argv) if os.name == 'nt' else shlex.join(argv)
+        rc, out = self.run_cli('verification', 'configure', '--test-script', wrapper, '--replace')
         self.assertEqual(rc, 0, out)
         self.assertEqual(self.run_cli('reopen', '--reanchor', '--reason', 'Fixture baseline')[0], 0)
 

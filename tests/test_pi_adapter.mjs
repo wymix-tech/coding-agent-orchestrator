@@ -385,6 +385,33 @@ test('host parentSession metadata keeps reviewer events separate from primary', 
   } finally { f.close(); }
 });
 
+test('detached runner metadata keeps old headerless child sessions separate', posix, async () => {
+  const f = fixture();
+  const oldChild = process.env.PI_SUBAGENT_CHILD;
+  const oldParent = process.env.PI_SUBAGENT_PARENT_SESSION;
+  try {
+    process.env.PI_SUBAGENT_CHILD = '1';
+    process.env.PI_SUBAGENT_PARENT_SESSION = 'parent-native';
+    const ctx = f.context('child-native');
+    await f.handlers.get('session_start')({reason: 'startup'}, ctx);
+    await f.handlers.get('session_shutdown')({reason: 'quit'}, ctx);
+    const rows = f.rows();
+    assert.equal(rows[0].event, 'subagent_start');
+    assert.equal(rows[1].event, 'subagent_stop');
+    for (const row of rows) {
+      assert.equal(row.kind, 'subagent');
+      assert.equal(row.parent_session_id, 'parent-native');
+      assert.equal(row.subagent_id, 'child-native');
+    }
+  } finally {
+    if (oldChild === undefined) delete process.env.PI_SUBAGENT_CHILD;
+    else process.env.PI_SUBAGENT_CHILD = oldChild;
+    if (oldParent === undefined) delete process.env.PI_SUBAGENT_PARENT_SESSION;
+    else process.env.PI_SUBAGENT_PARENT_SESSION = oldParent;
+    f.close();
+  }
+});
+
 test('CLI bridge does not block Pi event loop', posix, async () => {
   const f = fixture();
   let ticks = 0;

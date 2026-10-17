@@ -15,6 +15,7 @@ import stat
 import subprocess
 import sys
 import sysconfig
+import tempfile
 import time
 import uuid
 from functools import wraps
@@ -60,7 +61,8 @@ from scripts.instruction_updates import update_instructions
 from scripts.provider_restart import require_restart, observe_start, restart_state
 from scripts.startup_request import (ORDER as STARTUP_ORDER, capture_request, consume_request,
                                      pending_request, request_context)
-from scripts.review_binding import attach_reviewer
+from scripts.review_binding import attach_reviewer, runtime_model_name
+from scripts.native_obligations import load_findings, dispatch_review_next
 from scripts.technology_guidance import technology_instruction
 from scripts.light_spec_policy import make_binding, binding_digest, light_spec_state
 from scripts.sdd_acceptance_policy import digest as acceptance_digest
@@ -815,7 +817,13 @@ def host_adapter_status(repo: Path, host: str, root: Path | None = None) -> dict
                     continue
                 if installed:
                     break
-        return {**info, "installed": installed, "target": meta["target"], "packages": packages}
+        subagents = settings.get('subagents') or {}
+        child_extensions = subagents.get('defaultSubagentOnlyExtensions', []) if isinstance(subagents, dict) else []
+        child_hook = str(root / 'hosts/pi/coding-orchestrator.ts') if root else ''
+        child_ready = isinstance(child_extensions, list) and child_hook in child_extensions
+        return {**info, "installed": installed, "target": meta["target"], "packages": packages,
+                'child_hooks_installed': child_ready,
+                'child_hooks_next': None if child_ready else 'Run cao host install --host pi before restarting; foreground children need the CAO adapter explicitly.'}
     if root is None:
         return {**info, "installed": False, "target": meta["target"], "reason": "adapter files unavailable"}
     fragment_path = root / meta["fragment"]
@@ -860,6 +868,33 @@ def install_host_adapter(repo: Path, host: str) -> dict[str, Any]:
             ["pi", "install", "--local", str(root), "--approve"],
             cwd=repo, text=True, capture_output=True, timeout=120,
         )
+        if result.returncode == 0:
+            target = repo / meta['target']
+            try:
+                settings = load_json(target, {})
+                if not isinstance(settings, dict):
+                    raise ValueError('Pi settings must be an object')
+                subagents = settings.setdefault('subagents', {})
+                if not isinstance(subagents, dict):
+                    raise ValueError('Pi subagents settings must be an object')
+                if 'defaultSubagentOnlyExtensions' not in subagents:
+                    # A new project-level key shadows the user's global default.
+                    # Carry the effective inherited list forward before appending CAO.
+                    agent_dir = Path(os.environ.get('PI_CODING_AGENT_DIR') or Path.home() / '.pi/agent').expanduser()
+                    user_settings = load_json(agent_dir / 'settings.json', {})
+                    inherited = user_settings.get('subagents', {}) if isinstance(user_settings, dict) else {}
+                    inherited = inherited.get('defaultSubagentOnlyExtensions', []) if isinstance(inherited, dict) else []
+                    subagents['defaultSubagentOnlyExtensions'] = inherited
+                extensions = subagents.setdefault('defaultSubagentOnlyExtensions', [])
+                if not isinstance(extensions, list) or any(not isinstance(p, str) for p in extensions):
+                    raise ValueError('Pi child extension defaults must be a list of paths')
+                adapter = str(root / 'hosts/pi/coding-orchestrator.ts')
+                if adapter not in extensions:
+                    extensions.append(adapter)
+                    save_json(target, settings)
+            except (OSError, ValueError, TypeError) as exc:
+                return {'host': host, 'status': 'error', 'target': meta['target'],
+                        'reason': 'Cannot configure CAO child hooks: ' + str(exc)}
         return {
             "host": host,
             "status": "installed" if result.returncode == 0 else "error",
@@ -4112,7 +4147,7 @@ def register_session(
     host: str,
     *,
     event: str = "session_start",
-    kind: str = "primary",
+    kind: str | None = None,
     parent_session_id: str | None = None,
 ) -> dict[str, Any]:
     """Create or reattach a Session using the host-native ID as its lookup key."""
@@ -4649,9 +4684,6 @@ def cmd_sdd_install(args: argparse.Namespace) -> int:
         return 0
 
     prereq = sdd_prerequisite_check(provider)
-    if not prereq["ok"]:
-        print(json.dumps({"ok": False, "error": "SDD_PREREQUISITE_FAILED", "provider": provider, "prerequisites": prereq}, ensure_ascii=False, indent=2))
-        return 2
 
     meta = SDD_CATALOG[provider]["install"]
     external = choose_external_install_command(provider, getattr(args, "upgrade", False))
@@ -4688,6 +4720,11 @@ def cmd_sdd_install(args: argparse.Namespace) -> int:
         }, ensure_ascii=False, indent=2))
         return 0
 
+    # A plan is inspectable even when a tool is missing; actual installation
+    # remains blocked before any machine/project command runs.
+    if not prereq["ok"]:
+        print(json.dumps({"ok": False, "error": "SDD_PREREQUISITE_FAILED", "provider": provider, "prerequisites": prereq}, ensure_ascii=False, indent=2))
+        return 2
     results = []
     if external:
         result = run_install_command(external, repo); results.append(result)
@@ -4981,6 +5018,15 @@ def cmd_sdd_review(args: argparse.Namespace) -> int:
         print(json.dumps({"ok": False, "error": "NO_ACTIVE_WORK_ITEM"})); return 2
     try:
         records = work.setdefault("sdd", {}).setdefault("native_reviews", {})
+        identity = host_session_identity(None)
+        runtime_model = os.environ.get('PI_MODEL') if identity and identity[0] == 'pi' else None
+        if args.review_action in {'begin', 'attach'}:
+            args.model = runtime_model_name(args.model, runtime_model, os.environ.get('PI_PROVIDER'))
+            if runtime_model and runtime_model != args.model:
+                print(json.dumps({'ok': False, 'error': 'NATIVE_REVIEW_MODEL_MISMATCH',
+                                  'expected_model': runtime_model, 'actual_model': args.model,
+                                  'next': 'Use the current model in a new independent reviewer session; a different model is not required.'}))
+                return 2
         if args.review_action == "begin":
             if not args.model.strip():
                 raise ValueError("NATIVE_REVIEW_MODEL_REQUIRED")
@@ -5004,21 +5050,30 @@ def cmd_sdd_review(args: argparse.Namespace) -> int:
             inputs = review_inputs(repo, work, code_snapshot)
             primary_ids = [session.get("host_session_id") for session in list_sessions(repo)
                            if session.get("work_item_id") == work["id"] and session.get("kind") == "primary"]
-            run = {"id": new_id("review"), "status": "running", "inputs": inputs,
+            existing = records.get(args.layer) or {}
+            matching_inputs = (existing.get('inputs') == inputs or (existing.get('status') == 'classified'
+                               and all(existing.get('inputs', {}).get(k) == v for k, v in inputs.items() if k != 'code_snapshot')))
+            reused = (dispatch_review(work) and not args.restart and existing.get('status') in {'running', 'classified'}
+                      and matching_inputs and existing.get('model') == args.model)
+            run = existing if reused else {"id": new_id("review"), "status": "running", "inputs": inputs,
                    "input_sha256": native_digest(inputs), "model": args.model,
                    "existing_session_ids": [session['id'] for session in list_sessions(repo)],
                    "primary_session_ids": primary_ids}
             records[args.layer] = run
-            output = {"ok": True, "review": run, "active_layers": layers}
+            output = {"ok": True, "review": run, "active_layers": layers, 'reused': reused}
             output['reviewer_start'] = (f'{cao_invocation()["command"]} sdd review attach --work {work["id"]} '
                 f'--layer {args.layer} --run {run["id"]} --input-sha256 {run["input_sha256"]} --model {shlex.quote(args.model)}')
             output['next'] = ('Begin ALL active layers before launching reviewers. Each new independent host session must first run reviewer_start '
                 'to acknowledge this ticket and frozen input, then inspect that exact code without product writes. '
-                + ('Preserve raw JSON findings for each layer; classify ALL layers before patches, then resolve ALL layers. '
+                + ('Preserve unmodified native Markdown/JSON findings for each layer; classify ALL layers before patches, then resolve ALL layers. '
                    'Use `cao sdd review classify --layer <layer> --report <triage.json>`, then `cao sdd review resolve --layer <layer> --report <resolved.json>`.'
                    if dispatch_review(work) else
                    'Preserve raw Markdown findings and submit triage with `cao sdd review submit --layer <layer> --report <report.json>`.')
-                + ' If no subagent is available, use a new independent external host session with its CAO adapter. Never reuse results from before this ticket.')
+                + ' Before launch, inspect the installed agent definitions: the reviewer needs shell access to execute reviewer_start and the CAO host adapter. '
+                'Use an available agent name; do not assume task/general-purpose exist. Preserve native prompts/output formats, including Markdown. '
+                'If no capable subagent is available, use a new independent external host session with its CAO adapter. Never reuse results from before this ticket.')
+            if reused:
+                output['next'] = dispatch_review_next(records, layers, inputs)
         elif args.review_action == 'attach':
             run = records.get(args.layer) or {}
             identity = host_session_identity(None)
@@ -5026,16 +5081,18 @@ def cmd_sdd_review(args: argparse.Namespace) -> int:
             if session and any(key != args.layer and (record.get('execution_binding') or {}).get('session_id') == session['id']
                                for key, record in records.items() if key != '_contract'):
                 raise ValueError('NATIVE_REVIEW_SESSION_REUSED')
-            runtime_model = os.environ.get('PI_MODEL') if identity and identity[0] == 'pi' else None
-            if runtime_model and runtime_model != args.model:
-                raise ValueError('NATIVE_REVIEW_INDEPENDENT_MODEL_REQUIRED')
             attached = attach_reviewer(run, review_inputs(repo, work, code_snapshot), identity, session,
                                        args.model, args.run, args.input_sha256)
             output = {'ok': True, 'review': attached,
                       'next': 'Read the frozen review input and native instructions. Return actual findings; do not patch product code.'}
+        elif args.review_action == 'findings':
+            source = provider_artifact(repo, args.source, ['_bmad-output'])
+            output = {'ok': True, 'source': source.relative_to(repo).as_posix(),
+                      'source_sha256': sha256_file(source), 'findings': load_findings(source)}
+            print(json.dumps(output, ensure_ascii=False)); return 0
         elif args.review_action == "classify":
             output = {"ok": True, "review": classify_review(repo, work, args.layer, args.report, code_snapshot),
-                      "next": "Classify EVERY layer before product patches. Preserve raw JSON findings with stable IDs, including zero findings. After patches and native checks, resolve every layer with run_id and resolved_ids."}
+                      "next": dispatch_review_next(records, active_layers(repo, work), review_inputs(repo, work, code_snapshot))}
         elif args.review_action == "resolve":
             output = {"ok": True, "review": resolve_review(repo, work, args.layer, args.report, code_snapshot)}
         else:
@@ -6463,7 +6520,7 @@ def tool_effect(raw: dict, repo: Path | None = None) -> dict:
                 if _readonly_tokens(tokens, directory): continue
                 operands = shell_write_operands(tokens)
                 redirects = any(token in {">", ">>", "&>", ">|", "<>"} for token in tokens)
-                known_command = tokens[0] in {"rm", "mv", "cp", "touch", "mkdir", "rmdir", "chmod", "tee", "find", "sed", "git", "echo", "printf", "cat", "head", "tail", "ls", "grep", "rg"}
+                known_command = tokens[0] in {"rm", "mv", "cp", "touch", "mkdir", "rmdir", "chmod", "tee", "find", "sed", "git", "diff", "echo", "printf", "cat", "head", "tail", "ls", "grep", "rg"}
                 known = known_command and (bool(operands) or redirects)
                 if known: effect = "write"
                 elif effect != "write": effect = "unknown"
@@ -6552,7 +6609,7 @@ def shell_write_operands(tokens: list[str]) -> list[str]:
     """Keep read inputs and command data out of native-output exemptions."""
     redirects = {">", ">>", "&>", ">|", "<>"}
     outputs = [tokens[i + 1] for i, token in enumerate(tokens[:-1]) if token in redirects]
-    if tokens[0] in {"echo", "printf", "cat", "head", "tail", "ls", "grep", "rg"}:
+    if tokens[0] in {"echo", "printf", "cat", "head", "tail", "ls", "grep", "rg", "diff"}:
         return outputs
     operands = []
     skip = False
@@ -6883,6 +6940,37 @@ def readonly_shell(command: str, cwd: Path | None = None) -> bool:
         return False
 
 
+def diagnostic_shell_write(repo: Path, raw: dict) -> bool:
+    """Allow literal diff artifacts in the system temp directory, not product writes."""
+    if _event_key(raw, 'tool_name', 'toolname', 'tool', 'name').lower() not in SHELL_TOOLS:
+        return False
+    analysis = tool_effect(raw, repo)
+    if analysis['effect'] != 'write' or analysis['diagnostics'] or not analysis['targets']:
+        return False
+    root = Path(tempfile.gettempdir()).resolve()
+    if any(not inside(Path(target).resolve(), root) or inside(Path(target).resolve(), repo.resolve())
+           or Path(target).resolve() == root for target in analysis['targets']):
+        return False
+    commands = _collect_values_for_keys(raw, {'command', 'cmd'})
+    if not commands:
+        return False
+    for command in commands:
+        for tokens in _shell_segments(command):
+            if _readonly_tokens(tokens, tool_cwd(raw, repo)):
+                continue
+            if tokens[0] == 'mkdir' and all(t == '-p' or not t.startswith('-') for t in tokens[1:]):
+                continue
+            if tokens[0] != 'diff':
+                return False
+            stripped = list(tokens)
+            for i in range(len(stripped) - 2, 0, -1):
+                if stripped[i] in {'>', '>>'}:
+                    del stripped[i:i + 2]
+            if not _readonly_tokens(stripped, tool_cwd(raw, repo)):
+                return False
+    return True
+
+
 def _readonly_checksum_tokens(tokens: list[str]) -> bool:
     """Recognize literal SHA probes without accepting arbitrary runner flags."""
     algorithms = {"1", "224", "256", "384", "512", "512224", "512256"}
@@ -6964,6 +7052,11 @@ def _readonly_tokens(tokens: list[str], cwd: Path | None = None) -> bool:
             return True
     if name == "find":
         return not any(token in {"-delete", "-exec", "-execdir", "-ok", "-okdir", "-fprint", "-fprint0", "-fprintf"} for token in tokens)
+    if name == 'date':
+        return all(token in {'-u', '--utc', '--universal', '-I', '--iso-8601', '--rfc-3339=seconds'}
+                   or token.startswith('+') for token in tokens[1:])
+    if name in {'diff', 'printenv'}:
+        return True
     if name in {"ls", "dir", "cat", "type", "pwd", "grep", "rg", "head", "tail", "echo", "printf", "cd", "exit", "which", "file", "stat", "wc"}:
         return True
     if name == "command" and len(tokens) > 1 and tokens[1] in {"-v", "-V"}:
@@ -6982,7 +7075,7 @@ def _readonly_tokens(tokens: list[str], cwd: Path | None = None) -> bool:
         while len(args) >= 2 and args[0] == "-C": args = args[2:]
         if args and args[0] == "rev-parse":
             return bool(args[1:]) and all(token in {"--show-toplevel", "--is-inside-work-tree", "--git-dir", "--show-prefix", "--verify", "HEAD"} for token in args[1:])
-        if args and args[0] in {"status", "diff", "log", "show", "branch"}:
+        if args and args[0] in {"status", "diff", "log", "show", "branch", "ls-files"}:
             unsafe = {"--ext-diff", "--textconv", "-d", "-D", "-m", "-M", "-c", "-C", "--delete", "--move", "--copy"}
             return not git_output_targets(tokens) and not any(token in unsafe for token in args[1:]) and (args[0] != "branch" or all(token.startswith("-") for token in args[1:]))
     if name == "sed":
@@ -7166,7 +7259,8 @@ def host_event(args: argparse.Namespace) -> int:
         analysis = tool_effect(raw, repo)
         route_input_write = (not analysis["diagnostics"] and bool(analysis["targets"])
                              and all(writable_input(repo, target, work) for target in analysis["targets"]))
-        native_write = route_input_write or write_targets_native_sdd_output(repo, raw) or native_intake_shell(repo, raw)
+        native_write = (route_input_write or write_targets_native_sdd_output(repo, raw)
+                        or native_intake_shell(repo, raw) or diagnostic_shell_write(repo, raw))
         if tool_is_mutating(raw) and not native_write:
             if not work or work.get("status") != "active":
                 advice_work = work
@@ -7369,12 +7463,16 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--repo", default="."); sp.add_argument("--work"); sp.set_defaults(fn=cmd_sdd_sync)
     review = sdd_sub.add_parser("review", help="Record independent native reviews and pre-patch dispatch classification")
     review_sub = review.add_subparsers(dest="review_action", required=True)
-    for name in ("begin", "attach", "submit", "classify", "resolve"):
+    for name in ("begin", "attach", "submit", "classify", "resolve", "findings"):
         sp = review_sub.add_parser(name)
         sp.add_argument("--repo", default="."); sp.add_argument("--work")
-        sp.add_argument("--layer", required=True)
+        if name != 'findings':
+            sp.add_argument("--layer", required=True)
         if name == "begin":
             sp.add_argument("--model", required=True); sp.add_argument("--instructions", required=True)
+            sp.add_argument('--restart', action='store_true', help='Explicitly replace a failed current dispatch ticket')
+        elif name == 'findings':
+            sp.add_argument('--source', required=True, help='Unmodified native Markdown list or JSON findings under _bmad-output')
         elif name == 'attach':
             sp.add_argument('--run', required=True); sp.add_argument('--input-sha256', required=True)
             sp.add_argument('--model', required=True)
