@@ -74,7 +74,7 @@ class PiRouteGuidance(RepairCase):
         self.assess()
         before = self.read_work(self.wid)
         require_restart(self.repo, "bmad", ["pi"])
-        with patch.object(cao, "detect_current_host", return_value="pi"):
+        with patch("scripts.cao_guidance.detect_current_host", return_value="pi"):
             current = cao.current_work_action(self.repo, before)
         self.assertEqual((current["reason"], current["type"], current["stage"]),
                          ("HOST_RESTART_REQUIRED", "human", "startup"))

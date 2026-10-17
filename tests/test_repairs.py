@@ -67,7 +67,7 @@ class RepairTests(unittest.TestCase):
                 return 0, "v20.12.0", ""
             return 127, "", ""
 
-        with mock.patch.object(cao, "command_exists", side_effect=exists), mock.patch.object(cao, "command_output", side_effect=output):
+        with mock.patch("scripts.cao_providers.command_exists", side_effect=exists), mock.patch("scripts.cao_providers.command_output", side_effect=output):
             check = cao.sdd_prerequisite_check("bmad")
         self.assertTrue(check["ok"], check)
         py = next(item for item in check["checks"] if item["name"] == "python")

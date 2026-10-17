@@ -165,10 +165,11 @@ class VerificationSetupTests(RepairCase):
         args = argparse.Namespace(repo=str(self.repo), verify_script=["check"], test_script=[], replace=True)
         before = (self.repo / cao.CONFIG_REL).read_bytes()
         # Repository discovery already uses read-only git; isolate that common boundary.
-        with mock.patch.object(cao, "repo_root", return_value=self.repo), \
-                mock.patch.object(cao, "install_host_adapters") as install, \
+        with mock.patch("scripts.cao_verification.repo_root", return_value=self.repo), \
+                mock.patch("scripts.cao_runtime.repo_root", return_value=self.repo), \
+                mock.patch("scripts.cao_bootstrap.install_host_adapters") as install, \
                 mock.patch.object(cao.subprocess, "run") as run:
-            with mock.patch.object(cao, "save_json", side_effect=OSError("write denied")):
+            with mock.patch("scripts.cao_verification.save_json", side_effect=OSError("write denied")):
                 with self.assertRaises(OSError):
                     cao.cmd_verification_configure(args)
             self.assertEqual((self.repo / cao.CONFIG_REL).read_bytes(), before)

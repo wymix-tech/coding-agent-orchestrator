@@ -41,7 +41,7 @@ class TransactionsTests(RepairCase):
         work = cao.load_work(self.repo, self.start())
         self.assertIn("state_revision", work)
         revision = work["state_revision"]
-        with mock.patch.object(cao, "save_json", side_effect=OSError("disk")):
+        with mock.patch("scripts.cao_work_store.save_json", side_effect=OSError("disk")):
             with self.assertRaises(OSError):
                 cao.save_work(self.repo, work)
         self.assertEqual(work["state_revision"], revision)
@@ -83,7 +83,7 @@ class TransactionsTests(RepairCase):
         args = cao.build_parser().parse_args([
             "decision", "--repo", str(self.repo), "--work", wid, "--decision", "direct",
         ])
-        with mock.patch.object(cao, "load_work", side_effect=guarded_read):
+        with mock.patch("scripts.cao_work_store.load_work", side_effect=guarded_read):
             with contextlib.redirect_stdout(io.StringIO()):
                 rc = cao.cmd_decision(args)
         self.assertEqual(rc, 0)
@@ -132,7 +132,7 @@ class TransactionsTests(RepairCase):
         wid = self.start()
         work = cao.load_work(self.repo, wid)
         work["decisions"].append({"decision": "persisted before index failure"})
-        with mock.patch.object(cao, "save_index", side_effect=OSError("index disk")):
+        with mock.patch("scripts.cao_work_store.save_index", side_effect=OSError("index disk")):
             with self.assertRaises(OSError):
                 cao.save_work(self.repo, work)
         self.assertEqual(len(self.read_work(wid)["decisions"]), 1)
@@ -244,8 +244,8 @@ class TransactionsTests(RepairCase):
             "start", "--repo", str(self.repo), "--requirement", str(req),
         ])
         stream = io.StringIO()
-        with mock.patch.object(cao, "run_sdd_command", side_effect=inspect):
-            with mock.patch.object(cao, "host_session_identity", return_value=("pi", "start-session")):
+        with mock.patch("scripts.cao_work_commands.run_sdd_command", side_effect=inspect):
+            with mock.patch("scripts.cao_work_commands.host_session_identity", return_value=("pi", "start-session")):
                 with contextlib.redirect_stdout(stream):
                     rc = cao.cmd_start(args)
         self.assertEqual(rc, 0)
@@ -315,7 +315,7 @@ class TransactionsTests(RepairCase):
             return None
         args = cao.build_parser().parse_args(["done", "--repo", str(self.repo), "--work", wid])
         stream = io.StringIO()
-        with mock.patch.object(cao, "sdd_transition", side_effect=transition):
+        with mock.patch("scripts.cao_work_commands.sdd_transition", side_effect=transition):
             with contextlib.redirect_stdout(stream):
                 rc = cao.cmd_done(args)
         self.assertEqual(rc, 2, stream.getvalue())
