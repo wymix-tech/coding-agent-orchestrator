@@ -27,7 +27,9 @@ def main():
     records = []
     with tempfile.TemporaryDirectory(prefix="cao-installed-smoke-") as td:
         base = Path(td)
-        modules = ("import json; from scripts import cao, state_store, completion_policy, path_guard, verification_runner, verification_setup, windows_supervisor, dashboard, light_spec_policy, sdd_acceptance_runtime, sdd_acceptance_commands, native_route, native_progress, route_inputs, route_input_commands; "
+        modules = ("import json, importlib, pkgutil; import scripts; "
+                   "[importlib.import_module(item.name) for item in pkgutil.iter_modules(scripts.__path__, 'scripts.') if item.name.startswith('scripts.cao_')]; "
+                   "from scripts import cao, state_store, completion_policy, path_guard, verification_runner, verification_setup, windows_supervisor, dashboard, light_spec_policy, sdd_acceptance_runtime, sdd_acceptance_commands, native_route, native_progress, route_inputs, route_input_commands; "
                    "root=cao.package_root_dir(); "
                    "from scripts.skill_guidance import STAGE_FILES, PROVIDER_FILES, CONTRACT_FILES; "
                    "assert all((root/p).is_file() for p in {*STAGE_FILES.values(), *PROVIDER_FILES.values(), *CONTRACT_FILES.values()}); "

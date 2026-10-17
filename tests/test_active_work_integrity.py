@@ -92,7 +92,7 @@ class ActiveTests(RepairCase):
         args = cao.build_parser().parse_args([
             "start", "--repo", str(self.repo), "--requirement", str(requirement), "--replace",
         ])
-        with mock.patch.object(cao, "save_work", side_effect=fail_new_work):
+        with mock.patch("scripts.cao_work_commands.save_work", side_effect=fail_new_work):
             with self.assertRaises(OSError):
                 with contextlib.redirect_stdout(io.StringIO()):
                     cao.cmd_start(args)

@@ -96,7 +96,7 @@ class AuditTests(RepairCase):
         work = cao.load_work(self.repo, wid)
         work["resume"]["summary"] = "committed before audit"
         cao.queue_event(work, {"event": "task.reopened", "work_item_id": wid, "reason": "recovery"})
-        with mock.patch.object(cao, "_append_lifecycle_event", side_effect=OSError("log disk")):
+        with mock.patch("scripts.cao_work_store._append_lifecycle_event", side_effect=OSError("log disk")):
             with self.assertRaises(OSError):
                 cao.save_work(self.repo, work)
         pending = self.read_work(wid)["pending_events"]
@@ -119,7 +119,7 @@ class AuditTests(RepairCase):
                     and value.get("resume", {}).get("summary") == "queue clear injection"):
                 raise OSError("after log fsync, before queue clear")
             return original(path, value)
-        with mock.patch.object(cao, "save_json", side_effect=fail_clear):
+        with mock.patch("scripts.cao_work_store.save_json", side_effect=fail_clear):
             with self.assertRaises(OSError):
                 cao.save_work(self.repo, work)
         self.assertEqual(len(self.read_work(wid)["pending_events"]), 1)
@@ -138,7 +138,7 @@ class AuditTests(RepairCase):
         def fail_sync(repo, event):
             with mock.patch.object(cao.os, "fsync", side_effect=OSError("log fsync")):
                 return original(repo, event)
-        with mock.patch.object(cao, "_append_lifecycle_event", side_effect=fail_sync):
+        with mock.patch("scripts.cao_work_store._append_lifecycle_event", side_effect=fail_sync):
             with self.assertRaises(OSError):
                 cao.save_work(self.repo, work)
             # A complete line can be visible even though its fsync failed.
@@ -167,7 +167,7 @@ class AuditTests(RepairCase):
         artifact.parent.mkdir(parents=True)
         artifact.write_text("---\nstatus: ready-for-dev\n---\n# a\n", encoding="utf-8")
         work = cao.load_work(self.repo, wid)
-        with mock.patch.object(cao, "save_json", side_effect=OSError("authority disk")):
+        with mock.patch("scripts.cao_work_store.save_json", side_effect=OSError("authority disk")):
             with self.assertRaises(OSError):
                 cao.reconcile_native_sdd_state(self.repo, work)
         self.assertEqual(self.events(wid, "sdd.native_state.changed"), [])
