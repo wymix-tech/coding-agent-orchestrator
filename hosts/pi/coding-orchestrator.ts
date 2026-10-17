@@ -81,10 +81,14 @@ function sessionLineage(ctx: ExtensionContext): { kind: "primary" | "subagent"; 
   // Read host session metadata, never the prompt or the agent's task text.
   const manager = ctx.sessionManager as unknown as { getHeader?: () => { parentSession?: string } | null };
   const parentFile = manager.getHeader?.()?.parentSession;
-  if (!parentFile) return { kind: "primary" };
+  // Detached pi-subagents runners advertise their child role even when an old
+  // session archive has no parentSession header. Never treat them as primary.
+  const runnerChild = process.env.PI_SUBAGENT_CHILD === "1";
+  if (!parentFile && !runnerChild) return { kind: "primary" };
   let parent: string | undefined;
   let fd: number | undefined;
   try {
+    if (!parentFile) throw Error("No parent archive");
     fd = openSync(path.resolve(ctx.cwd, parentFile), "r");
     const buffer = Buffer.alloc(8192);
     const count = readSync(fd, buffer, 0, buffer.length, 0);
@@ -92,6 +96,7 @@ function sessionLineage(ctx: ExtensionContext): { kind: "primary" | "subagent"; 
     if (header.type === "session" && typeof header.id === "string") parent = header.id;
   } catch { /* Still a child when a parent archive is missing; never upgrade it. */ }
   finally { if (fd !== undefined) closeSync(fd); }
+  if (!parent && runnerChild) parent = process.env.PI_SUBAGENT_PARENT_SESSION;
   return { kind: "subagent", subagent_id: nativeSessionId(ctx), ...(parent ? { parent_session_id: parent } : {}) };
 }
 

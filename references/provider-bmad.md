@@ -23,6 +23,12 @@ Use the route declaration contract linked directly from SKILL.md for all fields 
 For dispatch approval/clarification/pause actions, read the BMAD approval reference selected by guidance. Approval does not substitute for native planning or implementation.
 
 Follow the actual step-03 implementation handoff; set SPEC `in-progress` and `baseline_commit` (HEAD or NO_VCS) first. Read the full step and use the implementation child session where required and available; use the installed fallback when unavailable. Pi observes the step read and actual child product writes. Custom handoffs follow actual rendered rules. Full planning requires native Finalize, memlog/audits and required PRD/architecture reviews, not draft artifacts.
+Before Pi dispatch, check `cao host status --host pi` for `child_hooks_installed`.
+Run `cao host install --host pi` and restart when missing: foreground pi-subagents
+children do not inherit ambient extensions. The installer merges the CAO child-only
+extension default; agents with explicit child extension overrides need CAO listed
+there too. Inspect actual agent names/tools first, preserve the native handoff,
+and do not substitute a fabricated `task` tool or `general-purpose` agent.
 
 ### Native review and close obligations
 

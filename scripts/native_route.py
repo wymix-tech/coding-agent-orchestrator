@@ -340,6 +340,14 @@ def observed_replies(record, work_id, raw, event, host, session_id):
     return replies
 
 
+def approval_action(value, event):
+    # UI badges are presentation. Normalize only request-bound tool choices,
+    # keeping the original response and its hash in the approval evidence.
+    if event == 'post_tool':
+        value = re.sub(r'\s*(?:\(Recommended\)|（推荐）|\(推荐\))\s*$', '', value, flags=re.I)
+    return value.strip()
+
+
 def approve_observed_response(repo, work, raw, event, host, session_id, dirs, timestamp):
     """Accept only an explicit approval response after a Work-specific request."""
     approval = (work.get("sdd") or {}).get("spec_approval") or {}
@@ -353,7 +361,7 @@ def approve_observed_response(repo, work, raw, event, host, session_id, dirs, ti
         if not approval.get("stop_after_approval"):
             return None
         pattern = r"(?:继续实现|开始实现|批准并继续|continue implementation|approve and continue)"
-    reply = next((v for v in replies if re.fullmatch(pattern + r"[。.!！\s]*", v.strip(), re.I)), None)
+    reply = next((v for v in replies if re.fullmatch(pattern + r"[。.!！\s]*", approval_action(v, event), re.I)), None)
     if reply is None:
         return None
     try:
@@ -384,7 +392,7 @@ def approve_baseline_response(work, raw, event, host, session_id, current_hash, 
     pattern = r'(?:批准验证基线|approve verification baseline)'
     if not competing:
         pattern = r'(?:批准验证基线|approve verification baseline|批准|同意|approve)'
-    reply = next((v for v in replies if re.fullmatch(pattern + r'[。.!！\s]*', v.strip(), re.I)), None)
+    reply = next((v for v in replies if re.fullmatch(pattern + r'[。.!！\s]*', approval_action(v, event), re.I)), None)
     if reply is None:
         return None
     review.update(status="approved", approved_at=timestamp, evidence={"host": host,

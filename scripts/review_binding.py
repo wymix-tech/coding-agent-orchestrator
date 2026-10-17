@@ -2,6 +2,16 @@
 from scripts.native_obligations import digest
 
 
+def runtime_model_name(model, runtime_model=None, provider=None):
+    """Normalize only the current provider's qualified spelling, never other models."""
+    model = str(model or '').strip()
+    runtime_model = str(runtime_model or '').strip()
+    provider = str(provider or '').strip()
+    if runtime_model and provider and model == provider + '/' + runtime_model:
+        return runtime_model
+    return model
+
+
 def attach_reviewer(run, inputs, identity, session, model, run_id, input_sha256):
     if not isinstance(run.get('existing_session_ids'), list):
         raise ValueError('NATIVE_REVIEW_RESTART_REQUIRED')
