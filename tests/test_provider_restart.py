@@ -8,6 +8,7 @@ import unittest
 from unittest.mock import patch
 
 from scripts import cao
+from repair_helpers import HOST_KEYS
 from scripts.provider_restart import require_restart, restart_state
 
 
@@ -16,7 +17,7 @@ class ProviderRestartTests(unittest.TestCase):
         temp = tempfile.TemporaryDirectory()
         self.addCleanup(temp.cleanup)
         self.repo = pathlib.Path(temp.name)
-        host = patch.object(cao, "detect_current_host", return_value=None)
+        host = patch.dict(cao.os.environ, {key: "" for key in HOST_KEYS})
         host.start()
         self.addCleanup(host.stop)
         code, out = self.cli("init", "--host", "pi", "--language", "zh-CN")
@@ -47,9 +48,9 @@ class ProviderRestartTests(unittest.TestCase):
 
         # Only external provider execution is faked. State, configuration,
         # detection, command routing and lifecycle hooks are the real core.
-        with patch.object(cao, "sdd_prerequisite_check", return_value={"ok": True}), \
-             patch.object(cao, "choose_external_install_command", return_value=None), \
-             patch.object(cao, "repo_root", return_value=self.repo), \
+        with patch("scripts.cao_providers.sdd_prerequisite_check", return_value={"ok": True}), \
+             patch("scripts.cao_providers.choose_external_install_command", return_value=None), \
+             patch("scripts.cao_providers.repo_root", return_value=self.repo), \
              patch.object(cao.subprocess, "run", side_effect=project_install):
             return self.cli("sdd", "install", "--provider", provider, "--host", host, "--yes",
                             *(["--upgrade"] if upgrade else []))
@@ -121,7 +122,7 @@ class ProviderRestartTests(unittest.TestCase):
             self.assertTrue(restart_state(self.repo)["ready"])
 
     def test_language_failure_retains_restart_boundary_and_repair_remains_available(self):
-        with patch.object(cao, "apply_provider_language", side_effect=ValueError("broken language config")):
+        with patch("scripts.cao_providers.apply_provider_language", side_effect=ValueError("broken language config")):
             code, out = self.install()
         self.assertEqual(code, 1, out)
         self.assertEqual(out["error"], "SDD_LANGUAGE_CONFIGURATION_FAILED")

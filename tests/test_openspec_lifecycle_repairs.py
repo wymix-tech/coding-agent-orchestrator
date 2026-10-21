@@ -204,7 +204,7 @@ sys.exit(p.returncode)
                 self.assertEqual(self.hook(command)["decision"], "deny", command)
 
     def test_usable_installed_openspec_skips_global_install(self):
-        with patch.object(cao, "command_exists", return_value=True), patch.object(cao, "command_output", return_value=(0, "1.14.2", "")):
+        with patch("scripts.cao_providers.command_exists", return_value=True), patch("scripts.cao_providers.command_output", return_value=(0, "1.14.2", "")):
             self.assertIsNone(cao.choose_external_install_command("openspec"))
-        with patch.object(cao, "command_exists", return_value=True), patch.object(cao, "command_output", return_value=(1, "", "cannot start")):
+        with patch("scripts.cao_providers.command_exists", return_value=True), patch("scripts.cao_providers.command_output", return_value=(1, "", "cannot start")):
             self.assertIsNotNone(cao.choose_external_install_command("openspec"))

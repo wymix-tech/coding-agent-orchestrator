@@ -26,7 +26,7 @@ class SnapshotTests(RepairCase):
         self.assertEqual(cao.code_snapshot(self.repo, excluded), initial)
 
     def test_walk_prunes_ignored_subtrees(self):
-        with mock.patch("scripts.cao.os.walk", wraps=cao.os.walk) as walk:
+        with mock.patch("scripts.cao_snapshot.os.walk", wraps=cao.os.walk) as walk:
             cao.code_snapshot(self.repo)
         self.assertTrue(walk.called)
 
@@ -43,7 +43,7 @@ class SnapshotTests(RepairCase):
             calls.append(str(path))
             return original(path)
         started = time.monotonic()
-        with mock.patch("scripts.cao.os.scandir", side_effect=scan):
+        with mock.patch("scripts.cao_snapshot.os.scandir", side_effect=scan):
             current = cao.code_snapshot(self.repo)
         self.assertEqual(current, before)
         self.assertFalse(any("node_modules" in path for path in calls), calls[:10])
@@ -66,7 +66,7 @@ class SnapshotTests(RepairCase):
         def scan(path):
             if pathlib.Path(path) == folder: raise PermissionError(13, "denied", str(folder))
             return original(path)
-        with mock.patch("scripts.cao.os.scandir", side_effect=scan), self.assertRaisesRegex(RuntimeError, "SNAPSHOT_READ_FAILED.*restricted"):
+        with mock.patch("scripts.cao_snapshot.os.scandir", side_effect=scan), self.assertRaisesRegex(RuntimeError, "SNAPSHOT_READ_FAILED.*restricted"):
             cao.code_snapshot(self.repo)
 
     def symlink(self, link, target, directory=False):

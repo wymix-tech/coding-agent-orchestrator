@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlparse, urlsplit
 
-from scripts.cao import locked_repo
+from scripts.cao_runtime import locked_repo
 
 
 def dashboard_html_path() -> Path:
@@ -134,7 +134,7 @@ def _artifact_label(path: str) -> tuple[str, str]:
 
 def build_sdd_artifact_catalog(repo: Path, work: dict[str, Any]) -> list[dict[str, Any]]:
     """Describe expected and discovered native artifacts without copying their contents."""
-    from scripts.cao import sha256_file
+    from scripts.cao_runtime import sha256_file
 
     repo = repo.resolve()
     sdd = work.get("sdd") if isinstance(work.get("sdd"), dict) else {}
@@ -388,7 +388,8 @@ def build_sdd_artifact_catalog(repo: Path, work: dict[str, Any]) -> list[dict[st
 @locked_repo
 def confirm_artifact(repo: Path, work_id: str, artifact_path: str, confirmed_by: str = "dashboard") -> dict[str, Any]:
     """Record an explicit human confirmation against the current file hash."""
-    from scripts.cao import load_work, mark_artifact_confirmed
+    from scripts.cao_artifacts import mark_artifact_confirmed
+    from scripts.cao_work_store import load_work
 
     repo = repo.resolve()
     work = load_work(repo, work_id)
@@ -404,7 +405,7 @@ def confirm_artifact(repo: Path, work_id: str, artifact_path: str, confirmed_by:
 
 def preview_artifact(repo: Path, work_id: str, artifact_path: str) -> dict[str, Any]:
     """Return bounded text content for a discovered SDD artifact, never arbitrary paths."""
-    from scripts.cao import load_work
+    from scripts.cao_work_store import load_work
 
     repo = repo.resolve()
     work = load_work(repo, work_id)
@@ -433,7 +434,7 @@ def infer_execution_phase(work: dict[str, Any], artifact_catalog: list[dict[str,
     if work.get("status") == "completed":
         return {"id": "done", "source": "cao-state"}
     if execution.get("phase"):
-        from scripts.cao import execution_phase
+        from scripts.cao_work_store import execution_phase
         phase = execution_phase(execution)
         if phase in {"planning", "ready", "implementation", "review", "verification", "audit", "release"}:
             return {"id": {"ready": "planning", "audit": "review", "release": "verification"}.get(phase, phase),
@@ -465,34 +466,17 @@ def infer_execution_phase(work: dict[str, Any], artifact_catalog: list[dict[str,
 @locked_repo
 def build_dashboard_overview(repo: Path, stale_after_minutes: int = 30) -> dict[str, Any]:
     """Build a read-only projection from CAO's existing JSON state files."""
-    from scripts.cao import (
-        HANDOFF_DIR,
-        SESSION_DIR,
-        WORK_DIR,
-        SDD_CATALOG,
-        config,
-        completion_status,
-        completion_next_instruction,
-        bound_verification_fresh,
-        gate_state,
-        sdd_acceptance_state,
-        light_spec_state,
-        provider_output_dirs,
-        verification_inputs,
-        detect_sdd,
-        empty_index,
-        list_handoff_records,
-        list_sessions,
-        load_index,
-        load_json,
-        load_work,
-        path_assessment_state,
-        reconcile_native_sdd_state,
-        native_sync_state,
-        native_route_state,
-        session_activity,
-        work_summary,
-    )
+    from scripts.cao_completion import completion_status, completion_next_instruction, sdd_acceptance_state, verification_inputs
+    from scripts.cao_defaults import HANDOFF_DIR, SESSION_DIR, WORK_DIR, SDD_CATALOG
+    from scripts.cao_native_sync import reconcile_native_sdd_state, native_sync_state, native_route_state
+    from scripts.cao_path import gate_state, path_assessment_state
+    from scripts.cao_provider_workflows import provider_output_dirs
+    from scripts.cao_providers import detect_sdd
+    from scripts.cao_runtime import config, load_json
+    from scripts.cao_sessions import list_handoff_records, list_sessions, session_activity
+    from scripts.cao_work_store import empty_index, load_index, load_work, work_summary
+    from scripts.completion_policy import verification_fresh as bound_verification_fresh
+    from scripts.light_spec_policy import light_spec_state
 
     repo = repo.resolve()
     initialized = (repo / ".orchestrator" / "config.json").is_file()

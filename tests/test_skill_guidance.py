@@ -86,8 +86,8 @@ class RuntimeNavigation(RepairCase):
             for mode, other in (("command", "skill"), ("skill", "command")):
                 work["sdd"]["acceptance"] = {"declaration": {"executor": {"mode": mode, "entrypoint": "native-acceptance"}}}
                 skill = {"name": "native-acceptance", "rel_path": "native/acceptance/SKILL.md"}
-                with patch.object(cao, "workflow_skill_identity", return_value=skill["name"]), \
-                     patch.object(cao, "provider_native_skills", return_value=[skill]):
+                with patch("scripts.cao_guidance.workflow_skill_identity", return_value=skill["name"]), \
+                     patch("scripts.cao_guidance.provider_native_skills", return_value=[skill]):
                     nav = cao.agent_guidance(self.repo, work, next_action=current)
                 self.assertIn(str(ROOT / CONTRACT_FILES["acceptance_" + mode]), nav["read_before_action"])
                 self.assertNotIn(str(ROOT / CONTRACT_FILES["acceptance_" + other]), nav["read_before_action"])
@@ -111,7 +111,7 @@ class RuntimeNavigation(RepairCase):
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_text("Fixture resource")
             current = {"stage": "execution", "reason": "NATIVE_ROUTE_REQUIRED"}
-            with patch.object(cao, "package_root_dir", return_value=root):
+            with patch("scripts.cao_guidance.package_root_dir", return_value=root):
                 out = cao.agent_guidance(self.repo, work, next_action=current)
                 self.assertFalse(out["ready"])
                 self.assertEqual(out["missing_resources"], [CONTRACT_FILES["native_route"]])
@@ -169,9 +169,9 @@ class RuntimeNavigation(RepairCase):
 
     def test_current_provider_only_for_all_quality_profiles(self):
         work = {"status": "active", "sdd": {}, "execution": {"phase": "review"}, "path_assessment": {}}
-        with patch.object(cao, "work_sdd_ready", return_value=(True, None)), \
-             patch.object(cao, "verification_baseline_state", return_value={"ready": True}), \
-             patch.object(cao, "path_assessment_state", return_value={"ready": True}):
+        with patch("scripts.cao_guidance.work_sdd_ready", return_value=(True, None)), \
+             patch("scripts.cao_tool_policy.verification_baseline_state", return_value={"ready": True}), \
+             patch("scripts.cao_guidance.path_assessment_state", return_value={"ready": True}):
             for provider in PROVIDER_FILES:
                 for profile in ("light", "standard", "comprehensive"):
                     work["sdd"]["provider"] = provider

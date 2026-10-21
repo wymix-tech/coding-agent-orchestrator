@@ -71,7 +71,7 @@ class PiChildProvisioning(unittest.TestCase):
             cao.save_json(agent_dir / 'settings.json', {'subagents': {'defaultSubagentOnlyExtensions': ['/global-hook.ts']}})
             result = subprocess.CompletedProcess([], 0, '', '')
             with patch.dict(cao.os.environ, {'PI_CODING_AGENT_DIR': str(agent_dir)}), \
-                    patch.object(cao, 'command_exists', return_value=True), \
+                    patch("scripts.cao_instructions.command_exists", return_value=True), \
                     patch.object(cao.subprocess, 'run', return_value=result):
                 self.assertEqual('installed', cao.install_host_adapter(repo, 'pi')['status'])
             extensions = json.loads((repo / '.pi/settings.json').read_text())['subagents']['defaultSubagentOnlyExtensions']
@@ -86,7 +86,7 @@ class PiChildProvisioning(unittest.TestCase):
                 'agentOverrides': {'custom': {'tools': ['read']}}}}
             cao.save_json(repo / '.pi/settings.json', original)
             result = subprocess.CompletedProcess([], 0, '', '')
-            with patch.object(cao, 'command_exists', return_value=True), patch.object(cao.subprocess, 'run', return_value=result):
+            with patch("scripts.cao_instructions.command_exists", return_value=True), patch.object(cao.subprocess, 'run', return_value=result):
                 for _ in range(2):
                     self.assertEqual('installed', cao.install_host_adapter(repo, 'pi')['status'])
             saved = json.loads((repo / '.pi/settings.json').read_text())
