@@ -15,10 +15,12 @@
     "skills": ["./SKILL.md"]
   },
   "peerDependencies": {
-    "@earendil-works/pi-coding-agent": "1.1.0"
+    "@earendil-works/pi-coding-agent": "1.1.0",
+    "@earendil-works/pi-tui": "1.1.0"
   },
   "devDependencies": {
     "@earendil-works/pi-coding-agent": "1.1.0",
+    "@earendil-works/pi-tui": "1.1.0",
     "typescript": "5.9.3",
     "@types/node": "^22.0.0"
   }

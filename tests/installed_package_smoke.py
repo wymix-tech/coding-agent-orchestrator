@@ -33,7 +33,7 @@ def main():
                    "root=cao.package_root_dir(); "
                    "from scripts.skill_guidance import STAGE_FILES, PROVIDER_FILES, CONTRACT_FILES; "
                    "assert all((root/p).is_file() for p in {*STAGE_FILES.values(), *PROVIDER_FILES.values(), *CONTRACT_FILES.values()}); "
-                   "assert all((root/p).is_file() for p in ['hosts/pi/coding-orchestrator.ts','hosts/pi/internal/failure-policy.ts','hooks/host-event.sh','hosts/claude-code/settings.fragment.json','hosts/codex/hooks.json','SKILL.md']); "
+                   "assert all((root/p).is_file() for p in ['hosts/pi/coding-orchestrator.ts','hosts/pi/internal/failure-policy.ts','hosts/pi/internal/context-presentation.ts','hooks/host-event.sh','hosts/claude-code/settings.fragment.json','hosts/codex/hooks.json','SKILL.md']); "
                    "assert not (root/'docs').exists(), 'Runtime installation must not contain developer docs'; "
                    "assert cao.overall_verification_status([{'required':False,'status':'failed'}]) == 'blocked'; "
                    "assert dashboard.dashboard_html_path().is_file(); print(json.dumps({'runner':verification_runner.__file__,'invocation':cao.cao_invocation()}))")
