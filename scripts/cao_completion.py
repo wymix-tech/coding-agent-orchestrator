@@ -97,8 +97,13 @@ def sdd_acceptance_state(repo: Path, work: dict) -> dict:
 
 
 def verification_inputs(repo: Path, work: dict, cfg: dict) -> dict:
+    record = (work.get("sdd") or {}).get("acceptance") or {}
+    native_acceptance = bool(record.get("declaration") and (work.get("path_assessment") or {}).get("profile") != "light")
+    excluded = {work["requirement"]["path"]}
+    if native_acceptance:
+        excluded |= sdd_acceptance_outputs(repo, work)
     inputs = {"snapshot_format": SNAPSHOT_FORMAT, "requirement_sha256": sha256_file(repo / work["requirement"]["path"]),
-            "code_snapshot": code_snapshot(repo, {work["requirement"]["path"]}),
+            "code_snapshot": code_snapshot(repo, excluded),
             "rules_snapshot": rules_snapshot(repo, cfg),
             "verification_config_sha256": verification_snapshot(cfg, repo),
             "assessment_revision": (work.get("path_assessment") or {}).get("revision")}
@@ -112,10 +117,8 @@ def verification_inputs(repo: Path, work: dict, cfg: dict) -> dict:
     plan_state = provider_verification_plan_state(repo, work)
     if plan_state["state"] != "not_applicable":
         inputs["rules_snapshot"] = binding_digest({"rules": inputs["rules_snapshot"], "native_plan": plan_state})
-    record = (work.get("sdd") or {}).get("acceptance") or {}
-    if record.get("declaration") and (work.get("path_assessment") or {}).get("profile") != "light":
+    if native_acceptance:
         sources = source_hashes(repo, record["declaration"], provider_output_dirs(work["sdd"]["provider"]))
-        inputs["code_snapshot"] = code_snapshot(repo, {work["requirement"]["path"]} | sdd_acceptance_outputs(repo, work))
         inputs["rules_snapshot"] = acceptance_digest({"rules": inputs["rules_snapshot"],
                                                       "declaration": record["declaration_sha256"], "sources": sources})
     return inputs

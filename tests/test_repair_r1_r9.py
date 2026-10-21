@@ -150,7 +150,7 @@ class VerifyIntegrity(RepairCase):
         work = cao.load_work(self.repo, wid)
         # Explicit legacy-state fixture, not real acceptance evidence.
         work['verification'].pop('snapshot_format')
-        work['verification']['code_snapshot'] = work['verification']['code_snapshot'].removeprefix('v3:')
+        work['verification']['code_snapshot'] = work['verification']['code_snapshot'].removeprefix('v4:')
         cao.save_work(self.repo, work)
         self.assertEqual(self.run_cli('done')[0], 2)
         self.assertEqual(self.run_cli('verify')[0], 0)
@@ -285,7 +285,7 @@ class SnapshotIntegrity(RepairCase):
     def test_r5_permissions_links_cycles_external_and_version(self):
         source = self.repo / 'run.sh'; source.write_text('echo ok\n'); source.chmod(0o755)
         initial = cao.code_snapshot(self.repo)
-        self.assertTrue(initial.startswith('v3:'))
+        self.assertTrue(initial.startswith('v4:'))
         if os.name != 'nt':
             source.chmod(0o644); self.assertNotEqual(initial, cao.code_snapshot(self.repo))
         folder = self.repo / 'src'; folder.mkdir(); (folder / 'app.py').write_text('x=1')

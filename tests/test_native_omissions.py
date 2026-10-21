@@ -118,6 +118,7 @@ class NativeOmissionTests(RepairCase):
     def test_git_commit_required_after_fresh_verify_and_does_not_stale_it(self):
         self.setup_oneshot();self.review();self.assertEqual(self.run_cli('verify')[0],0)
         subprocess.run(['git','init','-q'],cwd=self.repo,check=True)
+        (self.repo/'.git/info/exclude').write_text('__pycache__/\n*.py[cod]\n')
         self.assertEqual(self.run_cli('done')[1]['reason'],'NATIVE_SPEC_UNTRACKED')
         subprocess.run(['git','add','-A'],cwd=self.repo,check=True)
         subprocess.run(['git','-c','user.name=Fixture','-c','user.email=fixture@example.test','commit','-qm','feat: fixture'],cwd=self.repo,check=True)

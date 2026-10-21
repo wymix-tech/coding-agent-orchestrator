@@ -1,5 +1,7 @@
 # Verification baseline
 
+Contents: [Enter when](#enter-when) · [Execute](#execute) · [Script contract](#script-contract) · [Generated outputs and scope](#generated-outputs-and-snapshot-scope-format-v4) · [Exit when](#exit-when) · [If blocked](#if-blocked)
+
 ## Enter when
 
 An active Work exists and bootstrap reports `mode: verification_setup`, or accepted verification declarations/wrappers have changed.
@@ -84,8 +86,9 @@ Use `cao verification configure --test-script` for required test capability, or 
 `cao verify --script` is a one-off engineering check and cannot satisfy completion evidence. Scripts are
 trusted, not sandboxed; each has a finite positive `timeout_seconds` (default 300), process-tree cleanup,
 4000-byte output tails and a `timed_out` result (124/error on timeout). Input changes during execution
-mark the saved result stale. Snapshots prune ignored directories; internal file links use lexical names,
-directory links are not followed, and external file links/read failures cannot certify freshness.
+mark the saved result stale. Snapshots include untracked inputs, prune dependency caches, hash internal
+file/directory links under their lexical paths, and reject external links, cycles and unreadable inputs.
+The rules below distinguish generated outputs from source inputs.
 
 ## Exit when
 
@@ -94,3 +97,70 @@ The required baseline is accepted. Rerun bootstrap, then follow path assessment 
 ## If blocked
 
 Missing tools, missing dependencies and zero tests must fail/block. Ask for missing stack choices; do not install dependencies, overwrite scripts, fake a pass or use `init --force`.
+
+
+## Generated outputs and snapshot scope (format v4)
+
+`build`, `dist` and `target` are ordinary directory names and are scanned by default,
+at every depth. `.gitignore` does not define the verification input boundary.
+CAO skips root `.git` / `.orchestrator` metadata (whose relevant inputs are bound
+separately) and dependency/cache components such as `node_modules`, `.venv`, `venv`,
+`__pycache__`, `.pytest_cache`, `.mypy_cache`. Git-indexed inputs override cache
+pruning and user exclusions. Other files, including untracked source, are hashed.
+
+Declare report outputs before running tests; do not ignore a changed post-run
+snapshot or replace the pre-run baseline with it:
+
+```sh
+cao verification configure --replace --output coverage.xml --output reports/
+```
+
+This updates only the output list and preserves configured scripts. Repeated
+`--output` flags replace that list; `--clear-outputs --replace` clears it. For
+build products and caches that may contain generated code, use explicit scope
+exclusions, whose Git-indexed files still remain inputs:
+
+```sh
+cao verification configure --replace --exclude-path build/ --exclude-path dist/
+```
+
+Repeated `--exclude-path` flags replace the exclusion list;
+`--clear-exclude-paths --replace` clears it. Both declarations can be set in one
+configure command, including when configuring new `--test-script` commands.
+Unmentioned lists and unrelated configuration are preserved.
+
+Equivalent persisted fields:
+
+```json
+{
+  "snapshot": {"exclude_paths": ["build/", "dist/"]},
+  "verification": {"outputs": ["coverage.xml", "reports/"]}
+}
+```
+
+Paths use native filesystem case semantics and project-root-relative POSIX syntax: a file is exact,
+and trailing `/` means the complete subtree at that path. `build/` does not
+match `src/build/`. Globs, absolute paths, traversal, root-wide declarations and
+symlink declarations are rejected. Directories must have a trailing `/`.
+Output trees are checked before pruning; source-like files (including scripts,
+Markdown/YAML and JavaScript), manifests, rules, requirements, native SDD paths,
+verification wrappers and Git-indexed files cannot be declared as report
+outputs. Use a dedicated report tree of non-source files, or declare exact XML,
+JSON, text or HTML report files. Source/wrapper/rule paths cannot be excluded;
+explicit build/cache exclusions never override indexed inputs. Exclusions are
+trusted scope declarations, not a safe place to store untracked product input.
+
+An existing Work requires review/reanchor when scope changes. Format v4 also
+invalidates earlier verification bindings: review the intended
+scope and run `cao reopen --reanchor --reason "Reviewed snapshot v4 scope"`
+(or follow the pending human baseline-approval instruction), then rerun native
+reviews, `cao verify` and native acceptance where required. Do not edit Work
+state to migrate evidence. Completed history is preserved; inspect/reopen a
+completed Work explicitly if a new verification is needed. Rollback to an older
+binary does not make v4 evidence valid under its old algorithm.
+
+An undeclared changing report is still an input and can produce
+`VERIFICATION_SOURCE_CHANGED`. A configuration change produces
+`VERIFICATION_CONFIG_CHANGED`; an unreadable input or invalid scope at commit
+produces `VERIFICATION_SNAPSHOT_FAILED`. The result retains the script outcome
+in `run_status` while the official status remains `stale`.

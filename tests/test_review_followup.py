@@ -236,6 +236,7 @@ class ReviewFollowup(unittest.TestCase):
         t.run_cli("verify")
         t.run_cli("sdd", "acceptance", "run")
         self.assertEqual("NATIVE_SPEC_UNTRACKED", t.run_cli("done", expected=2)["reason"])
+        (t.repo / ".git/info/exclude").write_text("__pycache__/\n*.py[cod]\n")
         subprocess.run(["git", "add", "-A"], cwd=t.repo, check=True, capture_output=True)
         subprocess.run(["git", "-c", "user.name=Fixture", "-c", "user.email=fixture@example.test",
                         "commit", "-qm", "Reviewed oneshot fixture"], cwd=t.repo, check=True, capture_output=True)

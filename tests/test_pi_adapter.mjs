@@ -1,7 +1,8 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, symlinkSync} from 'node:fs';
-import {spawnSync} from 'node:child_process';
+import {spawn, spawnSync} from 'node:child_process';
+import {once} from 'node:events';
 import os from 'node:os';
 import path from 'node:path';
 import install from '../hosts/pi/coding-orchestrator.ts';
@@ -19,6 +20,7 @@ function resolvePython() {
 function fixture() {
   const python = resolvePython(); // Resolve before any test removes Python from PATH.
   const dir = mkdtempSync(path.join(os.tmpdir(), 'cao-contract-'));
+  mkdirSync(path.join(dir, '.orchestrator'));
   const keys = ['PATH', 'CAO_CAPTURE', 'CAO_FAKE_MODE', 'CAO_TEST_PYTHON'];
   const old = Object.fromEntries(keys.map(key => [key, process.env[key]]));
   process.env.CAO_TEST_PYTHON = python;
@@ -31,7 +33,9 @@ with open(os.environ['CAO_CAPTURE'],'a',encoding='utf-8') as f: f.write(json.dum
 mode=os.environ.get('CAO_FAKE_MODE','allow')
 if mode=='delay': time.sleep(.15)
 if mode=='timeout': time.sleep(10)
-if mode=='pipe-child': subprocess.Popen([sys.executable,'-c','import time; time.sleep(10)'])
+if mode=='pipe-child':
+ p=subprocess.Popen([sys.executable,'-c','import time; time.sleep(30)'])
+ with open(os.path.join(os.path.dirname(os.environ['CAO_CAPTURE']),'child.pid'),'w') as f: f.write(str(p.pid))
 if mode=='exit': print('backend failed',file=sys.stderr); sys.exit(2)
 if mode=='bad-json': print('not-json'); sys.exit(0)
 if mode=='invalid': print(json.dumps({'decision':'unknown'})); sys.exit(0)
@@ -438,18 +442,19 @@ test('allow guidance reaches model once without triggering another turn', posix,
   } finally {f.close();}
 });
 
-test('tool deny blocks while bridge failures fail open and diagnose once', posix, async () => {
+test('tool deny and bridge failures block writes and diagnose once', posix, async () => {
   const f = fixture();
   try {
     process.env.CAO_FAKE_MODE = 'deny';
     assert.deepEqual(await f.handlers.get('tool_call')(toolCall, f.context('A')), {block: true, reason: 'protected state'});
     for (const mode of ['bad-json', 'invalid', 'bad-fields', 'exit']) {
       process.env.CAO_FAKE_MODE = mode;
-      assert.equal(await f.handlers.get('tool_call')(toolCall, f.context(mode, true)), undefined);
+      assert.equal((await f.handlers.get('tool_call')(toolCall, f.context(mode, true))).block, true);
       await f.handlers.get('tool_call')(toolCall, f.context(mode, true));
     }
-    assert.equal(f.notices.length, 4);
-    assert.ok(f.notices.every(([, level]) => level === 'warning'));
+    assert.equal(f.notices.filter(([, level]) => level === 'warning').length, 4);
+    assert.equal(f.notices.filter(([, level]) => level === 'info').length, 4);
+    assert.equal(f.sent.length, 4, 'repeated faults must not duplicate recovery guidance');
   } finally {f.close();}
 });
 
@@ -515,7 +520,7 @@ test('missing bridge diagnoses on stderr without requiring a UI', posix, async (
   try {
     rmSync(path.join(f.dir, 'cao'));
     process.env.PATH = f.dir;
-    assert.equal(await f.handlers.get('tool_call')(toolCall, f.context('A')), undefined);
+    assert.equal((await f.handlers.get('tool_call')(toolCall, f.context('A'))).block, true);
     await f.handlers.get('tool_call')(toolCall, f.context('A'));
     assert.equal(f.notices.length, 0);
     assert.equal(diagnostics.length, 1);
@@ -528,19 +533,27 @@ test('inherited output pipes cannot postpone bridge timeout', {...posix, timeout
   try {
     process.env.CAO_FAKE_MODE = 'pipe-child';
     const start = Date.now();
-    assert.equal(await f.handlers.get('tool_call')(toolCall, f.context('A', true)), undefined);
-    assert.ok(Date.now() - start < 8000);
+    assert.equal((await f.handlers.get('tool_call')(toolCall, f.context('A', true))).block, true);
+    assert.ok(Date.now() - start < 10000);
     assert.match(f.notices[0][0], /CAO_TIMEOUT/);
+    const pid = Number(readFileSync(path.join(f.dir, 'child.pid'), 'utf8'));
+    try {
+      process.kill(pid, 0);
+      // Linux may retain a killed orphan as a zombie until init reaps it.
+      assert.match(readFileSync(`/proc/${pid}/stat`, 'utf8'), /\) Z /);
+    } catch (error) {
+      assert.ok(['ESRCH', 'ENOENT'].includes(error.code), String(error));
+    }
   } finally {f.close();}
 });
 
-test('bridge timeout is bounded and fail-open', {...posix, timeout: 12000}, async () => {
+test('bridge timeout is bounded and fail-closed', {...posix, timeout: 12000}, async () => {
   const f = fixture();
   try {
     process.env.CAO_FAKE_MODE = 'timeout';
     const start = Date.now();
-    assert.equal(await f.handlers.get('tool_call')(toolCall, f.context('A', true)), undefined);
-    assert.ok(Date.now() - start < 8000);
+    assert.equal((await f.handlers.get('tool_call')(toolCall, f.context('A', true))).block, true);
+    assert.ok(Date.now() - start < 10000);
     assert.match(f.notices[0][0], /CAO_TIMEOUT/);
   } finally {f.close();}
 });
@@ -579,5 +592,95 @@ test('an unavailable interpreter diagnoses the actual fixture failure', posix, (
   } finally {
     if (previous === undefined) delete process.env.CAO_TEST_PYTHON;
     else process.env.CAO_TEST_PYTHON = previous;
+  }
+});
+
+
+test('offline gate allows literal recovery only and blocks disguised shell effects', posix, async () => {
+  const f = fixture();
+  try {
+    process.env.CAO_FAKE_MODE = 'bad-json';
+    const ctx = f.context('offline');
+    for (const command of ['pwd', 'cao status', 'cao host status --host pi', 'cao host install --host pi']) {
+      assert.equal(await f.handlers.get('tool_call')({toolName: 'bash', input: {command}}, ctx), undefined);
+    }
+    for (const command of ['cao done', 'cao init --force', 'cao status > product.py',
+      'cao host install --host pi && touch product.py', 'cat README.md | sh',
+      'cao status; touch product.py', 'cao status\nrm file', 'cao status $(touch file)',
+      'cao status `touch file`', 'cat <(touch file)', 'python -c "print(1)"']) {
+      assert.equal((await f.handlers.get('tool_call')({toolName: 'bash', input: {command}}, ctx)).block, true, command);
+    }
+    assert.equal((await f.handlers.get('tool_call')({toolName: 'bash',
+      input: {command: 'cao status', cwd: '/other'}}, ctx)).block, true);
+    for (const toolName of ['read', 'ls', 'grep', 'find']) {
+      assert.equal(await f.handlers.get('tool_call')({toolName, input: {path: 'README.md'}}, ctx), undefined);
+    }
+    for (const toolName of ['edit', 'write', 'apply_patch', 'customUnknown']) {
+      assert.equal((await f.handlers.get('tool_call')({toolName, input: {}}, ctx)).block, true);
+    }
+    assert.match(f.sent.at(-1)[0].content, /GATE_UNAVAILABLE/);
+  } finally { f.close(); }
+});
+
+test('disabled projects are distinct from missing configuration and cannot downgrade after activation', posix, async () => {
+  const f = fixture();
+  try {
+    process.env.CAO_FAKE_MODE = 'exit';
+    rmSync(path.join(f.dir, '.orchestrator'), {recursive: true});
+    const ctx = f.context('enrollment');
+    assert.equal(await f.handlers.get('tool_call')(toolCall, ctx), undefined);
+    mkdirSync(path.join(f.dir, '.orchestrator'));
+    assert.equal((await f.handlers.get('tool_call')(toolCall, ctx)).block, true);
+    rmSync(path.join(f.dir, '.orchestrator'), {recursive: true});
+    assert.equal((await f.handlers.get('tool_call')(toolCall, ctx)).block, true);
+  } finally { f.close(); }
+});
+
+test('notification failures preserve tool results while oversized pre-tool responses block writes', posix, async () => {
+  const f = fixture();
+  try {
+    const ctx = f.context('notifications');
+    process.env.CAO_FAKE_MODE = 'large';
+    assert.equal((await f.handlers.get('tool_call')(toolCall, ctx)).block, true);
+    const event = {toolName: 'write', input: {path: 'x'}, content: [{type: 'text', text: 'original'}]};
+    const original = structuredClone(event);
+    assert.equal(await f.handlers.get('tool_result')(event, ctx), undefined);
+    assert.deepEqual(event, original);
+  } finally { f.close(); }
+});
+
+
+test('nested project directories retain offline gate enforcement', posix, async () => {
+  const f = fixture();
+  try {
+    process.env.CAO_FAKE_MODE = 'bad-json';
+    const nested = path.join(f.dir, 'src', 'nested');
+    mkdirSync(nested, {recursive: true});
+    const ctx = {...f.context('nested'), cwd: nested};
+    assert.equal((await f.handlers.get('tool_call')(toolCall, ctx)).block, true);
+  } finally { f.close(); }
+});
+
+test('state lock contention returns a core diagnostic before the bridge deadline', {...posix, timeout: 12000}, async () => {
+  const f = realCoreFixture();
+  let owner;
+  try {
+    mkdirSync(path.join(f.dir, '_bmad'));
+    f.cli('init', '--host', 'codex', '--sdd', 'bmad');
+    owner = spawn(f.python, ['-u', '-c',
+      "import fcntl,sys,time; f=open(sys.argv[1],'a'); fcntl.flock(f,fcntl.LOCK_EX); print('ready',flush=True); time.sleep(30)",
+      path.join(f.dir, '.orchestrator/state.lock')], {stdio: ['ignore', 'pipe', 'pipe']});
+    await once(owner.stdout, 'data');
+    const started = Date.now();
+    const reply = await f.handlers.get('tool_call')(toolCall, f.context('lock'));
+    assert.equal(reply.block, true);
+    assert.match(reply.reason, /STATE_LOCK_TIMEOUT/);
+    assert.ok(Date.now() - started < 8000);
+  } finally {
+    if (owner) {
+      owner.kill('SIGKILL');
+      await once(owner, 'close');
+    }
+    f.close();
   }
 });

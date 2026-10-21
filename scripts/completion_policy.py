@@ -6,6 +6,8 @@ import math
 import time
 from pathlib import Path
 
+from scripts.snapshot_version import SNAPSHOT_FORMAT
+
 SNAPSHOT_KEYS = ("snapshot_format", "requirement_sha256", "code_snapshot", "rules_snapshot",
                  "verification_config_sha256", "assessment_revision")
 
@@ -144,7 +146,7 @@ def workflow_ready(work: dict, repo: Path) -> tuple[bool, str | None]:
 def verification_fresh(work: dict, current: dict) -> bool:
     verification = work.get("verification") or {}
     anchor = work.get("acceptance") or {}
-    return bool(verification.get("snapshot_format") == 3 and verification.get("version") == 2 and verification.get("source") == "config"
+    return bool(verification.get("snapshot_format") == SNAPSHOT_FORMAT and verification.get("version") == 2 and verification.get("source") == "config"
                 and verification.get("status") == "passed"
                 and required_verification_status(verification.get("results", [])) == "passed"
                 and anchor.get("version") == 2
