@@ -1,4 +1,7 @@
-"""No-Work product writes block; intake/control and bridge failures stay open."""
+"""No-Work boundaries and the legacy shell bridge fallback contract.
+
+Pi failure semantics are exercised through real events in test_pi_adapter.mjs.
+"""
 import json
 import os
 import pathlib
@@ -87,13 +90,6 @@ class HostAdapterFailsOpen(unittest.TestCase):
                                capture_output=True, timeout=30)
             self.assertEqual(p.returncode, 0, f"hook failed closed: {p.stderr}")
 
-    def test_pi_adapter_never_denies_on_failure(self):
-        source = (ROOT / "hosts" / "pi" / "coding-orchestrator.ts").read_text(encoding="utf-8")
-        # Real timeout, ENOENT and invalid-response behavior is tested in test_pi_adapter.mjs.
-        self.assertIn('return { diagnostic: result.error || "CAO_UNAVAILABLE" }', source)
-        # The old fail-closed branches must be gone.
-        self.assertNotIn('decision: "deny", reason: r.stderr', source)
-        self.assertNotIn('decision: "deny", reason: "Invalid CAO response"', source)
 
 
 if __name__ == "__main__":

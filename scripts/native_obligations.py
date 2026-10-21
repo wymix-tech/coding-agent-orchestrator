@@ -437,19 +437,29 @@ def commit_state(repo, work, ignored_dirs):
         if dirty.returncode or staged.returncode or blob.returncode or head_blob.returncode or blob.stdout.strip() != head_blob.stdout.strip():
             return blocked('NATIVE_SPEC_UNCOMMITTED')
         status = subprocess.run(['git', '-C', str(repo), 'status', '--porcelain=v1', '-z', '--untracked-files=all', '--', '.'], capture_output=True, check=True).stdout
+        from scripts.cao_runtime import config
+        from scripts.snapshot_scope import CACHE_NAMES, INTERNAL_ROOTS, excluded_input, path_key, validate_scope
+        scope = validate_scope(repo.resolve(), config(repo))
+        extra_roots = {path_key(name) for name in ignored_dirs - CACHE_NAMES - INTERNAL_ROOTS}
         changed = []
         entries = status.split(b'\0'); i = 0
         while i < len(entries):
-            entry = entries[i]; i += 1
-            if not entry: continue
+            entry = entries[i]
+            i += 1
+            if not entry:
+                continue
             state, path = entry[:2], entry[3:].decode('utf-8')
             paths = [path]
             if b'R' in state or b'C' in state:
-                if i < len(entries): paths.append(entries[i].decode('utf-8')); i += 1
+                if i < len(entries):
+                    paths.append(entries[i].decode('utf-8'))
+                    i += 1
             for value in paths:
                 prefix = repo.resolve().relative_to(Path(exists.stdout.strip()).resolve()).as_posix()
-                if prefix != '.': value = Path(value).relative_to(prefix).as_posix()
-                if value != source['path'] and not any(part in ignored_dirs for part in Path(value).parts):
+                if prefix != '.':
+                    value = Path(value).relative_to(prefix).as_posix()
+                tracked = {path_key(value)} if state != b'??' else set()
+                if value != source['path'] and not excluded_input(value, scope, tracked, additional_roots=extra_roots):
                     changed.append(value)
         if changed:
             return {'ready': False, 'state': 'pending', 'reason': 'NATIVE_COMMIT_REQUIRED', 'changed': changed[:20],
@@ -457,5 +467,5 @@ def commit_state(repo, work, ignored_dirs):
         head = subprocess.run(['git', '-C', str(repo), 'rev-parse', 'HEAD'], capture_output=True, text=True)
         return {'ready': head.returncode == 0, 'state': 'committed' if head.returncode == 0 else 'pending',
                 'reason': None if head.returncode == 0 else 'NATIVE_COMMIT_REQUIRED', 'head': head.stdout.strip()}
-    except (OSError, ValueError, subprocess.SubprocessError) as exc:
+    except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as exc:
         return {'ready': False, 'state': 'blocked', 'reason': 'NATIVE_COMMIT_CHECK_FAILED', 'detail': str(exc)}

@@ -26,7 +26,10 @@ HANDOFF_DIR = ORCH / "handoffs"
 REQUIREMENT_DIR = ORCH / "requirements"
 
 
-SNAPSHOT_IGNORE_DIRS = {".git", ".orchestrator", ".venv", "venv", "node_modules", "target", "build", "dist", "__pycache__", ".pytest_cache", ".mypy_cache"}
+SNAPSHOT_INTERNAL_ROOTS = {".git", ".orchestrator"}
+SNAPSHOT_CACHE_DIRS = {".venv", "venv", "node_modules", "__pycache__", ".pytest_cache", ".mypy_cache"}
+# Compatibility for native commit checks. build/dist/target are not inherently generated.
+SNAPSHOT_IGNORE_DIRS = SNAPSHOT_INTERNAL_ROOTS | SNAPSHOT_CACHE_DIRS
 
 
 DEFAULT_CONFIG: dict[str, Any] = {

@@ -39,6 +39,10 @@ Inspect sessions with `cao sessions list/show`, handoffs with `cao handoff list/
 
 ### Native host execution recovery
 
+If the Pi bridge itself is unavailable, follow [Pi gate failure and recovery](pi-gate-recovery.md).
+Enabled projects block dangerous operations without a trusted decision; the offline recovery
+exceptions are deliberately narrower than the healthy core policy.
+
 For unavailable historical BMAD workflow/implementation observation, use only the
 existing audited `--allow-unverified --reason` exception where the CLI supports
 it; do not invent historical execution or use a renderer as workflow execution.

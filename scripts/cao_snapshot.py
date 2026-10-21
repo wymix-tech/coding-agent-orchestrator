@@ -9,22 +9,32 @@ import stat
 from pathlib import Path
 from typing import Any
 
-from scripts.cao_defaults import SNAPSHOT_IGNORE_DIRS
-from scripts.cao_runtime import rel, sha256_file, verification_scripts
+from scripts.cao_runtime import config, rel, sha256_file, verification_scripts
 from scripts.completion_policy import acceptance_hash, anchor_acceptance, normalize_timeout
 from scripts.native_obligations import digest as native_digest
-
-
-SNAPSHOT_FORMAT = 3
+from scripts.snapshot_scope import (
+    SNAPSHOT_FORMAT, excluded_input, git_inputs, path_key, scope_config, validate_scope,
+)
 
 
 def code_snapshot(repo: Path, excluded: set[str] | None = None, additional_ignore_dirs: set[str] | None = None) -> str:
     """Versioned content, execution bits and link topology; bounded internal traversal."""
     repo = repo.resolve()
     excluded = excluded or set()
-    ignored = SNAPSHOT_IGNORE_DIRS | (additional_ignore_dirs or set())
+    tracked = git_inputs(repo)
+    cfg = config(repo)
+    scope = validate_scope(repo, cfg, tracked, protected=excluded)
+    tracked_keys = {path_key(name) for name in tracked}
+    tracked_dirs = {path_key(parent.as_posix()) for name in tracked for parent in Path(name).parents}
+    extra = {path_key(name.rstrip("/")) for name in (additional_ignore_dirs or set())}
+
+    def skip(relative, directory=False):
+        return excluded_input(relative, scope, tracked_keys,
+                              tracked_dirs if directory else (), extra)
+
     h = hashlib.sha256()
     records = []
+    h.update(json.dumps(scope, sort_keys=True).encode())
     visited_entries = 0
     def walk_error(exc):
         raise RuntimeError("SNAPSHOT_READ_FAILED: " + str(exc.filename or repo)) from exc
@@ -41,7 +51,8 @@ def code_snapshot(repo: Path, excluded: set[str] | None = None, additional_ignor
             bits = mode & 0o111 if os.name != "nt" else 0
             return relative, {"type": kind, "executable": bits, "link": target}
         except RuntimeError as exc:
-            if str(exc).startswith("SNAPSHOT_"): raise
+            if str(exc).startswith("SNAPSHOT_"):
+                raise
             raise RuntimeError("SNAPSHOT_SYMLINK_CYCLE: " + relative) from exc
         except (OSError, ValueError) as exc:
             raise RuntimeError("SNAPSHOT_READ_FAILED: " + relative) from exc
@@ -54,7 +65,7 @@ def code_snapshot(repo: Path, excluded: set[str] | None = None, additional_ignor
                 raise RuntimeError("SNAPSHOT_SYMLINK_CYCLE: " + directory.relative_to(repo).as_posix())
         except OSError as exc:
             raise RuntimeError("SNAPSHOT_READ_FAILED: " + str(directory)) from exc
-        dirs[:] = sorted(name for name in dirs if name not in ignored)
+        dirs[:] = sorted(name for name in dirs if not skip((directory / name).relative_to(repo).as_posix(), True))
         visited_entries += len(dirs) + len(names)
         if visited_entries > 100000 or len(directory.relative_to(repo).parts) > 100:
             raise RuntimeError("SNAPSHOT_SCAN_LIMIT: " + str(directory))
@@ -66,17 +77,27 @@ def code_snapshot(repo: Path, excluded: set[str] | None = None, additional_ignor
         for name in names:
             path = directory / name
             relative = path.relative_to(repo).as_posix()
-            if name in ignored or relative in excluded: continue
+            if skip(relative) or relative in excluded:
+                continue
             relative, meta = identity(path)
             if meta["type"] != "file":
                 raise RuntimeError("SNAPSHOT_UNSUPPORTED_INPUT: " + relative)
-            try: content = hashlib.sha256(path.read_bytes()).digest()
-            except OSError as exc: raise RuntimeError("SNAPSHOT_READ_FAILED: " + relative) from exc
+            try:
+                digest = hashlib.sha256()
+                with path.open("rb") as stream:
+                    for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                        digest.update(chunk)
+                content = digest.digest()
+            except OSError as exc:
+                raise RuntimeError("SNAPSHOT_READ_FAILED: " + relative) from exc
             records.append((relative, meta, content))
     for relative, meta, content in sorted(records):
-        h.update(relative.encode()); h.update(b"\0")
-        h.update(json.dumps(meta, sort_keys=True).encode()); h.update(b"\0")
-        h.update(content); h.update(b"\0")
+        h.update(relative.encode())
+        h.update(b"\0")
+        h.update(json.dumps(meta, sort_keys=True).encode())
+        h.update(b"\0")
+        h.update(content)
+        h.update(b"\0")
     return f"v{SNAPSHOT_FORMAT}:" + h.hexdigest()
 
 
@@ -87,7 +108,9 @@ def verification_timeout(cfg: dict[str, Any]) -> float:
 def verification_snapshot(cfg: dict[str, Any], repo: Path | None = None) -> str:
     from scripts.cao_provider_workflows import workflow_command_identities
 
-    config_hash = acceptance_hash(verification_scripts(cfg), verification_timeout(cfg))
+    scope = validate_scope(repo.resolve(), cfg) if repo is not None else scope_config(cfg)
+    config_hash = native_digest({"scripts": acceptance_hash(verification_scripts(cfg), verification_timeout(cfg)),
+                                 "scope": scope})
     files = {}
     if repo is not None:
         for script in verification_scripts(cfg):

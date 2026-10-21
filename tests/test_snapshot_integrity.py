@@ -16,7 +16,7 @@ class SnapshotTests(RepairCase):
         file.write_text("x = 1\n", encoding="utf-8")
         excluded = {"acceptance-tests/test_acceptance.py"}
         initial = cao.code_snapshot(self.repo, excluded)
-        self.assertTrue(initial.startswith("v3:"))
+        self.assertTrue(initial.startswith("v4:"))
         file.write_text("x = 2\n", encoding="utf-8")
         changed = cao.code_snapshot(self.repo, excluded)
         self.assertNotEqual(changed, initial)
@@ -52,11 +52,12 @@ class SnapshotTests(RepairCase):
     def test_product_read_error_is_not_skipped(self):
         file = self.repo / "src.py"
         file.write_text("source\n", encoding="utf-8")
-        original = pathlib.Path.read_bytes
-        def read(path):
-            if path.resolve() == file.resolve(): raise PermissionError("unreadable source")
-            return original(path)
-        with mock.patch.object(pathlib.Path, "read_bytes", read), self.assertRaisesRegex(RuntimeError, "SNAPSHOT_READ_FAILED.*src.py"):
+        original = pathlib.Path.open
+        def read(path, *args, **kwargs):
+            if path.resolve() == file.resolve():
+                raise PermissionError("unreadable source")
+            return original(path, *args, **kwargs)
+        with mock.patch.object(pathlib.Path, "open", read), self.assertRaisesRegex(RuntimeError, "SNAPSHOT_READ_FAILED.*src.py"):
             cao.code_snapshot(self.repo)
 
     def test_unreadable_subtree_is_not_silently_skipped(self):

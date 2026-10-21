@@ -39,6 +39,7 @@ packages = ["scripts"]
 "share/coding-agent-orchestrator/hosts/claude-code" = ["hosts/claude-code/settings.fragment.json"]
 "share/coding-agent-orchestrator/hosts/codex" = ["hosts/codex/hooks.json"]
 "share/coding-agent-orchestrator/hosts/pi" = ["hosts/pi/coding-orchestrator.ts"]
+"share/coding-agent-orchestrator/hosts/pi/internal" = ["hosts/pi/internal/failure-policy.ts"]
 
 [tool.setuptools.package-data]
 scripts = ["dashboard.html"]

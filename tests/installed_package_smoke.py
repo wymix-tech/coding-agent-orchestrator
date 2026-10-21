@@ -33,7 +33,7 @@ def main():
                    "root=cao.package_root_dir(); "
                    "from scripts.skill_guidance import STAGE_FILES, PROVIDER_FILES, CONTRACT_FILES; "
                    "assert all((root/p).is_file() for p in {*STAGE_FILES.values(), *PROVIDER_FILES.values(), *CONTRACT_FILES.values()}); "
-                   "assert all((root/p).is_file() for p in ['hosts/pi/coding-orchestrator.ts','hooks/host-event.sh','hosts/claude-code/settings.fragment.json','hosts/codex/hooks.json','SKILL.md']); "
+                   "assert all((root/p).is_file() for p in ['hosts/pi/coding-orchestrator.ts','hosts/pi/internal/failure-policy.ts','hooks/host-event.sh','hosts/claude-code/settings.fragment.json','hosts/codex/hooks.json','SKILL.md']); "
                    "assert not (root/'docs').exists(), 'Runtime installation must not contain developer docs'; "
                    "assert cao.overall_verification_status([{'required':False,'status':'failed'}]) == 'blocked'; "
                    "assert dashboard.dashboard_html_path().is_file(); print(json.dumps({'runner':verification_runner.__file__,'invocation':cao.cao_invocation()}))")
@@ -120,7 +120,7 @@ def main():
                 subdir = repo / "sub"; subdir.mkdir()
                 assert decision(event("pre_tool", tool_name="exec_command", tool_input={"cmd": "printf x > ../.orchestrator/config.json", "workdir": str(subdir)})) == "deny"
                 verified = cli("verify")
-                assert verified["verification"]["snapshot_format"] == 3
+                assert verified["verification"]["snapshot_format"] == 4
                 assert verified["verification"]["run_id"]
                 cli("done")
                 before_completed = (repo / f".orchestrator/work/{wid}.json").read_bytes()
@@ -193,14 +193,16 @@ def main():
                         subprocess.run(['git', '-C', str(repo), *argv], check=True, capture_output=True, env=env)
                     git('init', '-q')
                     excludes = repo / '.git/info/exclude'
-                    excludes.write_text('.orchestrator/\n_bmad-output/\n')
+                    excludes.write_text('.orchestrator/\n_bmad-output/\n__pycache__/\n*.py[cod]\n')
                     fixture_native_review(repo, lambda _repo, *argv: (0, cli(*argv)), native_id, reviewer_cli=args.cao)
                     cli("verify")
                     git('add', '-A'); git('-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.test', 'commit', '-qm', 'Installed business fixture')
-                    assert cli('done', expected=2)['reason'] == 'NATIVE_SPEC_IGNORED'
-                    excludes.write_text('.orchestrator/\n')
+                    ignored_result = cli('done', expected=2)
+                    assert ignored_result['reason'] == 'NATIVE_SPEC_IGNORED', ignored_result
+                    excludes.write_text('.orchestrator/\n__pycache__/\n*.py[cod]\n')
                     git('add', '--', '_bmad-output/spec-oneshot.md')
-                    assert cli('done', expected=2)['reason'] == 'NATIVE_SPEC_NOT_IN_HEAD'
+                    head_result = cli('done', expected=2)
+                    assert head_result['reason'] == 'NATIVE_SPEC_NOT_IN_HEAD', head_result
                     git('-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.test', 'commit', '-qm', 'Installed SPEC fixture')
                     cli("done")
                     assert oneshot.read_bytes() == before

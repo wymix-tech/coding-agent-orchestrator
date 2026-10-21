@@ -40,6 +40,7 @@ from scripts.smoke_runner import run_smoke
 from scripts.state_store import repo_transaction
 from scripts.verification_runner import run_script
 from scripts.verification_setup import declared_scripts, prepare_config, setup_state
+from scripts.snapshot_scope import paths, validate_scope
 
 
 def cmd_verification_smoke(args: argparse.Namespace) -> int:
@@ -63,15 +64,43 @@ def cmd_verification_configure(args: argparse.Namespace) -> int:
     scripts = []
     raw = {}
     try:
-        scripts = declared_scripts(args.verify_script or [], args.test_script or [], getattr(args, 'security_script', None) or [])
         raw = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+        outputs = getattr(args, "output", None)
+        clear_outputs = getattr(args, "clear_outputs", False)
+        excludes = getattr(args, "exclude_path", None)
+        clear_excludes = getattr(args, "clear_exclude_paths", False)
+        declarations = (("verification", "outputs", outputs, clear_outputs),
+                        ("snapshot", "exclude_paths", excludes, clear_excludes))
+        for section, key, requested, clear in declarations:
+            if requested is not None and clear:
+                raise ValueError("SNAPSHOT_SCOPE_INVALID: conflicting set/clear options for " + section + "." + key)
+        has_scripts = bool(args.verify_script or args.test_script or getattr(args, "security_script", None))
+        if has_scripts:
+            scripts = declared_scripts(args.verify_script or [], args.test_script or [], getattr(args, 'security_script', None) or [])
+        elif outputs is not None or clear_outputs or excludes is not None or clear_excludes:
+            scripts = verification_scripts(raw)
+        else:
+            raise ValueError("VERIFICATION_SCRIPT_REQUIRED")
         candidate, changed = prepare_config(raw, scripts, args.replace, now())
+        for section, key, requested, clear in declarations:
+            if requested is None and not clear:
+                continue
+            normalized = paths(requested or [], section + "." + key)
+            previous = (raw.get(section) or {}).get(key, [])
+            if normalized != previous:
+                if not args.replace:
+                    raise ValueError("VERIFICATION_CONFIG_REPLACE_REQUIRED")
+                candidate = json.loads(json.dumps(candidate))
+                candidate.setdefault(section, {})[key] = normalized
+                candidate.setdefault("verification", {})["configured_at"] = now()
+                changed = True
         effective = json.loads(json.dumps(DEFAULT_CONFIG))
         deep_merge(effective, candidate)
         wid = getattr(args, "work", None) or load_index(repo).get("active_work")
         # An accepted standard cannot be silently reanchored. Only the first
         # valid baseline of a Work started with empty setup is established here.
         work = _read_work(repo, wid) if wid else None
+        validate_scope(repo, effective, protected={work["requirement"]["path"]} if work else ())
         initial_baseline = bool(work and work.get("status") == "active" and
             not setup_state(config(repo))["ready"] and
             (work.get("acceptance") or {}).get("config_sha256") == verification_snapshot(config(repo), repo) and
@@ -232,8 +261,11 @@ def commit_verification(repo, wid, inputs, scripts, results, source, started, ru
             return rejected
         try:
             current = verification_inputs(repo, work, config(repo))
-        except (ValueError, OSError, RuntimeError):
+        except (ValueError, OSError, RuntimeError) as exc:
             current = None
+            snapshot_error = str(exc)
+        else:
+            snapshot_error = None
         changed = current != inputs
         plan_state = observe_plan_scope(repo, work)
         if plan_state.get("scope"):
@@ -242,6 +274,15 @@ def commit_verification(repo, wid, inputs, scripts, results, source, started, ru
         verification = {"version": 2, "run_id": run["run_id"], "sequence": run["sequence"], "generation": run["generation"], "source": source, "at": started, **inputs,
                         "scripts": scripts, "results": results,
                         "status": "stale" if changed else status, "run_status": status}
+        if changed:
+            changed_keys = [key for key in inputs if current is None or current.get(key) != inputs[key]]
+            reason = ("VERIFICATION_SNAPSHOT_FAILED" if current is None else
+                      "VERIFICATION_CONFIG_CHANGED" if "verification_config_sha256" in changed_keys else
+                      "VERIFICATION_SOURCE_CHANGED" if "code_snapshot" in changed_keys else "VERIFICATION_INPUTS_CHANGED")
+            verification.update(reason_code=reason, changed_inputs=changed_keys,
+                                reason=snapshot_error or "Verification inputs changed during execution.",
+                                next="Restore readable inputs and review scope/config changes; explicitly reanchor changed standards, then rerun cao verify. Do not accept the post-run snapshot as evidence.")
+            work["execution"]["next_action"] = action("agent", verification["next"], reason=reason)
         work["verification"] = verification
         if not changed:
             work["execution"]["step"] = "verification"
