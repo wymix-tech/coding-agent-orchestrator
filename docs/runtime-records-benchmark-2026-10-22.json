@@ -1,0 +1,103 @@
+{
+  "streams": [
+    {
+      "mib_per_stream": 1,
+      "mode": "off",
+      "seconds": 0.1788,
+      "python_peak_bytes": 85927,
+      "rss_peak_bytes": 15859712,
+      "stored_log_bytes": 0
+    },
+    {
+      "mib_per_stream": 1,
+      "mode": "bounded",
+      "seconds": 0.2461,
+      "python_peak_bytes": 105925,
+      "rss_peak_bytes": 15859712,
+      "stored_log_bytes": 2097152
+    },
+    {
+      "mib_per_stream": 10,
+      "mode": "off",
+      "seconds": 2.1086,
+      "python_peak_bytes": 85928,
+      "rss_peak_bytes": 15859712,
+      "stored_log_bytes": 0
+    },
+    {
+      "mib_per_stream": 10,
+      "mode": "bounded",
+      "seconds": 1.8857,
+      "python_peak_bytes": 109105,
+      "rss_peak_bytes": 15859712,
+      "stored_log_bytes": 16777216
+    },
+    {
+      "mib_per_stream": 100,
+      "mode": "off",
+      "seconds": 15.1914,
+      "python_peak_bytes": 85929,
+      "rss_peak_bytes": 15859712,
+      "stored_log_bytes": 0
+    },
+    {
+      "mib_per_stream": 100,
+      "mode": "bounded",
+      "seconds": 15.3628,
+      "python_peak_bytes": 101025,
+      "rss_peak_bytes": 15859712,
+      "stored_log_bytes": 16777216
+    }
+  ],
+  "observations": [
+    {
+      "concurrency": 1,
+      "count": 64,
+      "p50_ms": 2.247,
+      "p95_ms": 3.027
+    },
+    {
+      "concurrency": 4,
+      "count": 64,
+      "p50_ms": 10.116,
+      "p95_ms": 11.493
+    },
+    {
+      "concurrency": 16,
+      "count": 64,
+      "p50_ms": 38.947,
+      "p95_ms": 40.622
+    }
+  ],
+  "queries": [
+    {
+      "records": 100,
+      "milliseconds": 15.046,
+      "python_peak_bytes": 48523
+    },
+    {
+      "records": 1000,
+      "milliseconds": 104.591,
+      "python_peak_bytes": 52739
+    },
+    {
+      "records": 10000,
+      "milliseconds": 895.971,
+      "python_peak_bytes": 53179
+    }
+  ],
+  "hooks": [
+    {
+      "mode": "off",
+      "count": 25,
+      "p50_ms": 90.603,
+      "p95_ms": 100.045
+    },
+    {
+      "mode": "meaningful",
+      "count": 25,
+      "p50_ms": 95.395,
+      "p95_ms": 109.028
+    }
+  ]
+}

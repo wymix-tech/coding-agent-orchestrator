@@ -265,6 +265,11 @@ def cmd_sdd_workflow(args: argparse.Namespace) -> int:
             record_workflow_unverified(repo, work, provider, str(workflow.get("name") or ""), unverified_reason, "complete")
         work["execution"]["step"] = "native-sdd-workflow-completed"
         work["execution"]["next_action"] = action("agent", "Continue implementation/review/verification according to the selected path; record manual reviews with `cao gate satisfy`, record additional native workflow outputs if produced, then run configured `cao verify` for derived gates and `cao done`.")
+    from scripts.runtime_store import queue_record
+    names = {"select": "selected", "execute": "execution_recorded", "complete": "completed"}
+    queue_record(repo, work, "workflow." + names[args.workflow_action],
+                 {"provider": provider, "workflow": sdd.get("workflow")},
+                 source="agent_declaration" if args.workflow_action == "execute" else "cao_command")
     save_work(repo, work)
     print(json.dumps({"ok": True, "work_item": work_summary(work), "workflow": sdd.get("workflow")}, ensure_ascii=False, indent=2)); return 0
 

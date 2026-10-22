@@ -4,6 +4,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from scripts.runtime_store import DEFAULTS as RUNTIME_DEFAULTS
+
 
 ORCH = Path(".orchestrator")
 
@@ -35,6 +37,7 @@ SNAPSHOT_IGNORE_DIRS = SNAPSHOT_INTERNAL_ROOTS | SNAPSHOT_CACHE_DIRS
 DEFAULT_CONFIG: dict[str, Any] = {
     "version": 1,
     "language": {"user": "zh-CN"},
+    "runtime": RUNTIME_DEFAULTS,
     "verification": {"scripts": []},
     "rules": {"files": []},
     "sdd": {

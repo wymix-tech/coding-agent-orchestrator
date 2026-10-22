@@ -64,6 +64,7 @@ from scripts.native_route import (
     bind_approval_question,
 )
 from scripts.provider_restart import observe_start, restart_state
+from scripts.runtime_host import binding as runtime_binding, observe as observe_runtime
 from scripts.route_inputs import writable_input
 from scripts.startup_request import ORDER as STARTUP_ORDER, capture_request
 from scripts.verification_setup import scaffold_instruction, setup_instruction, setup_state
@@ -81,9 +82,12 @@ def host_event(args: argparse.Namespace) -> int:
         "userpromptsubmit": "prompt_submit", "before_agent_start": "prompt_submit",
         "pretooluse": "pre_tool", "tool_call": "pre_tool",
         "posttooluse": "post_tool", "tool_result": "post_tool",
+        "posttoolusefailure": "post_tool",
         "subagentstart": "subagent_start", "subagentstop": "subagent_stop",
         "agent_end": "turn_end",
     }
+    if event == "posttoolusefailure":
+        raw["is_error"] = True
     event = mapping.get(event, event)
     index = load_index(repo) if (repo / CONFIG_REL).exists() else empty_index()
     wid = index.get("active_work")
@@ -112,7 +116,24 @@ def host_event(args: argparse.Namespace) -> int:
         parent_native = _event_key(raw, "session_id", "sessionId")
     parent_id = stable_session_id(args.host, parent_native) if parent_native and parent_native != host_session_id else None
 
+    # Bind post-tool side effects and observations to the task that authorized it.
+    if event == "post_tool":
+        try:
+            route = runtime_binding(repo, raw, args.host, host_session_id)
+        except (ValueError, OSError, RuntimeError):
+            route = None
+        if route:
+            work = load_work(repo, route["bound_work_id"]) if route["bound_work_id"] != "_unassigned" else None
     def respond(result: dict[str, Any]) -> int:
+        observed_work = work
+        if kind == "subagent":
+            parent_ref = parent_native or (known_session or {}).get("parent_session_id")
+            parent = load_session(repo, parent_ref, host=args.host) if parent_ref else None
+            bound = (parent or {}).get("work_item_id")
+            observed_work = load_work(repo, bound) if bound else None
+        diagnostic = observe_runtime(repo, observed_work, raw, args.host, host_session_id, event, result)
+        if diagnostic:
+            result["diagnostic"] = diagnostic
         if not host_session_id:
             result["diagnostic"] = "CAO_SESSION_ID_MISSING: no distinct native session ID; lifecycle tracking skipped"
             if args.host != "pi":

@@ -118,3 +118,12 @@ Every associated native task and applicable pre-verification review obligation i
 ## If blocked
 
 Unresolved ambiguity requires clarification and fresh assessment. A stale requirement, route, approval or review requires its own recovery; never restart intake or shrink known execution scope to clear a gate.
+
+
+## Execution diagnostics
+
+CAO automatically retains task-scoped runtime facts. Use `cao runtime status`,
+`events`, `runs`, and `recover --check` to inspect interruptions; continue to
+record progress through checkpoint/decision rather than writing JSON. Read
+[runtime-records.md](runtime-records.md) for log limits, sources, and recovery
+semantics. Runtime facts never replace verification or approval contracts.

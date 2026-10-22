@@ -877,3 +877,36 @@ test('state lock contention returns a core diagnostic before the bridge deadline
     f.close();
   }
 });
+
+test('real Pi runtime correlates late tool results without changing result content or full model context', posix, async () => {
+  const f = realCoreFixture();
+  try {
+    mkdirSync(path.join(f.dir, '_bmad'));
+    f.cli('init', '--host', 'pi', '--sdd', 'bmad');
+    const firstPath = f.cli('requirement', 'next-id', '--title', 'Runtime first').path;
+    writeFileSync(path.join(f.dir, firstPath), '# First runtime fixture');
+    const first = f.cli('start', '--requirement', firstPath).work_item.id;
+    const ctx = f.context('runtime-routing-pi', true);
+    await f.handlers.get('session_start')({reason: 'startup'}, ctx);
+    const tool = {toolName: 'write', toolCallId: 'runtime-call-1', input: {
+      path: '.orchestrator/requirements/runtime-note.md', content: 'Sensitive original tool content stays outside diagnostics'}};
+    assert.equal(await f.handlers.get('tool_call')(tool, ctx), undefined);
+    const secondPath = f.cli('requirement', 'next-id', '--title', 'Runtime second').path;
+    writeFileSync(path.join(f.dir, secondPath), '# Second runtime fixture');
+    const second = f.cli('start', '--replace', '--requirement', secondPath).work_item.id;
+    const result = {...tool, content: [{type: 'text', text: 'Original result'}],
+      details: {unmodified: true}, structuredContent: {ok: false}, isError: true};
+    const original = structuredClone(result);
+    assert.equal(await f.handlers.get('tool_result')(result, ctx), undefined);
+    assert.deepEqual(result, original);
+    const events = f.cli('runtime', 'events', '--work', first).items;
+    const finished = events.filter(item => item.event === 'tool.finished');
+    assert.equal(finished.length, 1);
+    assert.equal(finished[0].tool_call_id, 'runtime-call-1');
+    assert.equal(finished[0].source, 'host_observation');
+    assert.equal(finished[0].is_error, true);
+    assert.ok(!JSON.stringify(events).includes(tool.input.content));
+    assert.ok(!f.cli('runtime', 'events', '--work', second).items.some(item => item.event === 'tool.finished'));
+    assert.ok(f.sent.every(([message]) => message.display === false));
+  } finally { f.close(); }
+});

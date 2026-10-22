@@ -77,3 +77,13 @@ host detection must agree across multiple consumers.
 independent imports, the facade boundary, and trusted script classification.
 `tests/installed_package_smoke.py` imports the responsibility modules from the
 installed wheel and exercises provider/host flows outside the checkout.
+
+
+Runtime recording is separate from `cao_runtime.py` (configuration/general CLI
+utilities). `runtime_store.py` owns safe fact persistence and quotas;
+`runtime_logs.py` owns incremental redaction and bounded streams;
+`runtime_execution.py` integrates controlled execution and owner locks;
+`runtime_host.py` handles best-effort observations and call routing;
+`runtime_queries.py`, `runtime_retention.py`, and `runtime_commands.py` implement
+queries, disposable projection rebuilding, explicit pruning, and CLI registration.
+None decides gate acceptance. See [runtime-records.md](../references/runtime-records.md).

@@ -785,6 +785,6 @@ def _readonly_tokens(tokens: list[str], cwd: Path | None = None) -> bool:
     safe_control_commands = {
         "init", "bootstrap", "sdd", "start", "path", "list", "status", "next", "resume",
         "checkpoint", "decision", "block", "unblock", "handoff", "sessions", "verify", "done",
-        "context", "artifact", "host", "host-event", "requirement", "language", "gate", "reopen", "verification", "instructions",
+        "runtime", "context", "artifact", "host", "host-event", "requirement", "language", "gate", "reopen", "verification", "instructions",
     }
     return bool(command_tokens and (command_tokens[0] in safe_control_commands or command_tokens in (["--help"], ["-h"])))

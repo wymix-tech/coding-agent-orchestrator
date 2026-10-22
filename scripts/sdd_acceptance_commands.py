@@ -30,6 +30,9 @@ from scripts.sdd_acceptance_policy import normalize_declaration, normalize_repor
 from scripts.sdd_acceptance_runtime import anchor_matches, configure_record, finish_run, start_run
 from scripts.state_store import repo_transaction
 from scripts.verification_runner import run_script
+from scripts.runtime_execution import execute, finish_execution, owner
+from scripts.runtime_store import start_run as start_runtime_run, project_result
+from scripts.runtime_logs import redact
 
 
 def _emit(value: dict, code: int = 0) -> int:
@@ -78,6 +81,8 @@ def _start(args, mode):
         queue_event(work, {"event": "sdd.acceptance.started", "source": "cao", "work_item_id": work["id"],
                                "run_id": run["id"], "mode": mode, "occurred_at": now()})
         request = _request(work, run)
+        start_runtime_run(repo, work["id"], run["id"], "sdd_acceptance", inputs,
+                          source="cao_executor" if mode == "command" else "agent_declaration")
         save_work(repo, work)
         return repo, work["id"], request
 
@@ -109,17 +114,24 @@ def _finish(repo, wid, request, report, execution, error):
         except (ValueError, OSError, RuntimeError) as exc:
             inputs = {"input_error": str(exc)}
         # Save only bounded diagnostics. Full structured results are independently validated.
-        saved_execution = {**execution, "stdout_tail": execution.get("stdout_tail", "")[-4000:],
-                           "stderr_tail": execution.get("stderr_tail", "")[-4000:]}
+        tails = execution.get("diagnostic_tails") or {
+            "stdout_tail": redact(execution.get("stdout_tail", "")),
+            "stderr_tail": redact(execution.get("stderr_tail", ""))}
+        saved_execution = {**{key: value for key, value in execution.items() if key != "diagnostic_tails"},
+                           **{key: value[-4000:] for key, value in tails.items()}}
         run = finish_run(work, request["run_id"], inputs, report, saved_execution, hashes, error)
         if diagnostic:
             run["diagnostic"] = diagnostic
         queue_event(work, {"event": "sdd.acceptance.finished", "source": "cao", "work_item_id": wid,
-                               "run_id": run["id"], "status": run["status"], "occurred_at": now()})
+                               "run_id": run["id"], "status": run["status"],
+                               "evidence_hashes": run.get("evidence_hashes"), "output_hashes": run.get("output_hashes"),
+                               "occurred_at": now()})
         save_work(repo, work)
+        projection = project_result(repo, wid, run["id"], run)
         codes = {"passed": 0, "failed": 1, "blocked": 2, "stale": 2, "error": 3}
         completion = completion_status(repo, work)
         return _emit({"ok": run["status"] == "passed", "run": run, "completion": completion,
+                      "runtime_diagnostic": None if projection["ok"] else projection,
                       "next": completion_next_instruction(repo, work, completion) if not completion["ready"] else "Run `cao done`."}, codes[run["status"]])
 
 
@@ -155,21 +167,25 @@ def dispatch(args) -> int:
             if action == "begin":
                 return _emit({"ok": True, "request": request,
                               "next": "Follow the exact installed Skill instructions, including independent reviewer requirements. Submit this run's complete item evidence; a renderer or self-written findings file does not prove acceptance."})
-            executor = request["declaration"]["executor"]
-            env = dict(os.environ)
-            env["CAO_SDD_ACCEPTANCE_REQUEST"] = json.dumps(request, ensure_ascii=False)
-            report, error = None, None
-            try:
-                execution = run_script(executor["entrypoint"], repo, timeout=executor["timeout_seconds"], max_bytes=MAX_REPORT_BYTES + 1, env=env)
-                execution["source"] = "command_execution"
-                if execution.get("stdout_bytes", len(execution["stdout_tail"].encode())) > MAX_REPORT_BYTES:
-                    raise ValueError("SDD_ACCEPTANCE_REPORT_TOO_LARGE")
-                report = json.loads(execution["stdout_tail"])
-            except (ValueError, OSError, RuntimeError) as exc:
-                error = str(exc)
-                if "execution" not in locals():
-                    execution = {"exit_code": 125, "source": "command_execution", "stderr_tail": str(exc)}
-            return _finish(repo, wid, request, report, execution, error)
+            with owner(repo, wid, request["run_id"]):
+                executor = request["declaration"]["executor"]
+                env = dict(os.environ)
+                env["CAO_SDD_ACCEPTANCE_REQUEST"] = json.dumps(request, ensure_ascii=False)
+                report, error = None, None
+                try:
+                    execution = execute(repo, wid, request["run_id"], "command-0001",
+                                        executor["entrypoint"], executor["timeout_seconds"],
+                                        max_bytes=MAX_REPORT_BYTES + 1, env=env, runner=run_script)
+                    finish_execution(repo, wid, request["run_id"], [execution])
+                    execution["source"] = "command_execution"
+                    if execution.get("stdout_bytes", len(execution["stdout_tail"].encode())) > MAX_REPORT_BYTES:
+                        raise ValueError("SDD_ACCEPTANCE_REPORT_TOO_LARGE")
+                    report = json.loads(execution["stdout_tail"])
+                except (ValueError, OSError, RuntimeError) as exc:
+                    error = str(exc)
+                    if "execution" not in locals():
+                        execution = {"exit_code": 125, "source": "command_execution", "stderr_tail": str(exc)}
+                return _finish(repo, wid, request, report, execution, error)
         if action == "submit":
             with repo_transaction(repo_root(args.repo)):
                 repo, work = _work(args)

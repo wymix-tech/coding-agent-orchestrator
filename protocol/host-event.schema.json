@@ -10,6 +10,8 @@
     },
     "reason": {"type": "string", "description": "Original host shutdown reason, retained on session_end."},
     "tool_name": {"type": "string"},
+    "tool_call_id": {"type": "string", "description": "Native call identity; toolCallId/tool_use_id aliases accepted. Combined with host/session for runtime routing."},
+    "is_error": {"type": "boolean", "description": "Host-observed failure only; isError alias accepted. Not executor proof."},
     "tool_input": {},
     "last_assistant_message": {"type": "string"},
     "session_id": {"type": "string"},

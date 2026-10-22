@@ -53,6 +53,7 @@ from scripts.cao_work_commands import (
 )
 from scripts.cao_workflow_commands import cmd_sdd_review, cmd_sdd_spec, cmd_sdd_workflow
 from scripts.provider_restart import restart_state
+from scripts.runtime_commands import cmd_runtime, register_parser as register_runtime_parser
 
 
 def cmd_dashboard(args: argparse.Namespace) -> int:
@@ -64,6 +65,7 @@ def cmd_dashboard(args: argparse.Namespace) -> int:
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="cao", description="Coding Agent Orchestrator")
     sub = p.add_subparsers(dest="command", required=True)
+    register_runtime_parser(sub)
     sp = sub.add_parser("init"); sp.add_argument("--repo", default="."); sp.add_argument("--sdd", default=None); sp.add_argument("--language", default=None, help="User language / locale for conversation and all SDD artifacts, e.g. zh-CN or en-US"); sp.add_argument("--verify-script", action="append", default=None, help="Project verification script command; repeat for multiple scripts"); sp.add_argument("--test-script", action="append", default=None, help="Required verification script declaring the tests gate; repeat for multiple test suites"); sp.add_argument("--verify-command", action="append", default=None, help=argparse.SUPPRESS); sp.add_argument("--host", choices=sorted(HOST_ADAPTER_META), default=None, help="Coding-agent host whose hooks are wired during initialization"); sp.add_argument("--force", action="store_true"); sp.set_defaults(fn=cmd_init)
     host = sub.add_parser("host", help="Wire or inspect the coding-agent host hooks for this project")
     host_sub = host.add_subparsers(dest="host_command", required=True)
@@ -284,7 +286,7 @@ def main(argv: list[str] | None = None) -> int:
             cmd_init, cmd_bootstrap, cmd_host, host_event, cmd_language_show,
             cmd_language_set, cmd_language_apply, cmd_instructions_update,
             cmd_list, cmd_status, cmd_next, cmd_context, cmd_sessions_list,
-            cmd_sessions_show, cmd_decision_list, cmd_handoff, cmd_dashboard,
+            cmd_sessions_show, cmd_decision_list, cmd_handoff, cmd_dashboard, cmd_runtime,
             cmd_sdd_list, cmd_sdd_install, cmd_sdd_select,
         }
         if not repair_or_read:
@@ -295,7 +297,7 @@ def main(argv: list[str] | None = None) -> int:
                                   "next": action("human", restart["next"], reason=restart["reason"])}, ensure_ascii=False, indent=2))
                 return 2
         return int(args.fn(args))
-    except (RuntimeError, ValueError, json.JSONDecodeError) as exc:
+    except (OSError, RuntimeError, ValueError, json.JSONDecodeError) as exc:
         result = {"ok": False, "error": str(exc)}
         if str(exc).startswith("SNAPSHOT_"):
             result["reason_code"] = str(exc).split(":", 1)[0]

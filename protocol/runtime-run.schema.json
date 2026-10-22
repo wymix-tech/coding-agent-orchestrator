@@ -1,0 +1,94 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "CAO runtime run facts v1",
+  "type": "object",
+  "description": "Separate start intent, executor receipt, and disposable business-result projection. A projection cannot grant gates.",
+  "required": [
+    "schema_version",
+    "work_item_id",
+    "run_id"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "work_item_id": {
+      "type": "string"
+    },
+    "run_id": {
+      "type": "string"
+    },
+    "kind": {
+      "enum": [
+        "verification",
+        "sdd_acceptance"
+      ]
+    },
+    "source": {
+      "type": "string"
+    },
+    "started_at": {
+      "type": [
+        "number",
+        "string"
+      ]
+    },
+    "finished_at": {
+      "type": [
+        "number",
+        "string"
+      ]
+    },
+    "inputs": {
+      "type": "object"
+    },
+    "retry_of": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "command_id": {
+      "type": "string"
+    },
+    "process_status": {
+      "enum": [
+        "not_started",
+        "running",
+        "exited",
+        "timed_out",
+        "launch_failed",
+        "interrupted",
+        "unknown"
+      ]
+    },
+    "status": {
+      "enum": [
+        "pending",
+        "running",
+        "passed",
+        "failed",
+        "blocked",
+        "error",
+        "stale",
+        "superseded"
+      ]
+    },
+    "exit_code": {
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "logs": {
+      "type": "object"
+    },
+    "commands": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    }
+  },
+  "additionalProperties": true
+}
