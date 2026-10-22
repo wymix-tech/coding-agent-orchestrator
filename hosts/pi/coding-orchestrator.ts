@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import path from "node:path";
 import { openSync, readSync, closeSync } from "node:fs";
 import { enrollment, offlineAllowed } from "./internal/failure-policy.ts";
+import { createContextPresentation } from "./internal/context-presentation.ts";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 type CaoReply = { decision?: "allow" | "deny"; additional_context?: string; reason?: string; diagnostic?: string };
@@ -136,6 +137,7 @@ function sessionLineage(ctx: ExtensionContext): { kind: "primary" | "subagent"; 
 }
 
 export default function (pi: ExtensionAPI) {
+  const presentation = createContextPresentation(pi);
   const diagnostics = new Set<string>(), reminders = new Set<string>(), continued = new Set<string>();
   const managed = new Set<string>(), managedSessions = new Set<string>();
 
@@ -149,12 +151,14 @@ export default function (pi: ExtensionAPI) {
     const mapped = lineage.kind === "subagent" ? ({ session_start: "subagent_start", session_end: "subagent_stop" } as Record<string, string>)[event] || event : event;
     const hostTools = typeof pi.getAllTools === "function" ? pi.getAllTools().map(tool => tool.name) : undefined;
     const result = await callCao(mapped, { ...payload, ...lineage, session_id: id, host_tools: hostTools }, ctx.cwd);
+    presentation.show(result, ctx);
     if (result.diagnostic) {
       const key = JSON.stringify([id, result.diagnostic]);
       if (!diagnostics.has(key)) {
         diagnostics.add(key);
         if (ctx.hasUI) {
-          ctx.ui.notify(`[CAO] ${result.diagnostic}`, "warning");
+          const code = result.diagnostic.match(/^[A-Z][A-Z0-9_]+\b/)?.[0].slice(0, 64) || "Backend error";
+          ctx.ui.notify(`[CAO] ${code}. Details: /cao-context`, "warning");
         } else {
           process.stderr.write(`[CAO] ${result.diagnostic}\n`);
         }
@@ -172,15 +176,13 @@ export default function (pi: ExtensionAPI) {
       return;
     }
     reminders.add(key);
-    pi.sendMessage({ customType: "coding-agent-orchestrator", content: result.additional_context, display: true },
+    pi.sendMessage({ customType: "coding-agent-orchestrator", content: result.additional_context, display: false },
       { triggerTurn: false, deliverAs: "steer" });
-    if (ctx.hasUI) {
-      ctx.ui.notify(result.additional_context, "info");
-    }
   }
 
   pi.on("session_start", async (event, ctx) => {
     diagnostics.clear(); reminders.clear(); continued.clear();
+    presentation.reset(ctx);
     remind(await request("session_start", event, ctx), ctx);
   });
 
@@ -189,7 +191,7 @@ export default function (pi: ExtensionAPI) {
     reminders.clear();
     const result = await request("prompt_submit", event, ctx);
     if (result.additional_context) {
-      return { message: { customType: "coding-agent-orchestrator", content: result.additional_context, display: true } };
+      return { message: { customType: "coding-agent-orchestrator", content: result.additional_context, display: false } };
     }
   });
 
@@ -210,6 +212,7 @@ export default function (pi: ExtensionAPI) {
         "For lock contention, wait for the owner to finish and retry; do not delete state.lock. " +
         "Restore the CLI/dependencies or run exact `cao host install --host pi` to repair host wiring, then retry. " +
         "Protocol/output failures require inspecting the CLI diagnostic; do not bypass the gate.";
+      presentation.show({ additional_context: reason, diagnostic: result.diagnostic, decision: "deny" }, ctx);
       remind({ additional_context: reason }, ctx);
       return { block: true, reason };
     }
@@ -231,12 +234,13 @@ export default function (pi: ExtensionAPI) {
     if (result.decision === "deny" && event.context.canContinue && !continued.has(id)) {
       continued.add(id);
       return { entries: [{ type: "custom_message" as const, customType: "coding-agent-orchestrator",
-        content: result.reason || "CAO requires correction", display: true }], continue: true };
+        content: result.reason || "CAO requires correction", display: false }], continue: true };
     }
   });
 
   pi.on("session_shutdown", async (event, ctx) => {
     await request("session_end", { reason: event.reason }, ctx);
+    presentation.reset(ctx);
     diagnostics.clear(); reminders.clear(); continued.clear();
   });
 }

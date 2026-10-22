@@ -185,6 +185,15 @@ before_settle only reminds. Missing IDs produce diagnostics, never a shared defa
 uses SessionEnd; Pi 1.1.0 uses session_shutdown. Codex has no verified native SessionEnd integration:
 use `cao handoff --host codex --session <id> --end-session` on actual exit, not each turn.
 
+Pi sends complete CAO guidance to the model as hidden context messages. In the interactive terminal,
+a single widget shows a compact summary (at most four lines, clipped to the terminal width) and is
+updated in place instead of appending full-screen reminders or duplicate notifications. Older visible
+CAO messages also default to compact rendering when a conversation is reloaded. `/cao-context` opens
+the latest full context in a read-only, scrollable viewer; use arrows or Page Up/Down to scroll and
+Escape or `q` to close. Opening the viewer does not send another message to the model. Backend failures
+still produce a short warning; full diagnostics remain in the viewer. RPC/print modes keep full model
+context and do not create terminal widgets. Reload Pi after updating the adapter to apply this behavior.
+
 Host adapters register Sessions through `host-event`, which only happens when the adapter is installed. As a
 fallback, `cao bootstrap` and `cao start` attach the runtime Session whenever the host and its native session
 id are visible (`CAO_HOST`, `CLAUDE_CODE_SESSION_ID`, `CODEX_THREAD_ID`, `PI_SESSION_ID`); otherwise CAO records

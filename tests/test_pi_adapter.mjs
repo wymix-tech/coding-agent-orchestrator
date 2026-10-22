@@ -6,6 +6,9 @@ import {once} from 'node:events';
 import os from 'node:os';
 import path from 'node:path';
 import install from '../hosts/pi/coding-orchestrator.ts';
+import {contextSummary} from '../hosts/pi/internal/context-presentation.ts';
+import {stripTerminalSequences, visibleWidth} from '@earendil-works/pi-tui';
+import {convertToLlm} from '@earendil-works/pi-coding-agent';
 
 const posix = {skip: process.platform === 'win32'};
 
@@ -21,7 +24,7 @@ function fixture() {
   const python = resolvePython(); // Resolve before any test removes Python from PATH.
   const dir = mkdtempSync(path.join(os.tmpdir(), 'cao-contract-'));
   mkdirSync(path.join(dir, '.orchestrator'));
-  const keys = ['PATH', 'CAO_CAPTURE', 'CAO_FAKE_MODE', 'CAO_TEST_PYTHON'];
+  const keys = ['PATH', 'CAO_CAPTURE', 'CAO_FAKE_MODE', 'CAO_FAKE_CONTEXT', 'CAO_TEST_PYTHON'];
   const old = Object.fromEntries(keys.map(key => [key, process.env[key]]));
   process.env.CAO_TEST_PYTHON = python;
   process.env.CAO_CAPTURE = path.join(dir, 'events.jsonl');
@@ -37,23 +40,36 @@ if mode=='pipe-child':
  p=subprocess.Popen([sys.executable,'-c','import time; time.sleep(30)'])
  with open(os.path.join(os.path.dirname(os.environ['CAO_CAPTURE']),'child.pid'),'w') as f: f.write(str(p.pid))
 if mode=='exit': print('backend failed',file=sys.stderr); sys.exit(2)
+if mode=='long-error': print('X'*3500+'\\nREPAIR_DETAIL_END',file=sys.stderr); sys.exit(2)
 if mode=='bad-json': print('not-json'); sys.exit(0)
 if mode=='invalid': print(json.dumps({'decision':'unknown'})); sys.exit(0)
 reply={'decision':'allow'}
 if mode in ('deny','settle-deny'): reply={'decision':'deny','reason':'protected state'}
-if mode=='context': reply['additional_context']='review scope'
+if mode=='context': reply['additional_context']=os.environ.get('CAO_FAKE_CONTEXT','review scope')
+if mode=='deny-context': reply={'decision':'deny','reason':'protected state','additional_context':os.environ.get('CAO_FAKE_CONTEXT','review scope')}
 if mode=='bad-fields': reply['additional_context']={'not':'text'}
 if mode=='large': reply['additional_context']='x'*300000
 print(json.dumps(reply))
 `);
   writeFileSync(path.join(dir, 'cao'), '#!/bin/sh\nexec "${CAO_TEST_PYTHON:-python3}" ' +
     JSON.stringify(path.join(dir, 'fake.py')) + '\n', {mode: 0o755});
-  const handlers = new Map(), sent = [], notices = [];
+  const handlers = new Map(), sent = [], notices = [], widgets = new Map(), widgetUpdates = [];
+  const commands = new Map(), renderers = new Map();
   install({on: (key, fn) => {handlers.set(key, fn); return () => handlers.delete(key);},
+    registerCommand: (key, command) => commands.set(key, command),
+    registerMessageRenderer: (key, render) => renderers.set(key, render),
     sendMessage: (...args) => sent.push(args)});
   const context = (id, hasUI = false) => ({cwd: dir, hasUI, mode: hasUI ? 'tui' : 'print',
-    sessionManager: {getSessionId: () => id}, ui: {notify: (...args) => notices.push(args)}});
-  return {dir, handlers, sent, notices, context,
+    sessionManager: {getSessionId: () => id}, ui: {notify: (...args) => notices.push(args),
+      setWidget: (key, value) => {
+        widgetUpdates.push({key, value});
+        if (value === undefined) {
+          widgets.delete(key);
+        } else {
+          widgets.set(key, value);
+        }
+      }}});
+  return {dir, handlers, sent, notices, widgets, widgetUpdates, commands, renderers, context,
     rows: () => readFileSync(process.env.CAO_CAPTURE, 'utf8').trim().split('\n').map(JSON.parse),
     close: () => {
       for (const key of keys) {
@@ -436,10 +452,187 @@ test('allow guidance reaches model once without triggering another turn', posix,
     assert.equal(f.notices.length, 0, 'no UI must not notify');
     assert.equal(f.sent.length, 1);
     assert.equal(f.sent[0][0].content, 'review scope');
+    assert.equal(f.sent[0][0].display, false);
     assert.deepEqual(f.sent[0][1], {triggerTurn: false, deliverAs: 'steer'});
     await f.handlers.get('tool_call')(toolCall, f.context('B'));
     assert.equal(f.sent.length, 2, 'distinct sessions must not share reminder deduplication');
   } finally {f.close();}
+});
+
+const resumeContext = [
+  '# Coding Agent Orchestrator Resume Context',
+  '## Read before acting',
+  JSON.stringify({stage: 'completion', read_before_action: ['/project/SKILL.md']}),
+  `Work Item: 轻量登录系统${'🐍'.repeat(80)} (work-login)`,
+  'Status: active', 'SDD: bmad', 'Step: review-dispatch-patches',
+  '## Important Decisions', 'Python + FastAPI; '.repeat(500),
+  '## Next Action',
+  JSON.stringify({stage: 'completion', reason: 'NATIVE_REVIEW_REQUIRED', instruction: 'Review every active layer.'}),
+  '## Verification', '{"status":"pending"}',
+].join('\n');
+
+test('long resume guidance is hidden from transcript and updates one width-bounded widget', posix, async () => {
+  const f = fixture();
+  try {
+    process.env.CAO_FAKE_MODE = 'context';
+    process.env.CAO_FAKE_CONTEXT = resumeContext;
+    const ctx = f.context('compact', true);
+    await f.handlers.get('session_start')({reason: 'startup'}, ctx);
+    const prompt = await f.handlers.get('before_agent_start')({prompt: '继续'}, ctx);
+    await f.handlers.get('tool_call')(toolCall, ctx);
+    await f.handlers.get('tool_call')(toolCall, ctx);
+    assert.equal(f.notices.length, 0, 'complete context must not also be printed as a notification');
+    assert.equal(f.widgets.size, 1, 'updates must reuse the same widget');
+    assert.equal(f.widgetUpdates.length, 2, 'identical summaries must not repeatedly rebuild the widget');
+    assert.equal(prompt.message.display, false);
+    for (const message of [prompt.message, ...f.sent.map(([message]) => message)]) {
+      assert.equal(message.display, false);
+      assert.equal(message.content, resumeContext);
+      const converted = convertToLlm([{role: 'custom', timestamp: 1, ...message}]);
+      assert.equal(converted[0].content[0].text, resumeContext, 'Pi must still send the full content to the model');
+    }
+    const widget = [...f.widgets.values()][0]();
+    for (const width of [1, 8, 24, 80, 160]) {
+      const lines = widget.render(width);
+      assert.ok(lines.length <= 4);
+      assert.ok(lines.every(value => visibleWidth(value) <= width), `overflow at width ${width}`);
+    }
+    const summary = widget.render(160).map(stripTerminalSequences).join('\n');
+    assert.match(summary, /轻量登录系统/);
+    assert.match(summary, /completion.*bmad.*review-dispatch-patches/);
+    assert.match(summary, /Review every active layer/);
+    assert.match(summary, /\/cao-context/);
+    assert.doesNotMatch(summary, /read_before_action|FastAPI/);
+    process.env.CAO_FAKE_CONTEXT = 'HOST_RESTART_REQUIRED: Restart Pi before continuing.';
+    await f.handlers.get('tool_result')({toolName: 'read', input: {}, content: []}, ctx);
+    assert.equal(f.widgets.size, 1);
+    assert.match([...f.widgets.values()][0]().render(100).join('\n'), /HOST_RESTART_REQUIRED/);
+    await f.handlers.get('session_shutdown')({reason: 'quit'}, ctx);
+    assert.equal(f.widgets.size, 0);
+  } finally { f.close(); }
+});
+
+test('legacy visible CAO entries collapse without modifying their full content', posix, () => {
+  const f = fixture();
+  try {
+    const message = {content: resumeContext, customType: 'coding-agent-orchestrator', display: true};
+    const render = f.renderers.get(message.customType);
+    const collapsed = render(message, {expanded: false}).render(50);
+    assert.ok(collapsed.length <= 4);
+    assert.ok(collapsed.every(value => visibleWidth(value) <= 50));
+    assert.match(render(message, {expanded: true}).render(100).join('\n'), /Important Decisions/);
+    assert.equal(message.content, resumeContext);
+    assert.ok(contextSummary('## Next Action\n{"stage":4,"reason":[]}').length <= 4);
+    assert.doesNotThrow(() => contextSummary('## Next Action\nnot-json'));
+  } finally { f.close(); }
+});
+
+test('context viewer scrolls within the viewport, closes, and isolates sessions without model messages', posix, async () => {
+  const f = fixture();
+  try {
+    process.env.CAO_FAKE_MODE = 'context';
+    process.env.CAO_FAKE_CONTEXT = Array.from({length: 100}, (_, i) => `Line ${i}: 全文详情`).join('\n');
+    const ctx = f.context('viewer', true);
+    await f.handlers.get('session_start')({reason: 'startup'}, ctx);
+    const sentBefore = f.sent.length;
+    let component, closed = false;
+    const tui = {terminal: {rows: 12}, requestRender() {}};
+    ctx.ui.custom = async factory => {component = factory(tui, {}, {}, () => {closed = true;});};
+    await f.commands.get('cao-context').handler('', ctx);
+    assert.match(component.render(40).join('\n'), /Line 0:/);
+    component.handleInput('\x1b[6~'); // Page Down
+    assert.match(component.render(40).join('\n'), /Line 8:/);
+    component.handleInput('\x1b[F'); // End
+    assert.match(component.render(40).join('\n'), /Line 99:/);
+    tui.terminal.rows = 8;
+    const narrow = component.render(10);
+    assert.ok(narrow.length <= 8);
+    assert.ok(narrow.every(value => visibleWidth(value) <= 10));
+    component.handleInput('\x1b');
+    assert.equal(closed, true);
+    assert.equal(f.sent.length, sentBefore);
+    const other = f.context('other', true);
+    other.ui.custom = ctx.ui.custom;
+    await f.handlers.get('session_start')({reason: 'resume'}, other);
+    process.env.CAO_FAKE_MODE = 'allow';
+    await f.handlers.get('session_start')({reason: 'resume'}, other);
+    await f.commands.get('cao-context').handler('', other);
+    assert.match(component.render(100).join('\n'), /No CAO context recorded/);
+    assert.doesNotMatch(component.render(100).join('\n'), /Line 0:/);
+  } finally { f.close(); }
+});
+
+test('RPC and print modes keep model guidance without terminal widgets', posix, async () => {
+  const f = fixture();
+  try {
+    process.env.CAO_FAKE_MODE = 'context';
+    for (const mode of ['rpc', 'print', 'json']) {
+      const ctx = f.context(mode, mode === 'rpc');
+      ctx.mode = mode;
+      await f.handlers.get('session_start')({reason: 'startup'}, ctx);
+      assert.equal(f.sent.at(-1)[0].content, 'review scope');
+      assert.equal(f.sent.at(-1)[0].display, false);
+      await f.commands.get('cao-context').handler('', ctx);
+    }
+    assert.equal(f.widgetUpdates.length, 0);
+    assert.equal(f.notices.length, 1, 'only explicit RPC viewer request produces a short notice');
+  } finally { f.close(); }
+});
+
+test('denied guidance and settle correction stay complete while the widget flags the block', posix, async () => {
+  const f = fixture();
+  try {
+    process.env.CAO_FAKE_MODE = 'deny-context';
+    process.env.CAO_FAKE_CONTEXT = resumeContext;
+    const ctx = f.context('blocked', true);
+    const denied = await f.handlers.get('tool_call')(toolCall, ctx);
+    assert.deepEqual(denied, {block: true, reason: 'protected state'});
+    assert.match([...f.widgets.values()][0]().render(100).join('\n'), /Blocked/);
+    assert.match([...f.widgets.values()][0]().render(100).join('\n'), /protected state/);
+    const correction = await f.handlers.get('agent_before_settle')(settle(true), ctx);
+    assert.equal(correction.continue, true);
+    assert.equal(correction.entries[0].display, false);
+    assert.equal(correction.entries[0].content, 'protected state');
+    assert.ok(f.sent.every(([message]) => !message.display && message.content === resumeContext));
+    assert.equal(f.notices.length, 0);
+  } finally { f.close(); }
+});
+
+test('widget failures do not drop guidance or change native gate results', posix, async () => {
+  const f = fixture();
+  try {
+    const ctx = f.context('ui-failure', true);
+    ctx.ui.setWidget = () => {throw Error('renderer unavailable');};
+    process.env.CAO_FAKE_MODE = 'context';
+    await f.handlers.get('session_start')({reason: 'startup'}, ctx);
+    assert.equal(f.sent.at(-1)[0].content, 'review scope');
+    assert.equal(await f.handlers.get('tool_call')(toolCall, ctx), undefined);
+    process.env.CAO_FAKE_MODE = 'deny-context';
+    assert.deepEqual(await f.handlers.get('tool_call')(toolCall, ctx), {block: true, reason: 'protected state'});
+    await f.handlers.get('session_shutdown')({reason: 'quit'}, ctx);
+  } finally { f.close(); }
+});
+
+test('long backend diagnostics produce a short warning and keep repair details in the viewer', posix, async () => {
+  const f = fixture();
+  try {
+    process.env.CAO_FAKE_MODE = 'long-error';
+    const ctx = f.context('diagnostic', true);
+    const denied = await f.handlers.get('tool_call')(toolCall, ctx);
+    assert.equal(denied.block, true);
+    assert.match(denied.reason, /REPAIR_DETAIL_END/);
+    assert.equal(f.notices.length, 1);
+    assert.ok(f.notices[0][0].length < 128);
+    let component;
+    ctx.ui.custom = async factory => {
+      component = factory({terminal: {rows: 20}, requestRender() {}}, {}, {}, () => {});
+    };
+    await f.commands.get('cao-context').handler('', ctx);
+    component.render(80);
+    component.handleInput('\x1b[F');
+    assert.match(component.render(80).join('\n'), /do not bypass the gate/);
+    assert.match(f.sent.at(-1)[0].content, /REPAIR_DETAIL_END/);
+  } finally { f.close(); }
 });
 
 test('tool deny and bridge failures block writes and diagnose once', posix, async () => {
@@ -453,7 +646,7 @@ test('tool deny and bridge failures block writes and diagnose once', posix, asyn
       await f.handlers.get('tool_call')(toolCall, f.context(mode, true));
     }
     assert.equal(f.notices.filter(([, level]) => level === 'warning').length, 4);
-    assert.equal(f.notices.filter(([, level]) => level === 'info').length, 4);
+    assert.equal(f.notices.filter(([, level]) => level === 'info').length, 0);
     assert.equal(f.sent.length, 4, 'repeated faults must not duplicate recovery guidance');
   } finally {f.close();}
 });
