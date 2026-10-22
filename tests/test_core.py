@@ -131,7 +131,7 @@ class CoreTests(unittest.TestCase):
             self.assertEqual(out["work"]["work_item"]["sdd"]["native_ref"], "_bmad-output/implementation-artifacts/spec-spring-boot-auth-login.md")
             rc, events, _ = run(repo, "lifecycle", "events")
             self.assertEqual(rc, 0)
-            self.assertEqual([event["event"] for event in events["events"]], ["task.created"])
+            self.assertEqual([event["event"] for event in events["events"]], ["checkpoint.recorded", "task.created"])
 
     def test_status_reconciles_openspec_tasks_without_native_ref(self):
         td, repo = self.init_repo()

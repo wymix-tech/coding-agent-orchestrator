@@ -433,6 +433,11 @@ def create_handoff(repo: Path, work: dict[str, Any], session_id: str | None, hos
             save_session(repo, session)
         return latest
     save_json(handoff_record_path(repo, work["id"], handoff["id"]), handoff)
+    from scripts.runtime_store import queue_record
+    queue_record(repo, work, "handoff.created", {"handoff_id": handoff["id"],
+                 "session_id": handoff["session_id"], "reason": reason},
+                 event_id="evt-" + handoff["id"])
+    save_work(repo, work)
     if session:
         session["last_handoff_id"] = handoff["id"]
         save_session(repo, session)

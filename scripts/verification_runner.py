@@ -11,7 +11,7 @@ from scripts.completion_policy import normalize_timeout
 
 
 def run_script(command: str, repo: Path, timeout: float = 300.0, max_bytes: int = 4000,
-               env: dict[str, str] | None = None) -> dict:
+               env: dict[str, str] | None = None, log_sink=None) -> dict:
     timeout = normalize_timeout(timeout)
     if isinstance(max_bytes, bool) or not isinstance(max_bytes, int) or max_bytes < 1:
         raise ValueError("VERIFICATION_LIMIT_INVALID")
@@ -24,7 +24,8 @@ def run_script(command: str, repo: Path, timeout: float = 300.0, max_bytes: int 
     try:
         child = subprocess.Popen(launch, cwd=repo, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env, **kwargs)
     except OSError as exc:
-        return {"exit_code": 127, "stdout_tail": "", "stderr_tail": str(exc)[-max_bytes:], "timed_out": False}
+        return {"exit_code": 127, "stdout_tail": "", "stderr_tail": str(exc)[-max_bytes:],
+                "timed_out": False, "process_status": "launch_failed"}
     tails = [bytearray(), bytearray()]
     byte_counts = [0, 0]
     errors = []
@@ -47,6 +48,12 @@ def run_script(command: str, repo: Path, timeout: float = 300.0, max_bytes: int 
                 if not chunk:
                     break
                 byte_counts[index] += len(chunk)
+                if log_sink is not None:
+                    try:
+                        log_sink.write(index, chunk)
+                    except Exception:
+                        # Optional diagnostics must not stop draining the pipe.
+                        pass
                 tail.extend(chunk)
                 if len(tail) > max_bytes:
                     del tail[:-max_bytes]
@@ -104,5 +111,6 @@ def run_script(command: str, repo: Path, timeout: float = 300.0, max_bytes: int 
     if timed_out:
         stderr = (stderr + "\nVERIFICATION_TIMEOUT")[-max_bytes:]
     return {"exit_code": 125 if errors else 124 if timed_out else child.returncode,
+            "process_status": "timed_out" if timed_out else "exited",
             "stdout_tail": stdout, "stderr_tail": stderr, "timed_out": timed_out,
             "stdout_bytes": byte_counts[0], "stderr_bytes": byte_counts[1]}

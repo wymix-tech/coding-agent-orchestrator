@@ -208,3 +208,37 @@ sys.exit(rc)
         rc, out = self.run_cli("verify"); self.assertEqual(rc, 0, out)
         rc, out = self.run_cli("done"); self.assertEqual(rc, 0, out)
         self.assertIn("acceptance", self.read_work(self.wid)["sdd"])
+
+    def test_runtime_redaction_does_not_change_raw_acceptance_protocol(self):
+        from scripts import cao
+        from scripts.runtime_store import run_path, read_record
+        self.setup_acceptance()
+        cfg = cao.config(self.repo)
+        cfg['runtime']['redact_values'] = ['bmad']
+        cao.save_json(self.repo / '.orchestrator/config.json', cfg)
+        self.assertEqual(self.run_cli('verify')[0], 0)
+        rc, out = self.run_cli('sdd', 'acceptance', 'run')
+        self.assertEqual(rc, 0, out)
+        rid = out['run']['id']
+        receipt = read_record(run_path(self.repo, self.wid, rid, 'commands', 'command-0001', 'receipt.json'))
+        self.assertEqual(receipt['exit_code'], 0)
+        self.assertNotIn('bmad', out['run']['execution']['stdout_tail'])
+        self.assertIn('[REDACTED]', out['run']['execution']['stdout_tail'])
+        rc, shown = self.run_cli('runtime', 'show', '--run', rid)
+        self.assertEqual(rc, 0, shown)
+        self.assertEqual(shown['admission_status'], 'passed')
+
+    def test_skill_runtime_does_not_fabricate_command_receipts(self):
+        from scripts.runtime_store import run_path
+        self.setup_acceptance(mode='skill')
+        self.assertEqual(self.run_cli('verify')[0], 0)
+        rc, out = self.run_cli('sdd', 'acceptance', 'begin')
+        self.assertEqual(rc, 0, out)
+        rid = out['request']['run_id']
+        self.assertTrue(run_path(self.repo, self.wid, rid, 'start.json').is_file())
+        self.assertFalse(run_path(self.repo, self.wid, rid, 'receipt.json').exists())
+        rc, shown = self.run_cli('runtime', 'show', '--run', rid)
+        self.assertEqual(rc, 0, shown)
+        self.assertEqual(shown['source'], 'agent_declaration')
+        self.assertEqual(shown['process_status'], 'unknown')
+        self.assertEqual(shown['admission_status'], 'pending')

@@ -33,7 +33,7 @@ def main():
                    "root=cao.package_root_dir(); "
                    "from scripts.skill_guidance import STAGE_FILES, PROVIDER_FILES, CONTRACT_FILES; "
                    "assert all((root/p).is_file() for p in {*STAGE_FILES.values(), *PROVIDER_FILES.values(), *CONTRACT_FILES.values()}); "
-                   "assert all((root/p).is_file() for p in ['hosts/pi/coding-orchestrator.ts','hosts/pi/internal/failure-policy.ts','hosts/pi/internal/context-presentation.ts','hooks/host-event.sh','hosts/claude-code/settings.fragment.json','hosts/codex/hooks.json','SKILL.md']); "
+                   "assert all((root/p).is_file() for p in ['references/runtime-records.md','protocol/runtime-event.schema.json','protocol/runtime-run.schema.json','hosts/pi/coding-orchestrator.ts','hosts/pi/internal/failure-policy.ts','hosts/pi/internal/context-presentation.ts','hooks/host-event.sh','hosts/claude-code/settings.fragment.json','hosts/codex/hooks.json','SKILL.md']); "
                    "assert not (root/'docs').exists(), 'Runtime installation must not contain developer docs'; "
                    "assert cao.overall_verification_status([{'required':False,'status':'failed'}]) == 'blocked'; "
                    "assert dashboard.dashboard_html_path().is_file(); print(json.dumps({'runner':verification_runner.__file__,'invocation':cao.cao_invocation()}))")
@@ -122,6 +122,13 @@ def main():
                 verified = cli("verify")
                 assert verified["verification"]["snapshot_format"] == 4
                 assert verified["verification"]["run_id"]
+                runtime_run = verified["verification"]["run_id"]
+                assert cli("runtime", "show", "--run", runtime_run)["admission_status"] == "passed"
+                assert cli("runtime", "events")["items"]
+                assert cli("runtime", "recover", "--check")["check_only"]
+                assert cli("runtime", "logs", "--run", runtime_run, "--command", "command-0001", "--stream", "stderr")["metadata"]
+                cli("runtime", "rebuild")
+                assert cli("runtime", "prune", "--dry-run")["dry_run"]
                 cli("done")
                 before_completed = (repo / f".orchestrator/work/{wid}.json").read_bytes()
                 denied = subprocess.run([args.cao, "verify", "--work", wid, "--repo", str(repo)], cwd=repo, env=env, capture_output=True, text=True, timeout=30)

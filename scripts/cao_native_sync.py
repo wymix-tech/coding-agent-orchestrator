@@ -703,9 +703,10 @@ def reconcile_native_sdd_state(repo: Path, work: dict[str, Any]) -> bool:
         idem = hashlib.sha256(json.dumps(identity, sort_keys=True).encode("utf-8")).hexdigest()
         base_event = {
             "event_id": "evt-" + idem[:20], "idempotency_key": idem, "work_item_id": work.get("id"),
-            "source": provider, "native_ref": native_ref or None, "from_state": from_state,
+            "source": provider, "observation_source": "provider_observation", "native_ref": native_ref or None, "from_state": from_state,
             "to_state": canonical, "raw_state": raw_state, "source_path": status_source,
-            "evidence_sha256": evidence_hash, "occurred_at": new_snapshot["observed_at"],
+            "evidence_sha256": evidence_hash, "task_counts": task_counts,
+            "plan_scope": sdd.get("plan_scope"), "occurred_at": new_snapshot["observed_at"],
         }
         if old_canonical != canonical:
             queue_event(work, {**base_event, "event": "sdd.native_state.changed"})

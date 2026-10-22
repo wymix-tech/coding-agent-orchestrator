@@ -279,6 +279,7 @@ def cmd_checkpoint(args: argparse.Namespace) -> int:
     index = load_index(repo); wid = args.work or index.get("active_work"); work = load_work(repo, wid) if wid else None
     if not work or work.get("status") not in {"active", "suspended"}:
         print(json.dumps({"ok": False, "error": "NO_ACTIVE_WORK_ITEM"}, ensure_ascii=False, indent=2)); return 2
+    previous = json.loads(json.dumps({"execution": work.get("execution"), "resume": work.get("resume")}))
     if args.step:
         execution = work.setdefault("execution", {})
         phase = execution_phase({"step": args.step}) or execution_phase(execution)
@@ -293,6 +294,12 @@ def cmd_checkpoint(args: argparse.Namespace) -> int:
         work.setdefault("resume", {}).setdefault("completed", []).append(args.completed)
     if args.pending:
         work.setdefault("resume", {}).setdefault("pending", []).append(args.pending)
+    from scripts.runtime_store import queue_record
+    current = {"execution": work.get("execution"), "resume": work.get("resume")}
+    if previous != current:
+        queue_record(repo, work, "checkpoint.recorded", {
+            "execution": work.get("execution"), "summary": args.summary,
+            "completed": args.completed, "pending": args.pending, "session_id": args.session})
     work.setdefault("resume", {})["last_checkpoint_at"] = now()
     save_work(repo, work)
     if args.session:
@@ -308,6 +315,8 @@ def cmd_decision(args: argparse.Namespace) -> int:
         print(json.dumps({"ok": False, "error": "NO_WORK_ITEM"}, ensure_ascii=False, indent=2)); return 2
     d = {"id": new_id("decision"), "decision": args.decision, "reason": args.reason, "scope": args.scope, "created_at": now(), "supersedes": args.supersedes}
     work.setdefault("decisions", []).append(d)
+    from scripts.runtime_store import queue_record
+    queue_record(repo, work, "decision.recorded", d)
     save_work(repo, work)
     print(json.dumps({"ok": True, "decision": d}, ensure_ascii=False, indent=2)); return 0
 
@@ -349,6 +358,8 @@ def cmd_block(args: argparse.Namespace) -> int:
     b = {"id": new_id("blocker"), "reason": args.reason, "resolution": args.resolution, "created_at": now()}
     work.setdefault("blockers", []).append(b)
     work["status"] = "suspended" if args.suspend else work.get("status", "active")
+    from scripts.runtime_store import queue_record
+    queue_record(repo, work, "blocker.added", {**b, "status": work["status"]})
     try:
         save_work(repo, work)
     except RuntimeError as exc:
@@ -369,7 +380,8 @@ def cmd_unblock(args: argparse.Namespace) -> int:
     work = load_work(repo, args.work)
     if not work:
         print(json.dumps({"ok": False, "error": "WORK_ITEM_NOT_FOUND"}, ensure_ascii=False, indent=2)); return 2
-    before = len(work.get("blockers") or [])
+    previous_blockers = list(work.get("blockers") or [])
+    before = len(previous_blockers)
     if args.blocker:
         work["blockers"] = [b for b in work.get("blockers", []) if b.get("id") != args.blocker]
     else:
@@ -377,6 +389,10 @@ def cmd_unblock(args: argparse.Namespace) -> int:
     if work.get("status") == "suspended" and not work["blockers"]:
         if not other_active_work(repo, work["id"]):
             work["status"] = "active"
+    from scripts.runtime_store import queue_record
+    removed = [b["id"] for b in previous_blockers if b not in work["blockers"]]
+    if removed:
+        queue_record(repo, work, "blocker.resolved", {"blocker_ids": removed, "status": work["status"]})
     save_work(repo, work)
     out = {"ok": True, "removed": before - len(work.get("blockers") or []), "work_item": work_summary(work)}
     if work.get("status") == "suspended" and not work["blockers"]:
@@ -583,7 +599,8 @@ def _completion_blocked(repo: Path, work: dict[str, Any] | None, c: dict[str, An
         if c.get(key):
             blocked[key] = c[key]
     blocked["next"] = c.get("next") or completion_next_instruction(repo, work, c)
-    print(json.dumps(blocked, ensure_ascii=False, indent=2)); return 2
+    from scripts.runtime_store import record_denial
+    print(json.dumps(record_denial(repo, work, "done", blocked), ensure_ascii=False, indent=2)); return 2
 
 
 def cmd_done(args: argparse.Namespace) -> int:

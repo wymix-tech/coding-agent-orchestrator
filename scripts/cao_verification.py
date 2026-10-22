@@ -39,6 +39,8 @@ from scripts.native_obligations import planning_state, review_state as native_re
 from scripts.smoke_runner import run_smoke
 from scripts.state_store import repo_transaction
 from scripts.verification_runner import run_script
+from scripts.runtime_store import start_run as start_runtime_run, queue_record, project_result, record_denial
+from scripts.runtime_execution import execute, finish_execution, owner
 from scripts.verification_setup import declared_scripts, prepare_config, setup_state
 from scripts.snapshot_scope import paths, validate_scope
 
@@ -170,27 +172,27 @@ def _prepare_verification(args: argparse.Namespace):
     repo = repo_root(args.repo); ensure_initialized(repo)
     index = load_index(repo); wid = args.work or index.get("active_work"); work = load_work(repo, wid) if wid else None
     if not work:
-        print(json.dumps({"ok": False, "error": "NO_ACTIVE_WORK_ITEM"}, ensure_ascii=False, indent=2)); return 2
+        print(json.dumps(record_denial(repo, work, "verify", {"ok": False, "error": "NO_ACTIVE_WORK_ITEM"}), ensure_ascii=False, indent=2)); return 2
 
     if work.get("status") != "active":
         recovery = (f'cao reopen --work {wid} --reason "<why>"' if work.get("status") == "completed"
                     else f'cao resume --work {wid} --reactivate')
-        print(json.dumps({"ok": False, "error": "VERIFICATION_WORK_NOT_ACTIVE", "status": work.get("status"), "next": recovery})); return 2
+        print(json.dumps(record_denial(repo, work, "verify", {"ok": False, "error": "VERIFICATION_WORK_NOT_ACTIVE", "status": work.get("status"), "next": recovery}))); return 2
 
     route = native_route_state(repo, work)
     if not route["ready"]:
-        print(json.dumps({"ok": False, "error": route["reason"], "next": route["next"]})); return 2
+        print(json.dumps(record_denial(repo, work, "verify", {"ok": False, "error": route["reason"], "next": route["next"]}))); return 2
 
     plan_state = observe_plan_scope(repo, work)
     if not plan_state["ready"]:
-        print(json.dumps({"ok": False, "error": str(plan_state["reason"]).split(":", 1)[0],
-                          "verification_plan": plan_state, "next": plan_state["next"]}, ensure_ascii=False, indent=2)); return 2
+        print(json.dumps(record_denial(repo, work, "verify", {"ok": False, "error": str(plan_state["reason"]).split(":", 1)[0],
+                          "verification_plan": plan_state, "next": plan_state["next"]}), ensure_ascii=False, indent=2)); return 2
     review = native_review_state(repo, work, code_snapshot)
     if not review["ready"]:
-        print(json.dumps({"ok": False, "error": review["reason"], "native_review": review, "next": review.get("next")}, ensure_ascii=False)); return 2
+        print(json.dumps(record_denial(repo, work, "verify", {"ok": False, "error": review["reason"], "native_review": review, "next": review.get("next")}), ensure_ascii=False)); return 2
     planning = planning_state(repo, work)
     if not planning['ready']:
-        print(json.dumps({'ok': False, 'error': planning['reason'].split(':', 1)[0], **planning})); return 2
+        print(json.dumps(record_denial(repo, work, "verify", {'ok': False, 'error': planning['reason'].split(':', 1)[0], **planning}))); return 2
 
     cfg = config(repo)
     cfg_scripts = verification_scripts(cfg)
@@ -202,31 +204,31 @@ def _prepare_verification(args: argparse.Namespace):
     source = "cli" if cli_override else "config"
     scripts = cli_override or cfg_scripts
     if not scripts:
-        print(json.dumps({
+        print(json.dumps(record_denial(repo, work, "verify", {
             "ok": False,
             "error": "VERIFICATION_SCRIPT_REQUIRED",
             "next": "Configure required verification with `cao verification configure --test-script \"<real test command>\" --replace`, then explicitly re-anchor the Work Item."
-        }, ensure_ascii=False, indent=2)); return 2
+        }), ensure_ascii=False, indent=2)); return 2
 
     if source == "config":
         baseline = verification_baseline_state(repo, work)
         if not baseline["ready"]:
-            print(json.dumps({"ok": False, "error": baseline["reason"], "next": baseline["next"]})); return 2
+            print(json.dumps(record_denial(repo, work, "verify", {"ok": False, "error": baseline["reason"], "next": baseline["next"]}))); return 2
         required_gates = ((work.get("path_assessment") or {}).get("required_gates")) or []
         if "security_verification" in required_gates and not any(item['required'] and 'security_verification' in item['gates'] for item in scripts):
-            print(json.dumps({'ok': False, 'error': 'VERIFICATION_GATE_UNBOUND',
+            print(json.dumps(record_denial(repo, work, "verify", {'ok': False, 'error': 'VERIFICATION_GATE_UNBOUND',
                               'reason': 'security_verification needs a required script declaring that capability.',
-                              'next': 'Use verification configure --security-script <actual security checks>; the same test wrapper may also declare --test-script. Review and reanchor changed standards.'})); return 2
+                              'next': 'Use verification configure --security-script <actual security checks>; the same test wrapper may also declare --test-script. Review and reanchor changed standards.'}))); return 2
         if "tests" in required_gates and not any(item["required"] and "tests" in item["gates"] for item in scripts):
-            print(json.dumps({
+            print(json.dumps(record_denial(repo, work, "verify", {
                 "ok": False, "error": "VERIFICATION_GATE_UNBOUND",
                 "reason": "The tests gate needs a required verification script explicitly declaring gates: [tests].",
                 "next": "Use `cao verification configure --test-script \"<real test command>\" --replace`, then `cao reopen --reanchor --reason \"<why>\"` and rerun `cao verify`.",
-            }, ensure_ascii=False, indent=2)); return 2
+            }), ensure_ascii=False, indent=2)); return 2
 
     req = repo / work["requirement"]["path"]
     if not req.exists():
-        print(json.dumps({"ok": False, "error": "REQUIREMENT_FILE_MISSING"}, ensure_ascii=False, indent=2)); return 2
+        print(json.dumps(record_denial(repo, work, "verify", {"ok": False, "error": "REQUIREMENT_FILE_MISSING"}), ensure_ascii=False, indent=2)); return 2
     inputs = verification_inputs(repo, work, cfg)
     run = {"run_id": "verify-" + uuid.uuid4().hex,
            "sequence": int(work.get("verification_sequence", 0)) + 1,
@@ -237,6 +239,10 @@ def _prepare_verification(args: argparse.Namespace):
         work.setdefault("verification_history", []).append(previous)
     work["verification_sequence"] = run["sequence"]
     work["verification"] = run
+    start_runtime_run(repo, wid, run["run_id"], "verification", inputs,
+                      retry_of=previous.get("run_id"), generation=run["generation"], sequence=run["sequence"])
+    queue_record(repo, work, "verification.started", {"run_id": run["run_id"],
+                 "sequence": run["sequence"], "generation": run["generation"], "inputs": inputs})
     save_work(repo, work)
     return repo, work["id"], scripts, source, inputs, verification_timeout(cfg), run
 
@@ -257,6 +263,7 @@ def commit_verification(repo, wid, inputs, scripts, results, source, started, ru
             # Completed history remains immutable. Do not change its progress/official result.
             if work.get("status") != "completed":
                 work.setdefault("verification_history", []).append(rejected)
+                queue_record(repo, work, "verification.finished", rejected)
                 save_work(repo, work)
             return rejected
         try:
@@ -293,6 +300,7 @@ def commit_verification(repo, wid, inputs, scripts, results, source, started, ru
                            "Fix verification and rerun `cao verify`.")
             work["execution"]["next_action"] = action("agent", instruction)
             work["resume"]["summary"] = "Verification passed." if status == "passed" else f"Verification {status}. See verification.results for script status and reasons."
+        queue_record(repo, work, "verification.finished", verification)
         save_work(repo, work)
         return verification
 
@@ -304,31 +312,28 @@ def cmd_verify(args: argparse.Namespace) -> int:
     repo, wid, scripts, source, inputs, timeout, run = prepared
     started = now()
     results: list[dict[str, Any]] = []
-    for item in scripts:
-        command = item["command"]
-        command_started = now()
-        try:
-            result = run_script(command, repo, timeout=timeout)
-        except Exception as exc:
-            result = {"exit_code": 127, "stdout_tail": "", "stderr_tail": f"VERIFICATION_EXECUTION_ERROR: {exc}", "timed_out": False}
-        exit_code = result["exit_code"]
-        stdout, stderr = result["stdout_tail"], result["stderr_tail"]
-        status_for_script = verification_status_for_exit_code(exit_code)
-        results.append({
-            "name": item["name"],
-            "command": command,
-            "required": item["required"],
-            "gates": list(item["gates"]),
-            "exit_code": exit_code,
-            "status": status_for_script,
-            "timed_out": result["timed_out"],
-            "reason": verification_reason(stdout, stderr, status_for_script),
-            "started_at": command_started,
-            "stdout_tail": stdout[-4000:],
-            "stderr_tail": stderr[-4000:],
-        })
-
-    verification = commit_verification(repo, wid, inputs, scripts, results, source, started, run)
+    with owner(repo, wid, run["run_id"]):
+        for index, item in enumerate(scripts, 1):
+            command = item["command"]
+            command_started = now()
+            result = execute(repo, wid, run["run_id"], f"command-{index:04d}", command,
+                             timeout, runner=run_script)
+            exit_code = result["exit_code"]
+            stdout, stderr = result["diagnostic_tails"]["stdout_tail"], result["diagnostic_tails"]["stderr_tail"]
+            status_for_script = verification_status_for_exit_code(exit_code)
+            results.append({
+                "name": item["name"], "command": command, "required": item["required"],
+                "gates": list(item["gates"]), "exit_code": exit_code, "status": status_for_script,
+                "timed_out": result["timed_out"],
+                "reason": verification_reason(stdout, stderr, status_for_script),
+                "started_at": command_started, "process_status": result.get("process_status", "exited"), "stdout_tail": stdout[-4000:],
+                "stderr_tail": stderr[-4000:], "runtime": result.get("runtime"),
+            })
+        finish_execution(repo, wid, run["run_id"], results)
+        verification = commit_verification(repo, wid, inputs, scripts, results, source, started, run)
+        projection = project_result(repo, wid, run["run_id"], verification)
+        if not projection["ok"]:
+            verification = {**verification, "runtime_diagnostic": projection}
     status = verification["status"]
     with repo_transaction(repo):
         work = load_work(repo, wid)

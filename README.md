@@ -717,3 +717,18 @@ edits use the same target normalization. Managed-state writes remain denied; unk
 retains the existing risk policy and is not a sandbox guarantee.
 
 Detailed compatibility and regression mapping: [R1–R9 integrity repair](docs/2026-10-13-r1-r9-integrity-repair.md).
+
+### 任务运行记录
+
+CAO 自动保留检查点、决策、阻塞与交接历史，以及验证和 SDD 验收的执行事实。
+日志默认脱敏、分段并限制容量；Work Item 仍是任务和门禁状态的权威来源。
+
+```sh
+cao runtime status --work <id>
+cao runtime events --work <id> --limit 50
+cao runtime runs --work <id>
+cao runtime recover --work <id> --check
+```
+
+恢复检查不会自动重跑命令或补成验证通过。日志开关、查询、投影重建及清理见
+[运行记录使用合同](references/runtime-records.md)。

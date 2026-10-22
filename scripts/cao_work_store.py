@@ -116,6 +116,10 @@ def _persist_work(repo: Path, work: dict[str, Any]) -> None:
         backup_once(repo, work_path(repo, work["id"]))
     saved = {"pending_events": [], **work, "integrity_version": 2,
              "state_revision": revision + 1, "updated_at": now()}
+    for event in saved["pending_events"]:
+        # Replayed outbox entries retain their original business revision.
+        event.setdefault("state_revision", revision + 1)
+        event.setdefault("occurred_at", now())
     save_json(work_path(repo, work["id"]), saved)
     # Advance the caller only after authority commits.
     work.update(saved)

@@ -1,0 +1,78 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "CAO runtime event envelope v1",
+  "type": "object",
+  "description": "Diagnostic observations and new lifecycle envelopes. Older lifecycle records keep their original schema; this does not certify gate admission.",
+  "required": [
+    "schema_version",
+    "event_id",
+    "event",
+    "work_item_id",
+    "source",
+    "occurred_at",
+    "recorded_at",
+    "idempotency_key"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "event_id": {
+      "type": "string"
+    },
+    "event": {
+      "type": "string"
+    },
+    "work_item_id": {
+      "type": "string"
+    },
+    "source": {
+      "enum": [
+        "cao_command",
+        "cao_executor",
+        "host_observation",
+        "provider_observation",
+        "agent_declaration",
+        "recovery"
+      ]
+    },
+    "occurred_at": {
+      "type": [
+        "number",
+        "string"
+      ]
+    },
+    "recorded_at": {
+      "type": [
+        "number",
+        "string"
+      ]
+    },
+    "idempotency_key": {
+      "type": "string"
+    },
+    "state_revision": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "run_id": {
+      "type": "string"
+    },
+    "payload": {
+      "type": "object"
+    },
+    "coverage": {
+      "enum": [
+        "partial",
+        "correlated"
+      ]
+    },
+    "tool_call_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "additionalProperties": true
+}
