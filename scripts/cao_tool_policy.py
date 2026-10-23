@@ -772,6 +772,8 @@ def _readonly_tokens(tokens: list[str], cwd: Path | None = None) -> bool:
             return False
         root = package_root_dir()
         launchers = {str((root / "cao").resolve())} if root else set()
+        from scripts.registered_launchers import project_launchers
+        launchers.update(project_launchers(cwd or Path.cwd()))
         console = shutil.which("cao")
         if console:
             launchers.add(str(Path(console).resolve()))
