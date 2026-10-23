@@ -20,11 +20,13 @@ class LightSpecTests(RepairCase):
             args += ["--criteria-section", "验收标准"]
         return self.run_cli(*args)
 
-    def test_light_closes_without_workflow_plan_or_acceptance_run(self):
+    def test_light_closes_without_workflow_plan_with_real_behavior_acceptance(self):
         wid = self.start()
         self.spec()
         rc, out = self.bind(); self.assertEqual(rc, 0, out)
         rc, out = self.run_cli("verify"); self.assertEqual(rc, 0, out)
+        from tests.helpers import complete_acceptance
+        complete_acceptance(self.repo, lambda repo, *args: self.run_cli(*args))
         rc, out = self.run_cli("done"); self.assertEqual(rc, 0, out)
         self.assertEqual(self.read_work(wid)["status"], "completed")
         self.assertNotIn("workflow", self.read_work(wid)["sdd"])
@@ -92,6 +94,8 @@ class LightSpecTests(RepairCase):
         self.bind(replace=True)
         rc, out = self.run_cli("done"); self.assertEqual(rc, 2, out)
         self.run_cli("verify")
+        from tests.helpers import complete_acceptance
+        complete_acceptance(self.repo, lambda repo, *args: self.run_cli(*args))
         rc, out = self.run_cli("done"); self.assertEqual(rc, 0, out)
 
     def test_binding_change_and_product_write_cannot_reuse_technical_success(self):
@@ -122,5 +126,5 @@ class LightSpecTests(RepairCase):
         self.start(); self.spec(); self.bind(); self.run_cli("verify")
         view = build_dashboard_overview(self.repo)["work_items"][0]
         self.assertEqual(view["light_spec"]["state"], "valid")
-        self.assertEqual(view["sdd_acceptance"]["state"], "not_applicable")
-        self.assertTrue(view["completion"]["ready"])
+        self.assertEqual(view["sdd_acceptance"]["state"], "unconfigured")
+        self.assertFalse(view["completion"]["ready"])

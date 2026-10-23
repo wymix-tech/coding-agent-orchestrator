@@ -75,11 +75,15 @@ class VerifyIntegrity(RepairCase):
                 self.assertEqual(self.run_cli('done')[0], 2)
         self.configure('raise SystemExit(0)')
         self.assertEqual(self.run_cli('verify')[0], 0)
+        from tests.helpers import complete_acceptance
+        complete_acceptance(self.repo, lambda repo, *args: self.run_cli(*args))
         self.assertEqual(self.run_cli('done')[0], 0)
 
     def test_r8_completed_and_suspended_are_immutable_to_verify(self):
         wid = self.minimal()
         self.assertEqual(self.run_cli('verify')[0], 0)
+        from tests.helpers import complete_acceptance
+        complete_acceptance(self.repo, lambda repo, *args: self.run_cli(*args))
         self.assertEqual(self.run_cli('done')[0], 0)
         before = self.read_work(wid)
         self.assertEqual(self.run_cli('verify', '--work', wid)[0], 2)
@@ -137,6 +141,8 @@ class VerifyIntegrity(RepairCase):
             self.assertEqual(self.run_cli('done')[0], 2)
             release.touch()  # Allow the orphan fixture script to exit too.
             self.assertEqual(self.run_cli('verify')[0], 0)
+            from tests.helpers import complete_acceptance
+            complete_acceptance(self.repo, lambda repo, *args: self.run_cli(*args))
             self.assertEqual(self.run_cli('done')[0], 0)
 
     def test_r5_chmod_and_legacy_snapshot_require_reverify(self):
@@ -154,6 +160,8 @@ class VerifyIntegrity(RepairCase):
         cao.save_work(self.repo, work)
         self.assertEqual(self.run_cli('done')[0], 2)
         self.assertEqual(self.run_cli('verify')[0], 0)
+        from tests.helpers import complete_acceptance
+        complete_acceptance(self.repo, lambda repo, *args: self.run_cli(*args))
         self.assertEqual(self.run_cli('done')[0], 0)
 
     def test_r7_new_success_supersedes_old_failure_and_previous_pass_is_unavailable(self):
@@ -170,6 +178,8 @@ class VerifyIntegrity(RepairCase):
             release.touch(); out, err = first.communicate(timeout=10)
             self.assertEqual(first.returncode, 2, err)
             self.assertEqual(self.read_work(wid)['verification']['status'], 'passed')
+            from tests.helpers import complete_acceptance
+            complete_acceptance(self.repo, lambda repo, *args: self.run_cli(*args))
             self.assertEqual(self.run_cli('done')[0], 0)
 
 

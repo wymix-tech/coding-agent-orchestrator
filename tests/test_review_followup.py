@@ -223,6 +223,8 @@ class ReviewFollowup(unittest.TestCase):
         declaration = {"spec": t.spec, "criteria": [{"id": "AC-1", "source": t.spec,
                        "kind": "requirement", "description": "Fixture unittest passes"}],
                        "executor": {"mode": "command", "entrypoint": command}}
+        from scripts.acceptance_trace import criteria
+        declaration["criteria"][0]["covers"] = [item["id"] for item in criteria(t.repo, t.work())]
         t.write("acceptance.json", json.dumps(declaration))
         t.run_cli("sdd", "acceptance", "configure", "--declaration", "acceptance.json")
         t.run_cli("reopen", "--reanchor", "--reason", "Reviewed native fixture acceptance")
@@ -286,6 +288,8 @@ class FailedSwitch(unittest.TestCase):
         t.start("first")
         bind_light_spec(t.repo, lambda repo, *args: t.run_cli(*args), "_bmad-output/spec-first.md")
         self.assertEqual(0, t.run_cli("verify")[0])
+        from tests.helpers import complete_acceptance
+        complete_acceptance(t.repo, lambda repo, *args: t.run_cli(*args))
         self.assertEqual(0, t.run_cli("done")[0])
         second = t.start("second")
         before = t.read_work(second)

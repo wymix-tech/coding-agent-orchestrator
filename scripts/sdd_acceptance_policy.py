@@ -58,6 +58,11 @@ def normalize_declaration(raw: dict) -> dict:
         ids.add(identity)
         sources.add(source)
         normalized.append({"id": identity, "source": source, "kind": kind, "description": description})
+        if "covers" in item:
+            covers = item["covers"]
+            if not isinstance(covers, list) or not covers or any(not isinstance(value, str) or not value.startswith("src-") for value in covers):
+                raise ValueError(DECLARATION_INVALID)
+            normalized[-1]["covers"] = sorted(set(covers))
     if not any(item["kind"] == "requirement" for item in normalized):
         raise ValueError(DECLARATION_INVALID)
     mode = _text(executor.get("mode"), DECLARATION_INVALID)

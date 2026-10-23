@@ -1,0 +1,87 @@
+{
+  "date": "2026-10-23",
+  "base_sha": "5eab01b4301da5d08b71083ff52e26bf912637ec",
+  "branch": "feat/project-context-dual-acceptance",
+  "environment": {
+    "platform": "Linux",
+    "python": "3.12.14",
+    "node": "24.19.0",
+    "pi": "1.1.0"
+  },
+  "python": {
+    "clean_main": {
+      "count": 828,
+      "duration_seconds": 383.326,
+      "status": "passed"
+    },
+    "full_regression": {
+      "count": 873,
+      "duration_seconds": 498.098,
+      "status": "passed"
+    },
+    "project_specific": {
+      "count": 40,
+      "duration_seconds": 34.547,
+      "status": "passed"
+    },
+    "verification_runner_and_receipts": {
+      "count": 18,
+      "duration_seconds": 4.105,
+      "status": "passed"
+    },
+    "additional_documentation_case": {
+      "status": "passed",
+      "included_in_full_regression": false
+    },
+    "unique_current_cases_covered": 874
+  },
+  "pi": {
+    "typescript": "passed",
+    "adapter_tests": 36,
+    "status": "passed"
+  },
+  "installed_wheel": {
+    "status": "passed",
+    "fixture_cases": 21,
+    "contents_checked": true
+  },
+  "real_provider_startups": [
+    {
+      "provider": "openspec",
+      "exit": 0,
+      "empty_product": true,
+      "work_count": 0,
+      "pi_exit": 0,
+      "rpc_state_response": true,
+      "after_restart_mode": "project_context_setup"
+    },
+    {
+      "provider": "bmad",
+      "exit": 0,
+      "empty_product": true,
+      "work_count": 0,
+      "pi_exit": 0,
+      "rpc_state_response": true,
+      "after_restart_mode": "project_context_setup"
+    },
+    {
+      "provider": "speckit",
+      "exit": 0,
+      "empty_product": true,
+      "work_count": 0,
+      "pi_exit": 0,
+      "rpc_state_response": true,
+      "after_restart_mode": "project_context_setup"
+    }
+  ],
+  "scope_limits": {
+    "online_model_turns": 0,
+    "full_online_model_development_session": "not_run",
+    "platform_matrix": "local Linux; other platforms require CI"
+  },
+  "static_checks": {
+    "compileall": "passed",
+    "diff_check": "passed",
+    "skill_validation": "passed"
+  }
+}

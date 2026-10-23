@@ -58,6 +58,8 @@ class DashboardCompletionTests(RepairCase):
 
     def test_fresh_verification_is_not_implicit_done(self):
         self.native_complete()
+        from tests.helpers import complete_acceptance
+        complete_acceptance(self.repo, lambda repo, *args: self.run_cli(*args))
         rc, out = self.run_cli("verify")
         self.assertEqual(rc, 0, out)
         view = self.view()
@@ -131,7 +133,7 @@ vm.runInContext(html.match(/<script>([\s\S]*?)<\/script>/)[1],context);
 const work=JSON.parse(process.argv[2]);
 vm.runInContext('state='+JSON.stringify({work_items:[work]})+';selectedId='+JSON.stringify(work.id)+';renderDetail()',context);
 const detail=element('work-detail').innerHTML;
-for(const text of ['STALE_TEST_EVIDENCE','tests','accepted environment failure','旧版证据','独立 SDD 验收','不适用','原生规范 / 验收标准']) assert.ok(detail.includes(text),text);
+for(const text of ['STALE_TEST_EVIDENCE','tests','accepted environment failure','旧版证据','独立 SDD 验收','未配置','原生规范 / 验收标准']) assert.ok(detail.includes(text),text);
 for(const step of ['native-sdd-workflow-completed','done','complete','closed']) {
  const active={...work,status:'active',path_state:{ready:true},execution:{step}};
  assert.notEqual(vm.runInContext('currentFlowIndex('+JSON.stringify(active)+')',context),6);

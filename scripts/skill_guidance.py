@@ -5,6 +5,7 @@ from pathlib import Path
 STAGE_FILES = {
     "startup": "references/startup.md",
     "intake": "references/work-intake.md",
+    "project_setup": "references/project-context.md",
     "verification_setup": "references/verification-setup.md",
     "path_assessment": "references/execution.md",
     "execution": "references/execution.md",
@@ -58,7 +59,7 @@ def guidance(root: Path | None, command: str, stage: str, provider: str = "") ->
         "read_before_action": [str((root / name).resolve()) for name in files] if root else [],
         "ready": not missing,
         "missing_resources": missing,
-        "return_to": "bootstrap" if stage in {"startup", "intake", "verification_setup", "recovery"} else "next",
+        "return_to": "bootstrap" if stage in {"startup", "intake", "project_setup", "verification_setup", "recovery"} else "next",
         "instruction": ("Read the Skill once, then only the listed stage resources before acting. "
                         "Use command as the actual invocation for examples written as cao. "
                         "Follow the current action and native instructions; document loading is not execution."

@@ -21,6 +21,9 @@ def run(repo: pathlib.Path, *args: str) -> tuple[int, dict]:
         payload = json.loads(result.stdout)
     except Exception:
         payload = {"raw": result.stdout, "stderr": result.stderr}
+    if args and args[0] == "init" and result.returncode == 0:
+        from tests.helpers import provision_fixture_background
+        provision_fixture_background(repo)
     return result.returncode, payload
 
 

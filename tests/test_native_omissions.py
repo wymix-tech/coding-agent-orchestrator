@@ -77,9 +77,14 @@ class NativeOmissionTests(RepairCase):
         self.assertNotIn('review resolve', out['action']['instruction'])
 
     def test_fresh_independent_report_allows_verify_and_non_git_done(self):
-        self.setup_oneshot();before=self.spec.read_bytes();self.review()
+        self.setup_oneshot();before=self.spec.read_bytes()
+        from tests.helpers import complete_acceptance
+        complete_acceptance(self.repo, lambda repo, *args: self.run_cli(*args), prepare_only=True)
+        self.review()
         self.assertEqual(self.spec.read_bytes(),before)
         self.assertEqual(self.run_cli('verify')[0],0)
+        from tests.helpers import complete_acceptance
+        complete_acceptance(self.repo, lambda repo, *args: self.run_cli(*args))
         self.assertEqual(self.run_cli('done')[0],0)
 
     def test_code_or_evidence_changes_invalidate_review(self):
@@ -116,12 +121,17 @@ class NativeOmissionTests(RepairCase):
 
     @unittest.skipIf(os.name=='nt','Local POSIX git fixture')
     def test_git_commit_required_after_fresh_verify_and_does_not_stale_it(self):
-        self.setup_oneshot();self.review();self.assertEqual(self.run_cli('verify')[0],0)
+        self.setup_oneshot()
+        from tests.helpers import complete_acceptance
+        complete_acceptance(self.repo, lambda repo, *args: self.run_cli(*args), prepare_only=True)
+        self.review();self.assertEqual(self.run_cli('verify')[0],0)
         subprocess.run(['git','init','-q'],cwd=self.repo,check=True)
         (self.repo/'.git/info/exclude').write_text('__pycache__/\n*.py[cod]\n')
         self.assertEqual(self.run_cli('done')[1]['reason'],'NATIVE_SPEC_UNTRACKED')
         subprocess.run(['git','add','-A'],cwd=self.repo,check=True)
         subprocess.run(['git','-c','user.name=Fixture','-c','user.email=fixture@example.test','commit','-qm','feat: fixture'],cwd=self.repo,check=True)
+        from tests.helpers import complete_acceptance
+        complete_acceptance(self.repo, lambda repo, *args: self.run_cli(*args))
         self.assertEqual(self.run_cli('done')[0],0)
 
 

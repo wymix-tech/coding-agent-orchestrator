@@ -25,6 +25,7 @@ description: Coordinate non-trivial repository coding work across sessions and a
 | Condition | Read before acting |
 | --- | --- |
 | `sdd_select`, `sdd_install_required`, language/host installation trouble | [Startup](references/startup.md) |
+| `project_setup`, missing background, module scope, project technology migration | [Project context](references/project-context.md) |
 | No current Work, select/resume requirement, session transfer | [Work intake and continuity](references/work-intake.md) |
 | `verification_setup`, changed scripts/capabilities/`timeout_seconds` or wrappers | [Verification baseline](references/verification-setup.md) |
 | Missing assessment, native workflow/plan/scope work | [Execution path and scope](references/execution.md) |
@@ -91,13 +92,13 @@ require reanchoring. Any input change can require fresh reviews/bindings/verific
   native artifacts in that language while preserving code/API names, commands and required tokens.
 - Create/resume Work before product code, configuration, tests or verification scaffolding. New
   inline requirements use `cao requirement next-id`; use an existing requirement file directly.
-- Confirm material technology choices before stack-dependent planning/scaffolding. Preserve the existing product stack or explicit user choices/delegation; ask and wait for missing choices. Agent-written requirements/SPECs alone do not authorize choices. Restore recorded choices after restart; see the intake guide.
+- Save project background with `project context set` before starting a product Work; use `verification configure --plan-only` when actual entries do not exist. Project technology is independent of Work decisions. Confirm material technology choices before stack-dependent planning/scaffolding. Preserve the existing product stack or explicit user choices/delegation; ask and wait for missing choices. Agent-written requirements/SPECs alone do not authorize choices. Restore recorded choices after restart; see the intake guide.
 - Establish an accepted required verification baseline before business implementation, then assess
   the path and satisfy native prerequisites. Initial build/test scaffolding may fail; passing tests
   are not a prerequisite to creating Work or beginning implementation after its prerequisites.
 - Keep CAO profile (`light`, `standard`, `comprehensive`) separate from native route. Light still
   follows native prerequisites, actual task scope and required independent reviews. Do not
-  manufacture workflow/plan/no-plan/final-acceptance records merely for light.
+  manufacture workflow/plan/no-plan records merely for light. Prove actual native Intent/criteria behavior with current task acceptance evidence.
 - Associate ALL this requirement's execution units. `--plan-item` selects related BMAD stories/epics;
   repeated plans cover split changes/features. `--no-plan` cannot waive actual SPEC tasks.
 - Never invent approvals, independent reviewers, execution, artifacts or passing evidence. Only
@@ -111,3 +112,5 @@ require reanchoring. Any input change can require fresh reviews/bindings/verific
 - `cao checkpoint`, `cao decision` and explicit blockers/handoffs preserve continuity. Native done,
   generated documents and successful tests cannot close Work. Only successful `cao done` is final.
   Follow native local Commit obligations; never push without authorization.
+
+Inspect `cao acceptance status` before closing: project technical quality and current requirement/SDD evidence must both pass and remain fresh. Standards are inherited; prior Work results are not. Existing native reviews, approvals and full scope completion remain required.

@@ -24,6 +24,8 @@ sys.exit(rc)
         self.d = {"spec": "_bmad-output/spec.md", "outputs": outputs or [], "criteria": [
             {"id": "AC-1", "source": "_bmad-output/spec.md", "kind": "requirement", "description": "Session created"}],
             "executor": {"mode": mode, "entrypoint": shlex.join([sys.executable, script.name]) if mode == "command" else "bmad-review"}}
+        from scripts.acceptance_trace import criteria
+        self.d["criteria"][0]["covers"] = [item["id"] for item in criteria(self.repo, self.read_work(self.wid))]
         if mode == "skill":
             skill = self.repo / ".agents/skills/bmad-review"; skill.mkdir(parents=True)
             (skill / "SKILL.md").write_text("Review the implementation")
@@ -194,20 +196,28 @@ sys.exit(rc)
         self.assertTrue(set(contract["required"]).issubset(record))
         self.assertIn(record["run"]["status"], contract["properties"]["run"]["properties"]["status"]["enum"])
 
-    def test_downgrade_to_light_preserves_history_without_full_acceptance_gate(self):
+    def test_downgrade_to_light_still_requires_valid_native_behavior_evidence(self):
         self.setup_acceptance()
         rc, out = self.run_cli("path", "assess", "--profile", "light", "--reason", "Explicit bounded fixture re-assessment")
         self.assertEqual(rc, 0, out)
-        (self.repo / "_bmad-output/spec.md").unlink()
-        rc, out = self.run_cli("reopen", "--reanchor", "--reason", "Reviewed light technical standard")
-        self.assertEqual(rc, 0, out)
+        rc, out = self.run_cli("sdd", "spec", "bind", "--spec", "_bmad-output/spec.md", "--criteria-section", "Acceptance")
+        self.assertEqual(rc, 2, out)  # No invented checklist: use a real native section.
         file = self.repo / "_bmad-output/light.md"
         file.write_text("# Local fixture\nBounded fixture\n## Acceptance\n- Fixture check passes.\n")
         rc, out = self.run_cli("sdd", "spec", "bind", "--spec", "_bmad-output/light.md", "--criteria-section", "Acceptance")
         self.assertEqual(rc, 0, out)
-        rc, out = self.run_cli("verify"); self.assertEqual(rc, 0, out)
-        rc, out = self.run_cli("done"); self.assertEqual(rc, 0, out)
-        self.assertIn("acceptance", self.read_work(self.wid)["sdd"])
+        self.d['spec'] = '_bmad-output/light.md'
+        self.d['criteria'][0]['source'] = self.d['spec']
+        from scripts.acceptance_trace import criteria
+        self.d['criteria'][0]['covers'] = [item['id'] for item in criteria(self.repo, self.read_work(self.wid))]
+        (self.repo / 'declaration.json').write_text(json.dumps(self.d))
+        self.assertEqual(self.run_cli('acceptance', 'configure', '--declaration', 'declaration.json', '--replace')[0], 0)
+        self.assertEqual(self.run_cli('reopen', '--reanchor', '--reason', 'Review real light sources')[0], 0)
+        self.assertEqual(self.run_cli('verify')[0], 0)
+        self.assertEqual(self.run_cli('done')[0], 2)
+        self.assertEqual(self.run_cli('acceptance', 'run')[0], 0)
+        self.assertEqual(self.run_cli('done')[0], 0)
+        self.assertIn('acceptance', self.read_work(self.wid)['sdd'])
 
     def test_runtime_redaction_does_not_change_raw_acceptance_protocol(self):
         from scripts import cao

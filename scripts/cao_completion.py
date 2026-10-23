@@ -52,7 +52,9 @@ def sdd_acceptance_inputs(repo: Path, work: dict, cfg: dict) -> dict:
     record = (work.get("sdd") or {}).get("acceptance") or {}
     if not record.get("declaration"):
         raise ValueError("SDD_ACCEPTANCE_NOT_CONFIGURED")
-    return {**verification_inputs(repo, work, cfg), "work_id": work["id"], "provider": work["sdd"]["provider"],
+    from scripts.acceptance_inputs import task_inputs
+    inputs = task_inputs(repo, work, cfg) if work.get("project_binding") else verification_inputs(repo, work, cfg)
+    return {**inputs, "work_id": work["id"], "provider": work["sdd"]["provider"],
             "declaration_sha256": record["declaration_sha256"],
             "source_hashes": source_hashes(repo, record["declaration"], provider_output_dirs(work["sdd"]["provider"]))}
 
@@ -67,7 +69,7 @@ def sdd_acceptance_current_hashes(repo: Path, work: dict) -> dict:
 
 def sdd_acceptance_state(repo: Path, work: dict) -> dict:
     profile = (work.get("path_assessment") or {}).get("profile")
-    if profile == "light":
+    if profile == "light" and not work.get("project_binding"):
         return {"ready": True, "state": "not_applicable", "reason": None}
     if work.get("status") == "completed":
         run = ((work.get("sdd") or {}).get("acceptance") or {}).get("run") or {}
@@ -97,6 +99,9 @@ def sdd_acceptance_state(repo: Path, work: dict) -> dict:
 
 
 def verification_inputs(repo: Path, work: dict, cfg: dict) -> dict:
+    if work.get("project_binding"):
+        from scripts.acceptance_inputs import technical_inputs
+        return technical_inputs(repo, work, cfg)
     record = (work.get("sdd") or {}).get("acceptance") or {}
     native_acceptance = bool(record.get("declaration") and (work.get("path_assessment") or {}).get("profile") != "light")
     excluded = {work["requirement"]["path"]}
@@ -124,7 +129,7 @@ def verification_inputs(repo: Path, work: dict, cfg: dict) -> dict:
     return inputs
 
 
-def completion_status(repo: Path, work: dict[str, Any] | None) -> dict[str, Any]:
+def legacy_completion_status(repo: Path, work: dict[str, Any] | None) -> dict[str, Any]:
     from scripts.cao_tool_policy import verification_baseline_state
 
     restart = restart_state(repo, detect_current_host())
@@ -317,3 +322,78 @@ def completion_next_instruction(repo: Path, work: dict[str, Any] | None, complet
             return "The work item is already completed; no further action is required."
         return f"Make the work item active before closing it: `cao resume --work {wid} --reactivate`."
     return "Resolve the blocking condition shown above, then run `cao verify` and retry `cao done`."
+
+
+def lifecycle_status(repo, work):
+    """Collect independent closing obligations without short-circuiting acceptance."""
+    states = []
+    def check(name, fn):
+        try:
+            value = fn()
+        except (ValueError, OSError, RuntimeError) as exc:
+            value = {'ready': False, 'reason': str(exc)}
+        states.append({'obligation': name, **value})
+    if not work:
+        return {'ready': False, 'reason': 'NO_WORK_ITEM', 'obligations': []}
+    check('restart', lambda: restart_state(repo, detect_current_host()))
+    check('active', lambda: {'ready': work.get('status') == 'active', 'reason': 'Work must be active'})
+    check('blockers', lambda: {'ready': not work.get('blockers'), 'reason': 'active blocker exists'})
+    check('requirement', lambda: {'ready': sha256_file(repo / work['requirement']['path']) == work['requirement']['sha256'], 'reason': 'requirement changed since work started'})
+    check('assessment', lambda: path_assessment_state(repo, work))
+    from scripts.cao_tool_policy import verification_baseline_state
+    check('baseline', lambda: verification_baseline_state(repo, work))
+    check('native_route', lambda: native_route_state(repo, work))
+    check('plan_scope', lambda: provider_verification_plan_state(repo, work))
+    check('native_planning', lambda: planning_state(repo, work))
+    check('native_review', lambda: native_review_state(repo, work, code_snapshot))
+    profile = (work.get('path_assessment') or {}).get('profile')
+    if profile == 'light':
+        check('light_spec', lambda: light_spec_state(repo, work, provider_output_dirs(work['sdd']['provider'])))
+    else:
+        def native_workflow():
+            ready, reason = workflow_ready(work, repo)
+            if ready:
+                ownership = validate_workflow_artifacts(repo, work['sdd']['provider'], (work['sdd'].get('workflow') or {}).get('artifacts') or [])
+                if not ownership['ok']:
+                    return {'ready': False, 'reason': 'native workflow artifact ownership invalid', 'offending': ownership['offending']}
+            return {'ready': ready, 'reason': reason}
+        check('workflow', native_workflow)
+        def pending_plan():
+            pending = provider_pending_plan_items(repo, work)
+            return {'ready': not pending, 'reason': 'native plan has unfinished items', 'pending_plan_items': pending}
+        check('native_plan_complete', pending_plan)
+    def manual_gates():
+        gates = gate_state(work, True, True)
+        return {'ready': not gates['pending'], 'reason': 'required execution gates are not satisfied', 'pending_gates': gates['pending']}
+    if work.get('project_change'):
+        from scripts.project_context import load_context
+        from scripts.project_inspection import drift
+        def target_matches():
+            differences = drift(repo, load_context(repo), work['project_binding']['scopes'], work, allow_migration=False)
+            return {'ready': not differences, 'reason': 'PROJECT_MIGRATION_TARGET_MISMATCH', 'differences': differences}
+        check('migration_target', target_matches)
+    check('manual_gates', manual_gates)
+    check('native_commit', lambda: native_commit_state(repo, work, SNAPSHOT_IGNORE_DIRS | {'.agents', '.pi', '_bmad', '_bmad-output'}))
+    blocked = [state for state in states if not state['ready']]
+    return {'ready': not blocked, 'reason': blocked[0].get('reason') if blocked else None,
+            'obligations': states, 'blockers': blocked}
+
+
+def completion_status(repo, work):
+    if not work or (work.get('status') == 'completed' and not work.get('project_binding')):
+        return legacy_completion_status(repo, work)
+    from scripts.acceptance_summary import summarize
+    lifecycle = lifecycle_status(repo, work)
+    result = summarize(repo, work, lifecycle)
+    result['lifecycle'] = lifecycle
+    legacy = legacy_completion_status(repo, work)
+    if not legacy['ready']:
+        result['reason'] = legacy.get('reason') or result['reason']
+        result['next'] = {'type': 'agent', 'instruction': legacy.get('next') or completion_next_instruction(repo, work, legacy)}
+    for key in ('gates', 'pending_plan_items', 'pending_gates', 'missing_artifacts', 'workflow'):
+        if key in legacy:
+            result[key] = legacy[key]
+    # Existing callers consume an instruction string in completion.next.
+    result['next_action'] = result['next']
+    result['next'] = result['next_action']['instruction']
+    return result

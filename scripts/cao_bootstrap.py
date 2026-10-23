@@ -175,7 +175,9 @@ def cmd_bootstrap(args: argparse.Namespace) -> int:
 
     inspection = setup_state(cfg)
     current = current_work_action(repo, work)
-    mode = "verification_setup" if current.get("stage") == "verification_setup" else "resume" if work else "select"
+    mode = "project_context_setup" if current.get("stage") == "project_setup" else "verification_setup" if current.get("stage") == "verification_setup" else "resume" if work else "select"
+    if current.get("stage") == "project_setup" and current.get("reason") in {"PROJECT_VERIFICATION_PLAN_REQUIRED", "PROJECT_VERIFICATION_CONTEXT_MISMATCH"}:
+        mode = "project_verification_plan"
     next_out = {
         "ok": True, "mode": mode,
         "pending_request": pending_request(repo) if not work else None,
@@ -187,6 +189,8 @@ def cmd_bootstrap(args: argparse.Namespace) -> int:
     if next_out["work_item"]:
         next_out["work_item"]["next_action"] = current
     next_out["verification_setup"] = inspection
+    from scripts.project_context import context_state
+    next_out["project_context"] = context_state(repo, work=work)
     if bootstrap_session:
         next_out["session"] = bootstrap_session
     if bootstrap_adapter is not None:

@@ -51,6 +51,9 @@ class RouteSync(unittest.TestCase):
         proc = subprocess.run([sys.executable, str(ROOT / "scripts/cao.py"), *args],
                               cwd=self.repo, env=self.env, input=json.dumps(raw) if raw else None,
                               text=True, capture_output=True, timeout=30)
+        if args and args[0] == "init" and proc.returncode == 0:
+            from tests.helpers import provision_fixture_background
+            provision_fixture_background(self.repo)
         self.assertEqual(expected, proc.returncode, proc.stdout + proc.stderr)
         return json.loads(proc.stdout)
 

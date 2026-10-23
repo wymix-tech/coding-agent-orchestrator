@@ -63,6 +63,25 @@ def cmd_sdd_acceptance(args: argparse.Namespace) -> int:
 def cmd_verification_configure(args: argparse.Namespace) -> int:
     repo = repo_root(args.repo)
     path = repo / CONFIG_REL
+    from scripts.project_verification import verification_binding
+    from scripts.project_context import load_context
+    binding = verification_binding(repo, getattr(args, "scope", None)) if load_context(repo) else None
+    if getattr(args, "plan_only", False):
+        if not binding:
+            raise ValueError("PROJECT_CONTEXT_REQUIRED")
+        raw = json.loads(path.read_text(encoding="utf-8"))
+        plan = {"version": 1, "scripts": declared_scripts(args.verify_script or [], args.test_script or [], getattr(args, "security_script", None) or []), "context_binding": binding}
+        from scripts.project_verification import validate_entries
+        validate_entries(repo, plan["scripts"], getattr(args, "scope", None))
+        previous = (raw.get("verification") or {}).get("plan")
+        if previous and previous != plan and not args.replace:
+            raise ValueError("VERIFICATION_CONFIG_REPLACE_REQUIRED")
+        if (raw.get("verification") or {}).get("scripts"):
+            raise ValueError("VERIFICATION_ACTUAL_ENTRIES_EXIST: preserve actual entries; configure them instead")
+        raw.setdefault("verification", {}).update(plan=plan, context_binding=binding)
+        save_json(path, raw)
+        print(json.dumps({"ok": True, "status": "planned", "plan": plan, "executable": False}))
+        return 0
     scripts = []
     raw = {}
     try:
@@ -76,13 +95,18 @@ def cmd_verification_configure(args: argparse.Namespace) -> int:
         for section, key, requested, clear in declarations:
             if requested is not None and clear:
                 raise ValueError("SNAPSHOT_SCOPE_INVALID: conflicting set/clear options for " + section + "." + key)
+        environment = getattr(args, "environment_variable", None)
+        maximum_age = getattr(args, "maximum_evidence_age_seconds", None)
+        has_metadata = environment is not None or maximum_age is not None
         has_scripts = bool(args.verify_script or args.test_script or getattr(args, "security_script", None))
         if has_scripts:
             scripts = declared_scripts(args.verify_script or [], args.test_script or [], getattr(args, 'security_script', None) or [])
-        elif outputs is not None or clear_outputs or excludes is not None or clear_excludes:
+        elif outputs is not None or clear_outputs or excludes is not None or clear_excludes or has_metadata:
             scripts = verification_scripts(raw)
         else:
             raise ValueError("VERIFICATION_SCRIPT_REQUIRED")
+        from scripts.project_verification import validate_entries
+        validate_entries(repo, scripts, getattr(args, "scope", None))
         candidate, changed = prepare_config(raw, scripts, args.replace, now())
         for section, key, requested, clear in declarations:
             if requested is None and not clear:
@@ -96,6 +120,27 @@ def cmd_verification_configure(args: argparse.Namespace) -> int:
                 candidate.setdefault(section, {})[key] = normalized
                 candidate.setdefault("verification", {})["configured_at"] = now()
                 changed = True
+        if has_metadata:
+            candidate = json.loads(json.dumps(candidate))
+            metadata = {}
+            if environment is not None:
+                import re
+                if any(not re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*', key) for key in environment):
+                    raise ValueError('VERIFICATION_ENVIRONMENT_INVALID')
+                metadata['environment_variables'] = sorted(set(environment))
+            if maximum_age is not None:
+                from scripts.completion_policy import normalize_timeout
+                metadata['maximum_evidence_age_seconds'] = normalize_timeout(maximum_age)
+            if any((raw.get('verification') or {}).get(key) != value for key, value in metadata.items()):
+                if (raw.get('verification') or {}).get('scripts') and not args.replace:
+                    raise ValueError('VERIFICATION_CONFIG_REPLACE_REQUIRED')
+                candidate.setdefault('verification', {}).update(metadata)
+                changed = True
+        if binding:
+            if candidate is raw:
+                candidate = json.loads(json.dumps(candidate))
+            changed = changed or (raw.get("verification") or {}).get("context_binding") != binding
+            candidate.setdefault("verification", {})["context_binding"] = binding
         effective = json.loads(json.dumps(DEFAULT_CONFIG))
         deep_merge(effective, candidate)
         wid = getattr(args, "work", None) or load_index(repo).get("active_work")
@@ -179,6 +224,11 @@ def _prepare_verification(args: argparse.Namespace):
                     else f'cao resume --work {wid} --reactivate')
         print(json.dumps(record_denial(repo, work, "verify", {"ok": False, "error": "VERIFICATION_WORK_NOT_ACTIVE", "status": work.get("status"), "next": recovery}))); return 2
 
+    from scripts.project_verification import project_prerequisite
+    project = project_prerequisite(repo, work)
+    if project:
+        print(json.dumps({"ok": False, "error": project["reason"], "next": project}))
+        return 2
     route = native_route_state(repo, work)
     if not route["ready"]:
         print(json.dumps(record_denial(repo, work, "verify", {"ok": False, "error": route["reason"], "next": route["next"]}))); return 2
@@ -278,7 +328,9 @@ def commit_verification(repo, wid, inputs, scripts, results, source, started, ru
         if plan_state.get("scope"):
             work.setdefault("sdd", {})["plan_scope"] = plan_state["scope"]
         status = overall_verification_status(results)
-        verification = {"version": 2, "run_id": run["run_id"], "sequence": run["sequence"], "generation": run["generation"], "source": source, "at": started, **inputs,
+        verification = {"requirement_sha256": work["requirement"]["sha256"],
+                        "assessment_revision": (work.get("path_assessment") or {}).get("revision"),
+                        "version": 2, "run_id": run["run_id"], "sequence": run["sequence"], "generation": run["generation"], "source": source, "at": started, **inputs,
                         "scripts": scripts, "results": results,
                         "status": "stale" if changed else status, "run_status": status}
         if changed:
@@ -321,11 +373,26 @@ def cmd_verify(args: argparse.Namespace) -> int:
             exit_code = result["exit_code"]
             stdout, stderr = result["diagnostic_tails"]["stdout_tail"], result["diagnostic_tails"]["stderr_tail"]
             status_for_script = verification_status_for_exit_code(exit_code)
+            discovery = result.get('test_discovery') or {}
+            test_reason = None
+            if exit_code == 0 and 'tests' in item['gates']:
+                from scripts.cao_tool_policy import _shell_segments
+                try:
+                    segments = _shell_segments(command)
+                    noop = bool(segments) and all(tokens and tokens[0] in {'true', ':', 'echo', 'printf', 'exit'} for tokens in segments)
+                except ValueError:
+                    noop = False
+                if discovery.get('observed') and discovery.get('maximum_count') == 0:
+                    status_for_script, test_reason = 'blocked', 'ZERO_TESTS_DISCOVERED'
+                elif noop:
+                    status_for_script, test_reason = 'blocked', 'TEST_EXECUTION_NOT_PROVEN'
+
             results.append({
                 "name": item["name"], "command": command, "required": item["required"],
                 "gates": list(item["gates"]), "exit_code": exit_code, "status": status_for_script,
                 "timed_out": result["timed_out"],
-                "reason": verification_reason(stdout, stderr, status_for_script),
+                "reason": test_reason or verification_reason(stdout, stderr, status_for_script),
+                "test_discovery": discovery,
                 "started_at": command_started, "process_status": result.get("process_status", "exited"), "stdout_tail": stdout[-4000:],
                 "stderr_tail": stderr[-4000:], "runtime": result.get("runtime"),
             })

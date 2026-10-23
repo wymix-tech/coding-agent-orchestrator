@@ -29,8 +29,14 @@ def run(repo, *args):
     p = subprocess.run([sys.executable, str(CAO), *args], cwd=repo, text=True,
                        capture_output=True, env=dict(os.environ, **NO_HOST_ENV), timeout=60)
     try:
+        if args and args[0] == "init" and p.returncode == 0:
+            from tests.helpers import provision_fixture_background
+            provision_fixture_background(repo)
         return p.returncode, json.loads(p.stdout)
     except json.JSONDecodeError:
+        if args and args[0] == "init" and p.returncode == 0:
+            from tests.helpers import provision_fixture_background
+            provision_fixture_background(repo)
         return p.returncode, {"raw": p.stdout, "stderr": p.stderr}
 
 

@@ -102,9 +102,13 @@ class RecoveryTests(RepairCase):
         spec = self.repo / '_bmad-output/spec-fix.md'; spec.parent.mkdir(exist_ok=True)
         spec.write_text(ONESHOT)
         self.assertEqual(self.run_cli('sdd', 'spec', 'bind', '--spec', '_bmad-output/spec-fix.md')[0], 0)
+        from tests.helpers import complete_acceptance
+        complete_acceptance(self.repo, lambda repo, *args: self.run_cli(*args), prepare_only=True)
         fixture_native_review(self.repo, lambda repo, *args: self.run_cli(*args))
         self.run_cli('verify'); first = self.read_work(wid)['verification']['run_id']
         self.run_cli('verify'); second = self.read_work(wid)['verification']['run_id']
+        from tests.helpers import complete_acceptance
+        self.assertEqual(self.run_cli('acceptance', 'run')[0], 0)
         self.assertEqual(self.run_cli('done')[0], 0)
         work = cao.load_work(self.repo, wid)
         work['completed_at'] = 1; cao.save_work(self.repo, work)

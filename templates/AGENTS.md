@@ -16,7 +16,7 @@ Use CAO first for non-trivial repository coding work. Invoke its installed comma
 4. For `mode: sdd_select`, ask the user which Provider they want and wait for explicit selection
    before installing/selecting. A recommendation is not authorization.
 5. Resume current Work across sessions. Create Work before product code/configuration/tests/setup;
-   empty verification configuration and failing tests do not prevent start. Follow the stage guide
+   establish project background and actual verification entries or a plan before start; failing tests do not prevent start once those declarations are ready. Follow the stage guide
    for numbered intake, baseline setup, assessment, native execution and recovery.
 6. Preserve SDD-native prerequisites, approvals, whole-requirement scope and independent reviews.
    Read installed native Skills fully; rendering loads instructions, not completed execution.

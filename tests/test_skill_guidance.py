@@ -168,7 +168,8 @@ class RuntimeNavigation(RepairCase):
         self.assertIn("references/recovery.md", out["raw"])
 
     def test_current_provider_only_for_all_quality_profiles(self):
-        work = {"status": "active", "sdd": {}, "execution": {"phase": "review"}, "path_assessment": {}}
+        from scripts.project_context import make_binding
+        work = {"id": "fixture-navigation", "project_binding": make_binding(self.repo), "status": "active", "sdd": {}, "execution": {"phase": "review"}, "path_assessment": {}}
         with patch("scripts.cao_guidance.work_sdd_ready", return_value=(True, None)), \
              patch("scripts.cao_tool_policy.verification_baseline_state", return_value={"ready": True}), \
              patch("scripts.cao_guidance.path_assessment_state", return_value={"ready": True}):

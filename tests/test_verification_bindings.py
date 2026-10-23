@@ -211,6 +211,11 @@ class VerificationTests(RepairCase):
                     case.set_scripts([{"name": "unit", "command": command, "required": True, "gates": ["tests"]}])
                     wid = case.start(profile="standard")
                     rc, out = case.run_cli("verify")
+                    if name in {"requirement", "assessment"}:
+                        self.assertEqual(rc, 0, out)
+                        self.assertEqual(out["verification"]["status"], "passed")
+                        self.assertFalse(case.run_cli("acceptance", "status")[1]["ready"])
+                        continue
                     self.assertEqual(rc, 2, out)
                     self.assertEqual(out["verification"]["status"], "stale")
                     self.assertEqual(out["verification"]["run_status"], "passed")

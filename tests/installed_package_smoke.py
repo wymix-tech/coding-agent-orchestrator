@@ -11,7 +11,7 @@ import subprocess
 import tempfile
 import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from tests.helpers import fixture_native_review
+from tests.helpers import fixture_native_review, complete_acceptance
 
 
 def main():
@@ -65,6 +65,13 @@ def main():
                 tests.mkdir()
                 (tests / "test_acceptance.py").write_text("import unittest\nclass Acceptance(unittest.TestCase):\n    def test_pass(self): self.assertEqual(2+2,4)\n", encoding="utf-8")
                 cli("init", "--host", "codex", "--sdd", provider)
+                assert cli('bootstrap')['mode'] == 'project_context_setup'
+                event('prompt_submit', prompt='Fixture uses Python, setuptools and unittest.')
+                evidence = cli('project', 'inspect')['user_evidence'][0]['id']
+                cli('project', 'context', 'set', '--language', 'Python', '--build-tool', 'setuptools',
+                    '--test-framework', 'unittest', '--source', 'user-specified', '--evidence', evidence)
+                cli('verification', 'configure', '--plan-only', '--test-script',
+                    shell([args.python, '-m', 'unittest', 'discover', '-s', 'acceptance-tests']))
                 bootstrap = cli("bootstrap")
                 assert bootstrap["mode"] == "select"
                 assert bootstrap["guidance"]["ready"]
@@ -87,7 +94,7 @@ def main():
                 assert decision(readonly) == "allow", readonly
                 assert not readonly.get("additional_context") and not readonly.get("hookSpecificOutput", {}).get("additionalContext"), readonly
                 allocated = cli("requirement", "next-id", "--title", "Installed fixture")
-                (repo / allocated["path"]).write_text("# Local fixture acceptance\n", encoding="utf-8")
+                (repo / allocated["path"]).write_text("# Local fixture acceptance\nExpected fixture output exists.\n", encoding="utf-8")
                 wid = cli("start", "--requirement", allocated["path"])["work_item"]["id"]
                 assert cli("bootstrap")["mode"] == "verification_setup"
                 configured = cli("verification", "configure", "--test-script",
@@ -119,6 +126,7 @@ def main():
                 assert decision(event("pre_tool", tool_name="exec_command", tool_input={"cmd": "sed -n 'w .orchestrator/config.json' input.txt"})) == "deny"
                 subdir = repo / "sub"; subdir.mkdir()
                 assert decision(event("pre_tool", tool_name="exec_command", tool_input={"cmd": "printf x > ../.orchestrator/config.json", "workdir": str(subdir)})) == "deny"
+                complete_acceptance(repo, lambda _repo, *argv: (0, cli(*argv)), wid)
                 verified = cli("verify")
                 assert verified["verification"]["snapshot_format"] == 4
                 assert verified["verification"]["run_id"]
@@ -152,6 +160,7 @@ def main():
                     "print(json.dumps({'run_id':r['run_id'],'input_sha256':r['input_sha256'],'provider':r['provider'],'items':[{'id':'AC-1','status':'passed' if rc==0 else 'failed','evidence':[{'path':'acceptance-tests/test_acceptance.py','reason':'Actual fixture unittest execution'}]}]}))\nsys.exit(rc)\n", encoding="utf-8")
                 declaration = {"spec": artifact, "criteria": [{"id": "AC-1", "source": artifact, "kind": "requirement", "description": "Fixture unittest passes"}],
                     "executor": {"mode": "command", "entrypoint": shell([args.python, executor.name])}}
+                declaration["criteria"][0]["covers"] = [item["id"] for item in cli("acceptance", "criteria")["criteria"]]
                 (repo / "fixture-declaration.json").write_text(json.dumps(declaration), encoding="utf-8")
                 cli("sdd", "acceptance", "configure", "--declaration", "fixture-declaration.json")
                 cli("reopen", "--reanchor", "--reason", "Reviewed native fixture acceptance")
@@ -201,7 +210,9 @@ def main():
                     git('init', '-q')
                     excludes = repo / '.git/info/exclude'
                     excludes.write_text('.orchestrator/\n_bmad-output/\n__pycache__/\n*.py[cod]\n')
+                    complete_acceptance(repo, lambda _repo, *argv: (0, cli(*argv)), native_id, prepare_only=True)
                     fixture_native_review(repo, lambda _repo, *argv: (0, cli(*argv)), native_id, reviewer_cli=args.cao)
+                    complete_acceptance(repo, lambda _repo, *argv: (0, cli(*argv)), native_id)
                     cli("verify")
                     git('add', '-A'); git('-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.test', 'commit', '-qm', 'Installed business fixture')
                     ignored_result = cli('done', expected=2)

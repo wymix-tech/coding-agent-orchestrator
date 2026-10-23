@@ -40,6 +40,8 @@ sys.exit(p.returncode)
         declaration = {"spec": spec, "criteria": [{"id": "AC-1", "source": spec,
                        "kind": "requirement", "description": "Calculation succeeds"}],
                        "executor": {"mode": "command", "entrypoint": f'"{sys.executable}" acceptance.py'}}
+        from scripts.acceptance_trace import criteria
+        declaration["criteria"][0]["covers"] = [item["id"] for item in criteria(self.repo, self.read_work(self.wid))]
         (self.repo / "declaration.json").write_text(json.dumps(declaration))
         rc, out = self.run_cli("sdd", "acceptance", "configure", "--declaration", "declaration.json")
         self.assertEqual(rc, 0, out)

@@ -79,7 +79,7 @@ print(json.dumps(reply))
     }};
 }
 
-function realCoreFixture() {
+function realCoreFixture(projectReady = true) {
   const f = fixture();
   const python = process.env.CAO_TEST_PYTHON || 'python3';
   const core = path.resolve(import.meta.dirname, '../scripts/cao.py');
@@ -90,6 +90,11 @@ function realCoreFixture() {
     const result = spawnSync(python, [core, ...args, '--repo', f.dir],
       {cwd: f.dir, env, encoding: 'utf8', timeout: 20000});
     assert.equal(result.status, 0, result.stderr || result.stdout);
+    if (args[0] === 'init' && projectReady) {
+      const provision = spawnSync(python, ['-c', 'from pathlib import Path; import sys; from tests.helpers import provision_fixture_background; provision_fixture_background(Path(sys.argv[1]))', f.dir],
+        {cwd: path.resolve(import.meta.dirname, '..'), env, encoding: 'utf8', timeout: 20000});
+      assert.equal(provision.status, 0, provision.stderr);
+    }
     return JSON.parse(result.stdout);
   }
   // Only a launcher: every reply comes from the real Python core.
@@ -99,7 +104,7 @@ function realCoreFixture() {
 }
 
 test('real Pi intake delivers technology clarification before authoring requirements after restart', posix, async () => {
-  const f = realCoreFixture();
+  const f = realCoreFixture(false);
   try {
     f.cli('init', '--host', 'pi');
     mkdirSync(path.join(f.dir, '_bmad'));
@@ -118,7 +123,7 @@ test('real Pi intake delivers technology clarification before authoring requirem
 });
 
 test('real Pi hooks stop after provider installation and acknowledge host resource reload', posix, async () => {
-  const f = realCoreFixture();
+  const f = realCoreFixture(false);
   try {
     f.cli('init', '--host', 'pi');
     const ctx = f.context('same-conversation');
@@ -146,7 +151,7 @@ test('real Pi hooks stop after provider installation and acknowledge host resour
     await f.handlers.get('session_start')({reason: 'reload'}, restarted);
     const resumed = await f.handlers.get('before_agent_start')({prompt: '继续'}, restarted);
     const bootstrap = f.cli('bootstrap', '--host', 'pi');
-    assert.equal(bootstrap.mode, 'select');
+    assert.equal(bootstrap.mode, 'project_context_setup');
     assert.equal(bootstrap.pending_request.prompt, '开发一个登录系统');
     assert.match(resumed.message.content, /开发一个登录系统/);
     assert.match(resumed.message.content, /TECH_STACK_CLARIFICATION_REQUIRED/);

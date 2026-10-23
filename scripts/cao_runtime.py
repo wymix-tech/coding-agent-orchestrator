@@ -66,6 +66,8 @@ def deep_merge(dst: dict[str, Any], src: dict[str, Any]) -> None:
 
 def config(repo: Path) -> dict[str, Any]:
     raw = load_json(repo / CONFIG_REL, {})
+    if not isinstance(raw, dict):
+        raise ValueError("CONFIG_INVALID: restore the project configuration; do not initialize over it")
     merged = json.loads(json.dumps(DEFAULT_CONFIG))
     if raw:
         deep_merge(merged, raw)
