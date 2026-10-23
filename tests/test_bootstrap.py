@@ -85,7 +85,7 @@ class BootstrapTests(unittest.TestCase):
             repo = pathlib.Path(td)
             subprocess.run(["git", "init", "-q"], cwd=repo, check=True, timeout=20)
             (repo / "requirements").mkdir()
-            (repo / "requirements/login.md").write_text("Add login", encoding="utf-8")
+            (repo / "requirements/login.md").write_text("Generate a local status report", encoding="utf-8")
             (repo / "openspec").mkdir()
             (repo / "openspec/config.yaml").write_text("context: test\n", encoding="utf-8")
             run(repo, "init")

@@ -6,6 +6,13 @@ Bootstrap reports `select`, or an existing Work must be resumed. Never repeat in
 
 ## Execute
 
+Fill the actual request in a newly allocated CAO requirement before `cao start`.
+An untouched numbered template is rejected with `REQUIREMENT_CONTENT_REQUIRED`;
+edit that same file and retry. An existing task with this defect keeps its Work
+and needs reviewed reanchoring after the description is filled, not new intake.
+Explicit credential/authentication statements in the requirement body add a
+security minimum during path assessment even if the Agent omits the risk flag.
+
 1. Inspect `cao list` and `cao requirement list`; use the existing applicable Work/requirement.
 2. Resume with `cao resume --host <host> --session <real-session-id>`. Reactivate suspended work with `cao resume --work <id> --reactivate`, then resolve blockers. Do not invent missing runtime IDs.
 3. Before adding technology choices to a new requirement, apply the technology clarification flow below. For a new inline requirement, run `cao requirement next-id --title "<short title>"`. Fill the returned numbered path under `.orchestrator/requirements/`, then run `cao start --requirement <returned-path>`.

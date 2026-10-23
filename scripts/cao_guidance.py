@@ -101,11 +101,14 @@ def work_prerequisite_action(repo: Path, work: dict | None) -> dict | None:
         return action("agent", f"Resume this work item with `{command} resume --work {work['id']} --reactivate`.", stage="intake", reason="WORK_NOT_ACTIVE")
     if work.get("blockers"):
         return action("human", "Resolve the active blocker before continuing.", stage="recovery", reason="active blocker exists")
+    assessment = path_assessment_state(repo, work)
+    if assessment.get("reason") in {"REQUIREMENT_CONTENT_REQUIRED", "PATH_RISK_REASSESSMENT_REQUIRED"}:
+        return action("agent", assessment["next"], stage="path_assessment", reason=assessment["reason"],
+                      diagnostics=assessment.get("diagnostics", []))
     baseline = verification_baseline_state(repo, work)
     if not baseline["ready"]:
         return action("human" if baseline['reason'] == 'VERIFICATION_REVIEW_REQUIRED' else "agent",
                       baseline["next"], stage="verification_setup", reason=baseline["reason"])
-    assessment = path_assessment_state(repo, work)
     if not assessment["ready"]:
         reason = assessment["reason"]
         if reason in {"requirement changed since work started", "requirement file missing"}:

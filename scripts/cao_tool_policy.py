@@ -18,6 +18,7 @@ from scripts.cao_snapshot import verification_snapshot
 from scripts.path_guard import inside, patch_targets, repo_file
 from scripts.provider_preparation import bmad_preparation
 from scripts.route_inputs import writable_input
+from scripts.dependency_preparation import dependency_attempt, dependency_preparation
 from scripts.verification_setup import (
     SCAFFOLD_MANIFESTS,
     SCAFFOLD_ROOTS,
@@ -393,27 +394,43 @@ def verification_scaffold_write(repo: Path, raw: dict) -> bool:
         commands = _collect_values_for_keys(raw, {"command", "cmd"})
         try:
             for command in commands:
+                directory = tool_cwd(raw, repo) or repo
                 for tokens in _shell_segments(command):
-                    if _readonly_tokens(tokens): continue
+                    if tokens[0] == "cd" and len(tokens) == 2:
+                        directory = (directory / tokens[1]).resolve()
+                    if _readonly_tokens(tokens, directory): continue
                     if any(char in shlex.join(tokens) for char in "$`") or any(t in {">", ">>", "<<", "&>"} for t in tokens): return False
                     name = Path(tokens[0]).name
                     if tokens[:2] == ["git", "init"]: continue
-                    if tokens[:2] in (["uv", "venv"], ["uv", "run"]):
-                        if tokens[:2] == ["uv", "run"]:
-                            runner = tokens[2:]
-                            while runner and runner[0].startswith("--"):
-                                runner = runner[1:]
-                            if not runner or not (Path(runner[0]).name == "pytest" or
-                                    (Path(runner[0]).name.startswith("python") and runner[1:3] in (["-m", "pytest"], ["-m", "unittest"]))): return False
+                    if dependency_attempt(tokens):
+                        if not dependency_preparation(repo, tokens, directory): return False
                         continue
-                    if tokens[:3] == ["uv", "pip", "install"] or (name in {"pip", "pip3", "npm"} and "install" in tokens): continue
-                    if name.startswith("python") and tokens[1:3] == ["-m", "pip"] and "install" in tokens: continue
-                    if name.startswith("python") and tokens[1:3] in (["-m", "pytest"], ["-m", "unittest"], ["-m", "venv"]): continue
+                    if tokens[:2] == ["uv", "run"]:
+                        runner = tokens[2:]
+                        while runner and runner[0] in {"--no-cache", "--offline", "--no-sync", "-q"}:
+                            runner = runner[1:]
+                        if not runner or not (Path(runner[0]).name == "pytest" or
+                                (Path(runner[0]).name.startswith("python") and runner[1:3] in (["-m", "pytest"], ["-m", "unittest"]))): return False
+                        continue
+                    if name.startswith("python") and tokens[1:3] in (["-m", "pytest"], ["-m", "unittest"]): continue
                     return False
             return bool(commands)
         except ValueError:
             return False
     return False
+
+
+def dependency_setup_advice(repo, raw):
+    if _event_key(raw, "tool_name", "toolname", "tool", "name").lower() not in SHELL_TOOLS:
+        return None
+    try:
+        for command in _collect_values_for_keys(raw, {"command", "cmd"}):
+            if any(dependency_attempt(tokens) for tokens in _shell_segments(command)):
+                return {"reason": "VERIFICATION_DEPENDENCY_SCOPE_REQUIRED",
+                        "next": "Create a project .venv with `python -m venv .venv`, then install through `.venv/bin/python -m pip install <packages>` (Windows: .venv/Scripts/python.exe). Do not use global pip, --break-system-packages, --system or an external target before native implementation is authorized."}
+    except ValueError:
+        pass
+    return None
 
 
 def intake_writable_dirs() -> list[str]:
@@ -735,6 +752,10 @@ def _readonly_tokens(tokens: list[str], cwd: Path | None = None) -> bool:
         return True
     probe_name = Path(tokens[0]).name.lower()
     python_probe = re.fullmatch(r"python(?:3(?:\.\d+)?)?(?:\.exe)?", probe_name)
+    if python_probe and tokens[1:3] == ["-m", "json.tool"]:
+        args = tokens[3:]
+        flags = {"--sort-keys", "--no-ensure-ascii", "--json-lines", "--compact", "--tab", "--no-indent"}
+        return all(arg in flags or not arg.startswith("-") for arg in args) and sum(arg not in flags for arg in args) <= 1
     if len(tokens) == 2:
         if python_probe and tokens[1] in {"--version", "-V"}:
             return True

@@ -47,6 +47,7 @@ from scripts.cao_tool_policy import (
     diagnostic_shell_write,
     native_intake_shell,
     protected_state_advice,
+    dependency_setup_advice,
     tool_effect,
     tool_is_mutating,
     verification_baseline_state,
@@ -252,6 +253,9 @@ def host_event(args: argparse.Namespace) -> int:
                 if not verification_scaffold_write(repo, raw):
                     preflight = implementation_preflight(repo, work)
                     if not preflight["ready"]:
+                        dependency = dependency_setup_advice(repo, raw)
+                        if dependency:
+                            return respond({"decision": "deny", "reason": dependency["reason"] + ": " + dependency["next"]})
                         return respond({"decision": "deny", "reason": str(preflight["reason"]) + ": " + preflight["next"] + " " + scaffold_instruction()})
                     capabilities = verification_capability_state(repo, work)
                     if not capabilities['ready']:

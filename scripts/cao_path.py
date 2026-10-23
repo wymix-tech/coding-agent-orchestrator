@@ -32,6 +32,7 @@ from scripts.completion_policy import (
     verification_fresh as bound_verification_fresh,
 )
 from scripts.technology_guidance import technology_instruction
+from scripts.requirement_content import security_evidence, template_diagnostics
 
 
 def gate_is_auto_derived(name: str) -> bool:
@@ -145,6 +146,12 @@ def build_path_assessment(
 
 def path_assessment_state(repo: Path, work: dict[str, Any]) -> dict[str, Any]:
     """Return freshness and blocking details for a Work Item's path assessment."""
+    requirement_path = repo / str((work.get("requirement") or {}).get("path") or "")
+    if requirement_path.is_file():
+        diagnostics = template_diagnostics(requirement_path)
+        if diagnostics:
+            return {"ready": False, "reason": "REQUIREMENT_CONTENT_REQUIRED", "diagnostics": diagnostics,
+                    "next": f"Fill the actual request in `{requirement_path}`, then review and reanchor the same Work with `cao start --requirement <same-path> --replace`. Do not restart intake or create another file."}
     assessment = work.get("path_assessment")
     if not isinstance(assessment, dict):
         return {"ready": False, "reason": "execution path has not been assessed", "assessment": None}
@@ -173,6 +180,9 @@ def path_assessment_state(repo: Path, work: dict[str, Any]) -> dict[str, Any]:
         return {"ready": False, "reason": "requirement changed since work started", "assessment": assessment}
     if current_sha != assessment.get("requirement_sha256"):
         return {"ready": False, "reason": "execution path assessment is stale", "assessment": assessment}
+    if "security" not in flags and security_evidence(req_path):
+        return {"ready": False, "reason": "PATH_RISK_REASSESSMENT_REQUIRED", "assessment": assessment,
+                "next": "The requirement explicitly describes authentication or credential handling. Rerun `cao path assess --profile comprehensive --risk-flag security --reason <reviewed-reason>` for this Work; preserve its progress and refresh affected evidence."}
     if "major_ambiguity" in flags or assessment.get("open_questions"):
         return {"ready": False, "reason": "major requirement ambiguity requires clarification", "assessment": assessment}
     return {"ready": True, "reason": None, "assessment": assessment}
@@ -200,11 +210,15 @@ def cmd_path_assess(args: argparse.Namespace) -> int:
     if not work or work.get("status") not in {"active", "suspended"}:
         print(json.dumps({"ok": False, "error": "NO_ACTIVE_WORK_ITEM"}, ensure_ascii=False, indent=2))
         return 2
-
     requirement = work.get("requirement") or {}
     req_path = repo / str(requirement.get("path") or "")
     if not req_path.is_file():
         print(json.dumps({"ok": False, "error": "REQUIREMENT_FILE_MISSING", "path": requirement.get("path")}, ensure_ascii=False, indent=2))
+        return 2
+    diagnostics = template_diagnostics(req_path)
+    if diagnostics:
+        print(json.dumps({"ok": False, "error": "REQUIREMENT_CONTENT_REQUIRED", "diagnostics": diagnostics,
+                          "next": "Fill and review the existing requirement, then reanchor this same Work before reassessment."}, ensure_ascii=False))
         return 2
     current_sha = sha256_file(req_path)
     if current_sha != requirement.get("sha256"):
@@ -217,15 +231,18 @@ def cmd_path_assess(args: argparse.Namespace) -> int:
         return 2
 
     provider = str((work.get("sdd") or {}).get("provider") or "auto")
+    detected = security_evidence(req_path)
     assessment = build_path_assessment(
         requested_profile=args.profile,
         reason=args.reason,
-        risk_flags=args.risk_flag or [],
+        risk_flags=list(dict.fromkeys([*(args.risk_flag or []), *(["security"] if detected else [])])),
         provider=provider,
         requirement_sha256=current_sha,
         questions=args.question or [],
         assessed_by=args.assessed_by,
     )
+    if detected:
+        assessment["detected_risks"] = {"security": {"source": requirement["path"], "evidence": detected}}
     assessment["revision"] = int((work.get("path_assessment") or {}).get("revision") or 0) + 1
     work["path_assessment"] = assessment
     execution = work.setdefault("execution", {})

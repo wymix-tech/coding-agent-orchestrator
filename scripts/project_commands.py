@@ -9,6 +9,7 @@ from scripts.project_context import (FIELDS, ROOT, binding_state, commit_context
                                      digest, fingerprint, load_context, make_binding, read, relative)
 from scripts.project_inspection import drift, save_observation
 from scripts.project_sources import compact, user_evidence
+from scripts.project_technology import category_conflicts, validate_categories
 from scripts.state_store import atomic_json
 
 
@@ -51,6 +52,7 @@ def candidate_for(repo, args, context, allow_change=False):
     if args.expected_revision and args.expected_revision != (context or {}).get('revision'):
         raise ValueError('PROJECT_CONTEXT_REVISION_CONFLICT')
     values = fields(args)
+    validate_categories(values, args.scope + ".")
     candidate = deepcopy(context or {'schema_version': 1, 'scopes': {}, 'evidence': [], 'active_changes': []})
     scope = candidate['scopes'].setdefault(args.scope, {'paths': ['.'] if args.scope == 'root' else [], 'technology': {}})
     requested_paths = getattr(args, 'path', None)
@@ -65,7 +67,8 @@ def candidate_for(repo, args, context, allow_change=False):
     evidence = evidence_for(repo, args, values, observed)
     for key, value in values.items():
         old = scope['technology'].get(key, {})
-        if old.get('status') in {'accepted', 'not_applicable'} and compact(old.get('value')) != compact(value) and not allow_change:
+        wrong_category = bool(category_conflicts({key: old.get('value')}))
+        if old.get('status') in {'accepted', 'not_applicable'} and compact(old.get('value')) != compact(value) and not allow_change and not wrong_category:
             raise ValueError('PROJECT_CHANGE_REQUIRED: ' + args.scope + '.' + key)
         if old.get('status') == 'accepted' and compact(old.get('value')) == compact(value):
             value = old['value']
@@ -264,6 +267,8 @@ def error_context(args, code):
     kind = 'agent'
     if code == 'PROJECT_CONTEXT_REVISION_CONFLICT':
         instruction = 'Run `cao project context show` and `cao project context diff`; review the concurrent update and retry with its accepted --expected-revision. Do not overwrite it.'
+    elif code == 'PROJECT_FIELD_CATEGORY_MISMATCH':
+        instruction = 'Move the known technology to diagnostics.expected_field using its observed evidence. Ask only for the still-missing choice; a framework name does not authorize a build tool. Retry the corrected project context set command.'
     elif code.startswith(('PROJECT_SOURCE', 'PROJECT_DELEGATION', 'PROJECT_REPOSITORY_SOURCE')):
         kind = 'human'
         instruction = 'Run `cao project inspect` for actual host-observed user evidence or established product paths. Restore any missing explicit user choice through the host; source labels and Agent-authored files do not authorize choices.'

@@ -40,6 +40,15 @@ those checks belong to the project's wrappers. `--verify-script` does not automa
 
 Put new verification wrappers in `scripts/verification/`; `scripts/` alone is not an allowed setup root. Setup-only roots are `tests/`, `test/`, `acceptance-tests/`, `src/test/`, `scripts/verification/`, `.venv/` and `venv/`; supported build/test manifests remain writable with an active Work. Preserve the user's selected language, framework, runner and delivery shape. Do not substitute main programs for JUnit 5 when dependencies are missing.
 
+Before native implementation is authorized, install Python test dependencies
+in a project environment: `python -m venv .venv`, then
+`.venv/bin/python -m pip install <packages>` (Windows:
+`.venv/Scripts/python.exe -m pip install <packages>`). `uv pip install --python
+.venv/bin/python <packages>` is also scoped. Global pip, external targets and
+`--break-system-packages` are not preparation exceptions. npm installation
+must stay in the project, without global/prefix overrides. Do not install more
+packages to repair imports of business files whose writes were denied.
+
 Register a combined tests/general wrapper only once as a test script. For security checks use `cao verification configure --security-script <wrapper>`; the same exact command can declare both tests and security without duplicate execution. Same-path wrapper content changes require baseline review too. Installed BMAD Build requires host-observed `批准验证基线` (approve verification baseline); Agent reanchor reason text is not approval. Repeating configuration can request the current approval; only then reanchor. Active reanchor preserves business phase and decisions.
 
 After path assessment, configure any required security capability before implementation, rather than discovering it during final verification. A baseline approval can be a direct user reply or a bound `ask_user_question` answer: create the current request first, show the changes, then ask once. Include “验证基线” or “verification baseline” in that question so it binds to the baseline instead of a SPEC request. A plain “批准” is accepted when no competing SPEC approval is pending; otherwise use the explicit baseline response. Results from questions asked before the request, replaced baselines, other Works, subagents or unrelated sessions cannot approve it.

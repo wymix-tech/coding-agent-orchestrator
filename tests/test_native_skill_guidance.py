@@ -125,6 +125,7 @@ class SelectGuidance(unittest.TestCase):
     def _reached_workflow_select(self, repo: pathlib.Path) -> tuple[int, dict]:
         rc, out, _ = run(repo, "requirement", "next-id", "--title", "login", env_extra=NO_HOST_ENV)
         path = out["path"]
+        (repo / path).write_text("# Fixture\nGenerate a local status report.\n", encoding="utf-8")
         configure_verification(repo)
         rc, out, _ = run(repo, "start", "--requirement", path, env_extra=NO_HOST_ENV)
         assert rc == 0, out

@@ -319,10 +319,12 @@ def main(argv: list[str] | None = None) -> int:
         return int(args.fn(args))
     except (OSError, RuntimeError, ValueError, json.JSONDecodeError) as exc:
         result = {"ok": False, "error": str(exc)}
+        if getattr(exc, "diagnostics", None):
+            result.update(diagnostic=exc.diagnostics[0], diagnostics=exc.diagnostics)
         code = str(exc).split(':', 1)[0]
         if code.startswith(('PROJECT_CONTEXT', 'PROJECT_SCOPE', 'PROJECT_SOURCE', 'PROJECT_REPOSITORY_SOURCE',
                             'PROJECT_DELEGATION', 'PROJECT_VERSION', 'PROJECT_FIELDS', 'PROJECT_FIELD_CONFLICT',
-                            'PROJECT_CHANGE', 'PROJECT_BIND', 'PROJECT_REVISION', 'PROJECT_STATE', 'PROJECT_VERIFICATION')):
+                            'PROJECT_FIELD_CATEGORY', 'PROJECT_CHANGE', 'PROJECT_BIND', 'PROJECT_REVISION', 'PROJECT_STATE', 'PROJECT_VERIFICATION')):
             from scripts.project_commands import error_context
             result.update(error_context(args, code))
         if str(exc).startswith("SNAPSHOT_"):

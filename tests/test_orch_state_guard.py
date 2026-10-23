@@ -45,6 +45,7 @@ def provisioned(repo: pathlib.Path) -> str:
     (repo / "_bmad").mkdir(exist_ok=True)
     rc, out = run(repo, "requirement", "next-id", "--title", "login")
     path = out["path"]
+    (repo / path).write_text("# Fixture\nRecord a bounded local state transition.\n", encoding="utf-8")
     run(repo, "start", "--requirement", path)
     return path
 
