@@ -14,6 +14,7 @@ STAGE_FILES = {
 }
 PROVIDER_FILES = {name: f"references/provider-{name}.md" for name in ("bmad", "openspec", "speckit")}
 CONTRACT_FILES = {
+    "conformance": "references/conformance-knowledge.md",
     "native_route": "references/native-route-contract.md",
     "bmad_approval": "references/bmad-approval.md",
     "bmad_dispatch_review": "references/bmad-review-dispatch.md",
@@ -28,6 +29,8 @@ def action_files(reason: str, work: dict | None) -> list[str]:
     """Select contracts by the current operation, not a whole native namespace."""
     sdd = (work or {}).get("sdd") or {}
     keys = []
+    if reason.startswith("CONFORMANCE_"):
+        keys.append("conformance")
     if reason.startswith("NATIVE_ROUTE_"):
         keys.append("native_route")
     if sdd.get("provider") == "bmad":

@@ -7,6 +7,8 @@ import subprocess
 from pathlib import Path
 from scripts.light_spec_policy import _oneshot, _lines, _section
 from scripts.path_guard import repo_file, provider_artifact
+from scripts.spec_intent import frozen_intent
+from scripts.review_diagnostics import invalid, report_shape
 
 
 def digest(value):
@@ -112,8 +114,7 @@ def oneshot_source(repo, work):
             raise ValueError('NATIVE_ONESHOT_SPEC_INVALID')
         return None
     content = raw.decode('utf-8-sig')
-    frozen = re.search(r'<frozen-after-approval\b[^>]*>(.*?)</frozen-after-approval>', content, re.S)
-    intent = frozen[1] if frozen else '\n'.join(_section(_lines(raw), 'Intent'))
+    intent = frozen_intent(content, required=True)
     return {'path': path.relative_to(repo.resolve()).as_posix(), 'intent_sha256': digest(intent)}
 
 
@@ -238,8 +239,8 @@ def review_source(repo, work):
         raise ValueError('NATIVE_REVIEW_SOURCE_STALE')
     path = provider_artifact(repo, decision['primary_artifact'], ['_bmad-output'])
     content = path.read_text(encoding='utf-8-sig')
-    frozen = re.search(r'<frozen-after-approval\b[^>]*>(.*?)</frozen-after-approval>', content, re.S)
-    return {'path': path.relative_to(repo.resolve()).as_posix(), 'intent_sha256': digest(frozen[1] if frozen else content)}
+    intent = frozen_intent(content, required=True)
+    return {'path': path.relative_to(repo.resolve()).as_posix(), 'intent_sha256': digest(intent)}
 
 
 def active_layers(repo, work):
@@ -296,6 +297,7 @@ def classify_review(repo, work, layer, report_path, code_snapshot):
     report = json.loads(report_file.read_text())
     if not isinstance(report, dict):
         raise ValueError('NATIVE_REVIEW_REPORT_INVALID')
+    report_shape(report, dispatch=dispatch(work))
     validate_reviewer(run, report)
     if run.get('status') != 'running' or report.get('run_id') != run.get('id') or report.get('input_sha256') != digest(inputs):
         raise ValueError('NATIVE_REVIEW_RUN_STALE_OR_MISMATCH')
@@ -342,10 +344,15 @@ def classify_review(repo, work, layer, report_path, code_snapshot):
 
 def validate_reviewer(run, report):
     reviewer = report.get('reviewer') or {}
-    if (not isinstance(reviewer, dict) or reviewer.get('mode') not in {'subagent', 'external-session'}
-            or not str(reviewer.get('session_id') or '').strip() or reviewer.get('session_id') in run.get('primary_session_ids', [])
-            or reviewer.get('model') != run.get('model')):
-        raise ValueError('NATIVE_REVIEW_INDEPENDENT_MODEL_REQUIRED')
+    legacy = 'NATIVE_REVIEW_INDEPENDENT_MODEL_REQUIRED'
+    if not isinstance(reviewer, dict) or not reviewer:
+        invalid('NATIVE_REVIEW_REVIEWER_REQUIRED', '$.reviewer', '{mode, session_id, model} from actual attach', reviewer, legacy=legacy)
+    if reviewer.get('mode') not in {'subagent', 'external-session'}:
+        invalid('NATIVE_REVIEW_MODE_INVALID', '$.reviewer.mode', ['subagent', 'external-session'], reviewer.get('mode'), legacy=legacy)
+    if not str(reviewer.get('session_id') or '').strip() or reviewer.get('session_id') in run.get('primary_session_ids', []):
+        invalid('NATIVE_REVIEW_SESSION_INVALID', '$.reviewer.session_id', 'actual independent reviewer identity', reviewer.get('session_id'), legacy=legacy)
+    if reviewer.get('model') != run.get('model'):
+        invalid('NATIVE_REVIEW_MODEL_MISMATCH', '$.reviewer.model', run.get('model'), reviewer.get('model'), legacy=legacy)
     binding = run.get('execution_binding') or {}
     if (binding.get('reviewer') != reviewer
             or binding.get('input_sha256') != run.get('input_sha256')):
@@ -380,6 +387,7 @@ def submit_review(repo, work, layer, report_path, code_snapshot):
     report = json.loads(report_file.read_text())
     if not isinstance(report, dict):
         raise ValueError('NATIVE_REVIEW_REPORT_INVALID')
+    report_shape(report, dispatch=False)
     if (run.get('status') != 'running' or report.get('run_id') != run.get('id')
             or report.get('input_sha256') != digest(run.get('inputs'))
             or run.get('inputs') != review_inputs(repo, work, code_snapshot)):

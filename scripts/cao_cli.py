@@ -66,6 +66,10 @@ def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="cao", description="Coding Agent Orchestrator")
     sub = p.add_subparsers(dest="command", required=True)
     register_runtime_parser(sub)
+    from scripts.conformance import register_parser as register_conformance_parser
+    register_conformance_parser(sub)
+    from scripts.knowledge_commands import register_parser as register_knowledge_parser
+    register_knowledge_parser(sub)
     from scripts.project_commands import register_parser as register_project_parser
     register_project_parser(sub)
     from scripts.acceptance_summary import register_parser as register_acceptance_parser
@@ -128,14 +132,18 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--repo", default="."); sp.add_argument("--work"); sp.set_defaults(fn=cmd_sdd_sync)
     review = sdd_sub.add_parser("review", help="Record independent native reviews and pre-patch dispatch classification")
     review_sub = review.add_subparsers(dest="review_action", required=True)
-    for name in ("begin", "attach", "submit", "classify", "resolve", "findings"):
+    for name in ("begin", "attach", "submit", "classify", "resolve", "findings", "prepare", "import"):
         sp = review_sub.add_parser(name)
         sp.add_argument("--repo", default="."); sp.add_argument("--work")
-        if name != 'findings':
+        if name not in {'findings', 'prepare'}:
             sp.add_argument("--layer", required=True)
-        if name == "begin":
+        if name in {"begin", "prepare"}:
             sp.add_argument("--model", required=True); sp.add_argument("--instructions", required=True)
             sp.add_argument('--restart', action='store_true', help='Explicitly replace a failed current dispatch ticket')
+            if name == 'prepare':
+                capability = sp.add_mutually_exclusive_group()
+                capability.add_argument('--agent-definition', help='Actual installed agent definition under .pi/agents or .agents/agents')
+                capability.add_argument('--external-session', action='store_true', help='Prepare independent external-host handoff; adapter is verified on attach')
         elif name == 'findings':
             sp.add_argument('--source', required=True, help='Unmodified native Markdown list or JSON findings under _bmad-output')
         elif name == 'attach':
@@ -297,6 +305,7 @@ def main(argv: list[str] | None = None) -> int:
             cmd_sessions_show, cmd_decision_list, cmd_handoff, cmd_dashboard, cmd_runtime,
             cmd_sdd_list, cmd_sdd_install, cmd_sdd_select,
         }
+        repair_or_read = repair_or_read or getattr(args, 'conformance_action', None) in {'show', 'check'} or getattr(args, 'knowledge_action', None) in {'list', 'show'}
         if not repair_or_read:
             host = getattr(args, "host", None)
             restart = restart_state(repo_root(args.repo), host if host in HOST_ADAPTER_META else detect_current_host())

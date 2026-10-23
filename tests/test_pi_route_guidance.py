@@ -100,7 +100,7 @@ class PiRouteGuidance(RepairCase):
         spec = "_bmad-output/implementation-artifacts/spec-fixture.md"
         path = self.repo / spec
         path.parent.mkdir(parents=True)
-        path.write_text("---\nroute: oneshot\nstatus: draft\n---\n## Intent\nNative route fixture.\n## Implementation Notes\nNo implementation claimed.\n")
+        path.write_text("---\nroute: oneshot\nstatus: draft\n---\n## Intent\n<frozen-after-approval>\nNative route fixture.\n</frozen-after-approval>\n## Implementation Notes\nNo implementation claimed.\n")
         self.run_cli("sdd", "artifact", "bind", "--artifact", spec)
         _, out = self.run_cli("next")
         self.assertEqual(out["action"]["reason"], "NATIVE_ROUTE_REQUIRED")

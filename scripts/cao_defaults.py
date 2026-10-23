@@ -38,6 +38,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "version": 1,
     "language": {"user": "zh-CN"},
     "runtime": RUNTIME_DEFAULTS,
+    "knowledge": {"enabled": True},
     "verification": {"scripts": []},
     "rules": {"files": []},
     "sdd": {

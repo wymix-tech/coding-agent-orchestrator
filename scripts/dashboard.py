@@ -558,7 +558,7 @@ def build_dashboard_overview(repo: Path, stale_after_minutes: int = 30) -> dict[
             "sdd_acceptance": independent,
             "native_sync": native_sync_state(repo, work),
             "completion": completion,
-            "gates": gate_state(work, bool(fresh), independent["ready"]),
+            "gates": gate_state(work, bool(fresh), independent["ready"], repo=repo),
             "legacy_evidence": summary["legacy_evidence"],
             "workflow_exception": exceptions or None,
             "execution": {

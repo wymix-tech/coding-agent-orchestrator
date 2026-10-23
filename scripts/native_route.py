@@ -9,6 +9,7 @@ import json
 import re
 
 from scripts.path_guard import repo_file, provider_artifact
+from scripts.spec_intent import frozen_intent, IntentStructureError
 
 
 class RouteValidationError(ValueError):
@@ -104,14 +105,9 @@ def owned_file(repo, value, dirs):
 def intent_hash(path):
     """BMAD locks intent, not mutable status, task checkboxes or review notes."""
     content = path.read_text(encoding="utf-8-sig")
-    blocks = re.findall(r"<frozen-after-approval\b[^>]*>(.*?)</frozen-after-approval>",
-                        content, re.S)
-    if len(blocks) > 1:
-        raise ValueError("NATIVE_INTENT_AMBIGUOUS")
-    if blocks:
-        if not blocks[0].strip():
-            raise ValueError("NATIVE_INTENT_EMPTY")
-        return digest(blocks[0])
+    block = frozen_intent(content, required=build_route(path) in {'dispatch', 'oneshot'})
+    if block is not None:
+        return digest(block)
     # Native status/checkbox progress is mutable; changing task text is not.
     content = re.sub(r"\A---\s*\n(.*?)\n---(?:\n|$)",
                      lambda m: "---\n" + re.sub(r"(?m)^status\s*:.*\n?", "", m[1]) + "\n---\n",
@@ -183,6 +179,10 @@ def spec_preparation_diagnostics(repo, work, dirs):
         if build_route(path) not in {"dispatch", "oneshot"}:
             return [{**diagnostic, "field": "frontmatter.route", "issue": "build_route_invalid",
                      "expected": "exactly one YAML route: dispatch or route: oneshot, chosen by the installed Build workflow"}]
+        try:
+            frozen_intent(content, required=True)
+        except IntentStructureError as exc:
+            return [{**item, "path": ref} for item in exc.diagnostics]
     except (ValueError, OSError, RuntimeError) as exc:
         return [{**diagnostic, "issue": "source_unavailable", "detail": str(exc),
                  "expected": "a readable repository-owned native planning output for this provider"}]

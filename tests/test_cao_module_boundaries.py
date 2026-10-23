@@ -53,6 +53,8 @@ class ModuleBoundaryTests(unittest.TestCase):
 
     def test_only_entry_script_gets_control_command_exemption(self):
         self.assertTrue(cao_tool_policy.readonly_shell(f'{sys.executable} "{ROOT / "scripts/cao.py"}" status'))
+        for command in ('conformance show', 'conformance check', 'knowledge list', 'knowledge refresh'):
+            self.assertTrue(cao_tool_policy.readonly_shell(f'{sys.executable} "{ROOT / "scripts/cao.py"}" {command}'))
         self.assertFalse(cao_tool_policy.readonly_shell(f'{sys.executable} "{ROOT / "scripts/cao_tool_policy.py"}" status'))
 
 

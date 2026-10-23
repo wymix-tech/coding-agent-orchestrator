@@ -222,7 +222,7 @@ def legacy_completion_status(repo: Path, work: dict[str, Any] | None) -> dict[st
             }
 
     sdd_state = sdd_acceptance_state(repo, work)
-    gates = gate_state(work, fresh, sdd_state["ready"])
+    gates = gate_state(work, fresh, sdd_state["ready"], repo=repo)
     if gates["pending"]:
         manual = [gate for gate in gates["pending"] if not gate_is_auto_derived(gate)]
         if gates["pending"] == ["sdd_acceptance"]:
@@ -233,7 +233,7 @@ def legacy_completion_status(repo: Path, work: dict[str, Any] | None) -> dict[st
             "pending_gates": gates["pending"],
             "gates": gates,
             "next": (
-                "Mark each observed gate with `cao gate satisfy --gate " + "|".join(manual) + " --evidence \"<what was done>\"`."
+                "Inspect `cao conformance show` and reuse native evidence; do not repeat code review. Record only remaining observed obligations with `cao gate satisfy --gate " + "|".join(manual) + " --evidence \"<what was done>\"`."
                 if manual else "Run `cao verify` so the verification gates become fresh."
             ),
         }
@@ -363,7 +363,7 @@ def lifecycle_status(repo, work):
             return {'ready': not pending, 'reason': 'native plan has unfinished items', 'pending_plan_items': pending}
         check('native_plan_complete', pending_plan)
     def manual_gates():
-        gates = gate_state(work, True, True)
+        gates = gate_state(work, True, True, repo=repo)
         return {'ready': not gates['pending'], 'reason': 'required execution gates are not satisfied', 'pending_gates': gates['pending']}
     if work.get('project_change'):
         from scripts.project_context import load_context
@@ -386,6 +386,14 @@ def completion_status(repo, work):
     lifecycle = lifecycle_status(repo, work)
     result = summarize(repo, work, lifecycle)
     result['lifecycle'] = lifecycle
+    from scripts.conformance import summarize as conformance_summary
+    result['conformance'] = conformance_summary(repo, work, lifecycle)
+    if not result['conformance']['ready']:
+        result['ready'] = False
+        missing = result['conformance']['blockers'][0]
+        result['reason'] = missing.get('reason_code') or 'CONFORMANCE_NOT_READY'
+        result['next'] = {'type': 'agent', 'instruction': missing.get('repair_action') or 'Restore the nonempty declared artifact; run `cao conformance check`.'}
+        result['blockers'] = list(dict.fromkeys([*result['blockers'], 'CONFORMANCE_NOT_READY']))
     legacy = legacy_completion_status(repo, work)
     if not legacy['ready']:
         result['reason'] = legacy.get('reason') or result['reason']

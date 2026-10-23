@@ -3,6 +3,12 @@
 Read for a BMAD dispatch review action. Follow the actual rendered
 `step-04-review.md`; these report formats belong to dispatch.
 
+Prefer batch `cao sdd review prepare` to create all tickets and report paths before
+launching reviewers. Read [conformance and knowledge](conformance-knowledge.md) for
+capability preflight, one-session-per-layer handoff, existing-report import and
+unchanged-error retry handling. The commands below remain available for manual
+handoff. Current native evidence is reused; CAO does not add another code review.
+
 ## Collect, classify, patch, resolve
 
 1. Begin EVERY active native layer for the current snapshot with
