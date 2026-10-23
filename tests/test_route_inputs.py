@@ -218,6 +218,130 @@ class RouteInputs(RepairCase):
         self.assertIn("SHELL_PARSE_UNKNOWN", tool_effect(event, self.repo)["diagnostics"])
         self.assertEqual(self.hook(**event)["decision"], "deny")
 
+    def test_null_omission_replay_has_stable_targeted_diagnostics_without_work_changes(self):
+        self.draft()
+        raw = self.fill()
+        raw["omitted"] = [{"name": "sprint-status", "reason": "Native fixture", "replaced_by": None},
+                          {"name": "architecture", "reason": "Native fixture", "replaced_by": None}]
+        self.target.write_text(json.dumps(raw))
+        self.run_cli("sdd", "route", "rule", "--source", self.source, "--start-line", "3", "--end-line", "3")
+        before = self.read_work(self.wid)
+        repair_ids = []
+        for command in ("check", "propose", "check"):
+            rc, out = self.run_cli("sdd", "route", command, "--declaration", self.target)
+            self.assertEqual(rc, 2, out)
+            self.assertEqual(out["error"], "NATIVE_ROUTE_REPLACEMENT_REQUIRED")
+            self.assertEqual([d["field"] for d in out["diagnostics"]],
+                             ["$.omitted[0].replaced_by", "$.omitted[1].replaced_by"])
+            self.assertEqual(out["diagnostic"]["actual"], None)
+            self.assertEqual(out["diagnostic"]["allowed"], [self.spec])
+            self.assertNotIn("restart the host BEFORE", out["next"])
+            self.assertIn("$.omitted[0].replaced_by", out["next"])
+            self.assertEqual(out["retry_policy"]["unchanged_input"], "repair_instead_of_retry")
+            repair_ids.append(out["repair_id"])
+        self.assertEqual(len(set(repair_ids)), 1)
+        self.assertEqual(self.read_work(self.wid), before)
+        self.fill()
+        self.assertEqual(self.run_cli("sdd", "route", "check")[0], 0)
+
+    def test_structural_route_errors_name_the_field(self):
+        self.draft()
+        raw = self.fill()
+        self.run_cli("sdd", "route", "rule", "--source", self.source, "--start-line", "3", "--end-line", "3")
+        raw = json.loads(self.target.read_text())
+        for key, value, field in (("provider", "openspec", "$.provider"),
+                                  ("profile", "light", "$.profile"),
+                                  ("workflow", "invented", "$.workflow"),
+                                  ("route", "oneshot", "$.route"),
+                                  ("required_artifacts", [], "$.required_artifacts"),
+                                  ("omitted", [], "$.omitted"),
+                                  ("provider_version", "", "$.provider_version")):
+            changed = copy.deepcopy(raw)
+            changed[key] = value
+            self.target.write_text(json.dumps(changed))
+            rc, out = self.run_cli("sdd", "route", "check")
+            self.assertEqual(rc, 2, out)
+            self.assertEqual(out["diagnostic"]["field"], field)
+            self.assertNotIn("restart the host BEFORE", out["next"])
+
+    def test_invalid_json_is_repairable_and_changed_input_has_a_new_repair_id(self):
+        self.draft()
+        self.target.write_text("{invalid")
+        rc, first = self.run_cli("sdd", "route", "check")
+        self.assertEqual(rc, 2, first)
+        self.assertEqual(first["diagnostic"]["field"], "$")
+        self.assertEqual(first["diagnostic"]["line"], 1)
+        self.assertEqual(first["diagnostic"]["column"], 2)
+        self.assertNotIn("restart the host BEFORE", first["next"])
+        self.target.write_text("{different")
+        rc, second = self.run_cli("sdd", "route", "check")
+        self.assertEqual(rc, 2, second)
+        self.assertNotEqual(first["repair_id"], second["repair_id"])
+
+    def test_light_context_does_not_require_workflow_registration_to_shorten_guidance(self):
+        work = self.read_work(self.wid)
+        work["path_assessment"]["profile"] = "light"
+        work["sdd"].pop("workflow", None)
+        out = cao.route_preparation_action(self.repo, work, {"reason": "NATIVE_ROUTE_REQUIRED"})
+        self.assertIn("Inherit the accepted project background", out["instruction"])
+        self.assertNotIn("restart the host BEFORE", out["instruction"])
+
+    def test_not_applicable_requires_real_oneshot_route_evidence(self):
+        spec = self.repo / self.spec
+        spec.write_text(spec.read_text().replace("route: dispatch", "route: oneshot"))
+        source = self.repo / self.source
+        source.write_text("If no intent gaps, write only Intent and Implementation Notes. Set `route: 'oneshot'`.\n")
+        self.draft()
+        raw = self.fill()
+        raw["omitted"] = [{"name": "sprint-status", "reason": "Native oneshot does not use sprint tracking",
+                           "disposition": "not_applicable", "native_rule": self.source}]
+        self.target.write_text(json.dumps(raw))
+        self.run_cli("sdd", "route", "rule", "--source", self.source, "--start-line", "1", "--end-line", "1")
+        self.assertEqual(self.run_cli("sdd", "route", "check")[0], 0)
+        out = self.run_cli("sdd", "route", "propose", "--declaration", self.target)[1]
+        self.assertTrue(out["ok"], out)
+        self.assertNotIn("replaced_by", out["route"]["omitted"][0])
+        raw = json.loads(self.target.read_text())
+        raw["omitted"][0]["native_rule"] = ".agents/skills/bmad-build/references/claims-check.md"
+        self.target.write_text(json.dumps(raw))
+        rc, out = self.run_cli("sdd", "route", "check")
+        self.assertEqual(rc, 2, out)
+        self.assertEqual(out["error"], "NATIVE_ROUTE_NOT_APPLICABLE_EVIDENCE_REQUIRED")
+        self.assertEqual(out["diagnostic"]["field"], "$.omitted[0].native_rule")
+        from scripts.route_omissions import normalize_omissions
+        for provider, route, build in (("bmad", "direct-build", "dispatch"), ("bmad", "full-planning", "oneshot"),
+                                       ("openspec", "direct-build", "oneshot")):
+            with self.assertRaisesRegex(ValueError, "NATIVE_ROUTE_NOT_APPLICABLE_EVIDENCE_REQUIRED"):
+                normalize_omissions([{"name": "sprint", "reason": "Fixture", "disposition": "not_applicable", "native_rule": self.source}],
+                                    [], [{"path": self.source, "quote": "route: oneshot"}], provider, route, build)
+
+    def test_json_formatter_is_readonly_but_output_files_and_interpreter_code_are_not(self):
+        for command in ("cat .orchestrator/inputs/x/route.json | python3 -m json.tool",
+                        "python3 -m json.tool --sort-keys route.json"):
+            self.assertEqual(self.hook(tool_name="bash", tool_input={"command": command})["decision"], "allow", command)
+        for command in ("python3 -m json.tool route.json product.py", "python3 -c 'open(\"product.py\",\"w\").write(\"x\")'",
+                        "python3 -m json.tool route.json > product.py"):
+            self.assertEqual(self.hook(tool_name="bash", tool_input={"command": command})["decision"], "deny", command)
+
+    def test_dependency_setup_stays_in_project_environment(self):
+        folder = self.repo / ".venv"
+        executable = folder / "bin/python"
+        executable.parent.mkdir(parents=True)
+        (folder / "pyvenv.cfg").write_text("home = /fixture\n")
+        executable.write_text("fixture interpreter; command is not executed by this test\n")
+        for command in ("python3 -m venv .venv", ".venv/bin/python -m pip install pytest",
+                        "uv pip install --python .venv/bin/python pytest"):
+            self.assertEqual(self.hook(tool_name="bash", tool_input={"command": command})["decision"], "allow", command)
+        for command in ("python3 -m pip install pytest --break-system-packages", "pip install fastapi",
+                        "npm install -g test", ".venv/bin/python -m pip install --target /tmp/outside pytest",
+                        "uv pip install --python .venv/bin/python --python /usr/bin/python pytest"):
+            out = self.hook(tool_name="bash", tool_input={"command": command})
+            self.assertEqual(out["decision"], "deny", command)
+            self.assertIn("VERIFICATION_DEPENDENCY_SCOPE_REQUIRED", out["reason"])
+        for command in ("python-evil -m venv .venv", "python3 -m venv /tmp/outside",
+                        "uv pip install --python .venv/bin/python -p /usr/bin/python pytest"):
+            self.assertEqual(self.hook(tool_name="bash", tool_input={"command": command})["decision"], "deny", command)
+
     def test_legacy_copy_preserves_source_and_existing_draft(self):
         self.draft()
         raw = self.fill()

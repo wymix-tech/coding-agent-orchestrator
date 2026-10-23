@@ -6,6 +6,13 @@ Bootstrap or next reports project_setup, or project facts/scope/bindings need re
 
 ## Execute
 
+Known field-category conflicts are rejected before saving: FastAPI is a
+framework, not a build tool. `diagnostics` identifies the expected field; ask
+only for the still-missing build choice. Custom technology names remain valid.
+Legacy miscategorized records are reported as context conflicts. Correct them
+using observed user evidence, then review affected Work bindings; do not claim
+the old invalid field authorized a product-stack migration.
+
 Honor provider installation and the required host restart first. Then restore
 the original user request, inspect product facts, confirm only missing choices,
 save project background, and declare verification before starting a product Work.

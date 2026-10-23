@@ -127,6 +127,12 @@ def _prepare_start(args: argparse.Namespace):
         print(json.dumps({"ok": False, "error": "REQUIREMENT_SELECTION_REQUIRED", "candidates": candidates}, ensure_ascii=False, indent=2)); return 2
     index = load_index(repo)
     wid = stable_work_id(repo, p)
+    from scripts.requirement_content import template_diagnostics
+    diagnostics = template_diagnostics(p)
+    if diagnostics:
+        print(json.dumps({"ok": False, "error": "REQUIREMENT_CONTENT_REQUIRED", "diagnostics": diagnostics,
+                          "next": f"Fill the actual user request in `{rel(p, repo)}`, then rerun the same cao start command. Keep the existing file and current Work; do not allocate another requirement."}, ensure_ascii=False))
+        return 2
     existing = load_work(repo, wid)
     is_new_work = existing is None
     if existing and existing.get("status") == "completed" and not args.reopen:

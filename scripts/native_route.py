@@ -81,6 +81,17 @@ def text(value, error):
     return value.strip()
 
 
+def field_error(code, field, expected, actual=None, **details):
+    return RouteValidationError([{"code": code, "field": field, "actual": actual,
+                                  "expected": expected, **details}])
+
+
+def field_text(value, code, field):
+    if not isinstance(value, str) or not value.strip():
+        raise field_error(code, field, "a nonempty string", value)
+    return value.strip()
+
+
 def owned_file(repo, value, dirs):
     # Reject linked source trees as well as escaped files.
     safe = [d for d in dirs if (repo / d).resolve() == repo.resolve() / d]
@@ -180,75 +191,72 @@ def spec_preparation_diagnostics(repo, work, dirs):
 
 def normalize_decision(repo, work, raw, dirs, skills):
     if not isinstance(raw, dict):
-        raise ValueError("NATIVE_ROUTE_DECLARATION_INVALID")
+        raise field_error("NATIVE_ROUTE_DECLARATION_INVALID", "$", "a declaration object", raw)
     sdd = work.get("sdd") or {}
     provider = sdd.get("provider")
     assessment = work.get("path_assessment") or {}
     requirement = work["requirement"]["sha256"]
-    if raw.get("provider") != provider or raw.get("requirement_sha256") != requirement:
-        raise ValueError("NATIVE_ROUTE_IDENTITY_MISMATCH")
+    for key, expected in (("provider", provider), ("requirement_sha256", requirement)):
+        if raw.get(key) != expected:
+            raise field_error("NATIVE_ROUTE_IDENTITY_MISMATCH", "$." + key, expected, raw.get(key))
     if file_hash(repo / work["requirement"]["path"]) != requirement:
-        raise ValueError("NATIVE_ROUTE_REQUIREMENT_STALE")
+        raise field_error("NATIVE_ROUTE_REQUIREMENT_STALE", "$.requirement_sha256", "review and reanchor the changed requirement before declaring a route", raw.get("requirement_sha256"))
     if raw.get("profile", assessment.get("profile")) != assessment.get("profile"):
-        raise ValueError("NATIVE_ROUTE_PROFILE_CHANGE_REQUIRES_ASSESSMENT")
+        raise field_error("NATIVE_ROUTE_PROFILE_CHANGE_REQUIRES_ASSESSMENT", "$.profile", assessment.get("profile"), raw.get("profile"))
     workflow = sdd.get("workflow") or {}
     if not workflow and provider == "bmad" and assessment.get("profile") == "light":
         workflow = {"name": "bmad-build", "entrypoint": "invoke skill bmad-build"}
     if not workflow.get("name") or raw.get("workflow") != workflow.get("name"):
-        raise ValueError("NATIVE_ROUTE_WORKFLOW_MISMATCH")
-    route = text(raw.get("route"), "NATIVE_ROUTE_NAME_REQUIRED")
+        raise field_error("NATIVE_ROUTE_WORKFLOW_MISMATCH", "$.workflow", workflow.get("name") or "select the actual installed workflow first", raw.get("workflow"))
+    route = field_text(raw.get("route"), "NATIVE_ROUTE_NAME_REQUIRED", "$.route")
     build = raw.get("build_route")
     if provider == "bmad" and (route not in {"direct-build", "full-planning"}
                                or build not in {"dispatch", "oneshot"}):
-        raise ValueError("NATIVE_ROUTE_NAME_INVALID")
+        key = "route" if route not in {"direct-build", "full-planning"} else "build_route"
+        allowed = ["direct-build", "full-planning"] if key == "route" else ["dispatch", "oneshot"]
+        raise field_error("NATIVE_ROUTE_NAME_INVALID", "$." + key, "an installed native route value", raw.get(key), allowed=allowed)
     normalized = normalize_rules(repo, provider, raw.get("rules"), skills)
     required = raw.get("required_artifacts")
     if not isinstance(required, list) or not required:
-        raise ValueError("NATIVE_ROUTE_ARTIFACTS_REQUIRED")
+        raise field_error("NATIVE_ROUTE_ARTIFACTS_REQUIRED", "$.required_artifacts", "a nonempty array of real provider-owned {path, role} artifacts including the primary", required)
     artifacts = []
-    for item in required:
+    for index, item in enumerate(required):
+        field = f"$.required_artifacts[{index}]"
         if not isinstance(item, dict):
-            raise ValueError("NATIVE_ROUTE_ARTIFACT_INVALID")
-        path = owned_file(repo, item.get("path"), dirs)
-        role = text(item.get("role"), "NATIVE_ROUTE_ARTIFACT_ROLE_REQUIRED")
+            raise field_error("NATIVE_ROUTE_ARTIFACT_INVALID", field, "an object with path and role", item)
+        try:
+            path = owned_file(repo, item.get("path"), dirs)
+        except (ValueError, OSError, TypeError) as exc:
+            raise field_error(str(exc), field + ".path", "an existing repository-owned native artifact", item.get("path")) from exc
+        role = field_text(item.get("role"), "NATIVE_ROUTE_ARTIFACT_ROLE_REQUIRED", field + ".role")
         if any(a["path"] == path.relative_to(repo).as_posix() for a in artifacts):
-            raise ValueError("NATIVE_ROUTE_DUPLICATE_ARTIFACT")
+            raise field_error("NATIVE_ROUTE_DUPLICATE_ARTIFACT", field + ".path", "a unique artifact path", item.get("path"))
         if role == "sprint" and path.name not in {"sprint-status.yaml", "sprint-status.yml"}:
-            raise ValueError("NATIVE_ROUTE_SPRINT_SOURCE_INVALID")
+            raise field_error("NATIVE_ROUTE_SPRINT_SOURCE_INVALID", field + ".path", "native sprint-status.yaml or sprint-status.yml", item.get("path"))
         artifacts.append({"path": path.relative_to(repo).as_posix(), "role": role,
                           "intent_sha256": intent_hash(path)})
-    primary = text(raw.get("primary_artifact"), "NATIVE_ROUTE_PRIMARY_REQUIRED")
-    primary = owned_file(repo, primary, dirs).relative_to(repo).as_posix()
+    primary = field_text(raw.get("primary_artifact"), "NATIVE_ROUTE_PRIMARY_REQUIRED", "$.primary_artifact")
+    try:
+        primary = owned_file(repo, primary, dirs).relative_to(repo).as_posix()
+    except (ValueError, OSError) as exc:
+        raise field_error(str(exc), "$.primary_artifact", "an existing provider-owned primary output", primary) from exc
     if primary not in {a["path"] for a in artifacts}:
-        raise ValueError("NATIVE_ROUTE_PRIMARY_NOT_REQUIRED")
+        raise field_error("NATIVE_ROUTE_PRIMARY_NOT_REQUIRED", "$.primary_artifact", "a path also listed in required_artifacts", primary, allowed=[a["path"] for a in artifacts])
     if provider == "bmad":
         if build_route(repo / primary) != build:
-            raise ValueError("NATIVE_ROUTE_SPEC_ROUTE_MISMATCH")
+            raise field_error("NATIVE_ROUTE_SPEC_ROUTE_MISMATCH", "$.build_route", build_route(repo / primary), build)
         if route == "full-planning" and not {"prd", "architecture", "epics", "sprint"}.issubset(
                 {a["role"] for a in artifacts}):
-            raise ValueError("NATIVE_ROUTE_FULL_PLANNING_ARTIFACTS_REQUIRED")
-    omitted = raw.get("omitted", [])
-    if not isinstance(omitted, list):
-        raise ValueError("NATIVE_ROUTE_OMISSIONS_INVALID")
-    omissions = []
-    for item in omitted:
-        if not isinstance(item, dict):
-            raise ValueError("NATIVE_ROUTE_OMISSIONS_INVALID")
-        replacement = text(item.get("replaced_by"), "NATIVE_ROUTE_REPLACEMENT_REQUIRED")
-        if replacement not in {a["path"] for a in artifacts}:
-            raise ValueError("NATIVE_ROUTE_REPLACEMENT_UNBOUND")
-        omissions.append({"name": text(item.get("name"), "NATIVE_ROUTE_OMISSION_NAME_REQUIRED"),
-                          "reason": text(item.get("reason"), "NATIVE_ROUTE_OMISSION_REASON_REQUIRED"),
-                          "replaced_by": replacement})
-    if provider == "bmad" and route == "direct-build" and not omissions:
-        raise ValueError("NATIVE_ROUTE_OMISSIONS_REQUIRED")
+            raise field_error("NATIVE_ROUTE_FULL_PLANNING_ARTIFACTS_REQUIRED", "$.required_artifacts", "real native prd, architecture, epics and sprint roles for full-planning", [a["role"] for a in artifacts])
+    from scripts.route_omissions import normalize_omissions
+    omissions = normalize_omissions(raw.get("omitted", []), artifacts, normalized, provider, route, build)
     return {"provider": provider, "requirement_sha256": requirement,
             "assessment_revision": assessment.get("revision"), "profile": assessment.get("profile"),
             "required_gates": assessment.get("required_gates", []),
             "workflow": workflow["name"], "entrypoint": workflow["entrypoint"],
             "route": route, "build_route": build,
-            "reason": text(raw.get("reason"), "NATIVE_ROUTE_REASON_REQUIRED"),
-            "provider_version": text(raw.get("provider_version"), "NATIVE_ROUTE_VERSION_REQUIRED"),
+            "reason": field_text(raw.get("reason"), "NATIVE_ROUTE_REASON_REQUIRED", "$.reason"),
+            "provider_version": field_text(raw.get("provider_version"), "NATIVE_ROUTE_VERSION_REQUIRED", "$.provider_version"),
             "rules": normalized, "required_artifacts": artifacts,
             "primary_artifact": primary, "omitted": omissions,
             "approval_required": provider == "bmad" and build == "dispatch"}

@@ -36,7 +36,7 @@ class CoreTests(unittest.TestCase):
         td, repo = self.init_repo()
         with td:
             (repo / "requirements").mkdir()
-            (repo / "requirements/spring-boot-auth-login.md").write_text("Implement login", encoding="utf-8")
+            (repo / "requirements/spring-boot-auth-login.md").write_text("Implement bounded fixture behavior", encoding="utf-8")
             (repo / "_bmad").mkdir()
             run(repo, "init"); run(repo, "sdd", "select", "--provider", "bmad")
             run(repo, "start", "--requirement", "requirements/spring-boot-auth-login.md")
@@ -78,7 +78,7 @@ class CoreTests(unittest.TestCase):
         td, repo = self.init_repo()
         with td:
             (repo / "requirements").mkdir()
-            (repo / "requirements/spring-boot-auth-login.md").write_text("Implement login", encoding="utf-8")
+            (repo / "requirements/spring-boot-auth-login.md").write_text("Implement bounded fixture behavior", encoding="utf-8")
             (repo / "_bmad").mkdir()
             run(repo, "init"); run(repo, "sdd", "select", "--provider", "bmad")
             configure_verification(repo)
@@ -100,7 +100,7 @@ class CoreTests(unittest.TestCase):
         td, repo = self.init_repo()
         with td:
             (repo / "requirements").mkdir()
-            (repo / "requirements/spring-boot-auth-login.md").write_text("Implement login", encoding="utf-8")
+            (repo / "requirements/spring-boot-auth-login.md").write_text("Implement bounded fixture behavior", encoding="utf-8")
             (repo / "_bmad").mkdir()
             run(repo, "init"); run(repo, "sdd", "select", "--provider", "bmad")
             run(repo, "start", "--requirement", "requirements/spring-boot-auth-login.md")
@@ -119,7 +119,7 @@ class CoreTests(unittest.TestCase):
         td, repo = self.init_repo()
         with td:
             (repo / "requirements").mkdir()
-            (repo / "requirements/spring-boot-auth-login.md").write_text("Implement login", encoding="utf-8")
+            (repo / "requirements/spring-boot-auth-login.md").write_text("Implement bounded fixture behavior", encoding="utf-8")
             (repo / "_bmad").mkdir()
             run(repo, "init"); run(repo, "sdd", "select", "--provider", "bmad")
             run(repo, "start", "--requirement", "requirements/spring-boot-auth-login.md")
@@ -140,7 +140,7 @@ class CoreTests(unittest.TestCase):
         td, repo = self.init_repo()
         with td:
             (repo / "requirements").mkdir()
-            (repo / "requirements/add-login.md").write_text("Add login", encoding="utf-8")
+            (repo / "requirements/add-login.md").write_text("Generate a local status report", encoding="utf-8")
             run(repo, "init"); run(repo, "sdd", "select", "--provider", "openspec")
             run(repo, "start", "--requirement", "requirements/add-login.md")
             run(repo, "path", "assess", "--profile", "standard", "--reason", "Feature with planning")
@@ -167,7 +167,7 @@ class CoreTests(unittest.TestCase):
         td, repo = self.init_repo()
         with td:
             (repo / "requirements").mkdir()
-            (repo / "requirements/add-login.md").write_text("Add login", encoding="utf-8")
+            (repo / "requirements/add-login.md").write_text("Generate a local status report", encoding="utf-8")
             (repo / ".specify/memory").mkdir(parents=True)
             (repo / ".specify/memory/constitution.md").write_text("Constitution", encoding="utf-8")
             run(repo, "init"); run(repo, "sdd", "select", "--provider", "speckit")
@@ -186,7 +186,7 @@ class CoreTests(unittest.TestCase):
     def test_lifecycle(self):
         td, repo = self.init_repo()
         with td:
-            (repo / "requirements").mkdir(); (repo / "requirements/login.md").write_text("Add login", encoding="utf-8")
+            (repo / "requirements").mkdir(); (repo / "requirements/login.md").write_text("Generate a local status report", encoding="utf-8")
             rc, _, _ = run(repo, "init"); self.assertEqual(rc, 0)
             configure_verification(repo)
             run(repo, "sdd", "select", "--provider", "openspec")
@@ -216,7 +216,7 @@ class CoreTests(unittest.TestCase):
         td, repo = self.init_repo()
         with td:
             (repo / "_bmad").mkdir()
-            (repo / "requirements").mkdir(); (repo / "requirements/login.md").write_text("Add login", encoding="utf-8")
+            (repo / "requirements").mkdir(); (repo / "requirements/login.md").write_text("Generate a local status report", encoding="utf-8")
             run(repo, "init"); run(repo, "sdd", "select", "--provider", "bmad")
             configure_verification(repo)
             run(repo, "start", "--requirement", "requirements/login.md")
@@ -305,7 +305,7 @@ class CoreTests(unittest.TestCase):
     def test_resume_creates_handoff_and_new_session_can_continue(self):
         td, repo = self.init_repo()
         with td:
-            (repo / "requirements").mkdir(); (repo / "requirements/login.md").write_text("Add login", encoding="utf-8")
+            (repo / "requirements").mkdir(); (repo / "requirements/login.md").write_text("Generate a local status report", encoding="utf-8")
             run(repo, "init"); run(repo, "start", "--requirement", "requirements/login.md")
             run(repo, "decision", "--decision", "Use Redis for refresh token", "--reason", "Supports revocation")
             run(repo, "checkpoint", "--step", "implement-login-api", "--next", "run integration tests", "--summary", "Login endpoint implemented", "--completed", "JWT endpoint")

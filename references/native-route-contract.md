@@ -70,6 +70,12 @@ recomputing already-correct hashes, add unrelated rules or change native source
 text to make an invented quote match. If the source really changed, reread it
 and regenerate its evidence. Preparation and validation do not approve a SPEC.
 
+Structural errors also name their JSON field, actual value and expected value
+or allowed artifact paths. A stable `repair_id` and `retry_policy` identify the
+same rejected input. Repair the named field before retrying; another check or
+propose command cannot fix it. Do not change profile or fabricate replacement
+duties to pass a check. JSON syntax errors include their line and column.
+
 ## Declaration fields
 
 | Field | Required value |
@@ -86,6 +92,13 @@ and regenerate its evidence. Preparation and validation do not approve a SPEC.
 | `required_artifacts` | Nonempty array of `{path, role}` for real unique owned artifacts |
 | `rules` | Nonempty array of `{path, sha256, quote}` from actual installed native rules |
 | `omitted` | Array of `{name, reason, replaced_by}` for omitted duties; replacement must be a required artifact |
+
+`replaced_by: null` is invalid for a replacement. If an installed BMAD oneshot
+route makes a duty inapplicable, use `{name, reason, disposition: "not_applicable",
+native_rule: "<rules[].path>"}` instead. The referenced literal routing quote must
+select `route: oneshot`; unrelated review/check documents are not route evidence.
+This option applies only to BMAD direct-build/oneshot. It does not waive quality
+gates, unresolved questions, native reviewers or full-planning roles.
 
 Use repository-relative paths. Each rule hash must match the current file and
 its quote must occur in that file. A `sprint` role accepts only native

@@ -50,7 +50,8 @@ def init_repo(repo, provider="bmad"):
         (repo / "openspec").mkdir()
         (repo / "openspec" / "config.yaml").write_text("context: test\n", encoding="utf-8")
     (repo / "requirements").mkdir()
-    (repo / "requirements" / "login.md").write_text("Implement login", encoding="utf-8")
+    # Exercise profile/gate mechanics without an unrelated security minimum.
+    (repo / "requirements" / "login.md").write_text("Generate a bounded local status report", encoding="utf-8")
     run(repo, "init")
     configure_verification(repo)
     run(repo, "sdd", "select", "--provider", provider)

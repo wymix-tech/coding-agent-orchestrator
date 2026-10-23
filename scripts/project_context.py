@@ -136,6 +136,7 @@ def selected_scopes(context, requested=None, work=None):
 
 
 def context_state(repo, scopes=None, work=None, check_sources=False):
+    from scripts.project_technology import category_conflicts
     context = load_context(repo)
     if not context:
         return {'ready': False, 'reason': 'PROJECT_CONTEXT_REQUIRED', 'missing_fields': ['root.' + key for key in REQUIRED],
@@ -146,6 +147,7 @@ def context_state(repo, scopes=None, work=None, check_sources=False):
         return {'ready': False, 'reason': 'PROJECT_SCOPE_REQUIRED', 'scopes': list(context['scopes']),
                 'next': 'Choose the affected module with --scope; do not reselect the project stack.'}
     missing, conflicts = [], []
+    category_errors = []
     for name, scope in semantic(context, scopes).items():
         # A root containing only common constraints does not need its own stack.
         keys = REQUIRED if name in scopes else ()
@@ -155,6 +157,9 @@ def context_state(repo, scopes=None, work=None, check_sources=False):
             if scope['technology'].get(key, {}).get('status') not in {'accepted', 'not_applicable'}:
                 missing.append(name + '.' + key)
         conflicts += [name + '.' + key for key, item in scope['technology'].items() if item['status'] == 'conflict']
+        category_errors.extend(category_conflicts({key: item['value'] for key, item in scope['technology'].items()
+                                                  if item['status'] == 'accepted'}, name + '.'))
+    conflicts += [item['field'] for item in category_errors]
     changes = []
     for change_id in context.get('active_changes', []):
         change = read(repo / ROOT / 'changes' / (change_id + '.json'))
@@ -169,6 +174,9 @@ def context_state(repo, scopes=None, work=None, check_sources=False):
                      next='Resume the owner migration Work; conflicting tasks must wait.')
     elif conflicts:
         state.update(reason='PROJECT_CONTEXT_CONFLICT', next='Run `cao project context diff`; resolve the conflicting sources explicitly.')
+        if category_errors:
+            state.update(diagnostics=category_errors,
+                         next='Correct the miscategorized fields with actual user evidence using `cao project context set`, then review and refresh any affected Work project binding. Do not infer a build tool from a framework.')
     elif missing:
         state.update(reason='PROJECT_CONTEXT_REQUIRED', next='Confirm only missing fields and save them with `cao project context set`.')
     if check_sources and state['ready']:

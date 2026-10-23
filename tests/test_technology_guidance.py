@@ -68,7 +68,7 @@ class TechnologyGuidance(RepairCase):
         self.assert_policy(self.hook("post_tool", toolName="read", input={"path": "requirement.md"})["additional_context"])
 
     def test_existing_baseline_cannot_hide_technology_policy_during_native_preparation(self):
-        out = self.start_work("# 登录\n开发登录系统，技术选择待确认。\n")
+        out = self.start_work("# 状态页\n开发状态页，技术选择待确认。\n")
         folder = self.repo / "acceptance-tests"
         folder.mkdir()
         (folder / "test_fixture.py").write_text("import unittest\nclass Fixture(unittest.TestCase):\n def test_ok(self): self.assertTrue(True)\n")

@@ -52,6 +52,7 @@ from scripts.native_route import (
     owned_file as native_owned_file,
     route_state,
     spec_preparation_diagnostics,
+    digest as route_digest,
 )
 from scripts.path_guard import provider_artifact, repo_file
 from scripts.provider_restart import restart_state
@@ -291,7 +292,9 @@ def route_preparation_action(repo: Path, work: dict, state: dict) -> dict:
     selected = workflow_skill_identity(repo, provider, workflow.get("entrypoint") or "")
     skill = next((item for item in skills if item["name"] == (selected or "bmad-build")), None)
     from scripts.project_context import context_state
-    technology = (technology_instruction(command) if not workflow.get("name") or not context_state(repo, work=work)["ready"]
+    needs_technology = (not context_state(repo, work=work)["ready"] or
+                        not workflow.get("name") and (work.get("path_assessment") or {}).get("profile") != "light")
+    technology = (technology_instruction(command) if needs_technology
                   else "Inherit the accepted project background; do not ask for the stack again. Confirm authorization before a material stack change. ")
     instruction = technology + (f"Read the complete installed Skill `{repo / skill['rel_path']}`; invoke `{skill['name']}` "
                    "and use its exact renderer only when required. Renderer success loads instructions, not completed execution. "
@@ -453,6 +456,7 @@ def cmd_sdd_route(args: argparse.Namespace) -> int:
         print(json.dumps({"ok": True, "route": (work.get("sdd") or {}).get("route_decision"),
                           "history": (work.get("sdd") or {}).get("route_history", []),
                           "state": native_route_state(repo, work)}, ensure_ascii=False)); return 0
+    raw = None
     try:
         if args.route_action in {"prepare", "rule"}:
             from scripts.route_input_commands import dispatch
@@ -511,17 +515,25 @@ def cmd_sdd_route(args: argparse.Namespace) -> int:
         current = current_work_action(repo, work, check_completion=False)
         result = {"ok": False, "error": code, "next": current["instruction"],
                   "guidance": agent_guidance(repo, work, next_action=current)}
-        if getattr(exc, "diagnostic", None):
-            result["diagnostic"] = exc.diagnostic
-            result["diagnostics"] = exc.diagnostics
-        if getattr(exc, "diagnostic", None) and code.startswith("NATIVE_ROUTE_RULE"):
+        diagnostics = getattr(exc, "diagnostics", None)
+        if not diagnostics and code.startswith("NATIVE_ROUTE_DECLARATION_"):
+            diagnostics = [{"code": code, "field": "--declaration" if code.endswith(("PATH_REQUIRED", "FILE_MISSING")) else "$",
+                            "expected": "an existing JSON declaration path; prepare the input after native SPEC preparation" if code.endswith(("PATH_REQUIRED", "FILE_MISSING")) else "a valid JSON object in the declaration file",
+                            "line": getattr(exc, "lineno", None), "column": getattr(exc, "colno", None)}]
+        if diagnostics:
+            result.update(diagnostic=diagnostics[0], diagnostics=diagnostics)
+        if diagnostics and code.startswith("NATIVE_ROUTE_RULE"):
             result["next"] = ("Repair every listed diagnostic field; hashes and quotes are checked independently. "
                               "Use `cao sdd route prepare --from <existing-declaration>` for a legacy input, then "
                               "`cao sdd route rule --source <actual-native-file> --start-line <first> --end-line <last> --index <rule-index>` "
                               "to replace the named rule with literal source evidence. Run `cao sdd route check` before proposing again. "
                               "Do not resubmit unchanged evidence or rewrite native rules to make a quote match.")
             result["guidance"] = agent_guidance(repo, work, next_action={**current, "reason": "NATIVE_ROUTE_RULE_EVIDENCE_MISMATCH"})
-        if code.startswith("NATIVE_ROUTE_DECLARATION_"):
+        elif diagnostics and code != "NATIVE_SPEC_PREPARATION_REQUIRED":
+            result["next"] = " ".join(f"Repair {d['field']}: {d['expected']}." for d in diagnostics)
+            result["next"] += " Run `cao sdd route check` once after repairing the declaration or named source. Do not resubmit unchanged evidence, lower the profile, invent replacement duties or begin implementation."
+            result["guidance"] = agent_guidance(repo, work, next_action={"stage": "execution", "reason": "NATIVE_ROUTE_DECLARATION_INVALID"})
+        if code in {"NATIVE_ROUTE_DECLARATION_PATH_REQUIRED", "NATIVE_ROUTE_DECLARATION_FILE_MISSING"}:
             result["reason"] = ("--declaration expects a path to an existing JSON file, not inline JSON. "
                                 "Use the Work-specific CAO input path after native preparation; "
                                 "a rejected write did not create the file.")
@@ -530,6 +542,16 @@ def cmd_sdd_route(args: argparse.Namespace) -> int:
         if code == "NATIVE_ROUTE_NAME_INVALID":
             result["allowed_routes"] = ["direct-build", "full-planning"]
             result["allowed_build_routes"] = ["dispatch", "oneshot"]
+        input_sha = None
+        try:
+            candidate = repo_file(repo, getattr(args, "declaration", None) or route_declaration_path(work))
+            if candidate.is_file() and candidate.stat().st_size <= 1024 * 1024:
+                input_sha = sha256_file(candidate)
+        except (ValueError, OSError, RuntimeError, TypeError):
+            pass
+        result["repair_id"] = route_digest({"input": raw, "input_sha256": input_sha, "error": code, "diagnostics": result.get("diagnostics")})
+        result["retry_policy"] = {"unchanged_input": "repair_instead_of_retry",
+                                  "retry_when": "the declaration or named source has changed; follow diagnostics before choosing another command"}
         print(json.dumps(result, ensure_ascii=False)); return 2
 
 

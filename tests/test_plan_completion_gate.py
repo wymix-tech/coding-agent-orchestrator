@@ -74,7 +74,8 @@ def ready_to_close(repo: pathlib.Path, provider: str, artifact: str, profile: st
         (repo / ".specify").mkdir(exist_ok=True)
     rc, out = run(repo, "requirement", "next-id", "--title", "login")
     req = repo / out["path"]
-    req.write_text("# login\n\nJWT auth, RBAC, sessions.\n", encoding="utf-8")
+    # Plan completion is independent of domain-specific security capabilities.
+    req.write_text("# Fixture\n\nGenerate a bounded local status report.\n", encoding="utf-8")
     rc, out = run(repo, "start", "--requirement", out["path"])
     wid = out["work_item"]["id"]
     run(repo, "path", "assess", "--profile", profile, "--reason", "auth system", "--work", wid)

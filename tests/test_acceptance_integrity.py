@@ -41,7 +41,8 @@ def active_work(repo, command=None):
     (repo / "_bmad").mkdir(exist_ok=True)
     rc, out = run(repo, "requirement", "next-id", "--title", "login")
     req = repo / out["path"]
-    req.write_text("# login\n\nJWT auth, RBAC, session management.\n", encoding="utf-8")
+    # This suite exercises baseline/reanchor integrity, not authentication risk.
+    req.write_text("# Fixture\n\nGenerate a bounded local status report.\n", encoding="utf-8")
     rc, out = run(repo, "start", "--requirement", out["path"])
     assert rc == 0, out
     return out["work_item"]["id"]
