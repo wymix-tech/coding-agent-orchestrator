@@ -32,6 +32,7 @@ description: Coordinate non-trivial repository coding work across sessions and a
 | Current Provider is BMAD and native workflow action is needed | [BMAD](references/provider-bmad.md) |
 | Current Provider is OpenSpec and native workflow action is needed | [OpenSpec](references/provider-openspec.md) |
 | Current Provider is Spec Kit and native workflow action is needed | [Spec Kit](references/provider-speckit.md) |
+| Process/artifact conformance and project knowledge | [Conformance and knowledge](references/conformance-knowledge.md) |
 | Review/verification/final acceptance/close | [Completion](references/completion.md) |
 | Blockers, requirement changes, stale evidence, missing sources or abandoned runs | [Recovery](references/recovery.md) |
 | Declare/repair a native route (`NATIVE_ROUTE_*`); not workflow/SPEC preparation | [Native route contract](references/native-route-contract.md) |

@@ -6,6 +6,12 @@ Read for a BMAD oneshot review action, for any CAO quality profile.
 Follow EVERY active Review layer and Classify step in the actual rendered
 `step-oneshot.md`; a route-bound primary SPEC also identifies these obligations.
 
+Prefer batch `cao sdd review prepare` to create all tickets and report paths before
+launching reviewers. Read [conformance and knowledge](conformance-knowledge.md) for
+capability preflight, one-session-per-layer handoff, existing-report import and
+unchanged-error retry handling. The commands below remain available for manual
+handoff. Current native evidence is reused; CAO does not add another code review.
+
 ## Begin and submit
 
 1. Run `cao sdd review begin --layer <active-layer> --instructions <actual-step-oneshot.md> --model <current-model>` for each active layer.

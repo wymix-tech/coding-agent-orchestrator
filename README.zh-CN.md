@@ -283,3 +283,9 @@ Provider 安装通过显式的 `sdd install --yes` 执行。项目专用检查�
 Copyright (c) 2026 Coding Agent Orchestrator contributors.
 
 本项目采用 [MIT License](LICENSE)。完整许可声明及免责声明见 `LICENSE` 文件。
+
+## 过程符合性与项目知识
+
+SDD provider 负责功能代码评审；CAO 核查声明的产物、过程及有效证据，并复用原生评审结果满足对应门禁。`cao conformance show/check` 展示当前义务和阻塞原因。BMAD 的 `cao sdd review prepare` 提前创建全部层的票据和报告路径，`import` 校验已有原生报告，避免为格式补齐重复评审。
+
+评审完成和任务关闭后可自动采集带来源、范围及失效检查的项目知识；采集失败不会阻塞完成。通过 `cao knowledge list/collect/refresh` 管理，配置 `knowledge.enabled: false` 可关闭。详见[过程符合性与知识协议](references/conformance-knowledge.md)。

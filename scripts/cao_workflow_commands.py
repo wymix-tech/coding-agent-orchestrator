@@ -316,60 +316,19 @@ def cmd_sdd_review(args: argparse.Namespace) -> int:
         records = work.setdefault("sdd", {}).setdefault("native_reviews", {})
         identity = host_session_identity(None)
         runtime_model = os.environ.get('PI_MODEL') if identity and identity[0] == 'pi' else None
-        if args.review_action in {'begin', 'attach'}:
+        if args.review_action in {'begin', 'attach', 'prepare'}:
             args.model = runtime_model_name(args.model, runtime_model, os.environ.get('PI_PROVIDER'))
             if runtime_model and runtime_model != args.model:
                 print(json.dumps({'ok': False, 'error': 'NATIVE_REVIEW_MODEL_MISMATCH',
                                   'expected_model': runtime_model, 'actual_model': args.model,
                                   'next': 'Use the current model in a new independent reviewer session; a different model is not required.'}))
                 return 2
-        if args.review_action == "begin":
-            if not args.model.strip():
-                raise ValueError("NATIVE_REVIEW_MODEL_REQUIRED")
-            path = repo_file(repo, args.instructions)
-            expected_name = "step-04-review.md" if dispatch_review(work) else "step-oneshot.md"
-            if path.name != expected_name or not inside(path, repo / "_bmad/render") or (repo / "_bmad/render").resolve() != repo / "_bmad/render" or not path.is_file():
-                raise ValueError("NATIVE_REVIEW_INSTRUCTIONS_INVALID")
-            content = path.read_text()
-            layers = sorted(set(re.findall(r"(?m)^####[^\n]*\(`?([a-z][a-z0-9-]*)`?\)", content)))
-            if not layers or args.layer not in layers:
-                raise ValueError("NATIVE_REVIEW_LAYER_NOT_ACTIVE")
-            if dispatch_review(work) and layers != active_layers(repo, work):
-                raise ValueError("NATIVE_REVIEW_CONTRACT_MISMATCH")
-            records["_contract"] = {"sources": [path.relative_to(repo).as_posix()], "layers": layers}
-            if any(record.get('model') != args.model for key, record in records.items() if key != '_contract'):
-                # A model change starts a new review round; never mix layers
-                # from two capability levels while retaining their old passes.
-                for key in list(records):
-                    if key != '_contract':
-                        records.pop(key)
-            inputs = review_inputs(repo, work, code_snapshot)
-            primary_ids = [session.get("host_session_id") for session in list_sessions(repo)
-                           if session.get("work_item_id") == work["id"] and session.get("kind") == "primary"]
-            existing = records.get(args.layer) or {}
-            matching_inputs = (existing.get('inputs') == inputs or (existing.get('status') == 'classified'
-                               and all(existing.get('inputs', {}).get(k) == v for k, v in inputs.items() if k != 'code_snapshot')))
-            reused = (dispatch_review(work) and not args.restart and existing.get('status') in {'running', 'classified'}
-                      and matching_inputs and existing.get('model') == args.model)
-            run = existing if reused else {"id": new_id("review"), "status": "running", "inputs": inputs,
-                   "input_sha256": native_digest(inputs), "model": args.model,
-                   "existing_session_ids": [session['id'] for session in list_sessions(repo)],
-                   "primary_session_ids": primary_ids}
-            records[args.layer] = run
-            output = {"ok": True, "review": run, "active_layers": layers, 'reused': reused}
-            output['reviewer_start'] = (f'{cao_invocation()["command"]} sdd review attach --work {work["id"]} '
-                f'--layer {args.layer} --run {run["id"]} --input-sha256 {run["input_sha256"]} --model {shlex.quote(args.model)}')
-            output['next'] = ('Begin ALL active layers before launching reviewers. Each new independent host session must first run reviewer_start '
-                'to acknowledge this ticket and frozen input, then inspect that exact code without product writes. '
-                + ('Preserve unmodified native Markdown/JSON findings for each layer; classify ALL layers before patches, then resolve ALL layers. '
-                   'Use `cao sdd review classify --layer <layer> --report <triage.json>`, then `cao sdd review resolve --layer <layer> --report <resolved.json>`.'
-                   if dispatch_review(work) else
-                   'Preserve raw Markdown findings and submit triage with `cao sdd review submit --layer <layer> --report <report.json>`.')
-                + ' Before launch, inspect the installed agent definitions: the reviewer needs shell access to execute reviewer_start and the CAO host adapter. '
-                'Use an available agent name; do not assume task/general-purpose exist. Preserve native prompts/output formats, including Markdown. '
-                'If no capable subagent is available, use a new independent external host session with its CAO adapter. Never reuse results from before this ticket.')
-            if reused:
-                output['next'] = dispatch_review_next(records, layers, inputs)
+        if args.review_action == "prepare":
+            from scripts.review_dispatch import prepare_batch
+            output = prepare_batch(repo, work, args, identity)
+        elif args.review_action == "begin":
+            from scripts.review_dispatch import begin_review
+            output = begin_review(repo, work, args, identity)
         elif args.review_action == 'attach':
             run = records.get(args.layer) or {}
             identity = host_session_identity(None)
@@ -381,11 +340,19 @@ def cmd_sdd_review(args: argparse.Namespace) -> int:
                                        args.model, args.run, args.input_sha256)
             output = {'ok': True, 'review': attached,
                       'next': 'Read the frozen review input and native instructions. Return actual findings; do not patch product code.'}
+            from scripts.review_dispatch import stamp_report
+            stamp_report(repo, work, args.layer, attached)
         elif args.review_action == 'findings':
             source = provider_artifact(repo, args.source, ['_bmad-output'])
             output = {'ok': True, 'source': source.relative_to(repo).as_posix(),
                       'source_sha256': sha256_file(source), 'findings': load_findings(source)}
             print(json.dumps(output, ensure_ascii=False)); return 0
+        elif args.review_action == "import":
+            # Import uses exactly the native validators and original execution binding.
+            # It cannot retrospectively invent reviewer identity for old output.
+            from scripts.review_dispatch import import_review
+            result = import_review(repo, work, args.layer, args.report)
+            output = {"ok": True, "review": result, "imported": True}
         elif args.review_action == "classify":
             output = {"ok": True, "review": classify_review(repo, work, args.layer, args.report, code_snapshot),
                       "next": dispatch_review_next(records, active_layers(repo, work), review_inputs(repo, work, code_snapshot))}
@@ -394,8 +361,12 @@ def cmd_sdd_review(args: argparse.Namespace) -> int:
         else:
             output = {"ok": True, "review": submit_review(repo, work, args.layer, args.report, code_snapshot)}
         queue_event(work, {"event": "sdd.native_review." + args.review_action,
-                           "work_item_id": work["id"], "layer": args.layer, "occurred_at": now()})
+                           "work_item_id": work["id"], "layer": getattr(args, "layer", None), "occurred_at": now()})
+        if args.review_action in {'resolve', 'submit', 'import'} and output.get('review', {}).get('status') == 'passed':
+            from scripts.project_knowledge import collect_nonblocking
+            work['knowledge_collection'] = collect_nonblocking(repo, work)
         save_work(repo, work)
     except (ValueError, OSError, KeyError, TypeError, RuntimeError) as exc:
-        print(json.dumps({"ok": False, "error": str(exc)}, ensure_ascii=False)); return 2
+        from scripts.review_diagnostics import failure
+        print(json.dumps(failure(repo, work, args, exc), ensure_ascii=False)); return 2
     print(json.dumps(output, ensure_ascii=False)); return 0

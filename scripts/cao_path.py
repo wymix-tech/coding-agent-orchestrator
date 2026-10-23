@@ -40,13 +40,18 @@ def gate_is_auto_derived(name: str) -> bool:
     return low in AUTO_DERIVED_GATES or low.endswith("_verification")
 
 
-def gate_state(work: dict[str, Any], verification_fresh: bool, sdd_ready: bool = False) -> dict[str, Any]:
+def gate_state(work: dict[str, Any], verification_fresh: bool, sdd_ready: bool = False, *, repo: Path | None = None) -> dict[str, Any]:
     """Split the assessment's required gates into satisfied and pending ones.
 
     Verification gates require fresh configured evidence; tests additionally need
-    successful required scripts declaring that capability. Other gates can only be
-    observed by the Agent, so it must be marked with `cao gate satisfy`.
+    successful required scripts declaring that capability. Native review/approval
+    evidence satisfies corresponding review gates once. Remaining manual gates
+    record actual process evidence, never a duplicate CAO code review.
     """
+    derived = {}
+    if repo is not None:
+        from scripts.conformance import native_gate_evidence
+        derived = native_gate_evidence(repo, work)
     assessment = work.get("path_assessment") or {}
     gates = [str(gate) for gate in (assessment.get("required_gates") or [])]
     status = work.get("gate_status") or {}
@@ -61,11 +66,13 @@ def gate_state(work: dict[str, Any], verification_fresh: bool, sdd_ready: bool =
             ok = bool(verification_fresh and capability_satisfied(work.get("verification") or {}, gate))
         elif gate_is_auto_derived(gate):
             ok = bool(verification_fresh)
+        elif gate in derived:
+            ok = True
         else:
             evidence = status.get(gate) or {}
             ok = bool(evidence.get("satisfied") and evidence_matches(work, evidence))
         (satisfied if ok else pending).append(gate)
-    return {"gates": gates, "satisfied": satisfied, "pending": pending}
+    return {"gates": gates, "satisfied": satisfied, "pending": pending, "native_evidence": derived}
 
 
 def normalize_path_risk_flag(value: str) -> str:
@@ -265,7 +272,7 @@ def cmd_path_assess(args: argparse.Namespace) -> int:
                 if provider == "bmad" else f'Bind the native SPEC and explicit criteria with `cao sdd spec bind --spec <provider-spec.md> --criteria-section "<heading>" --work {work["id"]}`. Light does not require workflow/plan/independent acceptance registration. ')
                if assessment["profile"] == "light" else
                f"Before implementation, select and record the native workflow with `cao sdd workflow select --name \"<native workflow name>\" --entrypoint \"<native workflow command or skill>\" --work {work['id']}`. Then execute it and record the run with `cao sdd workflow execute --command \"<command actually run>\" --exit-code <code> --work {work['id']}`. Finally record its real output files with `cao sdd workflow complete --work {work['id']} --artifact <repo-relative-file>` (repeat --artifact for each produced native artifact). Outputs must live under the provider's own directory; product source files are not SDD artifacts. `cao done` blocks until this contract is satisfied. " if provider in SDD_CATALOG else "")
-            + f"Required gates: {gate_text}. Record observed manual reviews with `cao gate satisfy --gate <gate> --evidence \"<what was done>\"`; verification and tests gates come from fresh configured scripts, not manual claims. `cao done` blocks until all are satisfied. Reassess only if the scope, risk, or requirement materially changes.",
+            + f"Required gates: {gate_text}. Reuse current native evidence via `cao conformance show`; do not repeat functional code review. Record only remaining observed process obligations with `cao gate satisfy --gate <gate> --evidence \"<what was done>\"`; verification and tests gates come from fresh configured scripts, not manual claims. `cao done` blocks until all are satisfied. Reassess only if the scope, risk, or requirement materially changes.",
             profile=assessment["profile"],
             provider=provider,
         )
@@ -350,7 +357,7 @@ def cmd_gate(args: argparse.Namespace) -> int:
             "ok": True,
             "work_item": work_summary(work),
             "gate": name,
-            "gates": gate_state(work, False),
+            "gates": gate_state(work, False, repo=repo),
         }, ensure_ascii=False, indent=2))
         return 0
     fresh = bound_verification_fresh(work, verification_inputs(repo, work, config(repo)))
@@ -358,7 +365,7 @@ def cmd_gate(args: argparse.Namespace) -> int:
         "ok": True,
         "work_item": work_summary(work),
         "required_gates": assessment.get("required_gates") or [],
-        "gates": gate_state(work, fresh, sdd_acceptance_state(repo, work)["ready"]),
+        "gates": gate_state(work, fresh, sdd_acceptance_state(repo, work)["ready"], repo=repo),
         "gate_status": work.get("gate_status") or {},
     }, ensure_ascii=False, indent=2))
     return 0

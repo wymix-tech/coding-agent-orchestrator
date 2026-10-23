@@ -283,3 +283,15 @@ Use `cao language set --language zh-CN` for Chinese or another supported locale.
 Copyright (c) 2026 Coding Agent Orchestrator contributors.
 
 This project is licensed under the [MIT License](LICENSE). The complete permission notice and warranty disclaimer are in `LICENSE`.
+
+## Conformance and project knowledge
+
+SDD providers own functional code review. CAO verifies declared artifacts/processes
+and reuses current native evidence for matching gates. Use `cao conformance show/check`
+for obligations and blockers, and BMAD `cao sdd review prepare/import` for batch
+handoff and validation of existing native reports without duplicate review.
+
+Optional source-bound knowledge collection follows successful reviews and completion;
+collection failure never blocks completion. Use `cao knowledge list/collect/refresh`,
+or disable it with `knowledge.enabled: false`. See the
+[conformance and knowledge protocol](references/conformance-knowledge.md).

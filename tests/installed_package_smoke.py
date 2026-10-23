@@ -29,7 +29,7 @@ def main():
         base = Path(td)
         modules = ("import json, importlib, pkgutil; import scripts; "
                    "[importlib.import_module(item.name) for item in pkgutil.iter_modules(scripts.__path__, 'scripts.') if item.name.startswith('scripts.cao_')]; "
-                   "from scripts import cao, state_store, completion_policy, path_guard, verification_runner, verification_setup, windows_supervisor, dashboard, light_spec_policy, sdd_acceptance_runtime, sdd_acceptance_commands, native_route, native_progress, route_inputs, route_input_commands; "
+                   "from scripts import cao, state_store, completion_policy, path_guard, verification_runner, verification_setup, windows_supervisor, dashboard, light_spec_policy, sdd_acceptance_runtime, sdd_acceptance_commands, native_route, native_progress, route_inputs, route_input_commands, conformance, project_knowledge, knowledge_commands, review_dispatch, review_diagnostics, spec_intent; "
                    "root=cao.package_root_dir(); "
                    "from scripts.skill_guidance import STAGE_FILES, PROVIDER_FILES, CONTRACT_FILES; "
                    "assert all((root/p).is_file() for p in {*STAGE_FILES.values(), *PROVIDER_FILES.values(), *CONTRACT_FILES.values()}); "
@@ -177,7 +177,7 @@ def main():
                     native_id = cli("start", "--requirement", req["path"])["work_item"]["id"]
                     cli("path", "assess", "--profile", "light", "--reason", "bounded native oneshot")
                     oneshot = repo / "_bmad-output/spec-oneshot.md"
-                    oneshot.write_text("---\nroute: 'oneshot'\nstatus: 'done'\n---\n## Intent\nThe explicit fixture test passes.\n## Implementation Notes\nFixture execution.\n", encoding="utf-8")
+                    oneshot.write_text("---\nroute: 'oneshot'\nstatus: 'done'\n---\n## Intent\n<frozen-after-approval>\nThe explicit fixture test passes.\n</frozen-after-approval>\n## Implementation Notes\nFixture execution.\n", encoding="utf-8")
                     before = oneshot.read_bytes()
                     bound = cli("sdd", "spec", "bind", "--spec", "_bmad-output/spec-oneshot.md")
                     assert bound["binding"]["mode"] == "bmad_oneshot", bound

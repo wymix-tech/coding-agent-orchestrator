@@ -259,4 +259,6 @@ def render_context(repo: Path, work: dict[str, Any] | None, *, session_id: str |
         json.dumps(p.get("verification") or {"status": "pending"}, ensure_ascii=False),
         f"Completion ready: {p['completion'].get('ready')}",
     ])
+    from scripts.project_knowledge import context_excerpt
+    lines.extend(["", "## Relevant project knowledge (context only; follow original evidence)", context_excerpt(repo, work)])
     return "\n".join(lines)

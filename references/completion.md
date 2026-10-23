@@ -29,3 +29,11 @@ Verification is snapshot-bound. Code, requirements, direct wrappers, acceptance 
 Follow the specific blocker and recovery guidance; rerunning verification alone cannot approve a changed requirement or repair missing reviews/tasks.
 
 Project-bound evidence has separate technical and task inputs. Requirement-only changes can preserve applicable original technical runs; source coverage and task evidence still need refresh. Use `cao acceptance criteria` to derive source IDs; optional criterion `covers` maps those IDs without copying the original documents. `cao acceptance reuse --script <name>` consumes actual JSON item results from the same fresh configured technical command when its exact command matches the accepted task executor; it does not invent assertions or rerun the entrypoint.
+
+## Evidence reuse and optional knowledge
+
+Use `cao conformance show` to inspect declared process/artifact obligations and their
+current evidence. Native SDD review/approval evidence satisfies matching CAO gates;
+remaining verification and acceptance still apply. Knowledge collection after close
+is optional and cannot reopen or block a completed Work. See
+[conformance and knowledge](conformance-knowledge.md) for recovery and source validity.

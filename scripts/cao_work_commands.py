@@ -222,6 +222,8 @@ def cmd_start(args: argparse.Namespace) -> int:
     if isinstance(prepared, int):
         return prepared
     repo, wid, requirement, session = prepared
+    from scripts.project_knowledge import refresh_nonblocking
+    refresh_nonblocking(repo)
     native = run_sdd_command(repo, "inspect", [requirement])
     with repo_transaction(repo):
         work = load_work(repo, wid)
@@ -645,8 +647,10 @@ def cmd_done(args: argparse.Namespace) -> int:
         work["resume"]["summary"] = "Work item completed and verification was fresh."
         queue_event(work, {"event": "task.closed", "work_item_id": work.get("id"),
                            "source": "cao", "to_state": "closed", "occurred_at": work.get("completed_at")})
+        from scripts.project_knowledge import collect_nonblocking
+        work['knowledge_collection'] = collect_nonblocking(repo, work)
         save_work(repo, work)
-        print(json.dumps({"ok": True, "status": "completed", "work_item": work_summary(work), "sdd_transition": transition}, ensure_ascii=False, indent=2)); return 0
+        print(json.dumps({"ok": True, "knowledge_collection": work['knowledge_collection'], "status": "completed", "work_item": work_summary(work), "sdd_transition": transition}, ensure_ascii=False, indent=2)); return 0
 
 
 def cmd_context(args: argparse.Namespace) -> int:
