@@ -12,7 +12,7 @@ from scripts.path_guard import repo_file, provider_artifact
 
 
 class RouteValidationError(ValueError):
-    """Keep legacy error codes while identifying every invalid rule field."""
+    """Keep legacy error codes while identifying invalid preparation/evidence fields."""
     def __init__(self, diagnostics):
         super().__init__(diagnostics[0]["code"])
         self.diagnostics = diagnostics
@@ -39,9 +39,11 @@ def normalize_rules(repo, provider, rules, skills):
             content = path.read_bytes()
             source = rule_text(content)
         except (ValueError, OSError, RuntimeError, TypeError) as exc:
-            errors.append({"code": str(exc) if isinstance(exc, ValueError) and not isinstance(exc, UnicodeError) else "NATIVE_ROUTE_RULE_SOURCE_INVALID",
-                           "field": field + ".path", "path": rule.get("path"),
-                           "expected": "an existing readable installed native rule file inside this repository"})
+            detail = getattr(exc, "diagnostic", None) or {
+                "code": str(exc) if isinstance(exc, ValueError) and not isinstance(exc, UnicodeError) else "NATIVE_ROUTE_RULE_SOURCE_INVALID",
+                "path": rule.get("path"), "issue": "source_unreadable",
+                "expected": "an existing readable installed native rule file inside this repository"}
+            errors.append({**detail, "field": field + ".path"})
             continue
         relative = path.relative_to(repo.resolve()).as_posix()
         sha = hashlib.sha256(content).hexdigest()
@@ -125,17 +127,55 @@ def open_questions(path):
 
 def rule_source(repo, value, provider, skills):
     path = repo_file(repo, value)
+    repo = repo.resolve()
     roots = {"bmad": ["_bmad"], "openspec": ["openspec"],
              "speckit": [".specify"]}.get(provider, [])
-    allowed = any((repo / root).resolve() == repo.resolve() / root and
-                  path.is_relative_to(repo.resolve() / root) for root in roots)
+    allowed_roots = [repo / root for root in roots if (repo / root).resolve() == repo / root]
     for skill in skills:
-        source = repo_file(repo, skill["rel_path"])
-        if path == source:
-            allowed = True
-    if not allowed or not path.is_file():
-        raise ValueError("NATIVE_ROUTE_RULE_SOURCE_INVALID")
+        marker = repo / skill["rel_path"]
+        root = marker.parent
+        # Native instructions include step files, templates and references,
+        # not just SKILL.md. Do not follow a linked skill into product/state.
+        if (root.is_relative_to(repo) and root.resolve() == root and
+                marker.is_file() and not marker.is_symlink()):
+            allowed_roots.append(root)
+    issue = None
+    if not any(path.is_relative_to(root) for root in allowed_roots):
+        issue = "not_installed_native_rule"
+    elif not path.is_file():
+        issue = "source_missing"
+    if issue:
+        raise RouteValidationError([{
+            "code": "NATIVE_ROUTE_RULE_SOURCE_INVALID", "field": "source", "path": value,
+            "issue": issue, "allowed_roots": [root.relative_to(repo).as_posix() for root in allowed_roots],
+            "expected": "an existing installed provider rule under an allowed root; use workflow step instructions or references, not a generated SPEC or Agent-created business rules",
+        }])
     return path
+
+
+def spec_preparation_diagnostics(repo, work, dirs):
+    """Explain the existing preparation predicate without approving a SPEC."""
+    provider = (work.get("sdd") or {}).get("provider")
+    ref = (work.get("sdd") or {}).get("native_ref")
+    diagnostic = {"code": "NATIVE_SPEC_PREPARATION_REQUIRED", "field": "sdd.native_ref", "path": ref}
+    if not ref:
+        return [{**diagnostic, "issue": "source_unbound", "expected": "bind the actual native planning output with `cao sdd artifact bind --artifact <path>`"}]
+    try:
+        path = owned_file(repo, ref, dirs)
+        if provider != "bmad":
+            return []
+        content = path.read_text(encoding="utf-8-sig")
+        front = re.match(r"\A---\s*\n(.*?)\n---(?:\n|$)", content, re.S)
+        if not front:
+            return [{**diagnostic, "field": "frontmatter", "issue": "frontmatter_missing",
+                     "expected": "the installed Build SPEC template's YAML frontmatter, including route: dispatch or route: oneshot; body labels do not count"}]
+        if build_route(path) not in {"dispatch", "oneshot"}:
+            return [{**diagnostic, "field": "frontmatter.route", "issue": "build_route_invalid",
+                     "expected": "exactly one YAML route: dispatch or route: oneshot, chosen by the installed Build workflow"}]
+    except (ValueError, OSError, RuntimeError) as exc:
+        return [{**diagnostic, "issue": "source_unavailable", "detail": str(exc),
+                 "expected": "a readable repository-owned native planning output for this provider"}]
+    return []
 
 
 def normalize_decision(repo, work, raw, dirs, skills):

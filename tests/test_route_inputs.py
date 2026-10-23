@@ -112,6 +112,112 @@ class RouteInputs(RepairCase):
         self.assertEqual(errors[0]["expected"], hashlib.sha256((self.repo / self.source).read_bytes()).hexdigest())
         self.assertFalse(errors[1]["sha256_matches"])
 
+    def test_installed_skill_steps_and_references_are_real_rule_sources(self):
+        self.draft()
+        self.fill()
+        for relative in ("step-02-plan.md", "spec-template.md", "references/routing.md"):
+            source = (self.repo / self.skill).parent / relative
+            source.parent.mkdir(parents=True, exist_ok=True)
+            source.write_text(self.literal + "\n", encoding="utf-8")
+            # Both CLI absolute paths and portable declaration paths work.
+            rc, out = self.run_cli("sdd", "route", "rule", "--source", source,
+                                   "--start-line", "1", "--end-line", "1")
+            self.assertEqual(rc, 0, out)
+            self.assertEqual(out["rule"]["path"], source.relative_to(self.repo).as_posix())
+        self.assertEqual(self.run_cli("sdd", "route", "check")[0], 0)
+        rc, out = self.run_cli("sdd", "route", "propose", "--declaration", self.target)
+        self.assertEqual(rc, 0, out)
+        self.assertEqual(out["implementation"]["reason"], "NATIVE_SPEC_APPROVAL_REQUIRED")
+        self.assertEqual(self.hook("src/auth.py")["decision"], "deny")
+
+    def test_rule_source_diagnostics_distinguish_missing_and_unowned_sources(self):
+        self.draft()
+        before = self.target.read_bytes()
+        for source, issue in ((".agents/skills/bmad-build/missing.md", "source_missing"),
+                              (self.spec, "not_installed_native_rule"),
+                              (".agents/rules/login.md", "not_installed_native_rule")):
+            rc, out = self.run_cli("sdd", "route", "rule", "--source", source,
+                                   "--start-line", "1", "--end-line", "1")
+            self.assertEqual(rc, 2, out)
+            self.assertEqual(out["diagnostic"]["issue"], issue)
+            self.assertIn(".agents/skills/bmad-build", out["diagnostic"]["allowed_roots"])
+            self.assertIn("not a generated SPEC", out["diagnostic"]["expected"])
+        raw = json.loads(before)
+        raw.update(provider_version="fixture", route="direct-build", reason="Fixture")
+        raw["rules"] = [{"path": self.spec, "sha256": "0" * 64, "quote": "Fixture"}]
+        self.target.write_text(json.dumps(raw))
+        rc, out = self.run_cli("sdd", "route", "check")
+        self.assertEqual(rc, 2, out)
+        self.assertEqual(out["diagnostic"]["field"], "$.rules[0].path")
+        self.assertEqual(out["diagnostic"]["issue"], "not_installed_native_rule")
+
+    def test_linked_skill_sources_cannot_be_used_as_rule_evidence(self):
+        self.draft()
+        linked = (self.repo / self.skill).parent / "step-02-plan.md"
+        try:
+            linked.symlink_to(self.repo / self.spec)
+        except OSError:
+            self.skipTest("symlinks unavailable")
+        rc, out = self.run_cli("sdd", "route", "rule", "--source", linked,
+                               "--start-line", "1", "--end-line", "1")
+        self.assertEqual(rc, 2, out)
+        self.assertEqual(out["diagnostic"]["issue"], "not_installed_native_rule")
+
+    def test_malformed_spec_reports_exact_repair_then_cli_creates_input_parents(self):
+        spec = self.repo / self.spec
+        valid = spec.read_text()
+        spec.write_text("# 登录系统\n**规格状态**: ready-for-dev\n**路由**: dispatch\n")
+        rc, bound = self.run_cli("sdd", "artifact", "bind", "--artifact", self.spec)
+        self.assertEqual(rc, 0, bound)
+        self.assertEqual(bound["preparation"]["diagnostic"]["issue"], "frontmatter_missing")
+        before = self.read_work(self.wid)
+        for command in (("sdd", "route", "prepare"),
+                        ("sdd", "route", "rule", "--source", self.source, "--start-line", "3", "--end-line", "3")):
+            rc, out = self.run_cli(*command)
+            self.assertEqual(rc, 2, out)
+            self.assertEqual(out["error"], "NATIVE_SPEC_PREPARATION_REQUIRED")
+            self.assertEqual(out["diagnostic"]["field"], "frontmatter")
+            self.assertEqual(out["diagnostic"]["path"], self.spec)
+            self.assertIn("body labels do not count", out["next"])
+            self.assertNotIn("restart the host BEFORE", out["next"])
+            self.assertNotIn("--index <rule-index>", out["next"])
+        self.assertFalse(self.target.parent.exists())
+        self.assertEqual(self.read_work(self.wid), before)
+        mkdir = self.hook(tool_name="bash", tool_input={"command": "mkdir -p .orchestrator/inputs"})
+        self.assertEqual(mkdir["decision"], "deny")
+        self.assertIn("cao sdd route prepare", mkdir["reason"])
+        for key in ("requirement", "path_assessment", "sdd", "execution"):
+            self.assertEqual(self.read_work(self.wid)[key], before[key])
+        spec.write_text(valid)
+        self.run_cli("sdd", "artifact", "bind", "--artifact", self.spec)
+        self.draft()
+        self.assertTrue(self.target.parent.is_dir())
+        self.assertEqual(self.hook(str(self.target))["decision"], "allow")
+        self.assertEqual(self.hook(".orchestrator/config.json")["decision"], "deny")
+        self.fill()
+        self.run_cli("sdd", "route", "rule", "--source", self.source,
+                     "--start-line", "3", "--end-line", "3")
+        self.assertEqual(self.run_cli("sdd", "route", "check")[0], 0)
+
+    def test_invalid_frontmatter_route_has_a_targeted_diagnostic(self):
+        for route in ("", "route: full-planning\n", "route: dispatch\nroute: oneshot\n"):
+            (self.repo / self.spec).write_text("---\nstatus: draft\n" + route + "---\n# Intent\n")
+            rc, out = self.run_cli("sdd", "route", "prepare")
+            self.assertEqual(rc, 2, out)
+            self.assertEqual(out["diagnostic"]["field"], "frontmatter.route")
+            self.assertEqual(out["diagnostic"]["issue"], "build_route_invalid")
+
+    def test_literal_echo_is_readonly_but_unclosed_quote_is_not_proven_safe(self):
+        from scripts.cao_tool_policy import tool_effect
+        text = "# Login Rules\n\n- Passwords hashed with bcrypt\n- JWT tokens"
+        command = "echo '" + text + "'"
+        event = {"tool_name": "bash", "tool_input": {"command": command}}
+        self.assertEqual(tool_effect(event, self.repo)["effect"], "read")
+        self.assertEqual(self.hook(**event)["decision"], "allow")
+        event["tool_input"]["command"] = command[:-1]
+        self.assertIn("SHELL_PARSE_UNKNOWN", tool_effect(event, self.repo)["diagnostics"])
+        self.assertEqual(self.hook(**event)["decision"], "deny")
+
     def test_legacy_copy_preserves_source_and_existing_draft(self):
         self.draft()
         raw = self.fill()

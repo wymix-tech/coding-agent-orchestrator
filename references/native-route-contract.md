@@ -1,5 +1,7 @@
 # Native route declaration contract
 
+Contents: Prepare and propose; Prepare a CAO input; Repair evidence errors; Declaration fields; Freshness and recovery.
+
 Read when the current action requires declaring or repairing a native route.
 Use the selected Provider guide for native route values and obligations. This
 contract does not require other Providers to adopt BMAD's workflow or artifacts.
@@ -15,6 +17,11 @@ Light follows the installed native workflow without manufacturing full-profile
 records. Automatic Build route prerequisites apply to installed BMAD Build;
 other Providers retain their own native prerequisites.
 
+If preparation reports `NATIVE_SPEC_PREPARATION_REQUIRED`, repair its named
+`diagnostics` in the bound native source and rebind it. A BMAD Build route must
+be in the template's YAML frontmatter; translated body labels do not count.
+Binding an artifact records its identity, not successful preparation or approval.
+
 ## Prepare a CAO input
 
 Run `cao sdd route prepare` after native preparation. It creates or preserves
@@ -26,6 +33,8 @@ The draft copies known identity/SPEC metadata; blank version/route/reason and
 missing obligations must be filled from real native evidence, not guessed.
 Repeated prepare preserves edits. To copy an old declaration without destroying
 it, use `cao sdd route prepare --from <existing-declaration-file>`.
+The CLI creates input parent directories. Do not create or remove the inputs
+tree manually to work around a preparation error.
 
 Generate evidence from actual file lines, preserving Markdown and internal line
 breaks. Never summarize, insert ellipses or reconstruct a hash manually:
@@ -42,6 +51,10 @@ Line numbers are inclusive and one-based. `rule` replaces the same source path
 or appends; use `--index <zero-based-index>` to repair a named existing entry.
 It writes the source's actual hash and literal excerpt into the draft. Select
 rules that actually justify the route; file existence alone is not evidence.
+Installed rule sources include a provider skill's step files, templates and
+references beside `SKILL.md`, plus provider-owned native rule roots. Absolute
+paths inside the repository are accepted and normalized to repository-relative
+paths. Generated SPECs and Agent-created business rules are not native rules.
 `check` validates without accepting decisions or refreshing gates. `propose`
 accepts an existing file path, not inline JSON. Existing legacy declaration
 paths remain readable; new drafts use the CAO input path returned by `next`.

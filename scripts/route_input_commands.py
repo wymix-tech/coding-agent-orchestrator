@@ -9,6 +9,7 @@ from scripts.cao_provider_workflows import provider_native_skills
 from scripts.cao_runtime import rel
 from scripts.cao_tool_policy import verification_baseline_state
 from scripts.native_route import build_route as native_build_route
+from scripts.native_route import RouteValidationError
 from scripts.path_guard import repo_file
 
 
@@ -20,6 +21,8 @@ def dispatch(args, repo, work):
         raise ValueError("PATH_ASSESSMENT_REQUIRED")
     preparation = route_preparation_action(repo, work, {"reason": "NATIVE_ROUTE_REQUIRED"})
     if preparation["reason"] != "NATIVE_ROUTE_REQUIRED":
+        if preparation.get("diagnostics"):
+            raise RouteValidationError(preparation["diagnostics"])
         raise ValueError(preparation["reason"])
     provider = work["sdd"]["provider"]
     if args.route_action == "rule":
