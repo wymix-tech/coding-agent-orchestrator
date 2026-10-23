@@ -66,6 +66,10 @@ def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="cao", description="Coding Agent Orchestrator")
     sub = p.add_subparsers(dest="command", required=True)
     register_runtime_parser(sub)
+    from scripts.project_commands import register_parser as register_project_parser
+    register_project_parser(sub)
+    from scripts.acceptance_summary import register_parser as register_acceptance_parser
+    register_acceptance_parser(sub)
     sp = sub.add_parser("init"); sp.add_argument("--repo", default="."); sp.add_argument("--sdd", default=None); sp.add_argument("--language", default=None, help="User language / locale for conversation and all SDD artifacts, e.g. zh-CN or en-US"); sp.add_argument("--verify-script", action="append", default=None, help="Project verification script command; repeat for multiple scripts"); sp.add_argument("--test-script", action="append", default=None, help="Required verification script declaring the tests gate; repeat for multiple test suites"); sp.add_argument("--verify-command", action="append", default=None, help=argparse.SUPPRESS); sp.add_argument("--host", choices=sorted(HOST_ADAPTER_META), default=None, help="Coding-agent host whose hooks are wired during initialization"); sp.add_argument("--force", action="store_true"); sp.set_defaults(fn=cmd_init)
     host = sub.add_parser("host", help="Wire or inspect the coding-agent host hooks for this project")
     host_sub = host.add_subparsers(dest="host_command", required=True)
@@ -194,7 +198,7 @@ def build_parser() -> argparse.ArgumentParser:
     lifecycle_sub = lifecycle.add_subparsers(dest="lifecycle_command", required=True)
     sp = lifecycle_sub.add_parser("events", help="List lifecycle events from native SDD reconciliation and CAO transitions")
     sp.add_argument("--repo", default="."); sp.add_argument("--work"); sp.add_argument("--limit", type=int, default=100); sp.set_defaults(fn=cmd_lifecycle_events)
-    sp = sub.add_parser("start"); sp.add_argument("--repo", default="."); sp.add_argument("--requirement"); sp.add_argument("--title", default=None, help="Human-readable Work Item title; overrides the requirement filename"); sp.add_argument("--sdd-ref"); sp.add_argument("--sdd-provider", choices=sorted(SDD_CATALOG)); sp.add_argument("--host", choices=["claude-code", "codex", "pi"], default=None, help="Current coding-agent host; used to attach the runtime Session"); sp.add_argument("--replace", action="store_true"); sp.add_argument("--reopen", action="store_true"); sp.set_defaults(fn=cmd_start)
+    sp = sub.add_parser("start"); sp.add_argument("--repo", default="."); sp.add_argument("--requirement"); sp.add_argument("--title", default=None, help="Human-readable Work Item title; overrides the requirement filename"); sp.add_argument("--sdd-ref"); sp.add_argument("--sdd-provider", choices=sorted(SDD_CATALOG)); sp.add_argument("--host", choices=["claude-code", "codex", "pi"], default=None, help="Current coding-agent host; used to attach the runtime Session"); sp.add_argument("--replace", action="store_true"); sp.add_argument("--reopen", action="store_true"); sp.add_argument("--scope", action="append"); sp.set_defaults(fn=cmd_start)
     path = sub.add_parser("path", help="Assess and inspect the minimum-safe execution path")
     path_sub = path.add_subparsers(dest="path_command", required=True)
     sp = path_sub.add_parser("assess", help="Record an Agent's lightweight scope/risk assessment")
@@ -262,6 +266,10 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--clear-outputs", action="store_true", help="Explicitly remove all verification output declarations")
     sp.add_argument("--security-script", action="append", help="Required security checks; reuse the same test wrapper to declare both capabilities without running it twice")
     sp.add_argument("--replace", action="store_true", help="Explicitly replace different existing verification declarations")
+    sp.add_argument("--environment-variable", action="append", help="Bind hashes of relevant environment variables; values are never stored")
+    sp.add_argument("--maximum-evidence-age-seconds", type=float, help="Accepted positive validity period for technical evidence")
+    sp.add_argument("--plan-only", action="store_true", help="Save a non-executable plan before a Work exists")
+    sp.add_argument("--scope", action="append", help="Affected project module; repeat for shared verification")
     sp.set_defaults(fn=cmd_verification_configure)
     sp = sub.add_parser("verify"); sp.add_argument("--repo", default="."); sp.add_argument("--work"); sp.add_argument("--script", action="append", help="Engineering diagnostic only, never grants done eligibility; repeat for multiple scripts"); sp.add_argument("--command", action="append", help=argparse.SUPPRESS); sp.set_defaults(fn=cmd_verify)
     sp = sub.add_parser("done"); sp.add_argument("--repo", default="."); sp.add_argument("--work"); sp.set_defaults(fn=cmd_done)
@@ -296,9 +304,27 @@ def main(argv: list[str] | None = None) -> int:
                 print(json.dumps({"ok": False, "error": restart["reason"], "restart": restart,
                                   "next": action("human", restart["next"], reason=restart["reason"])}, ensure_ascii=False, indent=2))
                 return 2
+        advancing = {cmd_path_assess, cmd_gate, cmd_sdd_workflow, cmd_sdd_route, cmd_sdd_spec, cmd_verify}
+        if args.fn in advancing:
+            from scripts.cao_work_store import load_index, load_work
+            from scripts.project_verification import project_prerequisite
+            repo = repo_root(args.repo)
+            wid = getattr(args, 'work', None) or load_index(repo).get('active_work')
+            work = load_work(repo, wid) if wid else None
+            if work and work.get('status') != 'completed':
+                prerequisite = project_prerequisite(repo, work)
+                if prerequisite:
+                    print(json.dumps({'ok': False, 'error': prerequisite['reason'], 'next': prerequisite}))
+                    return 2
         return int(args.fn(args))
     except (OSError, RuntimeError, ValueError, json.JSONDecodeError) as exc:
         result = {"ok": False, "error": str(exc)}
+        code = str(exc).split(':', 1)[0]
+        if code.startswith(('PROJECT_CONTEXT', 'PROJECT_SCOPE', 'PROJECT_SOURCE', 'PROJECT_REPOSITORY_SOURCE',
+                            'PROJECT_DELEGATION', 'PROJECT_VERSION', 'PROJECT_FIELDS', 'PROJECT_FIELD_CONFLICT',
+                            'PROJECT_CHANGE', 'PROJECT_BIND', 'PROJECT_REVISION', 'PROJECT_STATE', 'PROJECT_VERIFICATION')):
+            from scripts.project_commands import error_context
+            result.update(error_context(args, code))
         if str(exc).startswith("SNAPSHOT_"):
             result["reason_code"] = str(exc).split(":", 1)[0]
             result["next"] = "Restore readable repository-owned inputs and executable permissions; replace external business links with repository-owned sources, repair broken/cyclic links or reduce the linked scan scope, then run `cao verify`. Old evidence is not reusable."

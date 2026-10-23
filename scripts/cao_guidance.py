@@ -23,6 +23,7 @@ from scripts.verification_setup import setup_state, verification_setup_context
 
 def resume_payload(repo: Path, work: dict[str, Any], session_id: str | None = None, host: str | None = None, *, next_action: dict | None = None) -> dict[str, Any]:
     from scripts.cao_sessions import latest_handoff
+    from scripts.project_context import context_state
 
     c = completion_status(repo, work)
     current = next_action or current_work_action(repo, work, completion=c)
@@ -31,6 +32,8 @@ def resume_payload(repo: Path, work: dict[str, Any], session_id: str | None = No
     handoff = latest_handoff(repo, work["id"]) or {}
     return {
         "work_item": summary,
+        "project_context": context_state(repo, work=work),
+        "project_binding": work.get("project_binding"),
         "requirement": work.get("requirement"),
         "execution": {**(work.get("execution") or {}), "next_action": current},
         "path_assessment": work.get("path_assessment"),
@@ -59,7 +62,7 @@ def work_intake_instruction(work: dict[str, Any] | None = None) -> str:
         "fill the returned numbered file with the user's confirmed requirement, "
         f"then run `{command} start --requirement <returned-path>`. "
         "If a requirement file already exists, use it directly; do not invent another requirement. "
-        "Verification need not pass or be configured before start. After start, rerun bootstrap "
+        "Verification need not pass before start; the project must have actual entries or a declared plan. After start, rerun bootstrap "
         "for verification setup and follow `next` for path assessment and the native SDD workflow. "
         "CAO commands, numbered requirement documents and native SDD output writes remain allowed; "
         "direct edits to CAO-derived state remain denied."
@@ -74,15 +77,26 @@ def work_prerequisite_action(repo: Path, work: dict | None) -> dict | None:
     restart = restart_state(repo, detect_current_host())
     if not restart["ready"]:
         return action("human", restart["next"], stage="startup", reason=restart["reason"])
+    if work and work.get("status") == "completed":
+        return action("none", "Work item is completed.", stage="completed")
     if not work:
         status = sdd_status(repo)
         startup = not status["installed"] or status["selected"] == "auto" and len(status["installed"]) > 1
+        if not startup:
+            from scripts.project_verification import project_prerequisite
+            project = project_prerequisite(repo)
+            if project:
+                return project
         return action("agent", f"Run `{command} bootstrap` and resolve SDD selection/installation first." if startup else work_intake_instruction(),
                       stage="startup" if startup else "intake", reason="SDD_SELECTION_REQUIRED" if startup else "WORK_REQUIRED")
     if work.get("status") == "completed":
         return action("none", "Work item is completed.", stage="completed")
     if not work_sdd_ready(repo, work)[0]:
         return action("human", f"Restore the Work's selected SDD, then run `{command} bootstrap`; do not restart intake.", stage="startup", reason="SDD_NOT_INSTALLED")
+    from scripts.project_verification import project_prerequisite
+    project = project_prerequisite(repo, work)
+    if project:
+        return project
     if work.get("status") in {"todo", "suspended"}:
         return action("agent", f"Resume this work item with `{command} resume --work {work['id']} --reactivate`.", stage="intake", reason="WORK_NOT_ACTIVE")
     if work.get("blockers"):
@@ -186,12 +200,16 @@ def render_context(repo: Path, work: dict[str, Any] | None, *, session_id: str |
     restart = restart_state(repo, host or detect_current_host())
     if not restart["ready"]:
         return restart["reason"] + ": " + restart["next"]
+    from scripts.project_context import context_state
     inspection = setup_state(config(repo))
     current = current_work_action(repo, work)
+    project = context_state(repo, work=work) if current.get("stage") != "startup" else {}
     navigation = "## Read before acting\n" + json.dumps(agent_guidance(repo, work, next_action=current), ensure_ascii=False)
     if not work or work.get("status") in {"todo", "suspended", "completed"}:
-        instruction = (STARTUP_ORDER if current.get('stage') == 'startup' else work_intake_instruction(work))
-        return "# Coding Agent Orchestrator Work Intake\n" + navigation + "\n" + instruction + request_context(repo)
+        instruction = STARTUP_ORDER if current.get('stage') == 'startup' else current['instruction']
+        return "# Coding Agent Orchestrator Work Intake\n" + navigation + "\n" + instruction + "\nProject background: " + json.dumps(project, ensure_ascii=False) + request_context(repo)
+    if current.get("stage") == "project_setup":
+        return "# CAO Project Setup\n" + navigation + "\n" + current["instruction"] + "\n" + json.dumps(current.get("project_state", {}), ensure_ascii=False) + request_context(repo)
     baseline = verification_baseline_state(repo, work)
     if not baseline["ready"]:
         # Preserve continuity without calculating completion from invalid declarations.
@@ -199,7 +217,7 @@ def render_context(repo: Path, work: dict[str, Any] | None, *, session_id: str |
             "# Coding Agent Orchestrator Verification Setup",
             navigation,
             baseline["next"],
-            json.dumps({"verification_setup": inspection, "work": verification_setup_context(work),
+            json.dumps({"verification_setup": inspection, "project_context": project, "work": verification_setup_context(work),
                         "session_id": session_id, "host": host}, ensure_ascii=False),
         ])
     p = resume_payload(repo, work, session_id=session_id, host=host, next_action=current)
@@ -208,6 +226,7 @@ def render_context(repo: Path, work: dict[str, Any] | None, *, session_id: str |
         "# Coding Agent Orchestrator Resume Context",
         navigation,
         f"Work Item: {p['work_item']['title']} ({p['work_item']['id']})",
+        "Project background: " + json.dumps(p["project_context"], ensure_ascii=False),
         f"Status: {p['work_item']['status']}",
         f"Requirement: {p['requirement']['path']}",
         f"SDD: {(p.get('work_item', {}).get('sdd') or {}).get('provider', 'none')}",

@@ -23,6 +23,9 @@ def run(repo: pathlib.Path, *args: str, payload: dict | None = None):
         output = json.loads(result.stdout)
     except json.JSONDecodeError:
         output = {"raw": result.stdout}
+    if args and args[0] == "init" and result.returncode == 0:
+        from tests.helpers import provision_fixture_background
+        provision_fixture_background(repo)
     return result.returncode, output, result.stderr
 
 

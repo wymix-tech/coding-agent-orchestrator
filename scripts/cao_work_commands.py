@@ -105,6 +105,12 @@ def _prepare_start(args: argparse.Namespace):
         except (OSError, UnicodeError, ValueError) as exc:
             print(json.dumps({"ok": False, "error": "SDD_LANGUAGE_CONFIGURATION_FAILED", "provider": selected, "reason": str(exc)}, ensure_ascii=False, indent=2))
             return 1
+    from scripts.project_verification import project_prerequisite
+    from scripts.project_context import make_binding
+    project = project_prerequisite(repo, scopes=getattr(args, "scope", None))
+    if project:
+        print(json.dumps({"ok": False, "error": project["reason"], "next": project}))
+        return 2
     p = resolve_requirement(repo, args.requirement)
     if p is None:
         if args.requirement:
@@ -170,6 +176,8 @@ def _prepare_start(args: argparse.Namespace):
         if work["sdd"].get("artifacts"):
             work.setdefault("resume", {})["previous_sdd_artifacts"] = work["sdd"]["artifacts"]
             work["sdd"]["artifacts"] = []
+    if is_new_work or not work.get("project_binding"):
+        work["project_binding"] = make_binding(repo, getattr(args, "scope", None))
     if is_new_work or changed:
         cfg = config(repo)
         anchor_verification(repo, work, cfg)
@@ -312,7 +320,7 @@ def cmd_decision(args: argparse.Namespace) -> int:
     repo = repo_root(args.repo); ensure_initialized(repo)
     index = load_index(repo); wid = args.work or index.get("active_work"); work = load_work(repo, wid) if wid else None
     if not work:
-        print(json.dumps({"ok": False, "error": "NO_WORK_ITEM"}, ensure_ascii=False, indent=2)); return 2
+        print(json.dumps({"ok": False, "error": "NO_WORK_ITEM", "scope": args.scope, "next": "Use `cao project context set` for project technology; Work decision requires an active Work."}, ensure_ascii=False, indent=2)); return 2
     d = {"id": new_id("decision"), "decision": args.decision, "reason": args.reason, "scope": args.scope, "created_at": now(), "supersedes": args.supersedes}
     work.setdefault("decisions", []).append(d)
     from scripts.runtime_store import queue_record
@@ -542,7 +550,7 @@ def cmd_reopen(args: argparse.Namespace) -> int:
         anchor_verification(repo, work, cfg)
         work["reanchored_at"] = now()
         record = work["sdd"].get("acceptance") or {}
-        if record.get("declaration") and (work.get("path_assessment") or {}).get("profile") != "light":
+        if record.get("declaration") and ((work.get("path_assessment") or {}).get("profile") != "light" or work.get("project_binding")):
             sources = source_hashes(repo, record["declaration"], provider_output_dirs(work["sdd"]["provider"]))
             reanchor_record(work, sources)
     reopening_message = (
@@ -595,7 +603,7 @@ def cmd_reopen(args: argparse.Namespace) -> int:
 def _completion_blocked(repo: Path, work: dict[str, Any] | None, c: dict[str, Any]) -> int:
     blocked: dict[str, Any] = {"ok": False, "error": "COMPLETION_BLOCKED", "reason": c["reason"]}
     # Report concrete items, not just an unfinished category.
-    for key in ("pending_plan_items", "missing_artifacts", "unmet_gates", "pending_gates", "gates", "workflow"):
+    for key in ("pending_plan_items", "missing_artifacts", "unmet_gates", "pending_gates", "gates", "workflow", "technical_acceptance", "task_acceptance", "lifecycle", "blockers"):
         if c.get(key):
             blocked[key] = c[key]
     blocked["next"] = c.get("next") or completion_next_instruction(repo, work, c)
@@ -625,6 +633,8 @@ def cmd_done(args: argparse.Namespace) -> int:
         c = completion_status(repo, work)
         if not c["ready"]:
             return _completion_blocked(repo, work, c)
+        from scripts.project_commands import finish_change
+        finish_change(repo, work)
         work["status"] = "completed"; work["completed_at"] = now(); work["execution"]["step"] = "done"; work["execution"]["next_action"] = action("none", "Work item is completed.")
         work["resume"]["summary"] = "Work item completed and verification was fresh."
         queue_event(work, {"event": "task.closed", "work_item_id": work.get("id"),

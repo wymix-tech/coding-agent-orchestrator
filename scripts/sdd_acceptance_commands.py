@@ -62,12 +62,17 @@ def _start(args, mode):
         record = (work.get("sdd") or {}).get("acceptance") or {}
         if work.get("status") != "active" or not path_assessment_state(repo, work)["ready"]:
             raise ValueError("SDD_ACCEPTANCE_ACTIVE_ASSESSMENT_REQUIRED")
-        if (work.get("path_assessment") or {}).get("profile") == "light":
+        if (work.get("path_assessment") or {}).get("profile") == "light" and not work.get("project_binding"):
             raise ValueError("SDD_ACCEPTANCE_NOT_APPLICABLE")
         if not record.get("declaration"):
             raise ValueError("SDD_ACCEPTANCE_NOT_CONFIGURED")
         if record["declaration"]["executor"]["mode"] != mode:
             raise ValueError("SDD_ACCEPTANCE_MODE_INVALID")
+        if work.get("project_binding"):
+            from scripts.acceptance_trace import coverage
+            trace = coverage(repo, work)
+            if trace["missing"] or not trace["required"]:
+                raise ValueError("TASK_ACCEPTANCE_COVERAGE_INCOMPLETE: run cao acceptance criteria and map every source item using covers")
         cfg = config(repo)
         inputs = sdd_acceptance_inputs(repo, work, cfg)
         if not anchor_matches(record, inputs):
@@ -96,6 +101,9 @@ def _finish(repo, wid, request, report, execution, error):
         current_run = record.get("run") or {}
         if current_run.get("id") != request["run_id"] or current_run.get("status") != "running":
             raise ValueError("SDD_ACCEPTANCE_RUN_CHANGED")
+        discovery = execution.get("test_discovery") or {}
+        if execution.get("exit_code") == 0 and discovery.get("observed") and discovery.get("maximum_count") == 0:
+            error = error or "SDD_ACCEPTANCE_ZERO_TESTS_DISCOVERED"
         hashes, diagnostic = {}, None
         try:
             results = normalize_report(report, record["declaration"], request["run_id"], request["input_sha256"], work["sdd"]["provider"])
@@ -146,7 +154,32 @@ def dispatch(args) -> int:
                 repo, work = _work(args)
                 if work["status"] not in {"active", "suspended"}:
                     raise ValueError("SDD_ACCEPTANCE_WORK_NOT_CONFIGURABLE")
-                declaration = normalize_declaration(read_json(repo_file(repo, args.declaration)))
+                if getattr(args, 'declaration', None):
+                    declaration = normalize_declaration(read_json(repo_file(repo, args.declaration)))
+                else:
+                    from scripts.acceptance_trace import criteria
+                    from scripts.path_guard import provider_artifact
+                    binding = work['sdd'].get('spec_binding') or {}
+                    spec = getattr(args, 'spec', None) or (binding.get('spec') or {}).get('path')
+                    if not spec:
+                        raise ValueError('TASK_ACCEPTANCE_NATIVE_SOURCE_REQUIRED: bind the native SPEC/Intent or pass --spec')
+                    derived = criteria(repo, work)
+                    if not derived:
+                        raise ValueError('TASK_ACCEPTANCE_SOURCE_REQUIRED')
+                    mode = 'command' if getattr(args, 'executor_command', None) else 'skill'
+                    entries = []
+                    dirs = provider_output_dirs(work['sdd']['provider'])
+                    for item in derived:
+                        try:
+                            provider_artifact(repo, item['source'], dirs)
+                            source = item['source']
+                        except ValueError:
+                            source = spec
+                        entries.append({**item, 'source': source, 'covers': [item['id']]})
+                    declaration = normalize_declaration({'spec': spec, 'criteria': entries,
+                        'executor': {'mode': mode, 'entrypoint': getattr(args, 'executor_command', None) or args.executor_skill},
+                        'outputs': getattr(args, 'output', None) or []})
+
                 source_hashes(repo, declaration, provider_output_dirs(work["sdd"]["provider"]))
                 previous = work["sdd"].get("acceptance") or {}
                 output_paths(repo, declaration, provider_output_dirs(work["sdd"]["provider"]), work["id"], previous.get("owned_outputs") or {})
@@ -162,6 +195,32 @@ def dispatch(args) -> int:
             with repo_transaction(repo_root(args.repo)):
                 repo, work = _work(args)
                 return _emit({"ok": True, "acceptance": work["sdd"].get("acceptance"), "state": sdd_acceptance_state(repo, work)})
+        if action == "reuse":
+            # A real configured technical command may also produce criterion results.
+            # Its exact command must match the accepted task executor, and its original
+            # output, freshness and result identity remain recorded.
+            with repo_transaction(repo_root(args.repo)):
+                repo, work = _work(args)
+                verification = work.get("verification") or {}
+                if not verification_fresh(work, verification_inputs(repo, work, config(repo))):
+                    raise ValueError("SDD_ACCEPTANCE_TECHNICAL_VERIFICATION_REQUIRED")
+                declaration = (work["sdd"].get("acceptance") or {}).get("declaration") or {}
+                matches = [item for item in verification.get("results", []) if item.get("name") == args.script]
+                executor = declaration.get("executor") or {}
+                if len(matches) != 1 or matches[0].get("command") != executor.get("entrypoint") or matches[0].get("status") != "passed":
+                    raise ValueError("ACCEPTANCE_SHARED_RUN_MISMATCH")
+                original = matches[0]
+                raw = json.loads(original.get("stdout_tail", ""))
+                if not isinstance(raw, dict) or not isinstance(raw.get("items"), list):
+                    raise ValueError("ACCEPTANCE_SHARED_RUN_ITEMS_REQUIRED")
+                if original.get("stdout_bytes", len(original.get("stdout_tail", "").encode())) > MAX_REPORT_BYTES:
+                    raise ValueError("SDD_ACCEPTANCE_REPORT_TOO_LARGE")
+                repo, wid, request = _start(args, "command")
+                report = {"run_id": request["run_id"], "input_sha256": request["input_sha256"],
+                          "provider": request["provider"], "items": raw["items"]}
+                return _finish(repo, wid, request, report,
+                               {"exit_code": original["exit_code"], "source": "verification_execution",
+                                "verification_run_id": verification["run_id"], "script": args.script}, None)
         if action in {"run", "begin"}:
             repo, wid, request = _start(args, "command" if action == "run" else "skill")
             if action == "begin":

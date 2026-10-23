@@ -27,6 +27,9 @@ class ProviderRestartTests(unittest.TestCase):
         output = io.StringIO()
         with contextlib.redirect_stdout(output), patch("sys.stdin", io.StringIO(json.dumps(event))):
             code = cao.main([*args, "--repo", str(self.repo)])
+        if args and args[0] == "init" and code == 0:
+            from tests.helpers import provision_fixture_background
+            provision_fixture_background(self.repo)
         return code, json.loads(output.getvalue())
 
     def hook(self, event, host="pi", **data):

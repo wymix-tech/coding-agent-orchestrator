@@ -320,6 +320,10 @@ def shell_write_operands(tokens: list[str]) -> list[str]:
 
 def verification_baseline_state(repo: Path, work: dict) -> dict:
     cfg = config(repo)
+    from scripts.project_verification import project_prerequisite
+    project = project_prerequisite(repo, work)
+    if project:
+        return {"ready": False, "reason": project["reason"], "next": project["instruction"]}
     state = setup_state(cfg)
     if not state["ready"]:
         return {"ready": False, "reason": "VERIFICATION_BASELINE_REQUIRED", "next": setup_instruction(cao_invocation()["command"])}
@@ -787,6 +791,6 @@ def _readonly_tokens(tokens: list[str], cwd: Path | None = None) -> bool:
     safe_control_commands = {
         "init", "bootstrap", "sdd", "start", "path", "list", "status", "next", "resume",
         "checkpoint", "decision", "block", "unblock", "handoff", "sessions", "verify", "done",
-        "runtime", "context", "artifact", "host", "host-event", "requirement", "language", "gate", "reopen", "verification", "instructions",
+        "project", "acceptance", "runtime", "context", "artifact", "host", "host-event", "requirement", "language", "gate", "reopen", "verification", "instructions",
     }
     return bool(command_tokens and (command_tokens[0] in safe_control_commands or command_tokens in (["--help"], ["-h"])))

@@ -8,6 +8,7 @@ import time
 from pathlib import Path
 
 from scripts.completion_policy import normalize_timeout
+from scripts.test_discovery import DiscoveryReceipt
 
 
 def run_script(command: str, repo: Path, timeout: float = 300.0, max_bytes: int = 4000,
@@ -28,6 +29,7 @@ def run_script(command: str, repo: Path, timeout: float = 300.0, max_bytes: int 
                 "timed_out": False, "process_status": "launch_failed"}
     tails = [bytearray(), bytearray()]
     byte_counts = [0, 0]
+    discovery = [DiscoveryReceipt(), DiscoveryReceipt()]
     errors = []
 
     def kill_group():
@@ -48,6 +50,7 @@ def run_script(command: str, repo: Path, timeout: float = 300.0, max_bytes: int 
                 if not chunk:
                     break
                 byte_counts[index] += len(chunk)
+                discovery[index].feed(chunk)
                 if log_sink is not None:
                     try:
                         log_sink.write(index, chunk)
@@ -110,7 +113,10 @@ def run_script(command: str, repo: Path, timeout: float = 300.0, max_bytes: int 
         stderr = (stderr + "\nVERIFICATION_ERROR: " + "; ".join(errors))[-max_bytes:]
     if timed_out:
         stderr = (stderr + "\nVERIFICATION_TIMEOUT")[-max_bytes:]
+    receipts = [item.finish() for item in discovery]
+    receipt = {"observed": any(item["observed"] for item in receipts),
+               "maximum_count": max(item["maximum_count"] for item in receipts)}
     return {"exit_code": 125 if errors else 124 if timed_out else child.returncode,
             "process_status": "timed_out" if timed_out else "exited",
             "stdout_tail": stdout, "stderr_tail": stderr, "timed_out": timed_out,
-            "stdout_bytes": byte_counts[0], "stderr_bytes": byte_counts[1]}
+            "stdout_bytes": byte_counts[0], "stderr_bytes": byte_counts[1], "test_discovery": receipt}

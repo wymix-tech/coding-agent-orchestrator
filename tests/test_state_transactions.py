@@ -306,6 +306,8 @@ class TransactionsTests(RepairCase):
         bind_light_spec(self.repo, lambda repo, *args: self.run_cli(*args), "_bmad-output/output.md", wid)
         rc, out = self.run_cli("verify", "--work", wid)
         self.assertEqual(rc, 0, out)
+        from tests.helpers import complete_acceptance
+        complete_acceptance(self.repo, lambda repo, *args: self.run_cli(*args))
         self.assertTrue(cao.completion_status(self.repo, self.read_work(wid))["ready"])
         def transition(repo, state):
             with ThreadPoolExecutor(max_workers=1) as pool:

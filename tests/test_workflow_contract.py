@@ -36,6 +36,9 @@ def run(repo, *args, payload=None, env_extra=None):
         output = json.loads(result.stdout)
     except json.JSONDecodeError:
         output = {"raw": result.stdout}
+    if args and args[0] == "init" and result.returncode == 0:
+        from tests.helpers import provision_fixture_background
+        provision_fixture_background(repo)
     return result.returncode, output, result.stderr
 
 
@@ -154,6 +157,8 @@ class LightPathContractTests(unittest.TestCase):
             init_repo(repo)
             run(repo, "path", "assess", "--profile", "light", "--reason", "Small local change")
             bind_light_spec(repo, run, "_bmad-output/fix.md")
+            from tests.helpers import complete_acceptance
+            complete_acceptance(repo, run)
             verify_via_config(repo, run)
             rc, out, _ = run(repo, "done")
             self.assertEqual(rc, 0, out)
@@ -204,6 +209,8 @@ class SessionFallbackTests(unittest.TestCase):
             self.assertEqual(rc, 0)
             self.assertIsNotNone(out.get("session"))
             self.assertEqual(out["session"]["host_session_id"], "pi-session-1")
+            from tests.helpers import provision_fixture_background
+            provision_fixture_background(repo)
             rc, out, _ = run(repo, "start", "--requirement", "requirements/login.md", env_extra=env)
             self.assertEqual(rc, 0)
             sessions = [s for s in self.sessions_in(repo) if s["host_session_id"] == "pi-session-1"]

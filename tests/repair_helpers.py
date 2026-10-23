@@ -48,6 +48,9 @@ class RepairCase(unittest.TestCase):
             out = json.loads(result.stdout)
         except json.JSONDecodeError:
             out = {"raw": result.stdout, "stderr": result.stderr}
+        if args and args[0] == "init" and result.returncode == 0:
+            from tests.helpers import provision_fixture_background
+            provision_fixture_background(self.repo)
         return result.returncode, out
 
     def start(self, title="a", profile="light") -> str:

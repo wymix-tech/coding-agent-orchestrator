@@ -17,6 +17,9 @@ def run(repo, *args, input_text=None):
         out = json.loads(p.stdout)
     except Exception:
         out = {"raw": p.stdout}
+    if args and args[0] == "init" and p.returncode == 0:
+        from tests.helpers import provision_fixture_background
+        provision_fixture_background(repo)
     return p.returncode, out, p.stderr
 
 
@@ -201,6 +204,7 @@ class CoreTests(unittest.TestCase):
             self.assertEqual(rc, 0)
             bind_light_spec(repo, run, "openspec/changes/demo.md")
             rc, _, _ = verify_via_config(repo, run); self.assertEqual(rc, 0)
+            complete_acceptance(repo, run)
             rc, out, _ = run(repo, "done"); self.assertEqual(rc, 0); self.assertEqual(out["status"], "completed")
             rc, events, _ = run(repo, "lifecycle", "events")
             self.assertEqual(rc, 0)

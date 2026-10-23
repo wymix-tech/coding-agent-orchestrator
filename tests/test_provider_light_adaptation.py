@@ -25,6 +25,8 @@ class OneShotCompletion(RepairCase):
         self.assertEqual(out['binding']['criteria_section'], 'Intent')
         self.assertEqual(path.read_bytes(), before)
         self.assertEqual([p.name for p in path.parent.iterdir()], ['spec-fix.md'])
+        from tests.helpers import complete_acceptance
+        complete_acceptance(self.repo, lambda repo, *args: self.run_cli(*args), prepare_only=True)
         fixture_native_review(self.repo, lambda repo, *args: self.run_cli(*args))
         rc, out = self.run_cli('verify'); self.assertEqual(rc, 0, out)
         from scripts.dashboard import build_dashboard_overview
@@ -32,6 +34,8 @@ class OneShotCompletion(RepairCase):
         self.assertEqual(view['light_spec']['mode'], 'bmad_oneshot')
         self.assertIn('no separate acceptance checklist', view['light_spec']['note'])
         self.assertEqual(view['status'], 'active')
+        from tests.helpers import complete_acceptance
+        complete_acceptance(self.repo, lambda repo, *args: self.run_cli(*args))
         rc, out = self.run_cli('done'); self.assertEqual(rc, 0, out)
         self.assertEqual(self.read_work(wid)['status'], 'completed')
         self.assertNotIn('workflow', self.read_work(wid)['sdd'])
@@ -65,6 +69,8 @@ class OneShotCompletion(RepairCase):
         rc, out = self.bind('--criteria', '_bmad-output/criteria.md'); self.assertEqual(rc, 0, out)
         self.assertNotIn('mode', out['binding'])
         rc, out = self.bind('--replace'); self.assertEqual(rc, 0, out)
+        from tests.helpers import complete_acceptance
+        complete_acceptance(self.repo, lambda repo, *args: self.run_cli(*args), prepare_only=True)
         fixture_native_review(self.repo, lambda repo, *args: self.run_cli(*args))
         self.run_cli('verify')
         path.write_text(ONESHOT.replace('empty password', 'empty credentials'))
@@ -73,13 +79,19 @@ class OneShotCompletion(RepairCase):
         self.assertNotIn('--criteria-section', out['next'])
         rc, out = self.bind('--replace'); self.assertEqual(rc, 0, out)
         rc, out = self.run_cli('done'); self.assertEqual(rc, 2, out)
+        from tests.helpers import complete_acceptance
+        complete_acceptance(self.repo, lambda repo, *args: self.run_cli(*args), prepare_only=True)
         fixture_native_review(self.repo, lambda repo, *args: self.run_cli(*args))
         self.run_cli('verify')
+        from tests.helpers import complete_acceptance
+        complete_acceptance(self.repo, lambda repo, *args: self.run_cli(*args))
         rc, out = self.run_cli('done'); self.assertEqual(rc, 0, out)
 
     def test_oneshot_does_not_bypass_failed_verification_or_changed_requirement(self):
         wid = self.start(); self.native_spec(); self.bind()
         (self.repo / 'acceptance-tests/test_acceptance.py').write_text('import unittest\nclass Broken(unittest.TestCase):\n def test_bad(self): self.fail("not fixed")\n')
+        from tests.helpers import complete_acceptance
+        complete_acceptance(self.repo, lambda repo, *args: self.run_cli(*args), prepare_only=True)
         fixture_native_review(self.repo, lambda repo, *args: self.run_cli(*args))
         rc, out = self.run_cli('verify'); self.assertEqual(rc, 1, out)
         rc, out = self.run_cli('done'); self.assertEqual(rc, 2, out)

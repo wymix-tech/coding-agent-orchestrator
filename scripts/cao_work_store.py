@@ -253,6 +253,7 @@ def work_summary(work: dict[str, Any]) -> dict[str, Any]:
         "sdd": work.get("sdd"),
         "blockers": work.get("blockers") or [],
         "decision_count": len(work.get("decisions") or []),
+        "project_binding": work.get("project_binding"),
         "verification": (work.get("verification") or {}).get("status"),
         "legacy_evidence": ((work.get("acceptance") or {}).get("version") != 2
                             or bool(work.get("verification") and work["verification"].get("version") != 2)

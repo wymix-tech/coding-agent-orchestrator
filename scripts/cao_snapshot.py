@@ -111,6 +111,10 @@ def verification_snapshot(cfg: dict[str, Any], repo: Path | None = None) -> str:
     scope = validate_scope(repo.resolve(), cfg) if repo is not None else scope_config(cfg)
     config_hash = native_digest({"scripts": acceptance_hash(verification_scripts(cfg), verification_timeout(cfg)),
                                  "scope": scope})
+    metadata = {key: cfg["verification"][key] for key in ("environment_variables", "maximum_evidence_age_seconds")
+                if key in (cfg.get("verification") or {})}
+    if metadata:
+        config_hash = native_digest({"standard": config_hash, "environment_policy": metadata})
     files = {}
     if repo is not None:
         for script in verification_scripts(cfg):

@@ -152,6 +152,10 @@ def host_event(args: argparse.Namespace) -> int:
         else:
             session = update_session_event(repo, host_session_id, args.host, event, work, kind=kind, parent_session_id=parent_id)
 
+    if event == 'prompt_submit' and kind == 'primary' and (repo / CONFIG_REL).exists():
+        from scripts.project_sources import observe_prompt
+        observe_prompt(repo, raw.get('prompt'), args.host, host_session_id)
+
     if event == 'prompt_submit' and not work and kind == 'primary' and (repo / CONFIG_REL).exists():
         capture_request(repo, raw.get('prompt'), args.host, host_session_id)
 
@@ -162,6 +166,10 @@ def host_event(args: argparse.Namespace) -> int:
             return respond({"decision": "deny", "reason": context, "additional_context": context})
         # Allow settling: a restart reminder must never force another Agent turn.
         return respond({"decision": "allow", "additional_context": context})
+
+    if event in {"pre_tool", "post_tool"} and kind == "primary":
+        from scripts.project_sources import observe_question
+        observe_question(repo, raw, event, args.host, host_session_id)
 
     if event in {"session_start", "subagent_start"}:
         if kind == "primary":
@@ -231,9 +239,13 @@ def host_event(args: argparse.Namespace) -> int:
                 if not advice_work and session and session.get("work_item_id"):
                     advice_work = load_work(repo, session["work_item_id"])
                 startup = work_prerequisite_action(repo, advice_work)
-                instruction = (STARTUP_ORDER if startup and startup.get('stage') == 'startup' else work_intake_instruction(advice_work))
+                instruction = startup['instruction'] if startup else work_intake_instruction(advice_work)
                 return respond({"decision": "deny", "reason": "CAO: no active Work; product writes are blocked. " + instruction})
             else:
+                from scripts.project_verification import project_prerequisite
+                project = project_prerequisite(repo, work)
+                if project:
+                    return respond({"decision": "deny", "reason": project["reason"] + ": " + project["instruction"]})
                 baseline = verification_baseline_state(repo, work)
                 if not baseline["ready"] and not verification_scaffold_write(repo, raw):
                     return respond({"decision": "deny", "reason": baseline["reason"] + ": " + baseline["next"]})

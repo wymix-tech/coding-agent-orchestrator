@@ -57,3 +57,9 @@ sample identities/paths with the current request and actual evidence.
 ```json
 {"run_id": "sdda-example", "input_sha256": "0000000000000000000000000000000000000000000000000000000000000000", "provider": "openspec", "items": [{"id": "AC-1", "status": "blocked", "evidence": [{"path": "openspec/changes/add-demo/spec.md", "reason": "Example only; configure and execute a real check"}]}]}
 ```
+
+## Project-bound dual acceptance
+
+Use `cao acceptance criteria` to obtain stable source IDs from the confirmed requirement and native criteria/Intent. A declared criterion may include `covers: ["src-..."]` to map original source items; exact source/text matches are also recognized. Reports still cover every declared criterion exactly once with real evidence. Source mapping alone does not establish semantic correctness or independent execution. In light, reuse the bound native Intent rather than manufacturing a formal checklist. Inspect both parts with `cao acceptance status`; technical results, task evidence and original native obligations must all be valid before done.
+
+For an already bound native SPEC/Intent, `cao acceptance configure --executor-command "<actual check>"` or `--executor-skill <native-entrypoint>` derives the declaration from existing source items, preserving IDs and coverage mappings. Use --spec for an explicit native source and --output for exact Work-scoped reports. This is configuration only; actual run/begin/submit or validated reuse is still required.

@@ -8,6 +8,8 @@ An active Work exists and bootstrap reports `mode: verification_setup`, or accep
 
 ## Execute
 
+Project background and verification intent precede Work. An empty product uses `cao verification configure --plan-only` before start; only an active Work creates actual manifests, tests and wrappers. The plan is never executable verification evidence. See [Project context](project-context.md).
+
 After honoring SDD selection/install authorization and creating or resuming an active Work, `mode: verification_setup` means the verification
 configuration is empty, invalid or optional-only. Before feature development:
 

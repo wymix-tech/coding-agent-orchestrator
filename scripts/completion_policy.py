@@ -149,6 +149,20 @@ def verification_fresh(work: dict, current: dict) -> bool:
     return bool(verification.get("snapshot_format") == SNAPSHOT_FORMAT and verification.get("version") == 2 and verification.get("source") == "config"
                 and verification.get("status") == "passed"
                 and required_verification_status(verification.get("results", [])) == "passed"
+                and not evidence_expired(verification, current)
                 and anchor.get("version") == 2
                 and anchor.get("config_sha256") == current["verification_config_sha256"]
-                and all(verification.get(key) == current.get(key) for key in SNAPSHOT_KEYS))
+                and all(verification.get(key) == current.get(key) for key in snapshot_keys(current)))
+
+
+def snapshot_keys(current):
+    if current.get('technical_input_version') == 1:
+        from scripts.acceptance_inputs import TECHNICAL_KEYS
+        return TECHNICAL_KEYS
+    return SNAPSHOT_KEYS
+
+
+def evidence_expired(verification, current):
+    maximum = current.get('maximum_evidence_age_seconds')
+    return bool(maximum is not None and (not isinstance(maximum, (int, float)) or maximum <= 0
+                or time.time() - verification.get('at', 0) > maximum))

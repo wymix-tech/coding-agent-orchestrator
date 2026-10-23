@@ -47,7 +47,7 @@ def bind_light_spec(repo, run, path, wid=None):
     assert result[0] == 0, result
 
 
-def complete_acceptance(repo, run, wid=None):
+def complete_acceptance(repo, run, wid=None, prepare_only=False):
     """Real CLI final acceptance for local fixtures, not a real provider/reviewer test.
 
     Preserves previously observed manual reviews across the initial explicit anchor.
@@ -64,9 +64,11 @@ def complete_acceptance(repo, run, wid=None):
         assert result[0] == 0, result
         return result[1]
     if not work['sdd'].get('acceptance'):
-        spec = f'{directory}/fixture-acceptance.md'
+        binding = work['sdd'].get('spec_binding') or {}
+        spec = (binding.get('spec') or {}).get('path') or f'{directory}/fixture-acceptance.md'
         (repo / directory).mkdir(exist_ok=True)
-        (repo / spec).write_text('# Local fixture acceptance\n- The fixture unittest passes.\n', encoding='utf-8')
+        if not binding:
+            (repo / spec).write_text('# Local fixture acceptance\n- The fixture unittest passes.\n', encoding='utf-8')
         script = 'fixture-final-acceptance.py'
         (repo / script).write_text('''import json, os, subprocess, sys
 r = json.loads(os.environ['CAO_SDD_ACCEPTANCE_REQUEST'])
@@ -77,12 +79,24 @@ sys.exit(p.returncode)
         argv = [sys.executable, script]
         command = subprocess.list2cmdline(argv) if os.name == 'nt' else shlex.join(argv)
         declaration = {'spec': spec, 'criteria': [{'id': 'AC-FIXTURE', 'source': spec, 'kind': 'requirement', 'description': 'Fixture unittest passes'}], 'executor': {'mode': 'command', 'entrypoint': command}}
+        from scripts.acceptance_trace import criteria
+        declaration['criteria'][0]['covers'] = [item['id'] for item in criteria(repo, work)]
         (repo / 'fixture-acceptance.json').write_text(json.dumps(declaration), encoding='utf-8')
         checked('sdd', 'acceptance', 'configure', '--declaration', 'fixture-acceptance.json')
         checked('reopen', '--reanchor', '--reason', 'Reviewed local fixture acceptance')
         for gate, record in work.get('gate_status', {}).items():
             if record.get('satisfied'):
                 checked('gate', 'satisfy', '--gate', gate, '--evidence', record['evidence'])
+    if prepare_only and work['sdd'].get('acceptance'):
+        from scripts.acceptance_trace import criteria, coverage
+        if coverage(repo, work)['missing']:
+            declaration = work['sdd']['acceptance']['declaration']
+            declaration['criteria'][0]['covers'] = [item['id'] for item in criteria(repo, work)]
+            (repo / 'fixture-acceptance.json').write_text(json.dumps(declaration))
+            checked('sdd', 'acceptance', 'configure', '--declaration', 'fixture-acceptance.json', '--replace')
+            checked('reopen', '--reanchor', '--reason', 'Reviewed changed local fixture source mapping')
+    if prepare_only:
+        return
     checked('verify')
     checked('sdd', 'acceptance', 'run')
 
@@ -133,3 +147,29 @@ def fixture_native_review(repo, run, wid=None, reviewer_cli=None):
     if wid:args+=['--work',wid]
     rc,out=run(repo,*args);assert rc==0,out
     return report
+
+
+def provision_fixture_background(repo):
+    """Explicit background for legacy workflow fixtures, scoped to their test harness.
+
+    These fixtures test pre-existing workflow contracts; new project setup tests
+    use the unmodified CLI directly and do not call this helper.
+    """
+    from scripts.project_context import commit_context, load_context
+    from scripts.project_sources import observe_prompt, user_evidence
+    from scripts.project_verification import verification_binding
+    repo = pathlib.Path(repo)
+    if load_context(repo):
+        return
+    ref = observe_prompt(repo, 'Fixture uses Python, unittest and setuptools.', 'fixture', 'fixture-setup')
+    values = {'language': 'Python', 'build_tool': 'setuptools', 'test_framework': 'unittest'}
+    context = {'schema_version': 1, 'scopes': {'root': {'paths': ['acceptance-tests'],
+               'technology': {key: {'value': value, 'status': 'accepted'} for key, value in values.items()}}},
+               'evidence': [user_evidence(repo, ref, values)], 'active_changes': []}
+    commit_context(repo, context, None)
+    path = repo / '.orchestrator/config.json'
+    cfg = json.loads(path.read_text())
+    cfg.setdefault('verification', {})['context_binding'] = verification_binding(repo)
+    cfg['verification']['plan'] = {'version': 1, 'scripts': [{'name': 'planned-fixture',
+        'command': 'python -m unittest discover -s acceptance-tests', 'required': True, 'gates': ['tests']}]}
+    path.write_text(json.dumps(cfg, ensure_ascii=False))

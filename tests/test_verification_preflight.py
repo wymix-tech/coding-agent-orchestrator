@@ -38,7 +38,7 @@ class VerificationPreflightTests(RepairCase):
                 self.scripts(value)
                 rc, out = self.run_cli("bootstrap")
                 self.assertEqual(rc, 0, out)
-                self.assertEqual(out["mode"], "select")
+                self.assertEqual(out["mode"], "verification_setup" if value[0].get("name") == "invalid" else "select")
                 self.assertFalse(out["verification_setup"]["ready"])
 
     def test_valid_configuration_keeps_work_selection(self):

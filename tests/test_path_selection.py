@@ -19,6 +19,9 @@ def run(repo, *args, input_text=None):
         payload = json.loads(result.stdout)
     except Exception:
         payload = {"raw": result.stdout}
+    if args and args[0] == "init" and result.returncode == 0:
+        from tests.helpers import provision_fixture_background
+        provision_fixture_background(repo)
     return result.returncode, payload, result.stderr
 
 

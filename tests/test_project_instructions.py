@@ -77,6 +77,9 @@ def run(repo, *args, env_extra=None):
         out = json.loads(p.stdout)
     except json.JSONDecodeError:
         out = {"raw": p.stdout}
+    if args and args[0] == "init" and p.returncode == 0:
+        from tests.helpers import provision_fixture_background
+        provision_fixture_background(repo)
     return p.returncode, out, p.stderr
 
 

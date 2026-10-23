@@ -23,8 +23,14 @@ def run(repo, *args, stdin=None):
                             capture_output=True, env=dict(os.environ, **NO_HOST_ENV),
                             timeout=60, input=stdin)
     try:
+        if args and args[0] == "init" and result.returncode == 0:
+            from tests.helpers import provision_fixture_background
+            provision_fixture_background(repo)
         return result.returncode, json.loads(result.stdout)
     except json.JSONDecodeError:
+        if args and args[0] == "init" and result.returncode == 0:
+            from tests.helpers import provision_fixture_background
+            provision_fixture_background(repo)
         return result.returncode, {"raw": result.stdout, "stderr": result.stderr}
 
 
@@ -91,7 +97,7 @@ class StandardMustCoverRequiredGates(unittest.TestCase):
     def test_verify_refuses_build_only_standard_when_tests_gate_is_required(self):
         with tempfile.TemporaryDirectory() as td:
             repo = pathlib.Path(td)
-            wid = active_work(repo, "mvn clean compile")
+            wid = active_work(repo, "python -m compileall acceptance-tests")
             standard_path(repo, wid)
             rc, out = run(repo, "verify", "--work", wid)
             self.assertEqual(rc, 2, out)
