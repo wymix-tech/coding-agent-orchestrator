@@ -108,6 +108,10 @@ def protected_state_advice(targets: list[str]) -> str:
         return "Session and Handoff records are written by the host hooks automatically."
     if "lifecycle/" in joined:
         return "`lifecycle/events.jsonl` is an append-only audit log written by CAO."
+    if "/inputs" in joined.replace("\\", "/"):
+        return ("Use `cao sdd route prepare` to create the active Work's input directories and route.json. "
+                "If preparation fails, repair its named SPEC diagnostics and retry; only the exact active route.json is Agent-writable. "
+                "Do not remove the inputs tree or edit another Work's input.")
     return "CAO state is derived from its own commands; hand edits would be overwritten."
 
 

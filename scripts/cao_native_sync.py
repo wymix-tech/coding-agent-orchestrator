@@ -46,11 +46,12 @@ from scripts.light_spec_policy import binding_digest
 from scripts.native_obligations import implementation_contract, implementation_state
 from scripts.native_route import (
     bind_request_context,
-    build_route as native_build_route,
+    build_route as native_build_route,  # Retain the compatibility facade export.
     intent_hash,
     normalize_decision as normalize_route_decision,
     owned_file as native_owned_file,
     route_state,
+    spec_preparation_diagnostics,
 )
 from scripts.path_guard import provider_artifact, repo_file
 from scripts.provider_restart import restart_state
@@ -289,7 +290,10 @@ def route_preparation_action(repo: Path, work: dict, state: dict) -> dict:
     workflow = (work.get("sdd") or {}).get("workflow") or {}
     selected = workflow_skill_identity(repo, provider, workflow.get("entrypoint") or "")
     skill = next((item for item in skills if item["name"] == (selected or "bmad-build")), None)
-    instruction = technology_instruction(command) + (f"Read the complete installed Skill `{repo / skill['rel_path']}`; invoke `{skill['name']}` "
+    from scripts.project_context import context_state
+    technology = (technology_instruction(command) if not workflow.get("name") or not context_state(repo, work=work)["ready"]
+                  else "Inherit the accepted project background; do not ask for the stack again. Confirm authorization before a material stack change. ")
+    instruction = technology + (f"Read the complete installed Skill `{repo / skill['rel_path']}`; invoke `{skill['name']}` "
                    "and use its exact renderer only when required. Renderer success loads instructions, not completed execution. "
                    if skill else "Read the selected provider's installed native workflow instructions. ")
     if (work.get("path_assessment") or {}).get("profile") != "light" and not workflow.get("name"):
@@ -299,14 +303,11 @@ def route_preparation_action(repo: Path, work: dict, state: dict) -> dict:
                         f'--entrypoint "{entry}" --work {work["id"]}` before preparing the route. ')
     else:
         ref = (work.get("sdd") or {}).get("native_ref")
-        try:
-            source = native_owned_file(repo, ref, provider_output_dirs(provider)) if ref else None
-            has_spec = bool(source and source.is_file() and
-                            (provider != "bmad" or native_build_route(source) in {"dispatch", "oneshot"}))
-        except (ValueError, OSError, RuntimeError):
-            has_spec = False
-        if not has_spec:
+        diagnostics = spec_preparation_diagnostics(repo, work, provider_output_dirs(provider))
+        if diagnostics:
             common["reason"] = "NATIVE_SPEC_PREPARATION_REQUIRED"
+            common.update(diagnostic=diagnostics[0], diagnostics=diagnostics)
+            instruction += " ".join(f"Repair `{item['path'] or 'sdd.native_ref'}` ({item['field']}): {item['expected']}." for item in diagnostics) + " "
             instruction += (f"Continue the selected native workflow `{workflow.get('name') or 'bmad-build'}` and its planning prerequisites; "
                             "do not switch workflows merely because the route is missing. Execute only native planning/spec preparation now, "
                             "then immediately bind the actual primary Build SPEC "
@@ -513,6 +514,7 @@ def cmd_sdd_route(args: argparse.Namespace) -> int:
         if getattr(exc, "diagnostic", None):
             result["diagnostic"] = exc.diagnostic
             result["diagnostics"] = exc.diagnostics
+        if getattr(exc, "diagnostic", None) and code.startswith("NATIVE_ROUTE_RULE"):
             result["next"] = ("Repair every listed diagnostic field; hashes and quotes are checked independently. "
                               "Use `cao sdd route prepare --from <existing-declaration>` for a legacy input, then "
                               "`cao sdd route rule --source <actual-native-file> --start-line <first> --end-line <last> --index <rule-index>` "
@@ -551,8 +553,12 @@ def cmd_sdd_artifact_bind(args: argparse.Namespace) -> int:
                            "path": value, "sha256": sha256_file(path), "occurred_at": now()})
         save_work(repo, work)
         reconcile_native_sdd_state(repo, work)
-        print(json.dumps({"ok": True, "native_sync": native_sync_state(repo, work),
-                          "implementation": native_route_state(repo, work)}, ensure_ascii=False)); return 0
+        result = {"ok": True, "native_sync": native_sync_state(repo, work),
+                  "implementation": native_route_state(repo, work)}
+        preparation = route_preparation_action(repo, work, {"reason": "NATIVE_ROUTE_REQUIRED"})
+        if preparation.get("diagnostics"):
+            result["preparation"] = preparation
+        print(json.dumps(result, ensure_ascii=False)); return 0
     except (ValueError, OSError, KeyError, RuntimeError) as exc:
         print(json.dumps({"ok": False, "error": str(exc)}, ensure_ascii=False)); return 2
 
