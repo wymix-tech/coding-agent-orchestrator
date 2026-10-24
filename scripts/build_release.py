@@ -13,27 +13,41 @@ ROOT = Path(__file__).resolve().parents[1]
 MANIFEST = ROOT / "release-manifest.txt"
 
 
-def patterns() -> list[str]:
-    result = []
+def patterns() -> tuple[list[str], list[str]]:
+    includes: list[str] = []
+    excludes: list[str] = []
     for line in MANIFEST.read_text(encoding="utf-8").splitlines():
         line = line.strip()
-        if line and not line.startswith("#"):
-            result.append(line)
-    return result
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("!"):
+            excludes.append(line[1:].strip())
+        else:
+            includes.append(line)
+    return includes, excludes
 
 
-def included_files() -> list[Path]:
+def expand(patterns: list[str], *, required: bool = True) -> list[Path]:
     files = []
-    for pattern in patterns():
+    for pattern in patterns:
         matches = sorted(ROOT.glob(pattern))
         if not matches:
-            raise SystemExit(f"release manifest entry has no matches: {pattern}")
+            # A missing include is a manifest error; a missing exclusion simply
+            # means the build-time file is already gone.
+            if required:
+                raise SystemExit(f"release manifest entry has no matches: {pattern}")
+            continue
         for match in matches:
             if match.is_file():
                 files.append(match)
             elif match.is_dir():
                 files.extend(path for path in sorted(match.rglob("*")) if path.is_file())
-    return sorted(set(files))
+    return files
+
+
+def included_files() -> list[Path]:
+    includes, excludes = patterns()
+    return sorted(set(expand(includes)) - set(expand(excludes, required=False)))
 
 
 def validate(files: list[Path]) -> None:

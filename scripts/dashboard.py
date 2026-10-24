@@ -4,7 +4,6 @@ from __future__ import annotations
 import ipaddress
 import json
 import re
-import sysconfig
 import webbrowser
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -16,10 +15,13 @@ from scripts.cao_runtime import locked_repo
 
 
 def dashboard_html_path() -> Path:
-    """Locate the dashboard page in a source checkout or installed wheel."""
+    """Locate the dashboard page in a source checkout or installed wheel.
+
+    `dashboard.html` ships as package data next to this module, so the sibling
+    path covers both layouts; there is no separate `web/` data directory.
+    """
     candidates = [
         Path(__file__).with_name("dashboard.html"),
-        Path(sysconfig.get_path("data")) / "share" / "coding-agent-orchestrator" / "web" / "dashboard.html",
     ]
     for candidate in candidates:
         if candidate.is_file():

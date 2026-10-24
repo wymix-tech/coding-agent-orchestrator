@@ -1,4 +1,5 @@
 # Runtime files included in a skill/Release package.
+# Lines starting with "!" are excluded after the include patterns are expanded.
 SKILL.md
 README.md
 LICENSE
@@ -13,3 +14,5 @@ templates/
 hosts/
 hooks/
 protocol/
+# Build-time only: the release builder is never imported or run by `cao`.
+!scripts/build_release.py
