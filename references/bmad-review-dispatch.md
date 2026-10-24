@@ -1,5 +1,7 @@
 # BMAD dispatch review evidence
 
+Contents: [Collect and classify](#collect-classify-patch-resolve) · [Classify fields](#classify-report-fields) · [Resolve fields](#resolve-report-fields) · [Recovery](#round-consistency-and-recovery)
+
 Read for a BMAD dispatch review action. Follow the actual rendered
 `step-04-review.md`; these report formats belong to dispatch.
 
@@ -84,3 +86,19 @@ Supply `{run_id, resolved_ids}` with the current layer's run ID and ALL its
 raw, classify and resolve evidence and binds the repaired code snapshot.
 A review round is not a loopback count. Changed sources/evidence require the
 applicable fresh review; a manual `implementation_review` gate cannot substitute.
+
+
+## Round consistency and recovery
+
+All active layers share one model and native instruction contract. Inspect
+`cao sdd review status`; only running layers need live reviewer sessions. Classified
+reviewers may exit, but their original raw and triage evidence must remain intact.
+Status, prepare, writes and finalization check the same evidence freshness.
+
+Model, common input or native contract changes require explicit whole-round
+`cao sdd review prepare --restart --instructions <actual-step-04-review.md> --model <current-model> --external-session`
+(or the installed `--agent-definition`). Removed layers are retained in history and
+no longer block the active round; newly required layers must complete. A damaged
+single layer under an unchanged contract can restore its original bytes or use
+`begin --restart --layer <layer>` with the same instructions/model. Preserve other
+valid layers. Restart alone never resolves a known frozen-intent conflict.

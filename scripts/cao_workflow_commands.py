@@ -335,11 +335,17 @@ def _cmd_sdd_review_locked(args: argparse.Namespace) -> int:
     work = resolve_work(repo, args.work)
     if not work or work.get("status") != "active":
         print(json.dumps({"ok": False, "error": "NO_ACTIVE_WORK_ITEM"})); return 2
+    from scripts.native_obligations import review_next
     from scripts.review_diagnostics import paused_failure
     paused = paused_failure(repo, work, args)
     if paused:
         print(json.dumps(paused, ensure_ascii=False)); return 2
     try:
+        if work.get('sdd', {}).get('provider') != 'bmad':
+            raise ValueError('NATIVE_REVIEW_NOT_APPLICABLE')
+        from scripts.native_obligations import require_review_integrity
+        if args.review_action not in {'begin', 'prepare', 'status'}:
+            require_review_integrity(repo, work)
         records = work.setdefault("sdd", {}).setdefault("native_reviews", {})
         identity = host_session_identity(None)
         runtime_model = os.environ.get('PI_MODEL') if identity and identity[0] == 'pi' else None
@@ -409,7 +415,7 @@ def _cmd_sdd_review_locked(args: argparse.Namespace) -> int:
             output = classify_batch(repo, work, args.report)
         elif args.review_action == "classify":
             output = {"ok": True, "review": classify_review(repo, work, args.layer, args.report, code_snapshot),
-                      "next": dispatch_review_next(records, active_layers(repo, work), review_inputs(repo, work, code_snapshot))}
+                      "next": review_next(repo, work, review_inputs(repo, work, code_snapshot))}
         elif args.review_action == "resolve":
             output = {"ok": True, "review": resolve_review(repo, work, args.layer, args.report, code_snapshot)}
         else:

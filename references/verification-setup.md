@@ -183,6 +183,8 @@ including an empty project before pom.xml is created,, CAO declares target/ as g
 explicitly configured. Existing baselines remain reviewable and unchanged; tracked
 inputs still override generated exclusions. Inspect configured scope before review.
 
-Configure task acceptance and source coverage before `cao sdd review prepare`.
+For BMAD Build oneshot/dispatch, configure task acceptance and source coverage before `cao sdd review prepare`. Other providers follow their installed native review workflow and the shared acceptance protocol.
 Use `cao sdd review check` for reviewer experiments in a disposable working copy;
 these results do not satisfy the final verification or acceptance gates.
+
+Change verification timeout using `cao verification configure --timeout-seconds 300 --replace`; review/approval and reanchor rules apply.

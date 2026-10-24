@@ -129,6 +129,17 @@ def current_work_action(repo: Path, work: dict | None, *, check_completion: bool
     route = native_route_state(repo, work)
     if not route["ready"]:
         return route_preparation_action(repo, work, route)
+    from scripts.review_dispatch import acceptance_preflight
+    from scripts.native_obligations import review_source
+    try:
+        prepared_review_source = review_source(repo, work)
+    except (ValueError, OSError, RuntimeError):
+        # Invalid native sources belong to the existing route/source diagnostics.
+        prepared_review_source = None
+    if prepared_review_source:
+        preflight = acceptance_preflight(repo, work)
+        if not preflight['ready']:
+            return action('agent', preflight['next'] + ' Run `cao acceptance criteria`, then `cao acceptance configure --executor-command "<actual check>"` or --executor-skill; review/reanchor changed inputs before preparing reviewers.', stage='completion', reason='TASK_ACCEPTANCE_COVERAGE_INCOMPLETE')
     phase = execution_phase(work.get("execution") or {})
     stage = "completion" if phase in {"review", "verification", "done"} else "execution"
     verification = (work.get("verification") or {}).get("status")

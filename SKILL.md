@@ -58,7 +58,8 @@ flowchart TD
     A["bootstrap"] --> B{"Authorized SDD ready?"}
     B -->|No| C["Obtain required choice or repair selected installation"]
     C --> A
-    B -->|Yes| D{"Current Work exists?"}
+    B -->|Yes| P["Establish project background and verification intent"]
+    P --> D{"Current Work exists?"}
     D -->|No| E["Restore Work or clarify scope/technology and register requirement"]
     E --> A
     D -->|Yes| F{"Verification baseline accepted?"}
@@ -76,7 +77,7 @@ flowchart TD
     N --> O["cao done enforces all gates"]
 ```
 
-Configure standard/comprehensive acceptance sources before the final verify/reanchor as directed by
+Configure task acceptance sources, executor and coverage before BMAD Build review preparation; other providers follow their installed native review workflow. Execute final acceptance after formal verification. Review/reanchor as directed by
 completion guidance. Perform required native commits at their native step; commit alone does not
 require reanchoring. Any input change can require fresh reviews/bindings/verification.
 

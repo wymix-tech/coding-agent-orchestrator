@@ -120,3 +120,5 @@ The diagnostics cover connected hooks and controlled runners only. They do not
 certify unobserved operations, contain full conversations, or provide protection
 against malicious local processes. POSIX-created diagnostic files are private
 (mode 0600); Windows uses the current account's filesystem permissions.
+
+Configure log capture with `cao runtime configure --mode bounded --segment-bytes 1048576 --max-bytes-per-stream 8388608`. Retention uses `--max-bytes-per-work` and `--closed-work-days`. Redaction fields remain installation-managed; no agent command exposes them. Do not edit derived config during a Work.

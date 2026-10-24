@@ -65,6 +65,11 @@ def settings(repo: Path) -> dict:
     raw = config(repo).get("runtime", {})
     if not isinstance(raw, dict):
         raise ValueError("RUNTIME_CONFIG_INVALID")
+    return validate_settings({'runtime': raw})
+
+
+def validate_settings(cfg: dict) -> dict:
+    raw = cfg.get('runtime', {})
     result = json.loads(json.dumps(DEFAULTS))
     for key, value in raw.items():
         if key in {"logs", "retention"}:

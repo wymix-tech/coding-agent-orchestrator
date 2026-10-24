@@ -23,7 +23,7 @@ After binding, read the exact native prompt and frozen review inputs provided in
 the dispatch package. Follow the provider's review criteria and original output
 format. Keep one complete finding together with its supporting explanation.
 Return original findings verbatim to the coordinator, who saves the native report
-and performs CAO draft/classify/resolve. Do not append implementation acceptance
+and performs CAO draft/classify, then dispatch resolve or oneshot submit. Do not append implementation acceptance
 JSON to the native findings or count explanatory bullets as separate findings.
 
 If reproduction needs a command, ask the coordinator to execute

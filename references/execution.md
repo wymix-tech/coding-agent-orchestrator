@@ -127,3 +127,5 @@ CAO automatically retains task-scoped runtime facts. Use `cao runtime status`,
 record progress through checkpoint/decision rather than writing JSON. Read
 [runtime-records.md](runtime-records.md) for log limits, sources, and recovery
 semantics. Runtime facts never replace verification or approval contracts.
+
+For BMAD Build oneshot/dispatch only, before launching native reviewers, configure the task acceptance declaration, executor and complete source coverage. `cao sdd review prepare` checks these prerequisites before creating tickets. Final acceptance executes after formal verification.

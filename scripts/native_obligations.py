@@ -104,6 +104,91 @@ def dispatch_review_next(records, layers, inputs):
     return 'Review evidence is stale. Begin fresh active layers for the current snapshot, collect and classify all, patch/check, then resolve all layers before `cao verify`.'
 
 
+def review_integrity(repo, work, snapshot=None, inputs=None):
+    """Read shared round/evidence facts without requiring completed reviewers to live."""
+    records = (work.get('sdd') or {}).get('native_reviews') or {}
+    layers = active_layers(repo, work)
+    models = {records[layer].get('model') for layer in layers if records.get(layer)}
+    expected = (records.get('_contract') or {}).get('model')
+    if len(models) > 1 or (expected and models and models != {expected}):
+        return {'ready': False, 'reason': 'NATIVE_REVIEW_MODEL_MISMATCH'}
+    from scripts.cao_snapshot import code_snapshot
+    current = inputs if inputs is not None else (review_inputs(repo, work, snapshot or code_snapshot)
+                                                if any(records.get(layer) for layer in layers) else {})
+    for layer in layers:
+        run = records.get(layer) or {}
+        if not run:
+            continue
+        if run.get('status') not in {'running', 'classified', 'passed'}:
+            return {'ready': False, 'reason': 'NATIVE_REVIEW_RESTART_REQUIRED', 'layer': layer, 'field': 'status'}
+        # Classified evidence deliberately keeps the original pre-patch snapshot.
+        if any(run.get('inputs', {}).get(key) != value for key, value in current.items()
+               if key != 'code_snapshot' or run.get('status') != 'classified'):
+            return {'ready': False, 'reason': 'NATIVE_REVIEW_STALE', 'layer': layer, 'field': 'inputs'}
+        if run.get('status') in {'classified', 'passed'}:
+            try:
+                validate_reviewer(run, {'reviewer': run.get('reviewer')})
+            except ValueError:
+                return {'ready': False, 'reason': 'NATIVE_REVIEW_EXECUTION_UNBOUND', 'layer': layer}
+        hashes = run.get('evidence_hashes') if run.get('status') == 'passed' else run.get('triage_hashes')
+        if run.get('status') in {'classified', 'passed'} and not hashes:
+            return {'ready': False, 'reason': 'NATIVE_REVIEW_STALE', 'layer': layer, 'field': 'evidence_hashes'}
+        for name, sha in (hashes or {}).items():
+            try:
+                valid = hashlib.sha256(repo_file(repo, name).read_bytes()).hexdigest() == sha
+            except (OSError, ValueError, RuntimeError):
+                valid = False
+            if not valid:
+                return {'ready': False, 'reason': 'NATIVE_REVIEW_TRIAGE_STALE' if run.get('status') == 'classified' else 'NATIVE_REVIEW_STALE',
+                        'layer': layer, 'file': name}
+    return {'ready': True}
+
+
+def require_review_integrity(repo, work, snapshot=None):
+    state = review_integrity(repo, work, snapshot)
+    if not state['ready']:
+        raise ValueError(state['reason'])
+
+
+def review_next(repo, work, inputs):
+    records = work['sdd'].get('native_reviews') or {}
+    layers = active_layers(repo, work)
+    integrity = review_integrity(repo, work, inputs=inputs)
+    if not integrity['ready']:
+        return ('Review evidence is stale: ' + integrity['reason'] + ' ' + str(integrity.get('layer', '')) + ' ' + str(integrity.get('file', ''))
+                + '. Restore verified original evidence or explicitly restart the affected layer; changed models/common inputs require `cao sdd review prepare --restart` for all layers.')
+    for layer in layers:
+        record = records.get(layer) or {}
+        if record and any(record.get('inputs', {}).get(key) != value for key, value in inputs.items() if record.get('status') != 'classified' or key != 'code_snapshot'):
+            return 'Review evidence is stale: inputs changed. Inspect the changes, then explicitly use `cao sdd review prepare --restart` with the native instructions/model and reviewer capability arguments. Previous tickets remain in history.'
+    if any((records.get(layer) or {}).get('loopback_required') for layer in layers):
+        return 'Resolve recorded intent conflicts with the human; refresh native intent/route as required, then explicitly restart the review round. Do not submit unresolved conflicts.'
+    missing = [layer for layer in layers if not records.get(layer)]
+    if missing and dispatch(work):
+        return dispatch_review_next(records, layers, inputs)
+    if missing:
+        return 'Prepare missing native reviewers with `cao sdd review prepare --instructions <actual-step-oneshot.md> --model <current-model> --external-session`; bind each new reviewer before inspection, classify all layers, patch, then `cao sdd review submit`.'
+    if any(records[layer].get('status') == 'running' for layer in layers):
+        from scripts.cao_sessions import load_session
+        for layer in layers:
+            if records[layer].get('status') != 'running':
+                continue
+            binding = records[layer].get('execution_binding') or {}
+            reviewer = binding.get('reviewer') or {}
+            if reviewer and binding.get('host'):
+                session = load_session(repo, reviewer['session_id'], host=binding['host'])
+                if not session or session.get('status') != 'active':
+                    return ('Bound reviewer for ' + layer + ' has exited. If its original ticket-bound findings were collected, classify them; otherwise restore its actual host session or explicitly restart this layer. Do not attach another identity to the existing ticket.')
+        if dispatch(work):
+            return dispatch_review_next(records, layers, inputs)
+        return 'Continue existing running tickets and reviewers; attach only unbound tickets. Collect and classify ALL layers before patches, then `cao sdd review submit` with separate resolved reports.'
+    if dispatch(work):
+        return dispatch_review_next(records, layers, inputs)
+    if any(records[layer].get('status') == 'classified' for layer in layers):
+        return 'All layers classified. Preserve raw and triage files; finish patches and checks, then `cao sdd review submit --layer <layer> --report <final.json>`. Do not classify again.'
+    return 'Continue remaining native obligations, then `cao verify`.'
+
+
 def oneshot_source(repo, work):
     sdd = work.get('sdd') or {}
     binding = sdd.get('spec_binding') or {}
@@ -165,12 +250,12 @@ def review_state(repo, work, code_snapshot):
                 break
         else:
             run = records.get(layers[-1]) or {}
-        if dispatch(work):
-            next_step = dispatch_review_next(records, layers, inputs)
-        else:
-            next_step = ('Follow the rendered BMAD oneshot Review and Classify steps. Start `cao sdd review begin --layer <active-layer> --instructions <actual-step-oneshot.md> --model <current-model>`; '
-                         'run the native prompt in an independent same-model reviewer (or use its external-session fallback), preserve the returned raw Markdown findings, '
-                         'then `cao sdd review submit --layer <active-layer> --report <native-report.json>`. Fix/triage findings, review changed code again, then `cao verify`.')
+        next_step = review_next(repo, work, inputs)
+        integrity = review_integrity(repo, work, code_snapshot)
+        if not integrity['ready']:
+            return {**integrity, 'state': 'stale', 'next': next_step}
+        if any((records.get(layer) or {}).get('loopback_required') for layer in layers):
+            return {'ready': False, 'state': 'blocked', 'reason': 'NATIVE_REVIEW_LOOPBACK_REQUIRED', 'next': next_step}
         if run.get('status') != 'passed':
             return {'ready': False, 'state': 'pending', 'reason': 'NATIVE_REVIEW_REQUIRED', 'next': next_step}
         if any(not (records.get(layer) or {}).get('execution_binding') for layer in layers):
@@ -265,7 +350,14 @@ def review_source(repo, work):
 def active_layers(repo, work):
     records = (work.get('sdd') or {}).get('native_reviews') or {}
     if not dispatch(work):
-        return (records.get('_contract') or {}).get('layers') or ['blind-hunter']
+        contract = records.get('_contract') or {}
+        for name in contract.get('sources', []):
+            source = repo_file(repo, name)
+            if source.name == 'step-oneshot.md' and source.is_file():
+                layers = sorted(set(re.findall(r'(?m)^####[^\n]*\(`?([a-z][a-z0-9-]*)`?\)', source.read_text())))
+                if layers:
+                    return layers
+        return contract.get('layers') or ['blind-hunter']
     # Resolve the active immutable renderer snapshot, never a project-wide glob
     # which could accidentally select another run's review customization.
     rules = work['sdd']['route_decision'].get('rules', [])
@@ -282,13 +374,14 @@ def active_layers(repo, work):
 
 def dispatch_patch_state(repo, work, code_snapshot):
     """Review patches must follow classification of every active layer."""
-    if not dispatch(work):
+    if not review_source(repo, work):
         return {'ready': True}
     records = work['sdd'].get('native_reviews') or {}
     started = [r for key, r in records.items() if key != '_contract']
     if not started:
         return {'ready': True}  # Initial implementation precedes review.
     try:
+        require_review_integrity(repo, work, code_snapshot)
         for layer in active_layers(repo, work):
             run = records.get(layer) or {}
             if run.get('status') not in {'classified', 'passed'}:
@@ -303,9 +396,66 @@ def dispatch_patch_state(repo, work, code_snapshot):
         return {'ready': False, 'reason': str(exc)}
 
 
+def validate_finding_policy(finding, dispatch_route):
+    """Shared judgment policy for classification and compatibility submission."""
+    if not isinstance(finding, dict):
+        raise ValueError('NATIVE_REVIEW_TRIAGE_INVALID')
+    verdict = finding.get('verdict')
+    if finding.get('disposition') == 'reject' and verdict in {'high', 'medium', 'low'}:
+        if verdict in {'high', 'medium'} or (dispatch_route and finding.get('reject_reason') != 'unlikely-use-nontrivial-fix'):
+            raise ValueError('NATIVE_REVIEW_VERIFIED_FINDING_REJECTED')
+
+
+def validate_finding_mapping(raw, findings):
+    from collections import Counter
+    raw_ids = [item.get('id') if isinstance(item, dict) else None for item in raw]
+    actual_ids = [item.get('id') if isinstance(item, dict) else None for item in findings]
+    def valid(value):
+        return isinstance(value, str) and bool(value.strip())
+    expected = {value for value in raw_ids if valid(value)}
+    actual = {value for value in actual_ids if valid(value)}
+    duplicates = {field: [value for value, count in Counter(v for v in values if valid(v)).items() if count > 1]
+                  for field, values in (('raw', raw_ids), ('classified', actual_ids))}
+    if (not all(valid(value) for value in raw_ids + actual_ids)
+            or any(duplicates.values()) or expected != actual):
+        invalid('NATIVE_REVIEW_FINDING_MAPPING_INVALID', '$.findings[*].id',
+                {'ids': raw_ids, 'missing': sorted(expected - actual)},
+                {'ids': actual_ids, 'extra': sorted(actual - expected), 'duplicate': duplicates})
+
+
+def validate_judgments(report, dispatch_route):
+    findings = report['findings']
+    conflicts = report.get('intent_conflicts', [])
+    if not isinstance(conflicts, list) or any(not isinstance(c, str) or not c.strip() for c in conflicts):
+        raise ValueError('NATIVE_REVIEW_INTENT_CONFLICTS_INVALID')
+    loopback = bool(conflicts)
+    for index, finding in enumerate(findings):
+        route = finding.get('disposition')
+        if finding.get('verdict') not in {'high', 'medium', 'low', 'false', 'maybe-false'} or not str(finding.get('evidence') or '').strip():
+            raise ValueError('NATIVE_REVIEW_TRIAGE_INVALID')
+        if route not in ({'patch', 'defer', 'reject', 'bad_spec', 'intent_gap'} if dispatch_route else {'patch', 'defer', 'reject'}):
+            raise ValueError('NATIVE_REVIEW_TRIAGE_INVALID')
+        if finding.get('violates_frozen_intent') is True and not dispatch_route:
+            loopback = True
+        elif finding.get('violates_frozen_intent') is True and route not in {'bad_spec', 'intent_gap'}:
+            raise ValueError('NATIVE_REVIEW_FROZEN_INTENT_LOOPBACK_REQUIRED')
+        if route == 'defer' and dispatch_route:
+            reason = finding.get('defer_reason')
+            if finding.get('violates_frozen_intent') is not False:
+                raise ValueError('NATIVE_REVIEW_DEFER_OUTSIDE_INTENT_REQUIRED')
+            if reason not in {'pre-existing', 'unverified', 'agent-context'}:
+                raise ValueError('NATIVE_REVIEW_DEFER_REASON_REQUIRED: pre-existing, unverified, or agent-context; not merely absent from scope')
+            if reason == 'unverified' and finding['verdict'] != 'maybe-false':
+                raise ValueError('NATIVE_REVIEW_DEFER_REASON_INVALID')
+        validate_finding_policy(finding, dispatch_route)
+        loopback = loopback or route in {'bad_spec', 'intent_gap'}
+    return conflicts, loopback
+
+
 def classify_review(repo, work, layer, report_path, code_snapshot):
-    if not dispatch(work):
-        raise ValueError('NATIVE_REVIEW_CLASSIFY_NOT_APPLICABLE')
+    require_review_integrity(repo, work, code_snapshot)
+    if layer not in active_layers(repo, work):
+        raise ValueError('NATIVE_REVIEW_LAYER_NOT_ACTIVE')
     records = work['sdd'].get('native_reviews') or {}
     # No patches between collecting reviewers and their classification.
     inputs = review_inputs(repo, work, code_snapshot)
@@ -326,41 +476,8 @@ def classify_review(repo, work, layer, report_path, code_snapshot):
     findings = report.get('findings')
     if not isinstance(raw, list) or not isinstance(findings, list):
         raise ValueError('NATIVE_REVIEW_TRIAGE_REQUIRED')
-    ids = [f.get('id') for f in raw if isinstance(f, dict)]
-    classified = [f.get('id') for f in findings if isinstance(f, dict)]
-    if (len(ids) != len(raw) or len(classified) != len(findings)
-            or any(not isinstance(i, str) or not i for i in ids + classified)
-            or len(set(ids)) != len(ids) or sorted(ids) != sorted(classified)):
-        invalid('NATIVE_REVIEW_FINDING_MAPPING_INVALID', '$.findings[*].id',
-                {'ids': ids, 'missing': sorted({i for i in ids if isinstance(i, str)} - set(classified))},
-                {'ids': classified, 'extra': sorted(set(classified) - {i for i in ids if isinstance(i, str)})})
-    conflicts = report.get('intent_conflicts', [])
-    if not isinstance(conflicts, list) or any(not isinstance(c, str) or not c.strip() for c in conflicts):
-        raise ValueError('NATIVE_REVIEW_INTENT_CONFLICTS_INVALID')
-    loopback = bool(conflicts)
-    for index, finding in enumerate(findings):
-        route = finding.get('disposition')
-        if finding.get('verdict') not in {'high', 'medium', 'low', 'false', 'maybe-false'} or not str(finding.get('evidence') or '').strip():
-            raise ValueError('NATIVE_REVIEW_TRIAGE_INVALID')
-        if route not in {'patch', 'defer', 'reject', 'bad_spec', 'intent_gap'}:
-            raise ValueError('NATIVE_REVIEW_TRIAGE_INVALID')
-        if finding.get('violates_frozen_intent') is True and route not in {'bad_spec', 'intent_gap'}:
-            raise ValueError('NATIVE_REVIEW_FROZEN_INTENT_LOOPBACK_REQUIRED')
-        if route == 'defer':
-            reason = finding.get('defer_reason')
-            if finding.get('violates_frozen_intent') is not False:
-                raise ValueError('NATIVE_REVIEW_DEFER_OUTSIDE_INTENT_REQUIRED')
-            if reason not in {'pre-existing', 'unverified', 'agent-context'}:
-                raise ValueError('NATIVE_REVIEW_DEFER_REASON_REQUIRED: pre-existing, unverified, or agent-context; not merely absent from scope')
-            if reason == 'unverified' and finding['verdict'] != 'maybe-false':
-                raise ValueError('NATIVE_REVIEW_DEFER_REASON_INVALID')
-        if route == 'reject' and finding['verdict'] in {'high', 'medium', 'low'}:
-            if not (finding['verdict'] == 'low' and finding.get('reject_reason') == 'unlikely-use-nontrivial-fix'):
-                invalid('NATIVE_REVIEW_VERIFIED_FINDING_REJECTED', f'$.findings[{index}].disposition',
-                        'patch verified findings, or native intent_gap/bad_spec; low reject requires unlikely-use-nontrivial-fix',
-                        {'id': finding['id'], 'verdict': finding['verdict'], 'disposition': route,
-                         'reject_reason': finding.get('reject_reason')})
-        loopback = loopback or route in {'bad_spec', 'intent_gap'}
+    validate_finding_mapping(raw, findings)
+    conflicts, loopback = validate_judgments(report, dispatch(work))
     run.update(status='classified', reviewer=report['reviewer'], findings=findings,
                loopback_required=loopback, intent_conflicts=conflicts, raw_count=len(raw), classified_count=len(findings),
                triage_hashes={p.relative_to(repo).as_posix(): hashlib.sha256(p.read_bytes()).hexdigest() for p in (report_file, findings_file)})
@@ -393,9 +510,13 @@ def validate_reviewer(run, report):
 
 
 def resolve_review(repo, work, layer, report_path, code_snapshot):
+    if not dispatch(work):
+        raise ValueError('NATIVE_REVIEW_RESOLVE_NOT_APPLICABLE')
     state = dispatch_patch_state(repo, work, code_snapshot)
     if not state['ready']:
         raise ValueError(state['reason'])
+    if layer not in active_layers(repo, work):
+        raise ValueError('NATIVE_REVIEW_LAYER_NOT_ACTIVE')
     run = work['sdd']['native_reviews'].get(layer) or {}
     if run.get('status') != 'classified':
         raise ValueError('NATIVE_REVIEW_CLASSIFY_REQUIRED')
@@ -416,6 +537,7 @@ def resolve_review(repo, work, layer, report_path, code_snapshot):
 def submit_review(repo, work, layer, report_path, code_snapshot):
     if dispatch(work):
         raise ValueError('NATIVE_REVIEW_CLASSIFY_REQUIRED: dispatch uses classify before patches, then resolve')
+    require_review_integrity(repo, work, code_snapshot)
     run = (work.get('sdd') or {}).get('native_reviews', {}).get(layer) or {}
     report_file = provider_artifact(repo, report_path, ['_bmad-output'])
     report = read_report(report_file)
@@ -423,9 +545,26 @@ def submit_review(repo, work, layer, report_path, code_snapshot):
         raise ValueError('NATIVE_REVIEW_REPORT_INVALID')
     report = complete_report_metadata(run, report)
     report_shape(report, dispatch=False)
-    if (run.get('status') != 'running' or report.get('run_id') != run.get('id')
+    if (run.get('loopback_required') or run.get('intent_conflicts') or report.get('intent_conflicts')
+            or any(f.get('violates_frozen_intent') is True for f in report.get('findings', []))):
+        raise ValueError('NATIVE_REVIEW_LOOPBACK_REQUIRED')
+    layers = active_layers(repo, work)
+    records = work['sdd']['native_reviews']
+    if layer not in layers or any(not records.get(key) for key in layers):
+        raise ValueError('NATIVE_REVIEW_ALL_LAYERS_REQUIRED')
+    if any((records.get(key) or {}).get('loopback_required') for key in layers):
+        raise ValueError('NATIVE_REVIEW_LOOPBACK_REQUIRED')
+    classified = run.get('status') == 'classified'
+    current = review_inputs(repo, work, code_snapshot)
+    if classified:
+        if any(hashlib.sha256(repo_file(repo, name).read_bytes()).hexdigest() != sha for name, sha in run.get('triage_hashes', {}).items()):
+            raise ValueError('NATIVE_REVIEW_TRIAGE_STALE')
+        if any((records.get(key) or {}).get('status') not in {'classified', 'passed'} for key in layers):
+            raise ValueError('NATIVE_REVIEW_ALL_LAYERS_REQUIRED')
+    matching = all(value == current.get(key) for key, value in run.get('inputs', {}).items() if not classified or key != 'code_snapshot')
+    if (run.get('status') not in {'running', 'classified'} or report.get('run_id') != run.get('id')
             or report.get('input_sha256') != digest(run.get('inputs'))
-            or run.get('inputs') != review_inputs(repo, work, code_snapshot)):
+            or not matching):
         raise ValueError('NATIVE_REVIEW_RUN_STALE_OR_MISMATCH')
     validate_reviewer(run, report)
     reviewer = report['reviewer']
@@ -435,8 +574,17 @@ def submit_review(repo, work, layer, report_path, code_snapshot):
     findings = report.get('findings')
     if not isinstance(findings, list) or not findings or len(findings) != len(load_findings(findings_file)):
         raise ValueError('NATIVE_REVIEW_TRIAGE_REQUIRED')
+    if classified and findings_file.relative_to(repo).as_posix() not in run.get('triage_hashes', {}):
+        raise ValueError('NATIVE_REVIEW_TRIAGE_STALE')
+    validate_finding_mapping(load_findings(findings_file), findings)
+    _, loopback = validate_judgments(report, False)
+    if loopback:
+        raise ValueError('NATIVE_REVIEW_LOOPBACK_REQUIRED')
+    if classified and [{k: v for k, v in f.items() if k != 'resolved'} for f in findings] != [{k: v for k, v in f.items() if k != 'resolved'} for f in run['findings']]:
+        raise ValueError('NATIVE_REVIEW_TRIAGE_STALE')
     ids = set()
     for finding in findings:
+        validate_finding_policy(finding, False)
         if (not isinstance(finding, dict) or not finding.get('id') or finding['id'] in ids
                 or finding.get('verdict') not in {'high', 'medium', 'low', 'false', 'maybe-false'}
                 or finding.get('disposition') not in {'patch', 'defer', 'reject'}
@@ -445,9 +593,9 @@ def submit_review(repo, work, layer, report_path, code_snapshot):
                 or (finding['disposition'] == 'patch' and finding.get('resolved') is not True)):
             raise ValueError('NATIVE_REVIEW_TRIAGE_INVALID_OR_UNRESOLVED')
         ids.add(finding['id'])
-    run.update(status='passed', report=report_file.relative_to(repo.resolve()).as_posix(), reviewer=reviewer,
-               evidence_hashes={path.relative_to(repo.resolve()).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()
-                                for path in (report_file, findings_file)})
+    run.update(status='passed', inputs=current, report=report_file.relative_to(repo.resolve()).as_posix(), reviewer=reviewer,
+               evidence_hashes={**(run.get('triage_hashes') or {}), **{path.relative_to(repo.resolve()).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()
+                                for path in (report_file, findings_file)}})
     return run
 
 
