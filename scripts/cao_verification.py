@@ -97,7 +97,7 @@ def cmd_verification_configure(args: argparse.Namespace) -> int:
                 raise ValueError("SNAPSHOT_SCOPE_INVALID: conflicting set/clear options for " + section + "." + key)
         environment = getattr(args, "environment_variable", None)
         maximum_age = getattr(args, "maximum_evidence_age_seconds", None)
-        has_metadata = environment is not None or maximum_age is not None
+        has_metadata = environment is not None or maximum_age is not None or getattr(args, "timeout_seconds", None) is not None
         has_scripts = bool(args.verify_script or args.test_script or getattr(args, "security_script", None))
         if has_scripts:
             scripts = declared_scripts(args.verify_script or [], args.test_script or [], getattr(args, 'security_script', None) or [])
@@ -119,6 +119,16 @@ def cmd_verification_configure(args: argparse.Namespace) -> int:
                 candidate = json.loads(json.dumps(candidate))
                 candidate.setdefault(section, {})[key] = normalized
                 candidate.setdefault("verification", {})["configured_at"] = now()
+                changed = True
+        timeout = getattr(args, 'timeout_seconds', None)
+        if timeout is not None:
+            from scripts.completion_policy import normalize_timeout
+            timeout = normalize_timeout(timeout)
+            if timeout != (raw.get('verification') or {}).get('timeout_seconds', 300):
+                if not args.replace:
+                    raise ValueError('VERIFICATION_CONFIG_REPLACE_REQUIRED')
+                candidate = json.loads(json.dumps(candidate))
+                candidate.setdefault('verification', {})['timeout_seconds'] = timeout
                 changed = True
         if has_metadata:
             candidate = json.loads(json.dumps(candidate))

@@ -12,7 +12,7 @@ from scripts.cao_providers import detect_current_host
 from scripts.cao_runtime import new_id
 from scripts.cao_sessions import list_sessions, load_session
 from scripts.cao_snapshot import code_snapshot
-from scripts.native_obligations import active_layers, dispatch as dispatch_review, dispatch_review_next, review_inputs, digest as native_digest
+from scripts.native_obligations import active_layers, dispatch as dispatch_review, review_next, review_inputs, digest as native_digest
 from scripts.path_guard import inside, repo_file, provider_artifact
 from scripts.review_diagnostics import invalid
 from scripts.runtime_store import identifier
@@ -27,6 +27,8 @@ def coordinator(repo, identity):
 
 def begin_review(repo, work, args, identity):
     coordinator(repo, identity)
+    if work.get('sdd', {}).get('provider') != 'bmad':
+        raise ValueError('NATIVE_REVIEW_NOT_APPLICABLE')
     records = work.setdefault('sdd', {}).setdefault('native_reviews', {})
     if not args.model.strip():
         raise ValueError("NATIVE_REVIEW_MODEL_REQUIRED")
@@ -40,28 +42,64 @@ def begin_review(repo, work, args, identity):
         raise ValueError("NATIVE_REVIEW_LAYER_NOT_ACTIVE")
     if dispatch_review(work) and layers != active_layers(repo, work):
         raise ValueError("NATIVE_REVIEW_CONTRACT_MISMATCH")
-    records["_contract"] = {"sources": [path.relative_to(repo).as_posix()], "layers": layers}
-    if any(record.get('model') != args.model for key, record in records.items() if key != '_contract'):
-        # A model change starts a new review round; never mix layers
-        # from two capability levels while retaining their old passes.
+    proposed = {"sources": [path.relative_to(repo).as_posix()], "layers": layers, "model": args.model}
+    old_contract = records.get('_contract') or {}
+    previous_contract = dict(old_contract)
+    # Compute prospective inputs without persisting a changed contract.
+    records['_contract'] = proposed
+    inputs = review_inputs(repo, work, code_snapshot)
+    has_prior_round = any(key != '_contract' for key in records)
+    prior = [records[key] for key in layers if records.get(key)]
+    # A changed layer set must not hide a conflict from the previous round.
+    # Only native intent/requirement clarification can retire that blocker.
+    for key, record in records.items():
+        if key == '_contract':
+            continue
+        intent_conflict = record.get('intent_conflicts') or any(
+            finding.get('violates_frozen_intent') is True or finding.get('disposition') == 'intent_gap'
+            for finding in record.get('findings', []))
+        if args.restart and intent_conflict and all(record.get('inputs', {}).get(key) == inputs.get(key)
+                for key in ('intent_sha256', 'requirement_sha256')):
+            records['_contract'] = previous_contract
+            raise ValueError('NATIVE_REVIEW_LOOPBACK_REQUIRED')
+    common_changed = any(any(record.get('inputs', {}).get(key) != value
+                             for key, value in inputs.items()
+                             if key != 'code_snapshot' or record.get('status') != 'classified')
+                         for record in prior)
+    contract_changed = has_prior_round and (
+        any(record.get('model') != args.model for record in prior)
+        or old_contract.get('sources') != proposed['sources']
+        or old_contract.get('layers') != layers or common_changed)
+    if contract_changed and not args.restart:
+        records['_contract'] = previous_contract
+        raise ValueError('NATIVE_REVIEW_RESTART_REQUIRED')
+    if args.restart and contract_changed:
+        from scripts.cao_runtime import now
         for key in list(records):
             if key != '_contract':
-                records.pop(key)
-    inputs = review_inputs(repo, work, code_snapshot)
+                work['sdd'].setdefault('native_review_history', []).append({
+                    'layer': key, 'review': records.pop(key), 'contract': previous_contract,
+                    'replaced_at': now(), 'replacement_reason': 'explicit round restart: model, contract or common inputs changed'})
     primary_ids = [session.get("host_session_id") for session in list_sessions(repo)
                    if session.get("work_item_id") == work["id"] and session.get("kind") == "primary"]
     existing = records.get(args.layer) or {}
     matching_inputs = (existing.get('inputs') == inputs or (existing.get('status') == 'classified'
                        and all(existing.get('inputs', {}).get(k) == v for k, v in inputs.items() if k != 'code_snapshot')))
-    reused = (dispatch_review(work) and not args.restart and existing.get('status') in {'running', 'classified'}
+    from scripts.native_obligations import review_integrity
+    intact = review_integrity(repo, work)['ready']
+    reused = (intact and not args.restart and existing.get('status') in {'running', 'classified'}
               and matching_inputs and existing.get('model') == args.model)
     if not args.restart and existing.get('status') == 'passed' and existing.get('inputs') == inputs and existing.get('model') == args.model:
         hashes = existing.get('evidence_hashes') or {}
         try:
-            reused = bool(hashes and existing.get('execution_binding')) and all(
+            reused = intact and bool(hashes and existing.get('execution_binding')) and all(
                 hashlib.sha256(repo_file(repo, name).read_bytes()).hexdigest() == sha for name, sha in hashes.items())
         except (ValueError, OSError, RuntimeError):
             reused = False
+    if existing and not reused and not args.restart:
+        invalid('NATIVE_REVIEW_RESTART_REQUIRED', 'review', 'review changed inputs/model/evidence and explicitly use --restart; previous ticket is retained', existing.get('id'))
+    if existing and not reused:
+        work['sdd'].setdefault('native_review_history', []).append({'layer': args.layer, 'review': existing, 'replacement_reason': 'explicit restart'})
     run = existing if reused else {"id": new_id("review"), "status": "running", "inputs": inputs,
            "input_sha256": native_digest(inputs), "model": args.model,
            "existing_session_ids": [session['id'] for session in list_sessions(repo)],
@@ -75,12 +113,12 @@ def begin_review(repo, work, args, identity):
         + ('Preserve unmodified native Markdown/JSON findings for each layer; classify ALL layers before patches, then resolve ALL layers. '
            'Use `cao sdd review classify --layer <layer> --report <triage.json>`, then `cao sdd review resolve --layer <layer> --report <resolved.json>`.'
            if dispatch_review(work) else
-           'Preserve raw Markdown findings and submit triage with `cao sdd review submit --layer <layer> --report <report.json>`.')
+           'Preserve raw Markdown findings. Classify all layers before patches and keep that file unchanged; submit a separate resolved report with `cao sdd review submit --layer <layer> --report <report.json>`.')
         + ' Before launch, inspect the installed agent definitions and effective tools/model/backend; read-only children use coordinator attachment and all children need the CAO host adapter. '
         'Use an available agent name; do not assume task/general-purpose exist. Preserve native prompts/output formats, including Markdown. '
         'If no capable subagent is available, use a new independent external host session with its CAO adapter. Never reuse results from before this ticket.')
     if reused:
-        output['next'] = dispatch_review_next(records, layers, inputs)
+        output['next'] = review_next(repo, work, inputs)
     return output
 
 
@@ -137,6 +175,8 @@ def agent_capability(repo, definition, host):
 
 def prepare_batch(repo, work, args, identity):
     coordinator(repo, identity)
+    if work.get('sdd', {}).get('provider') != 'bmad':
+        raise ValueError('NATIVE_REVIEW_NOT_APPLICABLE')
     from scripts.native_obligations import review_state
     existing = review_state(repo, work, code_snapshot)
     if existing.get('ready') and existing.get('state') == 'recorded' and not args.restart:
@@ -159,11 +199,19 @@ def prepare_batch(repo, work, args, identity):
     layers = sorted(set(re.findall(r'(?m)^####[^\n]*\(`?([a-z][a-z0-9-]*)`?\)', content)))
     if not layers:
         raise ValueError('NATIVE_REVIEW_LAYER_NOT_ACTIVE')
-    outputs = []
+    import copy
+    planned = copy.deepcopy(work)
+    prepared = []
     for layer in layers:
         item_args = argparse.Namespace(**vars(args))
         item_args.layer = layer
-        output = begin_review(repo, work, item_args, identity)
+        prepared.append((layer, begin_review(repo, planned, item_args, identity)))
+    work.clear()
+    work.update(planned)
+    outputs = []
+    for layer, output in prepared:
+        item_args = argparse.Namespace(**vars(args))
+        item_args.layer = layer
         run = output['review']
         if output.get('reused') and run.get('status') == 'passed':
             continue
@@ -179,11 +227,12 @@ def prepare_batch(repo, work, args, identity):
                    'inputs': run['inputs'], 'reviewer_start': output['reviewer_start'],
                    'report': report.relative_to(repo).as_posix(), 'capability': capability,
                    'task_contract': {'role': 'reviewer', 'product_writes': False, 'evidence': ['original-findings', 'review-input', 'reviewer-identity']},
-                   'next': 'Launch one NEW capable session for this layer after ALL tickets exist. Bind the observed child with coordinator attach --reviewer-session (read-only), or run reviewer_start in the child (shell), before review. Read native instructions and unchanged inputs; preserve original findings. Attach stamps actual identity into the report. Classify all layers before patches; resolve all after fixes. Never restart tickets in a reviewer.'}
+                   'next': output['next'], 'status': run['status'],
+                   'reviewer': (run.get('execution_binding') or {}).get('reviewer')}
         atomic_json(root / 'dispatch.json', package)
         outputs.append(package)
     return {'ok': True, 'reviews': outputs, 'owner': 'sdd_provider',
-            'next': 'Dispatch these native reviews once; CAO checks their evidence and does not run an additional code review.'}
+            'next': review_next(repo, work, review_inputs(repo, work, code_snapshot))}
 
 
 def stamp_report(repo, work, layer, run):
@@ -199,7 +248,8 @@ def stamp_report(repo, work, layer, run):
 
 
 def import_review(repo, work, layer, report):
-    from scripts.native_obligations import classify_review, submit_review
+    from scripts.native_obligations import classify_review, submit_review, require_review_integrity
+    require_review_integrity(repo, work)
     run = ((work.get('sdd') or {}).get('native_reviews') or {}).get(layer) or {}
     if run.get('status') == 'passed':
         source = provider_artifact(repo, report, ['_bmad-output'])
@@ -278,4 +328,4 @@ def classify_batch(repo, work, report_path):
                         'classified_count': run['classified_count']})
     work['sdd']['native_reviews'] = candidate['sdd']['native_reviews']
     return {'ok': True, 'reviews': results,
-            'next': dispatch_review_next(work['sdd']['native_reviews'], layers, review_inputs(repo, work, code_snapshot))}
+            'next': review_next(repo, work, review_inputs(repo, work, code_snapshot))}

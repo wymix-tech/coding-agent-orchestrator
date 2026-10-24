@@ -20,7 +20,7 @@ handoff. Current native evidence is reused; CAO does not add another code review
    original findings as a nonempty Provider-owned Markdown file. Then use
    `cao sdd review draft --layer <layer> --source <raw.md-or-json>` for mechanical
    triage metadata; judge findings rather than inventing report identities.
-3. Classify and fix findings as the native step requires. Submit actual evidence
+3. Before patches, run `cao sdd review classify --layer <layer> --report <triage.json>` for all layers. Preserve that classification file unchanged. Fix findings as the native step requires; create a separate final report with the same judgments and `resolved: true` for patches. Submit actual evidence
    with `cao sdd review submit --layer <active-layer> --report <provider-report.json>`.
 
 ## Submit report fields
@@ -41,7 +41,27 @@ returned evidence cannot satisfy the interface, retain the blocker and report it
 
 CAO checks identity, freshness, independent reviewer identity and report shape;
 it cannot establish semantic review from an Agent-written report. Primary
-self-review and fabricated independent sessions do not qualify. Changed code,
-intent, instructions or evidence requires fresh applicable review. Complete all
+self-review and fabricated independent sessions do not qualify. Normal product fixes after all layers are classified retain the original tickets; final submit binds the repaired snapshot. Changed intent, instructions, acceptance standards or frozen evidence require recovery or a fresh applicable review. Complete all
 layers before formal verify, then native Finalize/rebind, verification and Commit
-in the native order. Never use the dispatch `classify`/`resolve` format here.
+in the native order. Classify uses oneshot dispositions; finalization uses submit, never dispatch resolve.
+
+
+## Round consistency and recovery
+
+Use `cao sdd review status` before resuming. All active layers belong to one model
+and native instruction contract. Model, shared input or contract changes require
+`cao sdd review prepare --restart --instructions <actual-step-oneshot.md> --model <current-model> --external-session`
+(or the installed `--agent-definition`); the old round is retained in history.
+For a damaged single layer with unchanged common inputs, restore its exact original
+bytes or explicitly `begin --restart --layer <layer>` with the same instructions and
+model. Completed classified reviewers may exit normally. For a running reviewer
+that has exited, classify its original ticket-bound delivery if available; otherwise
+restore that session or explicitly restart the layer. Never attach a replacement
+identity to the old ticket.
+
+All active layers must be collected and classified before product fixes. An
+unresolved frozen intent conflict blocks patches and submit; restarting alone does
+not resolve it. Keep raw and classification reports unchanged, and submit a separate
+final report. Oneshot `low + reject` needs concrete evidence but no dispatch-only
+`reject_reason`. The unchanged-code direct submit compatibility entry uses the same
+judgment and ID policy, and cannot omit required active tickets.

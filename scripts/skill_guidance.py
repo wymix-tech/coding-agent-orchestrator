@@ -39,7 +39,7 @@ def action_files(reason: str, work: dict | None) -> list[str]:
         if reason.startswith("NATIVE_REVIEW_"):
             route = sdd.get("route_decision") or {}
             keys.append("bmad_dispatch_review" if route.get("build_route") == "dispatch" else "bmad_oneshot_review")
-    if reason.startswith(("SDD acceptance", "SDD_ACCEPTANCE_")):
+    if reason.startswith(("SDD acceptance", "SDD_ACCEPTANCE_", "TASK_ACCEPTANCE_")):
         keys.append("acceptance")
         mode = (((sdd.get("acceptance") or {}).get("declaration") or {}).get("executor") or {}).get("mode")
         if mode in {"command", "skill"}:

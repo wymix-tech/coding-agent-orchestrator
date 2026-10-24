@@ -10,6 +10,15 @@ from scripts import project_knowledge as knowledge
 def cmd_knowledge(args):
     repo = repo_root(args.repo)
     ensure_initialized(repo)
+    if args.knowledge_action == 'configure':
+        from scripts.cao_runtime import config, CONFIG_REL, save_json
+        from scripts.state_store import repo_transaction
+        with repo_transaction(repo):
+            cfg = config(repo)
+            cfg.setdefault('knowledge', {})['enabled'] = args.enabled == 'true'
+            save_json(repo / CONFIG_REL, cfg)
+        print(json.dumps({'ok': True, 'knowledge': cfg['knowledge']}))
+        return 0
     work = resolve_work(repo, args.work)
     if args.knowledge_action == 'collect':
         if not work:
@@ -37,12 +46,14 @@ def cmd_knowledge(args):
 
 def register_parser(sub):
     actions = sub.add_parser('knowledge', help='Collect and inspect optional source-bound project knowledge').add_subparsers(dest='knowledge_action', required=True)
-    for name in ('collect', 'list', 'show', 'refresh'):
+    for name in ('collect', 'list', 'show', 'refresh', 'configure'):
         parser = actions.add_parser(name)
         parser.add_argument('--repo', default='.')
         parser.add_argument('--work')
         parser.add_argument('--limit', type=int, default=8)
         parser.add_argument('--all', action='store_true', help='Include candidates, conflicts and stale records')
+        if name == 'configure':
+            parser.add_argument('--enabled', choices=['true', 'false'], required=True)
         if name == 'show':
             parser.add_argument('--id', required=True)
         if name == 'collect':

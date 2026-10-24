@@ -84,7 +84,7 @@ class ExtractionTests(unittest.TestCase):
         self.assertFalse(out['ok'])
         self.assertEqual(['code_snapshot'], out['verification']['changed_inputs'])
         self.assertIn('diagnostics', out)
-        self.assertNotIn('results', out['verification'])
+        self.assertEqual(['large output'], out['verification']['results'])
         self.assertFalse(summarize({'ok': True, 'ready': False, 'blockers': ['stale']})['ready'])
         self.assertEqual({'ok': True, 'sessions': ['session']}, summarize({'ok': True, 'sessions': ['session']}))
 

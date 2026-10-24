@@ -284,6 +284,7 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--security-script", action="append", help="Required security checks; reuse the same test wrapper to declare both capabilities without running it twice")
     sp.add_argument("--replace", action="store_true", help="Explicitly replace different existing verification declarations")
     sp.add_argument("--environment-variable", action="append", help="Bind hashes of relevant environment variables; values are never stored")
+    sp.add_argument("--timeout-seconds", type=float, help="Positive verification timeout; requires --replace when changed")
     sp.add_argument("--maximum-evidence-age-seconds", type=float, help="Accepted positive validity period for technical evidence")
     sp.add_argument("--plan-only", action="store_true", help="Save a non-executable plan before a Work exists")
     sp.add_argument("--scope", action="append", help="Affected project module; repeat for shared verification")

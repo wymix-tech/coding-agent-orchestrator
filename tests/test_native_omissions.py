@@ -69,6 +69,8 @@ class NativeOmissionTests(RepairCase):
 
     def test_done_spec_and_manual_gate_do_not_replace_review(self):
         self.setup_oneshot()
+        from tests.helpers import complete_acceptance
+        complete_acceptance(self.repo, lambda repo, *a: self.run_cli(*a), prepare_only=True)
         self.run_cli('gate','satisfy','--gate','implementation_review','--evidence','Self reviewed')
         self.assertEqual(self.run_cli('verify')[1]['error'],'NATIVE_REVIEW_REQUIRED')
         self.assertEqual(self.run_cli('done')[1]['reason'],'NATIVE_REVIEW_REQUIRED')
@@ -103,7 +105,7 @@ class NativeOmissionTests(RepairCase):
         self.setup_oneshot();self.review()
         source=self.repo/'_bmad/render/cao-fixture/step-oneshot.md'
         source.write_text(source.read_text()+'\n#### Other Reviewer (`other-reviewer`)\nIndependent review.\n')
-        self.run_cli('sdd','review','begin','--layer','blind-hunter','--model','fixture-model','--instructions',source.relative_to(self.repo))
+        self.run_cli('sdd','review','begin','--restart','--layer','blind-hunter','--model','fixture-model','--instructions',source.relative_to(self.repo))
         self.assertEqual(self.run_cli('verify')[1]['error'],'NATIVE_REVIEW_REQUIRED')
 
     def test_model_mismatch_or_stale_ticket_or_empty_triage_rejected(self):

@@ -205,7 +205,8 @@ class LiveWorkNavigation(unittest.TestCase):
                         '--input-sha256', other['input_sha256'], '--model', 'm', expected=2)
         self.assertEqual('NATIVE_REVIEW_SESSION_REUSED', out['error'])
         t.write('product.py', 'changed = True\n')
-        self.assertEqual('NATIVE_REVIEW_RUN_STALE_OR_MISMATCH', t.run_cli(*args, expected=2)['error'])
+        # Shared integrity detects changed round inputs before identity attachment.
+        self.assertEqual('NATIVE_REVIEW_STALE', t.run_cli(*args, expected=2)['error'])
 
 
 class RelativeLauncher(unittest.TestCase):

@@ -10,7 +10,7 @@ from scripts.cao_work_store import load_index, load_work
 from scripts.runtime_logs import redact_object
 from scripts.runtime_queries import events, inspect_run, log_tail, page, rebuild, runs
 from scripts.runtime_retention import prune
-from scripts.runtime_store import identifier, observation, settings
+from scripts.runtime_store import identifier, observation, settings, validate_settings
 from scripts.state_store import repo_transaction
 
 
@@ -41,6 +41,23 @@ def cmd_runtime(args) -> int:
         ensure_initialized(repo)
         action = args.runtime_command
         with repo_transaction(repo):
+            if action == 'configure':
+                from scripts.cao_runtime import config, CONFIG_REL, save_json
+                cfg = config(repo)
+                runtime = cfg.setdefault('runtime', {})
+                for field in ('mode', 'segment_bytes', 'max_bytes_per_stream'):
+                    value = getattr(args, field, None)
+                    if value is not None:
+                        runtime.setdefault('logs', {})[field] = value
+                for field in ('max_bytes_per_work', 'closed_work_days'):
+                    value = getattr(args, field, None)
+                    if value is not None:
+                        runtime.setdefault('retention', {})[field] = value
+                # Validate the complete candidate through the existing settings contract.
+                validate_settings(cfg)
+                save_json(repo / CONFIG_REL, cfg)
+                print(json.dumps({'ok': True, 'runtime': runtime}))
+                return 0
             selected = args.work or load_index(repo).get("active_work")
             if not selected:
                 raise ValueError("NO_WORK_ITEM: choose --work <id> or --work _unassigned for events")
@@ -78,10 +95,16 @@ def cmd_runtime(args) -> int:
 def register_parser(sub) -> None:
     runtime = sub.add_parser("runtime", help="Inspect task execution facts without changing gates")
     commands = runtime.add_subparsers(dest="runtime_command", required=True)
-    for name in ("status", "events", "runs", "show", "logs", "recover", "rebuild", "prune"):
+    for name in ("status", "events", "runs", "show", "logs", "recover", "rebuild", "prune", "configure"):
         parser = commands.add_parser(name)
         parser.add_argument("--repo", default=".")
         parser.add_argument("--work")
+        if name == 'configure':
+            parser.add_argument('--max-bytes-per-work', type=int)
+            parser.add_argument('--closed-work-days', type=int)
+            parser.add_argument('--mode', choices=['off', 'bounded'])
+            parser.add_argument('--segment-bytes', type=int)
+            parser.add_argument('--max-bytes-per-stream', type=int)
         if name in {"events", "runs"}:
             parser.add_argument("--limit", type=int, default=50)
             parser.add_argument("--cursor")

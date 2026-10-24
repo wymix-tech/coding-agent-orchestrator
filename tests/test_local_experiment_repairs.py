@@ -166,7 +166,7 @@ class DispatchReview(unittest.TestCase):
 
     def test_post_patch_classification_is_rejected(self):
         self.product.write_text('premature patch')
-        with self.assertRaisesRegex(ValueError, 'ALL_LAYERS_REQUIRED'):
+        with self.assertRaisesRegex(ValueError, 'NATIVE_REVIEW_STALE'):
             self.classify('blind-hunter')
 
     def test_missing_or_duplicate_raw_findings_cannot_be_hidden_by_grouping(self):

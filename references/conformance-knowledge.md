@@ -17,7 +17,9 @@ completion authority. Completion uses the same evidence checks.
 
 ## Native review preparation and recovery
 
-Prefer `cao sdd review prepare --instructions <rendered-step> --model <current-model>
+This section applies only to BMAD Build oneshot/dispatch. OpenSpec and Spec Kit use their installed native review instructions; the conformance and knowledge commands remain shared.
+
+For BMAD Build oneshot/dispatch only, prefer `cao sdd review prepare --instructions <rendered-step> --model <current-model>
 --agent-definition <installed-definition>` (one command). Preparation inspects an
 actual repository agent definition for read access, any declared backend executable,
 and the installed host adapter. A read-only reviewer uses coordinator attachment.
@@ -90,7 +92,7 @@ Knowledge collection follows successful review resolution/submission/import and 
 completion. Starting a Work retries pending collection. Knowledge never supplies
 approval, acceptance or completion authority; failure is recorded as `pending` and
 can be retried with `cao knowledge refresh` without reopening completed Work.
-Set `knowledge.enabled: false` in CAO configuration to disable collection/context use.
+Run `cao knowledge configure --enabled false` to disable collection/context use.
 
 Commands: `cao knowledge collect --work <id>`, `cao knowledge list --work <id>`,
 `cao knowledge show --id <id>`, and `cao knowledge refresh`. Inspect CLI `--help` for
@@ -108,3 +110,7 @@ sources on read. Knowledge files do not become part of the reviewed product snap
 This first implementation uses existing lifecycle contracts for all providers and
 adds explicit native evidence mapping/dispatch for BMAD. It does not infer arbitrary
 new provider contracts or promote candidate summaries automatically.
+
+Running and classified tickets survive preparation. Classified layers proceed to patches and route-specific finalization; never classify twice. Changed inputs/model/evidence require explicit `--restart`; replaced tickets remain in `sdd.native_review_history`. A recorded intent conflict blocks finalization until native clarification and a fresh reviewed round.
+
+The low-level `review begin` remains available for historical/manual integration and does not perform acceptance-coverage preflight. Recommended `prepare` and runtime navigation require project-bound coverage before dispatch.
