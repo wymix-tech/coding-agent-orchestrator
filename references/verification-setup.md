@@ -175,3 +175,14 @@ An undeclared changing report is still an input and can produce
 `VERIFICATION_CONFIG_CHANGED`; an unreadable input or invalid scope at commit
 produces `VERIFICATION_SNAPSHOT_FAILED`. The result retains the script outcome
 in `run_status` while the official status remains `stale`.
+
+## Review convergence
+
+When establishing the first actual Maven baseline for an accepted root Maven project,
+including an empty project before pom.xml is created,, CAO declares target/ as generated snapshot scope unless scope was
+explicitly configured. Existing baselines remain reviewable and unchanged; tracked
+inputs still override generated exclusions. Inspect configured scope before review.
+
+Configure task acceptance and source coverage before `cao sdd review prepare`.
+Use `cao sdd review check` for reviewer experiments in a disposable working copy;
+these results do not satisfy the final verification or acceptance gates.

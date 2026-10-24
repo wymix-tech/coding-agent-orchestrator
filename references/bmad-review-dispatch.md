@@ -14,20 +14,25 @@ handoff. Current native evidence is reused; CAO does not add another code review
 1. Begin EVERY active native layer for the current snapshot with
    `cao sdd review begin --layer <active-layer> --instructions <actual-step-04-review.md> --model <current-model>`.
 2. Inspect actual host tools and installed agent definitions before launching. Use an
-   available agent with shell access for `reviewer_start` and the CAO adapter loaded;
-   a read-only agent without shell cannot attach. Pi foreground children require
+   available agent with read access and the CAO adapter loaded. A shell-capable
+   reviewer runs `reviewer_start`; a read-only reviewer asks the coordinator to run
+   that attach command with `--reviewer-session <observed-child-id>` before review.
+   The coordinator binds host-observed child identity/model, never its own identity. Pi foreground children require
    explicit child extensions: run `cao host install --host pi` before restarting to
    register CAO in `subagents.defaultSubagentOnlyExtensions`. Preserve agent-specific
    extension overrides; include CAO there too or use a capable external session.
    Use the runtime model identity (`PI_MODEL`, optionally qualified by `PI_PROVIDER`);
    independent means a different session with the same model capability.
    Launch the independent same-model reviewers required by the native prompt
-    (or its external-session fallback). Pass each ticket's `reviewer_start` command to a NEW independent host session; that reviewer must execute it before reviewing. It binds the real native session and current code snapshot to the ticket. Never execute it in the primary session or reuse a pre-ticket review. Preserve the unmodified native findings under
+    (or its external-session fallback). Pass each ticket's `reviewer_start` command to a NEW independent host session; bind that child before reviewing, through self-attach or observed coordinator attach. It binds the real native session and current code snapshot to the ticket. Never self-attach the primary session or reuse a pre-ticket review. Preserve the unmodified native findings under
    `_bmad-output/`, in Markdown when the native prompt requests Markdown, or JSON
    when it requests JSON. Never rewrite native prompts to satisfy a CAO format.
    Run `cao sdd review findings --source <raw.md-or-json>` to inspect the ID mapping:
-   Markdown top-level findings get `finding-1`, `finding-2`, etc.; nested bullets
-   and fenced examples stay within their finding. JSON keeps its original IDs.
+   Markdown problem headings (or top-level list findings when no headings exist)
+   get `finding-1`, `finding-2`, etc.; explanatory bullets and fenced examples stay
+   within their finding. JSON keeps original IDs, deriving IDs only when absent.
+   Prefer `cao sdd review draft --layer <layer> --source <raw.md-or-json>` to create
+   the triage skeleton without converting or rewriting the native report.
 3. Collect all layers and classify every raw ID exactly once, before applying
    product patches: `cao sdd review classify --layer <active-layer> --report <triage-file.json>`.
 4. Apply the classified patches and native checks, then resolve every layer:
@@ -49,8 +54,8 @@ starts the new review round rather than reusing the classified loopback tickets.
 
 | Field | Value |
 | --- | --- |
-| `run_id`, `input_sha256` | Exact current begin ticket identity and input digest |
-| `reviewer` | `{mode, session_id, model}`; mode `subagent` or `external-session`, real independent session, same current model |
+| `run_id`, `input_sha256` | Generated from current ticket when omitted; explicit mismatches fail |
+| `reviewer` | Generated from actual attach when omitted; explicit conflicts fail |
 | `findings_file` | Existing Provider-owned, unmodified native Markdown list or JSON array |
 | `findings` | Array of `{id, verdict, disposition, evidence}` covering raw IDs exactly once |
 

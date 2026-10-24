@@ -41,3 +41,22 @@ def attach_reviewer(run, inputs, identity, session, model, run_id, input_sha256)
     run['execution_binding'] = {'reviewer': reviewer, 'input_sha256': input_sha256,
                                 'session_id': session['id'], 'host': identity[0]}
     return run
+
+
+def delegated_reviewer(repo, run, inputs, coordinator_identity, child_ref, model, run_id, input_sha256):
+    """A coordinator may bind an observed child; it never becomes the reviewer."""
+    from scripts.cao_sessions import load_session
+    parent = load_session(repo, coordinator_identity[1], host=coordinator_identity[0]) if coordinator_identity else None
+    if not parent or parent.get('kind') != 'primary' or parent.get('status') != 'active':
+        invalid('NATIVE_REVIEW_COORDINATOR_REQUIRED', 'session', 'active observed primary coordinator')
+    child = load_session(repo, child_ref, host=coordinator_identity[0])
+    if not child or child.get('kind') != 'subagent' or child.get('parent_session_id') not in {parent['id'], parent['host_session_id']}:
+        invalid('NATIVE_REVIEW_CHILD_REQUIRED', 'reviewer_session', 'a host-observed child of this coordinator', child_ref)
+    if 'read' not in (child.get('observed_tools') or []):
+        invalid('NATIVE_REVIEW_TOOLS_UNOBSERVED', 'reviewer.tools', 'observed read capability', child.get('observed_tools'))
+    if child.get('observed_model') != model:
+        invalid('NATIVE_REVIEW_MODEL_UNOBSERVED', 'reviewer.model', model, child.get('observed_model'))
+    identity = (child['host'], child['host_session_id'])
+    attached = attach_reviewer(run, inputs, identity, child, model, run_id, input_sha256)
+    attached['execution_binding']['delegated_by'] = parent['host_session_id']
+    return attached, child

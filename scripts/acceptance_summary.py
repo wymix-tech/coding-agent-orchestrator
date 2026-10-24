@@ -43,7 +43,7 @@ def summarize(repo, work, lifecycle=None):
             passed_ids = {item['id'] for item in task_run.get('results', []) if item.get('status') == 'passed'}
             passed = sum(bool(set(ids) & passed_ids) for ids in trace['mapping'].values())
             task['coverage'] = {**trace, 'passed': passed}
-            if trace['missing'] or not trace['required']:
+            if trace['missing'] or trace['unknown'] or not trace['required']:
                 task.update(status='blocked', fresh=False)
                 blockers.append('TASK_ACCEPTANCE_COVERAGE_INCOMPLETE')
         except (ValueError, OSError, RuntimeError) as exc:

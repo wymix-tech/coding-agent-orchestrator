@@ -813,6 +813,7 @@ def _readonly_tokens(tokens: list[str], cwd: Path | None = None) -> bool:
         if target not in launchers:
             return False
         command_tokens = tokens[index + 1:]
+    command_tokens = [token for token in command_tokens if token != "--compact-json"]
     safe_control_commands = {
         "init", "bootstrap", "sdd", "start", "path", "list", "status", "next", "resume",
         "checkpoint", "decision", "block", "unblock", "handoff", "sessions", "verify", "done",

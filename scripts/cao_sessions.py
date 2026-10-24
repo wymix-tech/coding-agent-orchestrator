@@ -362,6 +362,8 @@ def register_session(
         "ended_at": None,
         "end_reason": None,
         "last_handoff_id": (existing or {}).get("last_handoff_id"),
+        "observed_model": (existing or {}).get("observed_model"),
+        "observed_tools": (existing or {}).get("observed_tools"),
     }
     save_session(repo, session)
     if previous_internal_id and previous_internal_id != internal_id:

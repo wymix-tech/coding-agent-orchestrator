@@ -32,6 +32,13 @@ def source_items(repo, path, section=None, requirement=False):
     items = []
     for line in lines:
         value = re.sub(r'^\s*(?:[-*+]\s+|\d+[.)]\s+)(?:\[[ xX]\]\s*)?', '', line).strip()
+        # Metadata and presentation labels are not executable requirements.
+        plain = re.sub(r'[*_`]', '', value).strip()
+        if (re.match(r'^(?:需求编号|创建日期|更新日期|状态|负责人|编号|日期|requirement[ _-]?id|created(?:[ _-]at)?|updated(?:[ _-]at)?|status|owner)\s*[:：]', plain, re.I)
+                or re.fullmatch(r'<[^>]+>', plain)
+                or plain.endswith((':', '：'))
+                or re.fullmatch(r'[\s|:\-]+', plain)):
+            continue
         if not value or value.startswith('#') or not re.search(r'\w', value):
             continue
         if value.casefold() in {'todo', 'tbd', '待填写', '待补充'}:
@@ -70,6 +77,8 @@ def coverage(repo, work):
     declaration = ((work.get('sdd') or {}).get('acceptance') or {}).get('declaration') or {}
     declared = declaration.get('criteria', [])
     mapping = {item['id']: [entry['id'] for entry in declared if item['id'] in entry.get('covers', [])] for item in expected}
+    unknown = sorted({identity for entry in declared for identity in entry.get('covers', [])}
+                     - {item['id'] for item in expected})
     covered = {identity for identity, entries in mapping.items() if entries}
     # Exact source text permits existing native declarations without a duplicate mapping.
     for target in expected:
@@ -77,4 +86,4 @@ def coverage(repo, work):
             covered.add(target['id'])
             mapping[target['id']] += [item['id'] for item in declared if item['source'] == target['source'] and item['description'].strip() == target['description']]
     return {'required': len(expected), 'covered': len({item['id'] for item in expected} & covered),
-            'missing': [item for item in expected if item['id'] not in covered], 'mapping': mapping}
+            'missing': [item for item in expected if item['id'] not in covered], 'mapping': mapping, 'unknown': unknown}

@@ -20,7 +20,7 @@ function resolvePython() {
   return result.stdout.trim();
 }
 
-function fixture() {
+function fixture(extraApi = {}) {
   const python = resolvePython(); // Resolve before any test removes Python from PATH.
   const dir = mkdtempSync(path.join(os.tmpdir(), 'cao-contract-'));
   mkdirSync(path.join(dir, '.orchestrator'));
@@ -58,7 +58,7 @@ print(json.dumps(reply))
   install({on: (key, fn) => {handlers.set(key, fn); return () => handlers.delete(key);},
     registerCommand: (key, command) => commands.set(key, command),
     registerMessageRenderer: (key, render) => renderers.set(key, render),
-    sendMessage: (...args) => sent.push(args)});
+    sendMessage: (...args) => sent.push(args), ...extraApi});
   const context = (id, hasUI = false) => ({cwd: dir, hasUI, mode: hasUI ? 'tui' : 'print',
     sessionManager: {getSessionId: () => id}, ui: {notify: (...args) => notices.push(args),
       setWidget: (key, value) => {
@@ -392,6 +392,7 @@ test('host parentSession metadata keeps reviewer events separate from primary', 
     const parent = path.join(f.dir, 'parent.jsonl');
     writeFileSync(parent, JSON.stringify({type: 'session', id: 'primary-native'}) + '\n');
     const ctx = f.context('reviewer-native');
+    ctx.model = {id: 'fixture-model', provider: 'fixture'};
     ctx.sessionManager.getHeader = () => ({parentSession: parent});
     await f.handlers.get('session_start')({type: 'session_start'}, ctx);
     await f.handlers.get('before_agent_start')({prompt: 'review'}, ctx);
@@ -403,10 +404,23 @@ test('host parentSession metadata keeps reviewer events separate from primary', 
       assert.equal(row.kind, 'subagent');
       assert.equal(row.parent_session_id, 'primary-native');
       assert.equal(row.subagent_id, 'reviewer-native');
+      assert.equal(row.model, 'fixture-model');
     }
     ctx.sessionManager.getHeader = () => ({parentSession: path.join(f.dir, 'missing-parent.jsonl')});
     await f.handlers.get('session_start')({type: 'session_start'}, ctx);
     assert.equal(f.rows().at(-1).kind, 'subagent');
+  } finally { f.close(); }
+});
+
+test('reviewer observations use active tools rather than all registered tools', posix, async () => {
+  const f = fixture({getActiveTools: () => ['read', 'grep'],
+    getAllTools: () => [{name: 'read'}, {name: 'grep'}, {name: 'bash'}]});
+  try {
+    const ctx = f.context('readonly-native');
+    ctx.model = {id: 'same-model', provider: 'fixture'};
+    await f.handlers.get('session_start')({type: 'session_start'}, ctx);
+    assert.deepEqual(f.rows()[0].host_tools, ['read', 'grep']);
+    assert.equal(f.rows()[0].model, 'same-model');
   } finally { f.close(); }
 });
 

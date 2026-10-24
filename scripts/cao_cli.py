@@ -64,6 +64,7 @@ def cmd_dashboard(args: argparse.Namespace) -> int:
 
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="cao", description="Coding Agent Orchestrator")
+    p.add_argument("--compact-json", action="store_true", help="Compact JSON; preserves errors and exit status (accepted anywhere)")
     sub = p.add_subparsers(dest="command", required=True)
     register_runtime_parser(sub)
     from scripts.conformance import register_parser as register_conformance_parser
@@ -132,10 +133,10 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--repo", default="."); sp.add_argument("--work"); sp.set_defaults(fn=cmd_sdd_sync)
     review = sdd_sub.add_parser("review", help="Record independent native reviews and pre-patch dispatch classification")
     review_sub = review.add_subparsers(dest="review_action", required=True)
-    for name in ("begin", "attach", "submit", "classify", "resolve", "findings", "prepare", "import"):
+    for name in ("begin", "attach", "submit", "classify", "resolve", "findings", "prepare", "import", "status", "check", "draft", "classify-batch"):
         sp = review_sub.add_parser(name)
         sp.add_argument("--repo", default="."); sp.add_argument("--work")
-        if name not in {'findings', 'prepare'}:
+        if name not in {'findings', 'prepare', 'status', 'classify-batch'}:
             sp.add_argument("--layer", required=True)
         if name in {"begin", "prepare"}:
             sp.add_argument("--model", required=True); sp.add_argument("--instructions", required=True)
@@ -146,7 +147,15 @@ def build_parser() -> argparse.ArgumentParser:
                 capability.add_argument('--external-session', action='store_true', help='Prepare independent external-host handoff; adapter is verified on attach')
         elif name == 'findings':
             sp.add_argument('--source', required=True, help='Unmodified native Markdown list or JSON findings under _bmad-output')
+        elif name == 'draft':
+            sp.add_argument('--source', required=True, help='Original native Markdown/JSON findings; generates triage skeleton')
+        elif name == 'status':
+            pass
+        elif name == 'check':
+            sp.add_argument('--reviewer-session', help='Coordinator runs a check for its bound observed reviewer child')
+            sp.add_argument('--script', required=True, help='Configured verification script name; executes in a temporary copy')
         elif name == 'attach':
+            sp.add_argument('--reviewer-session', help='Coordinator binds an observed read-only child before review')
             sp.add_argument('--run', required=True); sp.add_argument('--input-sha256', required=True)
             sp.add_argument('--model', required=True)
         else:
@@ -293,7 +302,13 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     try:
-        args = build_parser().parse_args(argv)
+        import sys
+        from contextlib import redirect_stdout
+        from io import StringIO
+        arguments = list(sys.argv[1:] if argv is None else argv)
+        compact = '--compact-json' in arguments
+        arguments = [item for item in arguments if item != '--compact-json']
+        args = build_parser().parse_args(arguments)
         # Lifecycle observation and repair/inspection remain usable while the
         # installed host resources await reload. Work advancement must wait.
         # Dispatch by handler: several existing subcommands also use the
@@ -325,6 +340,13 @@ def main(argv: list[str] | None = None) -> int:
                 if prerequisite:
                     print(json.dumps({'ok': False, 'error': prerequisite['reason'], 'next': prerequisite}))
                     return 2
+        if compact:
+            from scripts.cli_output import emit_summary
+            output = StringIO()
+            with redirect_stdout(output):
+                code = int(args.fn(args))
+            emit_summary(output.getvalue())
+            return code
         return int(args.fn(args))
     except (OSError, RuntimeError, ValueError, json.JSONDecodeError) as exc:
         result = {"ok": False, "error": str(exc)}

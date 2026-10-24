@@ -48,36 +48,104 @@ def report_shape(report, *, dispatch):
         raise ReviewValidationError("NATIVE_REVIEW_REPORT_INVALID", errors)
 
 
-def failure(repo, work, args, exc):
-    """Stable repair identity, including state: stale retries do not launch new work."""
-    from scripts.runtime_store import read_record, safe_path, write_record
-    diagnostics = getattr(exc, "diagnostics", None) or [{"code": str(exc), "field": "review",
-                                                        "expected": "current native review contract and evidence"}]
-    state = {"review": (work.get("sdd") or {}).get("native_reviews"),
-             "route": (work.get("sdd") or {}).get("route_decision"),
-             "action": args.review_action, "layer": getattr(args, "layer", None),
-             "diagnostics": diagnostics}
-    from scripts.cao_providers import host_session_identity
+def request_identity(repo, work, args):
     from scripts.path_guard import repo_file
-    state['request'] = {key: value for key, value in vars(args).items() if not callable(value)}
-    state['session'] = host_session_identity(None)
-    report = getattr(args, 'report', None)
-    if report:
-        try:
-            state['report_sha256'] = hashlib.sha256(repo_file(repo, report).read_bytes()).hexdigest()
-        except (ValueError, OSError, RuntimeError):
-            state['report_sha256'] = None
-    repair_id = hashlib.sha256(json.dumps(state, sort_keys=True, default=str).encode()).hexdigest()[:24]
-    count = 1
+    from scripts.cao_providers import host_session_identity
+    run = ((work.get('sdd') or {}).get('native_reviews') or {}).get(getattr(args, 'layer', None)) or {}
+    value = {'request': {key: val for key, val in vars(args).items() if not callable(val)},
+             'session': host_session_identity(None), 'run': run}
     try:
-        path = safe_path(repo, work["id"], "review-retry.json")
-        previous = read_record(path) or {}
-        if previous.get("repair_id") == repair_id:
-            count = previous.get("count", 0) + 1
-        write_record(path, {"schema_version": 1, "repair_id": repair_id, "count": count}, immutable=False)
+        from scripts.cao_snapshot import code_snapshot
+        from scripts.native_obligations import review_inputs
+        value['current_inputs'] = review_inputs(repo, work, code_snapshot)
+    except (ValueError, OSError, KeyError, RuntimeError) as exc:
+        value['current_inputs'] = str(exc)
+    child_ref = getattr(args, 'reviewer_session', None)
+    if child_ref:
+        from scripts.cao_sessions import load_session
+        identity = value['session']
+        child = load_session(repo, child_ref, host=identity[0]) if identity else None
+        value['child'] = {key: (child or {}).get(key) for key in
+                          ('id', 'status', 'work_item_id', 'parent_session_id', 'observed_model', 'observed_tools')}
+    paths = [getattr(args, key, None) for key in ('report', 'source')]
+    report = getattr(args, 'report', None)
+    if report and args.review_action == 'classify-batch':
+        try:
+            manifest = json.loads(repo_file(repo, report).read_text())
+            if isinstance(manifest, dict):
+                paths += [path for path in manifest.values() if isinstance(path, str)]
+        except (ValueError, OSError, RuntimeError):
+            pass
+    value['files'] = {}
+    for path in filter(None, paths):
+        try:
+            raw = repo_file(repo, path).read_bytes()
+            value['files'][path] = hashlib.sha256(raw).hexdigest()
+            try:
+                payload = json.loads(raw)
+            except ValueError:
+                payload = None
+            source = payload.get('findings_file') if isinstance(payload, dict) else None
+            if isinstance(source, str):
+                value['files'][source] = hashlib.sha256(repo_file(repo, source).read_bytes()).hexdigest()
+        except (ValueError, OSError, RuntimeError):
+            value['files'][path] = None
+    return hashlib.sha256(json.dumps(value, sort_keys=True, default=str).encode()).hexdigest()
+
+
+def paused_failure(repo, work, args):
+    from scripts.runtime_store import read_record, safe_path
+    try:
+        record = read_record(safe_path(repo, work['id'], 'review-retry.json')) or {}
+        if record.get('request_id') == request_identity(repo, work, args) and record.get('count', 0) >= 2:
+            return record.get('response')
     except (ValueError, OSError, RuntimeError):
         pass
-    return {"ok": False, "error": str(exc), "diagnostics": diagnostics, "repair_id": repair_id,
-            "retry_count": count, "pause_retry": count >= 2,
-            "retry_when": "Correct the listed fields or change the failed prerequisite; unchanged input must not be retried or delegated again.",
-            "next": "Use `cao conformance show` for current obligations. Reuse a valid native result; do not rerun code review merely to repair report metadata. For stale inputs prepare a new batch in the coordinator, then launch one NEW capable session per layer."}
+    return None
+
+
+def failure(repo, work, args, exc):
+    """Count a logical fault across cosmetic report edits, sessions and other layers."""
+    from scripts.runtime_store import read_record, safe_path, write_record
+    diagnostics = getattr(exc, 'diagnostics', None) or [{'code': str(exc), 'field': 'review',
+                                                        'expected': 'current native review contract and evidence'}]
+    run = ((work.get('sdd') or {}).get('native_reviews') or {}).get(getattr(args, 'layer', None)) or {}
+    fault = {'work': work['id'], 'run': run.get('id'), 'input': run.get('input_sha256'),
+             'action': args.review_action, 'layer': getattr(args, 'layer', None),
+             'diagnostics': [{key: row.get(key) for key in ('code', 'field')} for row in diagnostics]}
+    repair_id = hashlib.sha256(json.dumps(fault, sort_keys=True).encode()).hexdigest()[:24]
+    count, history = 1, {}
+    path = None
+    try:
+        path = safe_path(repo, work['id'], 'review-retry.json')
+        previous = read_record(path) or {}
+        history = previous.get('faults', {})
+        count = history.get(repair_id, 0) + 1
+    except (ValueError, OSError, RuntimeError):
+        pass
+    response = {'ok': False, 'error': str(exc), 'diagnostics': diagnostics, 'repair_id': repair_id,
+                'retry_count': count, 'pause_retry': count >= 2,
+                'retry_when': 'Correct the named prerequisite or judgment with evidence. Identical failed requests are paused; report cosmetics do not reset the fault count.',
+                'next': 'Use `cao sdd review status` and fix the named field. Reuse native findings; do not repeat code review to repair metadata.'}
+    if path:
+        history[repair_id] = count
+        try:
+            write_record(path, {'schema_version': 1, 'repair_id': repair_id, 'count': count,
+                               'faults': dict(list(history.items())[-128:]),
+                               'request_id': request_identity(repo, work, args), 'response': response}, immutable=False)
+        except (ValueError, OSError, RuntimeError):
+            pass
+    return response
+
+
+def read_report(path):
+    """Describe format failures without asking the model to rewrite native findings."""
+    try:
+        report = json.loads(path.read_text(encoding='utf-8-sig'))
+    except json.JSONDecodeError as exc:
+        invalid('NATIVE_REVIEW_REPORT_JSON_REQUIRED', '$',
+                'triage JSON; preserve native findings and run review draft --source RAW',
+                {'line': exc.lineno, 'column': exc.colno})
+    if not isinstance(report, dict):
+        invalid('NATIVE_REVIEW_REPORT_INVALID', '$', 'triage object, not the native findings array', type(report).__name__)
+    return report

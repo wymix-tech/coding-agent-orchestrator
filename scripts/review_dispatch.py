@@ -4,6 +4,7 @@ import hashlib
 import json
 import re
 import shlex
+import shutil
 from pathlib import Path
 
 from scripts.cao_instructions import cao_invocation, host_adapter_status
@@ -69,13 +70,13 @@ def begin_review(repo, work, args, identity):
     output = {"ok": True, "review": run, "active_layers": layers, 'reused': reused}
     output['reviewer_start'] = (f'{cao_invocation()["command"]} sdd review attach --work {work["id"]} '
         f'--layer {args.layer} --run {run["id"]} --input-sha256 {run["input_sha256"]} --model {shlex.quote(args.model)}')
-    output['next'] = ('Begin ALL active layers before launching reviewers. Each new independent host session must first run reviewer_start '
+    output['next'] = ('Begin ALL active layers before launching reviewers. Each new independent reviewer must be bound before review, via child reviewer_start or coordinator --reviewer-session with observed child metadata. '
         'to acknowledge this ticket and frozen input, then inspect that exact code without product writes. '
         + ('Preserve unmodified native Markdown/JSON findings for each layer; classify ALL layers before patches, then resolve ALL layers. '
            'Use `cao sdd review classify --layer <layer> --report <triage.json>`, then `cao sdd review resolve --layer <layer> --report <resolved.json>`.'
            if dispatch_review(work) else
            'Preserve raw Markdown findings and submit triage with `cao sdd review submit --layer <layer> --report <report.json>`.')
-        + ' Before launch, inspect the installed agent definitions: the reviewer needs shell access to execute reviewer_start and the CAO host adapter. '
+        + ' Before launch, inspect the installed agent definitions and effective tools/model/backend; read-only children use coordinator attachment and all children need the CAO host adapter. '
         'Use an available agent name; do not assume task/general-purpose exist. Preserve native prompts/output formats, including Markdown. '
         'If no capable subagent is available, use a new independent external host session with its CAO adapter. Never reuse results from before this ticket.')
     if reused:
@@ -96,21 +97,42 @@ def bundle_root(repo, work, layer, run):
 
 def agent_capability(repo, definition, host):
     """Inspect an actual definition, not a guessed agent name or promised tools."""
-    path = repo_file(repo, definition)
-    roots = [repo / '.pi/agents', repo / '.agents/agents']
+    requested = Path(definition).expanduser()
+    path = requested if requested.is_absolute() else repo / requested
+    roots = [repo / '.pi/agents', repo / '.agents/agents',
+             Path.home() / '.pi/agents', Path.home() / '.pi/agent/agents']
     if not any(path.is_relative_to(root) for root in roots) or not path.is_file():
-        invalid('NATIVE_REVIEW_AGENT_UNAVAILABLE', 'agent_definition', 'an installed definition under .pi/agents or .agents/agents', definition)
+        invalid('NATIVE_REVIEW_AGENT_UNAVAILABLE', 'agent_definition', 'an installed project/global agent definition', definition)
+    if path.is_symlink() or path.resolve() != path.absolute():
+        invalid('NATIVE_REVIEW_AGENT_UNAVAILABLE', 'agent_definition', 'a regular installed definition without symlink aliases', definition)
     content = path.read_text(encoding='utf-8-sig')
     header = re.match(r'\A---\s*\n(.*?)\n---(?:\n|$)', content, re.S)
+    command = re.search(r'(?m)^[ \t]*command:[ \t]*([^\n]+)', header[1]) if header else None
+    external = bool(header and re.search(r'(?m)^[ \t]*type:[ \t]*external-cli\s*$', header[1]))
+    if command:
+        argv = shlex.split(command[1])
+        if not argv or not shutil.which(argv[0]):
+            invalid('NATIVE_REVIEW_EXECUTABLE_UNAVAILABLE', 'agent.command', 'installed executable', command[1])
+    if external:
+        invalid('NATIVE_REVIEW_EXTERNAL_ADAPTER_REQUIRED', 'agent.runner',
+                'use --external-session after checking backend parameter support and independent CAO session observation; do not inject model overrides', definition)
     match = re.search(r'(?m)^tools:[ \t]*([^\n]*)(?:\n((?:[ \t]+-[^\n]*\n?)*))?', header[1]) if header else None
     tools = set(re.findall(r'[a-z][a-z_-]*', ' '.join(value or '' for value in match.groups()))) if match else set()
-    if not {'bash', 'read'} <= tools:
-        invalid('NATIVE_REVIEW_AGENT_CAPABILITY_REQUIRED', 'agent.tools', ['bash', 'read'], sorted(tools))
+    if 'read' not in tools:
+        invalid('NATIVE_REVIEW_AGENT_CAPABILITY_REQUIRED', 'agent.tools', ['read'], sorted(tools))
+    if header and re.search(r'(?m)^acceptanceRole:[ \t]*writer\s*$', header[1]):
+        invalid('NATIVE_REVIEW_WRITER_CONTRACT', 'agent.acceptanceRole',
+                'install templates/pi-reviewer.md as .pi/agents/cao-native-reviewer.md, then prepare with that reviewer definition', 'writer')
     status = host_adapter_status(repo, host)
     if not status.get('installed') or host == 'pi' and not status.get('child_hooks_installed'):
         invalid('NATIVE_REVIEW_ADAPTER_REQUIRED', 'host.adapter', 'install the CAO adapter before launching reviewers', host)
-    return {'definition': path.relative_to(repo).as_posix(), 'tools': sorted(tools), 'host': host,
-            'definition_sha256': hashlib.sha256(path.read_bytes()).hexdigest()}
+    return {'definition': path.relative_to(repo).as_posix() if path.is_relative_to(repo) else str(path), 'tools': sorted(tools), 'host': host,
+            'definition_sha256': hashlib.sha256(path.read_bytes()).hexdigest(),
+            'attach_mode': 'self' if 'bash' in tools else 'coordinator',
+            'task_contract': {'role': 'reviewer', 'product_writes': False,
+                              'evidence': ['original-findings', 'review-input', 'reviewer-identity']},
+            'launch_preflight': ['verify effective runtime tools/extensions', 'verify backend executable and model-override support'],
+            'model_override': 'only when supported by the selected host backend'}
 
 
 def prepare_batch(repo, work, args, identity):
@@ -120,6 +142,9 @@ def prepare_batch(repo, work, args, identity):
     if existing.get('ready') and existing.get('state') == 'recorded' and not args.restart:
         return {'ok': True, 'reviews': [], 'status': 'already_satisfied', 'evidence': existing,
                 'next': 'Native review evidence is current. Continue remaining conformance/acceptance obligations; do not rerun code review.'}
+    preflight = acceptance_preflight(repo, work)
+    if not preflight['ready']:
+        invalid('TASK_ACCEPTANCE_COVERAGE_INCOMPLETE', 'acceptance.coverage', preflight['next'], preflight['coverage'])
     host = identity[0] if identity else detect_current_host()
     if getattr(args, 'external_session', False):
         capability = {'mode': 'external-session', 'requires': ['new session per layer', 'shell', 'CAO host adapter'],
@@ -153,7 +178,8 @@ def prepare_batch(repo, work, args, identity):
         package = {'layer': layer, 'run_id': run['id'], 'input_sha256': run['input_sha256'],
                    'inputs': run['inputs'], 'reviewer_start': output['reviewer_start'],
                    'report': report.relative_to(repo).as_posix(), 'capability': capability,
-                   'next': 'Launch one NEW capable session for this layer after ALL tickets exist. Run reviewer_start first. Read native instructions and unchanged inputs; preserve original findings. Attach stamps actual identity into the report. Classify all layers before patches; resolve all after fixes. Never restart tickets in a reviewer.'}
+                   'task_contract': {'role': 'reviewer', 'product_writes': False, 'evidence': ['original-findings', 'review-input', 'reviewer-identity']},
+                   'next': 'Launch one NEW capable session for this layer after ALL tickets exist. Bind the observed child with coordinator attach --reviewer-session (read-only), or run reviewer_start in the child (shell), before review. Read native instructions and unchanged inputs; preserve original findings. Attach stamps actual identity into the report. Classify all layers before patches; resolve all after fixes. Never restart tickets in a reviewer.'}
         atomic_json(root / 'dispatch.json', package)
         outputs.append(package)
     return {'ok': True, 'reviews': outputs, 'owner': 'sdd_provider',
@@ -189,3 +215,67 @@ def import_review(repo, work, layer, report):
     if dispatch_review(work):
         return classify_review(repo, work, layer, report, code_snapshot)
     return submit_review(repo, work, layer, report, code_snapshot)
+
+
+def draft_report(repo, work, layer, source):
+    """Mechanical conversion only: never infer verdicts or disposition."""
+    from scripts.native_obligations import load_findings, validate_reviewer
+    run = ((work.get('sdd') or {}).get('native_reviews') or {}).get(layer) or {}
+    binding = run.get('execution_binding') or {}
+    validate_reviewer(run, {'reviewer': binding.get('reviewer')})
+    if run.get('status') != 'running' or run.get('inputs') != review_inputs(repo, work, code_snapshot):
+        raise ValueError('NATIVE_REVIEW_RUN_STALE_OR_MISMATCH')
+    raw = provider_artifact(repo, source, ['_bmad-output'])
+    findings = load_findings(raw)
+    ids = [item.get('id') for item in findings]
+    if any(not isinstance(item, str) or not item for item in ids) or len(set(ids)) != len(ids):
+        invalid('NATIVE_REVIEW_FINDING_MAPPING_INVALID', 'source.ids', 'unique nonempty IDs', ids)
+    root = bundle_root(repo, work, layer, run)
+    root.mkdir(parents=True, exist_ok=True)
+    path = root / 'report.json'
+    if path.exists() and json.loads(path.read_text()).get('findings'):
+        invalid('NATIVE_REVIEW_DRAFT_EXISTS', 'report', 'reuse the existing triage; never overwrite judgments', str(path.relative_to(repo)))
+    report = {'run_id': run['id'], 'input_sha256': run['input_sha256'], 'reviewer': binding['reviewer'],
+              'findings_file': raw.relative_to(repo).as_posix(), 'intent_conflicts': [],
+              'findings': [{'id': item, 'verdict': None, 'disposition': None, 'evidence': ''} for item in ids]}
+    atomic_json(path, report)
+    return {'ok': True, 'report': path.relative_to(repo).as_posix(), 'findings': findings,
+            'source_sha256': hashlib.sha256(raw.read_bytes()).hexdigest(),
+            'next': 'Judge each complete native finding and fill verdict, disposition and evidence; then classify this report. Original findings remain unchanged.'}
+
+
+def acceptance_preflight(repo, work):
+    """Check coverage before spending reviewer sessions; legacy unbound work is unchanged."""
+    if not work.get('project_binding'):
+        return {'ready': True, 'state': 'legacy_unbound'}
+    from scripts.acceptance_trace import coverage
+    trace = coverage(repo, work)
+    declaration = ((work.get('sdd') or {}).get('acceptance') or {}).get('declaration')
+    return {'ready': bool(declaration and trace['required'] and not trace['missing'] and not trace['unknown']),
+            'coverage': trace,
+            'next': 'Configure task acceptance and map substantive source items before preparing native reviewers. Do not map document metadata to functional criteria.'}
+
+
+def classify_batch(repo, work, report_path):
+    """All active layers are classified atomically; shell loops are unnecessary."""
+    from copy import deepcopy
+    from scripts.native_obligations import classify_review
+    from scripts.review_diagnostics import read_report
+    mapping = read_report(provider_artifact(repo, report_path, ['_bmad-output']))
+    layers = active_layers(repo, work)
+    if set(mapping) != set(layers) or any(not isinstance(path, str) or not path for path in mapping.values()):
+        invalid('NATIVE_REVIEW_BATCH_LAYERS_REQUIRED', '$', layers, mapping)
+    candidate = deepcopy(work)
+    results = []
+    for layer in layers:
+        try:
+            run = classify_review(repo, candidate, layer, mapping[layer], code_snapshot)
+        except ValueError as exc:
+            from scripts.review_diagnostics import ReviewValidationError
+            diagnostics = getattr(exc, 'diagnostics', [{'code': str(exc), 'field': 'review'}])
+            raise ReviewValidationError(str(exc), [{**item, 'layer': layer} for item in diagnostics]) from exc
+        results.append({'layer': layer, 'run_id': run['id'], 'status': run['status'],
+                        'classified_count': run['classified_count']})
+    work['sdd']['native_reviews'] = candidate['sdd']['native_reviews']
+    return {'ok': True, 'reviews': results,
+            'next': dispatch_review_next(work['sdd']['native_reviews'], layers, review_inputs(repo, work, code_snapshot))}

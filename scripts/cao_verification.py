@@ -141,6 +141,18 @@ def cmd_verification_configure(args: argparse.Namespace) -> int:
                 candidate = json.loads(json.dumps(candidate))
             changed = changed or (raw.get("verification") or {}).get("context_binding") != binding
             candidate.setdefault("verification", {})["context_binding"] = binding
+        # Establish known Maven outputs with the first actual baseline, not after
+        # test execution has already invalidated review evidence. Explicit scope wins.
+        if (not (raw.get('verification') or {}).get('scripts') and has_scripts
+                and outputs is None and excludes is None and not clear_outputs and not clear_excludes):
+            from scripts.project_context import load_context
+            context = load_context(repo) or {}
+            build = ((context.get('scopes', {}).get('root') or {}).get('technology') or {}).get('build_tool') or {}
+            maven = build.get('status') == 'accepted' and str(build.get('value', '')).casefold() == 'maven'
+            if maven:
+                candidate.setdefault('snapshot', {})['exclude_paths'] = sorted(set(
+                    candidate.get('snapshot', {}).get('exclude_paths', []) + ['target/']))
+                changed = True
         effective = json.loads(json.dumps(DEFAULT_CONFIG))
         deep_merge(effective, candidate)
         wid = getattr(args, "work", None) or load_index(repo).get("active_work")

@@ -21,6 +21,9 @@ def technical_inputs(repo, work, cfg):
             excluded.add(binding[key]['path'])
     excluded |= {path for path in ((work.get('sdd') or {}).get('workflow') or {}).get('artifacts', []) if path.endswith(('.md', '.yaml', '.yml'))}
     excluded |= sdd_acceptance_outputs(repo, work)
+    from scripts.review_scope import acceptance_review_scope
+    declaration_files, _ = acceptance_review_scope(repo, work)
+    excluded |= declaration_files
     # Only exact declarative native sources are excluded; executable directories remain inputs.
     excluded = {path for path in excluded if not path.endswith(('.py', '.java', '.js', '.ts', '.sh', '.go', '.rs'))}
     gates = set((work.get('path_assessment') or {}).get('required_gates', []))

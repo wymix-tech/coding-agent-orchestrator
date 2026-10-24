@@ -149,8 +149,10 @@ export default function (pi: ExtensionAPI) {
     }
     const lineage = sessionLineage(ctx);
     const mapped = lineage.kind === "subagent" ? ({ session_start: "subagent_start", session_end: "subagent_stop" } as Record<string, string>)[event] || event : event;
-    const hostTools = typeof pi.getAllTools === "function" ? pi.getAllTools().map(tool => tool.name) : undefined;
-    const result = await callCao(mapped, { ...payload, ...lineage, session_id: id, host_tools: hostTools }, ctx.cwd);
+    const hostTools = typeof pi.getActiveTools === "function" ? pi.getActiveTools()
+      : typeof pi.getAllTools === "function" ? pi.getAllTools().map(tool => tool.name) : undefined;
+    const result = await callCao(mapped, { ...payload, ...lineage, session_id: id,
+      host_tools: hostTools, model: ctx.model?.id }, ctx.cwd);
     presentation.show(result, ctx);
     if (result.diagnostic) {
       const key = JSON.stringify([id, result.diagnostic]);

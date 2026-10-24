@@ -153,6 +153,20 @@ def host_event(args: argparse.Namespace) -> int:
         else:
             session = update_session_event(repo, host_session_id, args.host, event, work, kind=kind, parent_session_id=parent_id)
 
+    if session:
+        observed_model = raw.get('model')
+        if not isinstance(observed_model, str):
+            observed_model = os.environ.get('PI_MODEL') if os.environ.get('PI_SESSION_ID') == host_session_id else None
+        if observed_model:
+            from scripts.review_binding import runtime_model_name
+            from scripts.cao_sessions import save_session
+            session['observed_model'] = runtime_model_name(observed_model, os.environ.get('PI_MODEL'), os.environ.get('PI_PROVIDER'))
+            save_session(repo, session)
+        if isinstance(raw.get('host_tools'), list) and all(isinstance(tool, str) for tool in raw['host_tools']):
+            from scripts.cao_sessions import save_session
+            session['observed_tools'] = raw['host_tools']
+            save_session(repo, session)
+
     if event == 'prompt_submit' and kind == 'primary' and (repo / CONFIG_REL).exists():
         from scripts.project_sources import observe_prompt
         observe_prompt(repo, raw.get('prompt'), args.host, host_session_id)
