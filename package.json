@@ -2,7 +2,7 @@
   "name": "coding-agent-orchestrator",
   "version": "0.1.0",
   "type": "module",
-  "files": ["SKILL.md", "references", "scripts/*.py", "scripts/dashboard.html", "cao", "templates", "hosts", "hooks", "protocol", "plugin.json", "pyproject.toml"],
+  "files": ["SKILL.md", "references/", "scripts/*.py", "scripts/dashboard.html", "cao", "templates/", "hosts/", "hooks/", "protocol/", "plugin.json", "pyproject.toml", "LICENSE"],
   "engines": {"node": ">=22.18.0"},
   "scripts": {
     "test:pi": "node --test tests/test_pi_adapter.mjs",
