@@ -10,6 +10,15 @@ CAO records project technology choices, manages each requirement as a **Work Ite
 
 The repository provides adapters for **Claude Code, Codex, and Pi**, a Python CLI, and a local dashboard. It supports existing repositories, new projects, interrupted tasks, and transfers between agents. CAO does not provide a model or call an LLM itself.
 
+### Runtime Release Packages
+
+GitHub Releases automatically publish runtime-only `tar.gz` and `zip` archives. They are built from `release-manifest.txt` and contain the skill entrypoint, references, CLI scripts, host adapters, hooks, protocol schemas, templates, and package metadata. Development tests, historical design documents, examples, CI files, and `node_modules` are excluded. To validate or build the same package locally:
+
+```bash
+python scripts/build_release.py --check
+python scripts/build_release.py --version v0.1.0 --output dist
+```
+
 ## Quick start
 
 ### 1. Install CAO

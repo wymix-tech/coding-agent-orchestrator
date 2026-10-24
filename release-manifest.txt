@@ -1,0 +1,15 @@
+# Runtime files included in a skill/Release package.
+SKILL.md
+README.md
+LICENSE
+package.json
+plugin.json
+pyproject.toml
+cao
+references/
+scripts/*.py
+scripts/dashboard.html
+templates/
+hosts/
+hooks/
+protocol/

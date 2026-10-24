@@ -7,3 +7,20 @@
 *.pdf binary
 *.zip binary
 *.gz binary
+
+# Keep GitHub's tag/source archives focused on distributable source metadata.
+# Runtime Release archives use release-manifest.txt and are built separately.
+/.gitignore export-ignore
+/.gitattributes export-ignore
+/.github/ export-ignore
+/.cnb.yml export-ignore
+/tests/ export-ignore
+/docs/ export-ignore
+/examples/ export-ignore
+/node_modules/ export-ignore
+/Makefile export-ignore
+/CONTRIBUTING.md export-ignore
+/DESIGN.md export-ignore
+/ROADMAP.md export-ignore
+/SDD_LIFECYCLE_REPAIR.md export-ignore
+/README.zh-CN.md export-ignore
