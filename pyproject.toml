@@ -30,7 +30,7 @@ packages = ["scripts"]
 
 [tool.setuptools.data-files]
 "share/coding-agent-orchestrator" = ["package.json", "SKILL.md", "cao"]
-"share/coding-agent-orchestrator/templates" = ["templates/AGENTS.md", "templates/CLAUDE.md"]
+"share/coding-agent-orchestrator/templates" = ["templates/AGENTS.md", "templates/CLAUDE.md", "templates/pi-reviewer.md"]
 "share/coding-agent-orchestrator/references" = ["references/*.md"]
 "share/coding-agent-orchestrator/protocol" = ["protocol/*.json"]
 # Host adapters and the shared hook bridge must ship with the package: without
