@@ -306,12 +306,39 @@ def cmd_sdd_spec(args: argparse.Namespace) -> int:
                       "next": "Follow the native implementation/review workflow. After reviewing any SPEC changes, rebind if needed, run configured `cao verify`, then `cao done`."}, ensure_ascii=False)); return 0
 
 
-@locked_command
 def cmd_sdd_review(args: argparse.Namespace) -> int:
+    # A review experiment must not hold the repository state lock while tests run.
+    if args.review_action == 'check':
+        from scripts.state_store import repo_transaction
+        from scripts.review_checks import run_check
+        repo = repo_root(args.repo)
+        with repo_transaction(repo):
+            ensure_initialized(repo)
+            work = resolve_work(repo, args.work)
+        if not work or work.get('status') != 'active':
+            print(json.dumps({'ok': False, 'error': 'NO_ACTIVE_WORK_ITEM'})); return 2
+        try:
+            output = run_check(repo, work, args.layer, args.script, host_session_identity(None),
+                               getattr(args, 'reviewer_session', None))
+        except (ValueError, OSError, KeyError, TypeError, RuntimeError) as exc:
+            from scripts.review_diagnostics import failure
+            with repo_transaction(repo):
+                output = failure(repo, work, args, exc)
+        print(json.dumps(output, ensure_ascii=False))
+        return 0 if output['ok'] else 2
+    return _cmd_sdd_review_locked(args)
+
+
+@locked_command
+def _cmd_sdd_review_locked(args: argparse.Namespace) -> int:
     repo = repo_root(args.repo); ensure_initialized(repo)
     work = resolve_work(repo, args.work)
     if not work or work.get("status") != "active":
         print(json.dumps({"ok": False, "error": "NO_ACTIVE_WORK_ITEM"})); return 2
+    from scripts.review_diagnostics import paused_failure
+    paused = paused_failure(repo, work, args)
+    if paused:
+        print(json.dumps(paused, ensure_ascii=False)); return 2
     try:
         records = work.setdefault("sdd", {}).setdefault("native_reviews", {})
         identity = host_session_identity(None)
@@ -333,15 +360,39 @@ def cmd_sdd_review(args: argparse.Namespace) -> int:
             run = records.get(args.layer) or {}
             identity = host_session_identity(None)
             session = load_session(repo, identity[1], host=identity[0]) if identity else None
+            if getattr(args, 'reviewer_session', None):
+                from scripts.review_binding import delegated_reviewer
+                # Check cross-layer reuse before mutating the run.
+                child = load_session(repo, args.reviewer_session, host=identity[0]) if identity else None
+                if child and any(key != args.layer and (record.get('execution_binding') or {}).get('session_id') == child['id']
+                                 for key, record in records.items() if key != '_contract'):
+                    raise ValueError('NATIVE_REVIEW_SESSION_REUSED')
+                attached, session = delegated_reviewer(repo, run, review_inputs(repo, work, code_snapshot), identity,
+                    args.reviewer_session, args.model, args.run, args.input_sha256)
+            else:
+                attached = None
             if session and any(key != args.layer and (record.get('execution_binding') or {}).get('session_id') == session['id']
                                for key, record in records.items() if key != '_contract'):
                 raise ValueError('NATIVE_REVIEW_SESSION_REUSED')
-            attached = attach_reviewer(run, review_inputs(repo, work, code_snapshot), identity, session,
-                                       args.model, args.run, args.input_sha256)
+            if attached is None:
+                attached = attach_reviewer(run, review_inputs(repo, work, code_snapshot), identity, session,
+                                           args.model, args.run, args.input_sha256)
             output = {'ok': True, 'review': attached,
                       'next': 'Read the frozen review input and native instructions. Return actual findings; do not patch product code.'}
             from scripts.review_dispatch import stamp_report
             stamp_report(repo, work, args.layer, attached)
+        elif args.review_action == 'draft':
+            from scripts.review_dispatch import draft_report
+            output = draft_report(repo, work, args.layer, args.source)
+            print(json.dumps(output, ensure_ascii=False)); return 0
+        elif args.review_action == 'status':
+            from scripts.native_obligations import review_state
+            from scripts.review_dispatch import acceptance_preflight
+            output = {'ok': True, 'acceptance_preflight': acceptance_preflight(repo, work), 'state': review_state(repo, work, code_snapshot),
+                      'layers': {key: {field: value.get(field) for field in
+                          ('id', 'status', 'execution_binding', 'raw_count', 'classified_count')}
+                                 for key, value in records.items() if key != '_contract'}}
+            print(json.dumps(output, ensure_ascii=False)); return 0
         elif args.review_action == 'findings':
             source = provider_artifact(repo, args.source, ['_bmad-output'])
             output = {'ok': True, 'source': source.relative_to(repo).as_posix(),
@@ -353,6 +404,9 @@ def cmd_sdd_review(args: argparse.Namespace) -> int:
             from scripts.review_dispatch import import_review
             result = import_review(repo, work, args.layer, args.report)
             output = {"ok": True, "review": result, "imported": True}
+        elif args.review_action == 'classify-batch':
+            from scripts.review_dispatch import classify_batch
+            output = classify_batch(repo, work, args.report)
         elif args.review_action == "classify":
             output = {"ok": True, "review": classify_review(repo, work, args.layer, args.report, code_snapshot),
                       "next": dispatch_review_next(records, active_layers(repo, work), review_inputs(repo, work, code_snapshot))}

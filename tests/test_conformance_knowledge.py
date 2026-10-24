@@ -55,6 +55,13 @@ class SessionConformance(unittest.TestCase):
         self.instructions = '_bmad/render/bmad-build/step-04-review.md'
         t.write(self.instructions, '#### Blind (`blind-hunter`)\n#### Gap (`verification-gap`)\n')
         t.env.update(CAO_HOST='pi', PI_SESSION_ID='primary-fixture', PI_MODEL='fixture-model')
+        from scripts.acceptance_trace import criteria
+        declaration = {'spec': t.spec, 'executor': {'mode': 'command', 'entrypoint': 'python accept.py'},
+                       'criteria': [{'id': 'AC-' + str(index), 'source': t.spec, 'kind': 'requirement',
+                                     'description': item['description'], 'covers': [item['id']]}
+                                    for index, item in enumerate(criteria(t.repo, t.work()))]}
+        t.write('acceptance.json', json.dumps(declaration))
+        t.run_cli('sdd', 'acceptance', 'configure', '--declaration', 'acceptance.json')
 
     def prepare(self, *extra, expected=0):
         return self.t.run_cli('sdd', 'review', 'prepare', '--instructions', self.instructions,
@@ -83,12 +90,12 @@ class SessionConformance(unittest.TestCase):
         self.assertEqual(before, t.work()['sdd']['spec_approval'])
         self.assertEqual(inputs, review_inputs(t.repo, t.work(), cao.code_snapshot))
 
-    def test_preflight_fails_before_ticket_creation_and_no_shell_definition_fails(self):
+    def test_preflight_fails_before_ticket_creation_and_no_read_definition_fails(self):
         t = self.t
         out = self.prepare(expected=2)
         self.assertEqual('NATIVE_REVIEW_CAPABILITY_REQUIRED', out['error'])
         self.assertFalse(t.work()['sdd'].get('native_reviews'))
-        t.write('.pi/agents/reviewer.md', '---\nname: reviewer\ntools: read, grep\n---\nReview.')
+        t.write('.pi/agents/reviewer.md', '---\nname: reviewer\ntools: grep\n---\nReview.')
         out = self.prepare('--agent-definition', '.pi/agents/reviewer.md', expected=2)
         self.assertEqual('agent.tools', out['diagnostics'][0]['field'])
         self.assertFalse(t.work()['sdd'].get('native_reviews'))

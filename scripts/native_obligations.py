@@ -8,7 +8,7 @@ from pathlib import Path
 from scripts.light_spec_policy import _oneshot, _lines, _section
 from scripts.path_guard import repo_file, provider_artifact
 from scripts.spec_intent import frozen_intent
-from scripts.review_diagnostics import invalid, report_shape
+from scripts.review_diagnostics import invalid, report_shape, read_report
 
 
 def digest(value):
@@ -22,7 +22,10 @@ def load_findings(path):
         value = json.loads(content)
         if not isinstance(value, list):
             raise ValueError('NATIVE_REVIEW_FINDINGS_INVALID: expected an array')
-        return value
+        # Native JSON may omit CAO IDs; derive them without rewriting the source.
+        if any(not isinstance(item, dict) for item in value):
+            raise ValueError('NATIVE_REVIEW_FINDINGS_INVALID: expected finding objects')
+        return [{**item, 'id': item.get('id', f'finding-{index + 1}')} for index, item in enumerate(value)]
     except json.JSONDecodeError:
         if path.suffix.lower() != '.md':
             raise ValueError('NATIVE_REVIEW_FINDINGS_INVALID')
@@ -39,6 +42,17 @@ def load_findings(path):
             lines.append((line, False))
         else:
             lines.append((line, True))
+    # Heading-based native reports group all explanatory bullets into one finding.
+    wrappers = {'findings', 'review findings', 'native findings', 'review results', '审查发现', '审查结果', '问题列表'}
+    headings = [(index, len(match[1])) for index, (line, outside) in enumerate(lines)
+                if outside for match in [re.match(r'^ {0,3}(#{2,6})\s+(.+?)\s*#*$', line)]
+                if match and match[2].strip().rstrip(':：').casefold() not in wrappers]
+    if headings:
+        level = min(depth for _, depth in headings)
+        starts = [index for index, depth in headings if depth == level]
+        return [{'id': f'finding-{number + 1}',
+                 'content': '\n'.join(line for line, _ in lines[start:end]).strip()}
+                for number, (start, end) in enumerate(zip(starts, starts[1:] + [len(lines)]))]
     candidates = [len(match[1]) for line, outside in lines if outside
                   for match in [re.match(r'^( {0,3})(?:[-*+]|[0-9]+[.)])\s+\S', line)] if match]
     indent = min(candidates, default=0)
@@ -78,7 +92,7 @@ def dispatch_review_next(records, layers, inputs):
     if running:
         unbound = [layer for layer in running if not records[layer].get('execution_binding')]
         return ('Continue existing tickets for ' + ', '.join(running) + '. '
-                + ('Run each existing reviewer_start in a capable NEW independent host session for ' + ', '.join(unbound) + '. ' if unbound else '')
+                + ('Bind each NEW observed child via coordinator --reviewer-session or child reviewer_start for ' + ', '.join(unbound) + '. ' if unbound else '')
                 + 'Collect native findings and `cao sdd review classify` ALL layers before product patches, then `cao sdd review resolve`. Do not begin again; use --restart only to explicitly replace a failed ticket.')
     classified = [layer for layer in layers if records[layer].get('status') == 'classified']
     # Classified reviews deliberately retain the pre-patch code snapshot.
@@ -124,8 +138,13 @@ def review_inputs(repo, work, code_snapshot):
         raise ValueError('NATIVE_REVIEW_NOT_APPLICABLE')
     contract = ((work.get('sdd') or {}).get('native_reviews') or {}).get('_contract') or {}
     instructions = {path: hashlib.sha256(repo_file(repo, path).read_bytes()).hexdigest() for path in contract.get('sources', [])}
-    return {'instructions': instructions, 'work_id': work['id'], 'requirement_sha256': work['requirement']['sha256'],
-            'code_snapshot': code_snapshot(repo, {work['requirement']['path']}, {'_bmad-output', '_bmad', '.agents', '.pi', 'openspec', '.specify', 'specs'}), **source}
+    from scripts.review_scope import acceptance_review_scope
+    excluded, acceptance_standard = acceptance_review_scope(repo, work)
+    result = {'instructions': instructions, 'work_id': work['id'], 'requirement_sha256': work['requirement']['sha256'],
+              'code_snapshot': code_snapshot(repo, {work['requirement']['path'], *excluded}, {'_bmad-output', '_bmad', '.agents', '.pi', 'openspec', '.specify', 'specs'}), **source}
+    if acceptance_standard is not None:
+        result['acceptance_standard_sha256'] = digest(acceptance_standard)
+    return result
 
 
 def review_state(repo, work, code_snapshot):
@@ -294,9 +313,10 @@ def classify_review(repo, work, layer, report_path, code_snapshot):
         raise ValueError('NATIVE_REVIEW_ALL_LAYERS_REQUIRED')
     run = records.get(layer) or {}
     report_file = provider_artifact(repo, report_path, ['_bmad-output'])
-    report = json.loads(report_file.read_text())
+    report = read_report(report_file)
     if not isinstance(report, dict):
         raise ValueError('NATIVE_REVIEW_REPORT_INVALID')
+    report = complete_report_metadata(run, report)
     report_shape(report, dispatch=dispatch(work))
     validate_reviewer(run, report)
     if run.get('status') != 'running' or report.get('run_id') != run.get('id') or report.get('input_sha256') != digest(inputs):
@@ -311,12 +331,14 @@ def classify_review(repo, work, layer, report_path, code_snapshot):
     if (len(ids) != len(raw) or len(classified) != len(findings)
             or any(not isinstance(i, str) or not i for i in ids + classified)
             or len(set(ids)) != len(ids) or sorted(ids) != sorted(classified)):
-        raise ValueError('NATIVE_REVIEW_FINDING_MAPPING_INVALID')
+        invalid('NATIVE_REVIEW_FINDING_MAPPING_INVALID', '$.findings[*].id',
+                {'ids': ids, 'missing': sorted({i for i in ids if isinstance(i, str)} - set(classified))},
+                {'ids': classified, 'extra': sorted(set(classified) - {i for i in ids if isinstance(i, str)})})
     conflicts = report.get('intent_conflicts', [])
     if not isinstance(conflicts, list) or any(not isinstance(c, str) or not c.strip() for c in conflicts):
         raise ValueError('NATIVE_REVIEW_INTENT_CONFLICTS_INVALID')
     loopback = bool(conflicts)
-    for finding in findings:
+    for index, finding in enumerate(findings):
         route = finding.get('disposition')
         if finding.get('verdict') not in {'high', 'medium', 'low', 'false', 'maybe-false'} or not str(finding.get('evidence') or '').strip():
             raise ValueError('NATIVE_REVIEW_TRIAGE_INVALID')
@@ -334,12 +356,22 @@ def classify_review(repo, work, layer, report_path, code_snapshot):
                 raise ValueError('NATIVE_REVIEW_DEFER_REASON_INVALID')
         if route == 'reject' and finding['verdict'] in {'high', 'medium', 'low'}:
             if not (finding['verdict'] == 'low' and finding.get('reject_reason') == 'unlikely-use-nontrivial-fix'):
-                raise ValueError('NATIVE_REVIEW_VERIFIED_FINDING_REJECTED')
+                invalid('NATIVE_REVIEW_VERIFIED_FINDING_REJECTED', f'$.findings[{index}].disposition',
+                        'patch verified findings, or native intent_gap/bad_spec; low reject requires unlikely-use-nontrivial-fix',
+                        {'id': finding['id'], 'verdict': finding['verdict'], 'disposition': route,
+                         'reject_reason': finding.get('reject_reason')})
         loopback = loopback or route in {'bad_spec', 'intent_gap'}
     run.update(status='classified', reviewer=report['reviewer'], findings=findings,
                loopback_required=loopback, intent_conflicts=conflicts, raw_count=len(raw), classified_count=len(findings),
                triage_hashes={p.relative_to(repo).as_posix(): hashlib.sha256(p.read_bytes()).hexdigest() for p in (report_file, findings_file)})
     return run
+
+
+def complete_report_metadata(run, report):
+    # Omitted mechanical fields come from the ticket; explicit conflicts still fail.
+    binding = run.get('execution_binding') or {}
+    return {'run_id': run.get('id'), 'input_sha256': run.get('input_sha256'),
+            'reviewer': binding.get('reviewer'), **report}
 
 
 def validate_reviewer(run, report):
@@ -356,7 +388,8 @@ def validate_reviewer(run, report):
     binding = run.get('execution_binding') or {}
     if (binding.get('reviewer') != reviewer
             or binding.get('input_sha256') != run.get('input_sha256')):
-        raise ValueError('NATIVE_REVIEW_EXECUTION_UNBOUND')
+        invalid('NATIVE_REVIEW_EXECUTION_UNBOUND', '$.reviewer',
+                binding.get('reviewer') or 'attach an observed independent reviewer first', reviewer)
 
 
 def resolve_review(repo, work, layer, report_path, code_snapshot):
@@ -367,7 +400,8 @@ def resolve_review(repo, work, layer, report_path, code_snapshot):
     if run.get('status') != 'classified':
         raise ValueError('NATIVE_REVIEW_CLASSIFY_REQUIRED')
     path = provider_artifact(repo, report_path, ['_bmad-output'])
-    report = json.loads(path.read_text())
+    report = read_report(path)
+    report.setdefault('run_id', run.get('id'))
     resolved = report.get('resolved_ids')
     expected = [f['id'] for f in run['findings'] if f['disposition'] == 'patch']
     if report.get('run_id') != run['id'] or not isinstance(resolved, list) or sorted(resolved) != sorted(expected):
@@ -384,9 +418,10 @@ def submit_review(repo, work, layer, report_path, code_snapshot):
         raise ValueError('NATIVE_REVIEW_CLASSIFY_REQUIRED: dispatch uses classify before patches, then resolve')
     run = (work.get('sdd') or {}).get('native_reviews', {}).get(layer) or {}
     report_file = provider_artifact(repo, report_path, ['_bmad-output'])
-    report = json.loads(report_file.read_text())
+    report = read_report(report_file)
     if not isinstance(report, dict):
         raise ValueError('NATIVE_REVIEW_REPORT_INVALID')
+    report = complete_report_metadata(run, report)
     report_shape(report, dispatch=False)
     if (run.get('status') != 'running' or report.get('run_id') != run.get('id')
             or report.get('input_sha256') != digest(run.get('inputs'))
@@ -398,7 +433,7 @@ def submit_review(repo, work, layer, report_path, code_snapshot):
     if findings_file == report_file or not findings_file.read_text().strip():
         raise ValueError('NATIVE_REVIEW_FINDINGS_REQUIRED')
     findings = report.get('findings')
-    if not isinstance(findings, list) or not findings or len(findings) != len(re.findall(r'(?m)^ {0,3}(?:[-*+]|[0-9]+[.)])\s+\S', findings_file.read_text())):
+    if not isinstance(findings, list) or not findings or len(findings) != len(load_findings(findings_file)):
         raise ValueError('NATIVE_REVIEW_TRIAGE_REQUIRED')
     ids = set()
     for finding in findings:

@@ -71,7 +71,7 @@ def _start(args, mode):
         if work.get("project_binding"):
             from scripts.acceptance_trace import coverage
             trace = coverage(repo, work)
-            if trace["missing"] or not trace["required"]:
+            if trace["missing"] or trace["unknown"] or not trace["required"]:
                 raise ValueError("TASK_ACCEPTANCE_COVERAGE_INCOMPLETE: run cao acceptance criteria and map every source item using covers")
         cfg = config(repo)
         inputs = sdd_acceptance_inputs(repo, work, cfg)
@@ -186,11 +186,20 @@ def dispatch(args) -> int:
                 if previous.get("declaration") and previous["declaration"] != declaration and not args.replace:
                     raise ValueError("SDD_ACCEPTANCE_REPLACE_REQUIRED")
                 changed = configure_record(work, declaration)
+                declaration_file = getattr(args, 'declaration', None)
+                if declaration_file:
+                    declaration_file = repo_file(repo, declaration_file).relative_to(repo).as_posix()
+                    record = work['sdd']['acceptance']
+                    if record.get('declaration_file') != declaration_file:
+                        record['declaration_file'] = declaration_file
+                        changed = True
                 if changed:
                     save_work(repo, work)
                 state = sdd_acceptance_state(repo, work)
+                from scripts.acceptance_trace import coverage
                 return _emit({"ok": True, "status": "configured" if changed else "unchanged",
-                              "acceptance_review_required": not state["ready"], "next": state.get("next")})
+                              "acceptance_review_required": not state["ready"], "next": state.get("next"),
+                              "coverage": coverage(repo, work)})
         if action == "show":
             with repo_transaction(repo_root(args.repo)):
                 repo, work = _work(args)
