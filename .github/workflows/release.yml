@@ -10,6 +10,8 @@ permissions:
 jobs:
   package-runtime:
     runs-on: ubuntu-latest
+    env:
+      RELEASE_TAG: ${{ github.event.release.tag_name }}
     steps:
       - name: Check out release tag
         uses: actions/checkout@v4
@@ -20,10 +22,10 @@ jobs:
         with:
           python-version: "3.11"
       - name: Validate runtime manifest
-        run: python scripts/build_release.py --check
+        run: python tools/release/build_release.py --check
       - name: Build runtime-only archives
-        run: python scripts/build_release.py --version "${{ github.event.release.tag_name }}" --output dist
+        run: python tools/release/build_release.py --version="$RELEASE_TAG" --output dist
       - name: Upload runtime archives
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release upload "${{ github.event.release.tag_name }}" dist/* --clobber
+        run: gh release upload --clobber -- "$RELEASE_TAG" dist/*.tar.gz dist/*.zip

@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
+import re
 import shutil
 import tarfile
 import tempfile
@@ -9,7 +11,7 @@ import zipfile
 from pathlib import Path
 
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 MANIFEST = ROOT / "release-manifest.txt"
 
 
@@ -65,11 +67,21 @@ def validate(files: list[Path]) -> None:
         raise SystemExit(f"required runtime files missing: {', '.join(missing)}")
 
 
+def archive_version(version: str) -> str:
+    """Keep conventional tags readable; disambiguate normalized or long tags."""
+    if not version:
+        raise ValueError("release tag must not be empty")
+    if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,79}", version):
+        return version
+    readable = re.sub(r"[^A-Za-z0-9._-]+", "-", version).strip(".-_")[:60] or "tag"
+    return readable + "-" + hashlib.sha256(version.encode("utf-8")).hexdigest()[:16]
+
+
 def build(output: Path, version: str) -> tuple[Path, Path]:
     files = included_files()
     validate(files)
     output.mkdir(parents=True, exist_ok=True)
-    name = f"coding-agent-orchestrator-{version}-runtime"
+    name = f"coding-agent-orchestrator-{archive_version(version)}-runtime"
     with tempfile.TemporaryDirectory() as temporary:
         staging = Path(temporary) / name
         for source in files:
