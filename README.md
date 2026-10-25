@@ -1,6 +1,6 @@
 # Coding Agent Orchestrator
 
-English | [简体中文](README.zh-CN.md)
+English | [简体中文](https://github.com/wymix-tech/coding-agent-orchestrator/blob/main/README.zh-CN.md)
 
 ## Project overview
 
@@ -12,11 +12,18 @@ The repository provides adapters for **Claude Code, Codex, and Pi**, a Python CL
 
 ### Runtime Release Packages
 
+Run the build commands below from a full Git checkout. The runtime downloads do
+not include development tooling or the release manifest. Extract a runtime archive
+and run `python -m pip install .` inside its root to install CAO. GitHub's automatic
+source archives are separate from these runtime assets. Tags containing slashes or
+other filename-unsafe characters receive a normalized archive name plus a stable
+hash suffix; assets are still uploaded to the original, unchanged Release tag.
+
 GitHub Releases automatically publish runtime-only `tar.gz` and `zip` archives. They are built from `release-manifest.txt` and contain the skill entrypoint, references, CLI scripts, host adapters, hooks, protocol schemas, templates, and package metadata. Development tests, historical design documents, examples, CI files, and `node_modules` are excluded. To validate or build the same package locally:
 
 ```bash
-python scripts/build_release.py --check
-python scripts/build_release.py --version v0.1.0 --output dist
+python tools/release/build_release.py --check
+python tools/release/build_release.py --version v0.1.0 --output dist
 ```
 
 ## Quick start
@@ -233,7 +240,7 @@ All required scripts must pass. The runner supports finite `timeout_seconds` (de
 
 Snapshots include untracked product inputs and bind content, file types, and relevant link/permission semantics. `build/`, `dist/`, and `target/` are not automatically excluded. Declare reports with `verification configure --output` and appropriate generated build paths with `--exclude-path`; Git-indexed inputs remain inputs. See [verification setup and snapshot scope](references/verification-setup.md).
 
-For development, see [CONTRIBUTING.md](CONTRIBUTING.md) and [module boundaries](docs/cao-module-structure.md). Checks include Python unittest suites, installed-wheel smoke scenarios, Pi TypeScript checks, and Pi adapter tests. In a development checkout:
+For development, see [CONTRIBUTING.md](https://github.com/wymix-tech/coding-agent-orchestrator/blob/main/CONTRIBUTING.md) and [module boundaries](https://github.com/wymix-tech/coding-agent-orchestrator/blob/main/docs/cao-module-structure.md). Checks include Python unittest suites, installed-wheel smoke scenarios, Pi TypeScript checks, and Pi adapter tests. In a development checkout:
 
 ```bash
 python -m pip install -e .

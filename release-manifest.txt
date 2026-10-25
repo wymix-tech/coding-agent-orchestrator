@@ -14,5 +14,3 @@ templates/
 hosts/
 hooks/
 protocol/
-# Build-time only: the release builder is never imported or run by `cao`.
-!scripts/build_release.py
