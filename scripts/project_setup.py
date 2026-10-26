@@ -50,6 +50,10 @@ def safe_product(repo, name, bases):
                                    for child in parent.iterdir()):
             raise ValueError('PROJECT_SETUP_CASE_COLLISION: ' + name)
         parent = parent / component
+    managed = name.startswith('.orchestrator/scripts/verification/')
+    if managed:
+        from scripts.managed_verification import safe_script
+        return safe_script(repo, name)
     if any(part in {'.orchestrator', '.git', '.agents', '.pi', '_bmad', '_bmad-output', 'openspec', '.specify', 'specs'} for part in Path(name).parts):
         raise ValueError('PROJECT_SETUP_PROTECTED_PATH: ' + name)
     if not any(path.is_relative_to(repo / base) for base in bases):
@@ -123,6 +127,13 @@ def normalize_plan(repo, scope, raw):
             raise ValueError('PROJECT_SETUP_FILE_INVALID')
         path = safe_product(repo, entry.get('path'), bases)
         name = path.relative_to(repo).as_posix()
+        if name.startswith('.orchestrator/'):
+            from scripts.managed_verification import owned_files
+            owner = owned_files(repo, include_planned=True).get(name)
+            if owner and owner['scope'] != scope:
+                raise ValueError('VERIFICATION_SCRIPT_SCOPE_CONFLICT: ' + name)
+        if name.startswith('.orchestrator/') and entry['purpose'] != 'verification':
+            raise ValueError('PROJECT_SETUP_PROTECTED_PATH: ' + name)
         key = name.casefold()
         for parent in [*Path(name).parents, Path(name)]:
             spelling = parent.as_posix()
@@ -196,14 +207,14 @@ def baseline_snapshot(repo, plan):
     cfg = deepcopy(config(repo))
     verification = cfg.get('verification', {})
     prefix = 'setup-' + plan['scope'] + '-'
-    verification['scripts'] = [c for c in verification.get('scripts', []) if c['name'].startswith(prefix) or not c['name'].startswith('setup-')]
+    verification['scripts'] = [c for c in verification.get('scripts', []) if c['name'].startswith(prefix) or c['name'].startswith('setup-root-') or not c['name'].startswith('setup-')]
     def selected(path):
         return any(base == '.' or path.rstrip('/') == base or path.startswith(base + '/') for base in plan['bases'])
     verification['outputs'] = [p for p in verification.get('outputs', []) if selected(p)]
     if 'generated_output_suffixes' in verification:
         verification['generated_output_suffixes'] = {p: s for p, s in verification['generated_output_suffixes'].items() if selected(p)}
     cfg.setdefault('snapshot', {})['exclude_paths'] = [p for p in cfg.get('snapshot', {}).get('exclude_paths', []) if selected(p)]
-    return verification_snapshot(cfg, repo)
+    return verification_snapshot(cfg, repo, managed_scopes=[plan['scope']])
 
 
 def current_inputs(repo, plan):
@@ -300,6 +311,9 @@ def apply(repo, scope):
             except FileExistsError:
                 if file_hash(target) != f['sha256']:
                     raise ValueError('PROJECT_SETUP_FILE_CONFLICT: ' + f['path'])
+        if any(f['path'].startswith('.orchestrator/scripts/verification/') for f in plan['files']):
+            from scripts.managed_verification import ensure_trackable
+            ensure_trackable(repo)
         cfg = config(repo)
         from scripts.project_verification import verification_binding
         from scripts.completion_policy import normalize_scripts

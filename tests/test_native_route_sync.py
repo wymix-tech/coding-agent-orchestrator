@@ -37,9 +37,11 @@ class RouteSync(unittest.TestCase):
                    "## Acceptance\n有效密码返回令牌；错误密码被拒绝。\n</frozen-after-approval>\n"
                    "## Tasks & Acceptance\n- [ ] Implement login\n")
         self.write(".orchestrator/requirements/001-登录系统.md", "# 登录系统\n用户配置在配置文件中。\n")
+        self.run_cli("verification", "configure", "--replace", "--test-script", f"{sys.executable} -m unittest discover -s tests")
+        from tests.helpers import seed_project_preparation
+        seed_project_preparation(self.repo)
         self.run_cli("start", "--requirement", ".orchestrator/requirements/001-登录系统.md")
         self.wid = json.loads((self.repo / ".orchestrator/index.json").read_text())["active_work"]
-        self.run_cli("verification", "configure", "--test-script", f"{sys.executable} -m unittest discover -s tests")
         self.run_cli("path", "assess", "--profile", "standard", "--reason", "安全敏感认证")
         self.run_cli("sdd", "workflow", "select", "--name", "bmad-build", "--entrypoint", "bmad-build")
         self.hook("session_start")
@@ -90,7 +92,7 @@ class RouteSync(unittest.TestCase):
         work = self.work()
         self.assertNotEqual("reopened", work["execution"]["step"])
         self.assertTrue(cao.verification_baseline_state(self.repo, work)["ready"])
-        self.assertTrue(any(e["event"] == "verification.baseline.established" for e in cao.list_lifecycle_events(self.repo)))
+        self.assertEqual(cao.verification_snapshot(cao.config(self.repo), self.repo), work["acceptance"]["config_sha256"])
         out = self.run_cli("verification", "configure", "--test-script", "different-tests", "--replace")
         self.assertTrue(out["acceptance_review_required"])
         self.assertFalse(out["initial_baseline_established"])

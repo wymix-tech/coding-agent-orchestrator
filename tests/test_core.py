@@ -387,6 +387,8 @@ class CoreTests(unittest.TestCase):
                 {"name": "lint", "command": "python3 -c \"print('lint')\"", "required": True},
             ]
             cfg_path.write_text(json.dumps(cfg, ensure_ascii=False, indent=2), encoding="utf-8")
+            from tests.helpers import seed_project_preparation
+            seed_project_preparation(repo)
             run(repo, "start", "--requirement", "requirements/a.md")
             rc, out, _ = run(repo, "verify")
             self.assertEqual(rc, 0)
@@ -411,14 +413,14 @@ class CoreTests(unittest.TestCase):
     def test_default_verification_scripts_are_empty(self):
         td, repo = self.init_repo()
         with td:
-            run(repo, "init")
+            subprocess.run([sys.executable, str(CAO), 'init'], cwd=repo, check=True, capture_output=True)
             cfg = json.loads((repo / ".orchestrator/config.json").read_text(encoding="utf-8"))
             self.assertEqual(cfg["verification"]["scripts"], [])
             (repo / "requirements").mkdir(); (repo / "requirements/a.md").write_text("A", encoding="utf-8")
             run(repo, "start", "--requirement", "requirements/a.md")
             rc, out, _ = run(repo, "verify")
             self.assertEqual(rc, 2)
-            self.assertEqual(out["error"], "VERIFICATION_SCRIPT_REQUIRED")
+            self.assertEqual(out["error"], "NO_ACTIVE_WORK_ITEM")
 
     def test_artifact_reference_has_writer_and_refreshes_hash(self):
         td, repo = self.init_repo()
@@ -452,6 +454,8 @@ class CoreTests(unittest.TestCase):
                 {"name": "optional", "command": "python3 -c \"print('informational check failed'); raise SystemExit(1)\"", "required": False},
             ]
             cfg_path.write_text(json.dumps(cfg, ensure_ascii=False, indent=2), encoding="utf-8")
+            from tests.helpers import seed_project_preparation
+            seed_project_preparation(repo)
             run(repo, "start", "--requirement", "requirements/a.md")
             rc, out, _ = run(repo, "verify")
             self.assertEqual(rc, 2)
@@ -474,6 +478,8 @@ class CoreTests(unittest.TestCase):
                 {"name": "coverage", "command": "python3 -c \"print('coverage 82% >= 80%')\"", "required": True},
             ]
             cfg_path.write_text(json.dumps(cfg, ensure_ascii=False, indent=2), encoding="utf-8")
+            from tests.helpers import seed_project_preparation
+            seed_project_preparation(repo)
             run(repo, "start", "--requirement", "requirements/a.md")
             rc, out, _ = run(repo, "verify")
             self.assertEqual(rc, 0)

@@ -1,4 +1,5 @@
-"""Work selection precedes setup; setup preserves active Work and its evidence."""
+"""Project preparation precedes new Work; legacy active Work retains evidence."""
+import shutil
 from repair_helpers import RepairCase
 from scripts import cao
 
@@ -22,11 +23,11 @@ class VerificationPreflightTests(RepairCase):
         for _ in range(2):
             rc, out = self.run_cli("bootstrap", "--host", "pi")
             self.assertEqual(rc, 0, out)
-            self.assertEqual(out["mode"], "select")
+            self.assertEqual(out["mode"], "verification_setup")
             self.assertFalse(out["verification_setup"]["ready"])
             self.assertIsNone(out["work_item"])
-            self.assertIn("requirement next-id", out["next"]["instruction"])
-            self.assertIn("start --requirement", out["next"]["instruction"])
+            self.assertIn("verification configure", out["next"]["instruction"])
+            self.assertIn("verification check", out["next"]["instruction"])
         self.assertEqual((self.repo / cao.CONFIG_REL).read_bytes(), before)
         self.assertEqual(list((self.repo / cao.WORK_DIR).glob("*.json")), [])
         self.assertEqual(cao.load_session(self.repo, "native-pi", host="pi"), None)
@@ -38,7 +39,7 @@ class VerificationPreflightTests(RepairCase):
                 self.scripts(value)
                 rc, out = self.run_cli("bootstrap")
                 self.assertEqual(rc, 0, out)
-                self.assertEqual(out["mode"], "verification_setup" if value[0].get("name") == "invalid" else "select")
+                self.assertEqual(out["mode"], "verification_setup")
                 self.assertFalse(out["verification_setup"]["ready"])
 
     def test_valid_configuration_keeps_work_selection(self):
@@ -120,14 +121,16 @@ class VerificationPreflightTests(RepairCase):
         self.assertIn("CAO-managed", out["reason"])
 
     def test_start_without_baseline_establishes_initial_anchor_on_first_configure(self):
+        # Historical Work may have an empty accepted baseline; create that
+        # state explicitly to exercise compatibility, not the new start path.
+        wid = self.start()
         self.scripts([])
+        work = self.read_work(wid)
+        cao.anchor_verification(self.repo, work, cao.config(self.repo))
+        cao.save_work(self.repo, work)
+        before = work['acceptance']
         (self.repo / ".orchestrator/requirements").mkdir(exist_ok=True)
         (self.repo / ".orchestrator/requirements/scope.md").write_text("New product scope", encoding="utf-8")
-        rc, out = self.run_cli("start", "--requirement", ".orchestrator/requirements/scope.md")
-        self.assertEqual(rc, 0, out)
-        self.assertIn("verification setup", out.get("warning", "").lower())
-        wid = out["work_item"]["id"]
-        before = self.read_work(wid)["acceptance"]
         rc, out = self.run_cli("verification", "configure", "--test-script", self.test_command)
         self.assertEqual(rc, 0, out)
         self.assertFalse(out["acceptance_review_required"])
@@ -148,7 +151,7 @@ class VerificationPreflightTests(RepairCase):
         self.scripts(["project general check"])
         rc, out = self.run_cli("bootstrap")
         self.assertEqual(rc, 0, out)
-        self.assertEqual(out["mode"], "select")
+        self.assertEqual(out["mode"], "verification_setup")
         self.assertIn("verification_setup", out)
         self.assertTrue(out["verification_setup"]["ready"])
         self.assertFalse(out["verification_setup"]["tests_bound"])

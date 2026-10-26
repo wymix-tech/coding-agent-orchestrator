@@ -15,9 +15,9 @@ SCAFFOLD_MANIFESTS = frozenset({
 
 
 def scaffold_instruction() -> str:
-    return ("Put new verification wrappers in scripts/verification/; scripts/ alone is not an allowed scaffold root. "
+    return ("Put new CAO verification wrappers in .orchestrator/scripts/verification/. Reserve exact paths with `cao verification prepare --path <path>` before writing; legacy scripts/verification/ remains compatible. "
             "Allowed setup-only roots: " + ", ".join(root + "/" for root in SCAFFOLD_ROOTS) +
-            "; supported build/test manifests also remain writable. These exceptions require an active Work. ")
+            "; supported build/test manifests also remain writable. Legacy test/manifest scaffold exceptions require an active Work; prepared verification inputs and project setup files are writable without Work. ")
 
 
 def configured_scripts(cfg: dict[str, Any]) -> list[dict[str, Any]]:
@@ -67,7 +67,7 @@ def setup_instruction(command: str) -> str:
         "CAO verification setup: establish and explicitly accept a configured baseline before feature development; product writes are blocked until then, while native artifacts, manifests, tests and verification wrappers remain writable. "
         "Run bootstrap first and honor explicit SDD selection/install authorization. "
         "Empty products first use `cao project setup rules`, `draft`, `plan`, `apply` and `check` without a business Work; resume the original request after setup is ready. "
-        "For existing products, create or resume the Work before business implementation; missing verification configuration alone does not prevent cao start. "
+        "For existing products, establish actual required checks and run `cao verification check` before creating business Work; plan-only does not establish readiness. Existing active Work repairs missing baselines in place. "
         "For an existing project, analyze product manifests, source, tests and CI; reuse meaningful verification. "
         "Do not infer the product tech stack from .orchestrator derived state, .agents, .pi, host assets, SDD tools/outputs or caches; current user requirements remain relevant. "
         + technology_instruction(command) +

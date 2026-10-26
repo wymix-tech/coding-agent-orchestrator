@@ -4,13 +4,36 @@ Contents: [Enter when](#enter-when) · [Execute](#execute) · [Script contract](
 
 ## Enter when
 
-An active Work exists and bootstrap reports `mode: verification_setup`, or accepted verification declarations/wrappers have changed.
+Bootstrap reports `mode: verification_setup` before Work creation, or existing Work needs baseline repair/review.
+
+
+## Project preparation before Work
+
+New products finish scope-owned `project setup plan/apply/check`; those checks establish initialization only. Existing products reuse their real entries. When a wrapper is needed:
+
+```bash
+cao verification prepare --scope root --path .orchestrator/scripts/verification/root/check.py
+# Write the exact prepared file with the accepted project toolchain.
+cao verification configure --test-script "python3 .orchestrator/scripts/verification/root/check.py"
+cao verification check --scope root
+cao bootstrap
+```
+
+The script directory does not determine command cwd: commands run from the repository root unless the configured command explicitly changes to its module. Use a repository-relative wrapper path after a module `cd` (for a top-level `api` module, `../.orchestrator/scripts/verification/api/check.py`). `--scope` binds standards; it does not implicitly change cwd.
+
+`verification prepare` reserves exact scope-owned paths and maintains Git ignore exceptions for the scripts subtree. It does not generate scripts or grant arbitrary state writes. Setup plans may declare these paths with purpose `verification`; this also permits repair. Keep logs/caches in declared output paths outside this input tree. Script and helper content, missing files and execution bits participate in the baseline fingerprint; symlinks are rejected.
+
+No-Work `verification check` saves project-owned preparation results. Required runtime test entries must discover actual tests. Missing tools, zero tests and failures cannot establish readiness. `--project` explicitly records project preparation when a Work is already active; it cannot populate Work gates. Default active-Work checks remain diagnostic probes.
+
+`verification migrate` migrates only proven setup-owned legacy `scripts/verification/` wrappers. Unknown/user-owned scripts stay in place and remain usable. It checks target conflicts, journals mappings for retries and retains original files for rollback. Review changed baselines/reanchor applicable active Work, then rerun checks. Migration does not certify success or move business tests.
+
+Project readiness inherits standards, never Work verification results. Ordinary business edits do not restart initialization. Work changes must still pass formal project verification plus SDD-owned requirement acceptance.
 
 ## Execute
 
 Empty products complete [project initialization](project-initialization.md) without a business Work. Existing active Work keeps its stage and can trial configured entries with `cao verification check --work <id>` before acceptance/review. Trial results never satisfy formal verification gates. A plan-only declaration is not executable evidence. See [Project context](project-context.md).
 
-After honoring SDD selection/install authorization and creating or resuming an active Work, `mode: verification_setup` means the verification
+After honoring SDD selection/install authorization and preparing the project scaffold, `mode: verification_setup` means the verification
 configuration is empty, invalid or optional-only. Before feature development:
 
 1. Existing project: analyze product manifests, source, tests and CI; reuse meaningful checks. Host assets,
@@ -29,16 +52,16 @@ configuration is empty, invalid or optional-only. Before feature development:
    Different nonempty/invalid declarations need explicit `--replace`. Identical declarations are unchanged.
    Never hand-edit derived config or use `init --force` to configure verification.
 5. Rerun bootstrap before business implementation. Configuration readiness is not verification success:
-   within an active Work, initial scaffolding and tests may be written before tests pass. Keep setup limited
+   existing active Work may repair initial scaffolding/tests before formal verification; newly created Work already inherits prepared project checks. Keep setup limited
    to build/test scaffolding and verification wrappers; follow path assessment and native SDD instructions
    before business implementation.
-   The first valid baseline on a Work started with empty verification is established without reopening. Existing accepted baselines keep their anchor; review any changed standard and explicitly reanchor with
+   For legacy Work only, the first valid baseline started from empty verification can be established without reopening. Existing accepted baselines keep their anchor; review any changed standard and explicitly reanchor with
    `cao reopen --work <id> --reanchor --reason "Reviewed acceptance changes"`. Do not replace the Work or its decisions.
 
 CAO does not call an LLM, generate stack-specific templates, parse test reports or detect zero tests;
 those checks belong to the project's wrappers. `--verify-script` does not automatically declare tests.
 
-Put new verification wrappers in `scripts/verification/`; `scripts/` alone is not an allowed setup root. Setup-only roots are `tests/`, `test/`, `acceptance-tests/`, `src/test/`, `scripts/verification/`, `.venv/` and `venv/`; supported build/test manifests remain writable with an active Work. Preserve the user's selected language, framework, runner and delivery shape. Do not substitute main programs for JUnit 5 when dependencies are missing.
+Reserve exact new wrapper paths with `cao verification prepare --path .orchestrator/scripts/verification/root/check.py`, then write those files; no directory-wide write grant is created. Legacy active-Work setup-only roots are `tests/`, `test/`, `acceptance-tests/`, `src/test/`, `scripts/verification/`, `.venv/` and `venv/`; supported build/test manifests remain writable with an active Work. Preserve the user's selected language, framework, runner and delivery shape. Do not substitute main programs for JUnit 5 when dependencies are missing.
 
 Before native implementation is authorized, install Python test dependencies
 in a project environment: `python -m venv .venv`, then
@@ -57,7 +80,7 @@ Use exact approval labels. A selected structured action may include a UI
 preserving the original host response as evidence. Inspect the approval status
 before asking again; an already recorded approval needs reanchor, not a second vote.
 
-For an existing verification wrapper, a literal `chmod +x scripts/verification/<wrapper>`
+For an existing verification wrapper, a literal `chmod +x .orchestrator/scripts/verification/<wrapper>`
 is allowed during active Work setup. Recursive/reference permission operations and product/state
 targets are not setup exceptions.
 

@@ -45,26 +45,24 @@ Empty runtime product: follow [project initialization](references/project-initia
 | Acceptance executor mode is `command` | [Command acceptance](references/sdd-acceptance-command.md) |
 | Acceptance executor mode is `skill` | [Skill acceptance](references/sdd-acceptance-skill.md) |
 
-Read the relevant file completely when entering its stage. Do not preload unrelated Providers,
-all references, source scripts, README or historical repair notes. Links are navigation, not automatic
-loading. If a native Skill requires a renderer, run its exact installed renderer and read the result;
+Read current stage files fully; defer unrelated providers, source scripts and historical notes. If a native Skill requires a renderer, run its exact installed renderer and read the result;
 rendering loads instructions and does not execute/complete the workflow.
 
 ## Execution flow
 
-The diagram shows dependencies. Resume at the current state; Provider-native instructions determine
-internal planning, implementation, review, Classify, Finalize and Commit order.
+Resume at the current state; native instructions determine internal workflow order.
 
 ```mermaid
 flowchart TD
     A["bootstrap"] --> B{"Authorized SDD ready?"}
     B -->|No| C["Obtain required choice or repair selected installation"]
     C --> A
-    B -->|Yes| P["Establish project background and verification intent"]
-    P --> D{"Current Work exists?"}
+    B -->|Yes| P["Confirm project background and prepare scaffold"]
+    P --> Q["Establish actual project checks and pass initialization"]
+    Q --> D{"Current Work exists?"}
     D -->|No| E["Restore Work or clarify scope/technology and register requirement"]
     E --> A
-    D -->|Yes| F{"Verification baseline accepted?"}
+    D -->|Yes| F{"Inherited baseline current and accepted?"}
     F -->|No| G["Configure or review baseline; approve and reanchor when required"]
     G --> A
     F -->|Yes| H["Confirm assessment and current next action"]
@@ -89,15 +87,15 @@ require reanchoring. Any input change can require fresh reviews/bindings/verific
   freshness. The selected SDD owns PRD/spec/design/tasks/stories and native workflow. Store native
   references; do not copy artifacts just to make their format uniform.
 - Agent-authored CAO inputs are `requirements/` and only the active Work's exact
-  `.orchestrator/inputs/WORK_ID/route.json` returned by `next`. The exact prepared `.orchestrator/inputs/project-SCOPE/setup.json` is also Agent-editable. Other `.orchestrator/` files are derived state. Never edit config,
+  `.orchestrator/inputs/WORK_ID/route.json` returned by `next`. The exact prepared `.orchestrator/inputs/project-SCOPE/setup.json` and explicitly prepared `.orchestrator/scripts/verification/` files are also Agent-editable. Other `.orchestrator/` files are derived state. Never edit config,
   index, Work, sessions, handoffs or lifecycle files by hand; use their CAO commands.
 - Respect the current user's instructions and language. Read `language.user` through `cao language
   show`; apply an ongoing changed preference with `cao language set --language <locale>`. Write
   native artifacts in that language while preserving code/API names, commands and required tokens.
 - Empty products complete exact scope-owned `project setup` without Work. After ready, create/resume Work before business code. Existing products and active Work reuse their setup; see [project initialization](references/project-initialization.md). New
   inline requirements use `cao requirement next-id`; use an existing requirement file directly.
-- Save project background with `project context set` before starting a product Work; use `verification configure --plan-only` when actual entries do not exist. Project technology is independent of Work decisions. Confirm material technology choices before stack-dependent planning/scaffolding. Preserve the existing product stack or explicit user choices/delegation; ask and wait for missing choices. Agent-written requirements/SPECs alone do not authorize choices. Restore recorded choices after restart; see the intake guide.
-- Establish an accepted required verification baseline before business implementation, then assess
+- Save project background with `project context set`, establish actual verification entries and run project preparation checks before starting a product Work; plan-only does not establish readiness. Project technology is independent of Work decisions. Confirm material technology choices before stack-dependent planning/scaffolding. Preserve the existing product stack or explicit user choices/delegation; ask and wait for missing choices. Agent-written requirements/SPECs alone do not authorize choices. Restore recorded choices after restart; see the intake guide.
+- Establish actual project verification before the first Work; preserve accepted baseline checks before business implementation, then assess
   the path and satisfy native prerequisites. Initial build/test scaffolding may fail; passing tests
   are not a prerequisite to creating Work or beginning implementation after its prerequisites.
 - Keep CAO profile (`light`, `standard`, `comprehensive`) separate from native route. Light still

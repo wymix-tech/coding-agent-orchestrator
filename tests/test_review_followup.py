@@ -23,6 +23,8 @@ class ReviewFollowup(unittest.TestCase):
     def switch_work(self):
         t = self.case
         t.write(".orchestrator/requirements/002-other.md", "# Independent work\n")
+        from tests.helpers import seed_project_preparation
+        seed_project_preparation(t.repo)
         t.run_cli("start", "--requirement", ".orchestrator/requirements/002-other.md", "--replace")
         t.wid = json.loads((t.repo / ".orchestrator/index.json").read_text())["active_work"]
         t.run_cli("path", "assess", "--profile", "standard", "--reason", "Second work")

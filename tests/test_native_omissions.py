@@ -30,8 +30,8 @@ class NativeOmissionTests(RepairCase):
         return self.run_cli('host-event','--host','pi',payload={'event':'pre_tool','session_id':'primary-demo3','tool_name':tool,'tool_input':{'path':path,'content':'fixture',**extra}})[1]
 
     def missing_baseline(self):
-        cfg=cao.config(self.repo);cfg['verification']['scripts']=[];cao.save_json(self.repo/cao.CONFIG_REL,cfg)
         self.wid=self.start()
+        cfg=cao.config(self.repo);cfg['verification']['scripts']=[];cao.save_json(self.repo/cao.CONFIG_REL,cfg)
 
     def test_business_before_baseline_denied_in_all_hosts(self):
         self.missing_baseline()
@@ -55,6 +55,10 @@ class NativeOmissionTests(RepairCase):
 
     def test_initial_baseline_needs_no_reopen_or_passing_tests(self):
         self.missing_baseline()
+        # Model the legacy accepted-empty anchor; new Work cannot start empty.
+        work = self.read_work(self.wid)
+        cao.anchor_verification(self.repo, work, cao.config(self.repo))
+        cao.save_work(self.repo, work)
         rc,out=self.run_cli('verification','configure','--work',self.wid,'--test-script',self.test_command)
         self.assertEqual(rc,0,out)
         self.assertFalse(out['acceptance_review_required'])

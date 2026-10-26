@@ -396,7 +396,7 @@ scripts. The Agent analyzes product manifests/source/tests/CI, reuses existing c
 explicit stack for new products; otherwise it asks and waits. Host/SDD assets and caches are not product
 stack evidence. CAO does not call an LLM or maintain framework templates. Project wrappers must fail/block
 on zero tests or missing tools/dependencies; core never parses test reports. Configuration readiness is
-not verification success. Scaffolding/test creation within an active Work remains allowed before tests pass; no-Work product writes are denied. Setup must not expand into business implementation. Empty verification configuration does not prevent Work creation.
+not verification success. Scaffolding/test creation within an active Work remains allowed before tests pass; no-Work product writes are denied. Setup must not expand into business implementation. New Work requires actual project checks and successful project preparation; plan-only and empty verification cannot unlock Work. Existing active Work repairs missing baselines in place. Managed scripts live under `.orchestrator/scripts/verification/`, with exact prepared write grants and independent baseline fingerprints.
 
 `cao verification configure --test-script "<tests>" --verify-script "<general check>"` performs a locked
 atomic config-only update. Required tests are explicit; general checks do not gain tests capability.

@@ -28,6 +28,7 @@ def configure_verification(repo, command=None):
     ]
     cfg["verification"]["configured_at"] = int(time.time())
     path.write_text(json.dumps(cfg, ensure_ascii=False), encoding="utf-8")
+    seed_project_preparation(repo)
 
 
 def verify_via_config(repo, run):
@@ -211,9 +212,17 @@ def provision_fixture_background(repo):
     path = repo / '.orchestrator/config.json'
     cfg = json.loads(path.read_text())
     cfg.setdefault('verification', {})['context_binding'] = verification_binding(repo)
-    cfg['verification']['plan'] = {'version': 1, 'scripts': [{'name': 'planned-fixture',
-        'command': 'python -m unittest discover -s acceptance-tests', 'required': True, 'gates': ['tests']}]}
+    if not cfg['verification'].get('scripts'):
+        baseline = repo / 'acceptance-tests/test_acceptance.py'
+        if not baseline.exists():
+            baseline.write_text('import unittest\nclass Acceptance(unittest.TestCase):\n def test_ok(self): self.assertEqual(1 + 1, 2)\n')
+        cfg['verification']['scripts'] = [{'name': 'test-1',
+            'command': shlex.join([sys.executable, '-m', 'unittest', 'discover', '-s', 'acceptance-tests', '-v']),
+            'required': True, 'gates': ['tests']}]
     path.write_text(json.dumps(cfg, ensure_ascii=False))
+    # Legacy workflow fixtures start after project preparation. Seed only the
+    # project-owned readiness record; Work verification is still unpopulated.
+    seed_project_preparation(repo)
 
 
 def publish_fixture_review(repo, reviewer, text, reviewer_cli=None):
@@ -226,3 +235,16 @@ def publish_fixture_review(repo, reviewer, text, reviewer_cli=None):
         'host-event', '--host', 'pi', '--repo', str(repo)], input=json.dumps(payload),
         text=True, capture_output=True, env=env, timeout=30)
     assert result.returncode == 0, (result.stdout, result.stderr)
+
+
+def seed_project_preparation(repo):
+    """Mock only historical project preparation for unrelated lifecycle fixtures.
+
+    Dedicated bootstrap integration tests use real commands and never this seed.
+    """
+    from scripts.project_context import load_context
+    from scripts.verification_probe import project_result_path, project_standard
+    from scripts.state_store import atomic_json
+    if load_context(repo):
+        atomic_json(project_result_path(repo, 'root'), {'status': 'passed',
+            'purpose': 'unit-test-fixture', 'standard': project_standard(repo, 'root')})

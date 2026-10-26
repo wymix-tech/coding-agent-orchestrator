@@ -274,10 +274,14 @@ def build_parser() -> argparse.ArgumentParser:
     sp = sessions_sub.add_parser("show"); sp.add_argument("--repo", default="."); sp.add_argument("--id", required=True); sp.add_argument("--host", choices=["claude-code", "codex", "pi"]); sp.add_argument("--stale-after-minutes", type=int, default=30); sp.set_defaults(fn=cmd_sessions_show)
     verification = sub.add_parser("verification", help="Configure project verification without resetting other state")
     verification_sub = verification.add_subparsers(dest="verification_command", required=True)
+    from scripts.managed_verification import register as register_verification_inputs
+    register_verification_inputs(verification_sub)
     from scripts.verification_probe import command as cmd_verification_check
     probe = verification_sub.add_parser('check', help='Run configured preparation checks without certifying final acceptance')
     probe.add_argument('--repo', default='.')
     probe.add_argument('--work')
+    probe.add_argument('--project', action='store_true', help='Record project preparation even when a Work is active')
+    probe.add_argument('--scope', action='append')
     probe.set_defaults(fn=cmd_verification_check)
     sp = verification_sub.add_parser("smoke", help="HTTP smoke with a fresh port and owned server process")
     sp.add_argument("--repo", default="."); sp.add_argument("--server-command", required=True)

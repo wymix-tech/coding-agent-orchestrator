@@ -37,7 +37,13 @@ class ProjectAcceptanceTests(unittest.TestCase):
         return run.returncode, out
 
     def check(self, *args, payload=None):
+        # These delivery fixtures explicitly accept changed technical standards;
+        # baseline-review behavior is covered by the dedicated integrity suites.
+        if args[:2] == ('verification', 'configure') and '--plan-only' not in args and '--replace' not in args:
+            args = (*args, '--replace')
         rc, out = self.cli(*args, payload=payload)
+        if rc == 0 and args[:2] == ('verification', 'configure') and out.get('acceptance_review_required'):
+            self.check('reopen', '--reanchor', '--reason', 'Review delivery fixture verification changes')
         self.assertEqual(rc, 0, out)
         return out
 
@@ -74,6 +80,21 @@ class ProjectAcceptanceTests(unittest.TestCase):
                 manifest = base / 'pyproject.toml'
                 if not manifest.exists():
                     manifest.write_text('[project]\nname = "fixture-product"\nversion = "0.1.0"\n')
+        # Establish an actual preparation suite before the first business Work.
+        # Business tests are deliberately created later by these SDD fixtures.
+        cfg = json.loads((self.repo / '.orchestrator/config.json').read_text())
+        if not cfg['verification'].get('scripts'):
+            baseline = self.repo / 'preparation_suite.py'
+            baseline.write_text('import unittest\nclass Preparation(unittest.TestCase):\n def test_load(self): self.assertEqual(2 + 2, 4)\nunittest.main(verbosity=2)\n')
+            command = f'{shlex.quote(sys.executable)} preparation_suite.py'
+            command_args = ['verification', 'configure', '--test-script', command]
+            if scope:
+                command_args += ['--scope', scope]
+            self.check(*command_args)
+        check_args = ['verification', 'check', '--project']
+        if scope:
+            check_args += ['--scope', scope]
+        self.check(*check_args)
         path = self.repo / 'openspec' / (name + '.md')
         path.write_text('# Feature\n- Correct behavior is observed.\n')
         args = ['start', '--requirement', path.relative_to(self.repo).as_posix()]
@@ -205,7 +226,11 @@ sys.exit(p.returncode)
     def test_plan_is_not_executed_by_verify(self):
         self.background()
         self.plan()
-        self.start()
+        (self.repo / 'pyproject.toml').write_text('[project]\nname="existing"\nversion="0.1"\n')
+        (self.repo / 'openspec/feature.md').write_text('# Feature\nActual requirement\n')
+        rc, out = self.cli('start', '--requirement', 'openspec/feature.md')
+        self.assertEqual(rc, 2, out)
+        self.assertEqual('VERIFICATION_BASELINE_REQUIRED', out['error'])
         rc, out = self.cli('verify')
         self.assertNotEqual(rc, 0, out)
         self.assertFalse((self.repo / 'tests').exists())
@@ -512,12 +537,12 @@ sys.exit(p.returncode)
                    '--not-applicable', 'test_framework', '--source', 'user-specified', '--evidence', ref)
         command = f'{shlex.quote(sys.executable)} scripts/verification/docs.py'
         self.check('verification', 'configure', '--plan-only', '--verify-script', command)
-        self.start('docs')
         directory = self.repo / 'scripts/verification'
         directory.mkdir(parents=True)
         (directory / 'docs.py').write_text("from pathlib import Path\nassert 'Expected usage' in Path('guide.md').read_text()\n")
         (self.repo / 'guide.md').write_text('# Guide\nExpected usage\n')
         self.check('verification', 'configure', '--verify-script', command)
+        self.start('docs')
         self.check('path', 'assess', '--profile', 'light', '--reason', 'Pure documentation scope')
         (self.repo / 'openspec/docs-spec.md').write_text('# Intent\n## Acceptance\n- Document contains Expected usage.\n')
         self.check('sdd', 'spec', 'bind', '--spec', 'openspec/docs-spec.md', '--criteria-section', 'Acceptance')

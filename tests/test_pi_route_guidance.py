@@ -29,6 +29,9 @@ class PiRouteGuidance(RepairCase):
         _, out = self.run_cli("requirement", "next-id", "--title", "登录系统")
         self.req = out["path"]
         (self.repo / self.req).write_text("# 登录系统\nPrepare a fixture, do not fabricate execution.\n")
+        self.configure()
+        from tests.helpers import seed_project_preparation
+        seed_project_preparation(self.repo)
         _, self.started = self.run_cli("start", "--requirement", self.req)
         self.wid = self.started["work_item"]["id"]
 
@@ -36,7 +39,7 @@ class PiRouteGuidance(RepairCase):
         folder = self.repo / "acceptance-tests"
         folder.mkdir(exist_ok=True)
         (folder / "test_fixture.py").write_text("import unittest\nclass Fixture(unittest.TestCase):\n def test_fixture(self): self.assertEqual(2+2,4)\n")
-        self.run_cli("verification", "configure", "--test-script",
+        self.run_cli("verification", "configure", "--replace", "--test-script",
                      shlex.join([sys.executable, "-m", "unittest", "discover", "-s", "acceptance-tests"]))
 
     def assess(self):
@@ -60,13 +63,12 @@ class PiRouteGuidance(RepairCase):
             self.assertNotIn("retry `cao done`", out["additional_context"])
 
     def test_baseline_precedes_assessment_and_route_on_every_surface(self):
-        self.assertEqual(self.started["next_action"]["reason"], "VERIFICATION_BASELINE_REQUIRED")
-        self.assertEqual(self.started["action"], "VERIFICATION_SETUP")
-        self.assertEqual(self.started["guidance"]["stage"], "verification_setup")
-        self.assert_current("VERIFICATION_BASELINE_REQUIRED")
-        assessed = self.assess()  # Early assessment is stored, but cannot displace setup.
-        self.assertEqual(assessed["next_action"]["reason"], "VERIFICATION_BASELINE_REQUIRED")
-        self.assert_current("VERIFICATION_BASELINE_REQUIRED")
+        self.assertEqual(self.started["next_action"]["reason"], "execution path has not been assessed")
+        self.assertEqual(self.started["action"], "ASSESS_PATH")
+        self.assert_current("execution path has not been assessed")
+        assessed = self.assess()
+        self.assertEqual(assessed["next_action"]["reason"], "NATIVE_WORKFLOW_SELECTION_REQUIRED")
+        self.assert_current("NATIVE_WORKFLOW_SELECTION_REQUIRED")
         self.configure()
         self.assert_current("NATIVE_WORKFLOW_SELECTION_REQUIRED")
         self.assertEqual(self.read_work(self.wid)["path_assessment"]["revision"], 1)
