@@ -45,7 +45,7 @@ def sdd_acceptance_outputs(repo: Path, work: dict) -> set[str]:
             path = repo_file(repo, value)
             if path.is_file():
                 previous[value] = sha256_file(path)
-    return output_paths(repo, declaration, provider_output_dirs(work["sdd"]["provider"]), work["id"], previous)
+    return output_paths(repo, declaration, provider_output_dirs(work["sdd"]["provider"], repo), work["id"], previous)
 
 
 def sdd_acceptance_inputs(repo: Path, work: dict, cfg: dict) -> dict:
@@ -56,7 +56,7 @@ def sdd_acceptance_inputs(repo: Path, work: dict, cfg: dict) -> dict:
     inputs = task_inputs(repo, work, cfg) if work.get("project_binding") else verification_inputs(repo, work, cfg)
     return {**inputs, "work_id": work["id"], "provider": work["sdd"]["provider"],
             "declaration_sha256": record["declaration_sha256"],
-            "source_hashes": source_hashes(repo, record["declaration"], provider_output_dirs(work["sdd"]["provider"]))}
+            "source_hashes": source_hashes(repo, record["declaration"], provider_output_dirs(work["sdd"]["provider"], repo))}
 
 
 def sdd_acceptance_current_hashes(repo: Path, work: dict) -> dict:
@@ -123,7 +123,7 @@ def verification_inputs(repo: Path, work: dict, cfg: dict) -> dict:
     if plan_state["state"] != "not_applicable":
         inputs["rules_snapshot"] = binding_digest({"rules": inputs["rules_snapshot"], "native_plan": plan_state})
     if native_acceptance:
-        sources = source_hashes(repo, record["declaration"], provider_output_dirs(work["sdd"]["provider"]))
+        sources = source_hashes(repo, record["declaration"], provider_output_dirs(work["sdd"]["provider"], repo))
         inputs["rules_snapshot"] = acceptance_digest({"rules": inputs["rules_snapshot"],
                                                       "declaration": record["declaration_sha256"], "sources": sources})
     return inputs
@@ -174,7 +174,7 @@ def legacy_completion_status(repo: Path, work: dict[str, Any] | None) -> dict[st
     provider = str(sdd.get("provider") or "none")
     profile = str(assessment.get("profile") or "light")
     if profile == "light":
-        spec_state = light_spec_state(repo, work, provider_output_dirs(provider))
+        spec_state = light_spec_state(repo, work, provider_output_dirs(provider, repo))
         if not spec_state["ready"]:
             return {"ready": False, "reason": spec_state["reason"], "next": spec_state.get("next"), "light_spec": spec_state}
     review = native_review_state(repo, work, code_snapshot)
@@ -352,7 +352,7 @@ def lifecycle_status(repo, work):
     check('native_review', lambda: native_review_state(repo, work, code_snapshot))
     profile = (work.get('path_assessment') or {}).get('profile')
     if profile == 'light':
-        check('light_spec', lambda: light_spec_state(repo, work, provider_output_dirs(work['sdd']['provider'])))
+        check('light_spec', lambda: light_spec_state(repo, work, provider_output_dirs(work['sdd']['provider'], repo)))
     else:
         def native_workflow():
             ready, reason = workflow_ready(work, repo)

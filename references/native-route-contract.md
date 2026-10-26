@@ -92,6 +92,7 @@ duties to pass a check. JSON syntax errors include their line and column.
 | `required_artifacts` | Nonempty array of `{path, role}` for real unique owned artifacts |
 | `rules` | Nonempty array of `{path, sha256, quote}` from actual installed native rules |
 | `omitted` | Array of `{name, reason, replaced_by}` for omitted duties; replacement must be a required artifact |
+| `planning_duties` | For BMAD full-planning without the legacy four-document set: exactly three `{name, artifact, native_rule, reason}` entries named `requirements`, `design`, `execution`; artifact must be required and native_rule must be in rules |
 
 `replaced_by: null` is invalid for a replacement. If an installed BMAD oneshot
 route makes a duty inapplicable, use `{name, reason, disposition: "not_applicable",
@@ -105,6 +106,12 @@ its quote must occur in that file. A `sprint` role accepts only native
 `sprint-status.yaml` or `sprint-status.yml`. Provider-specific role requirements
 belong to that Provider; PRD/architecture/epics/sprint are not universal roles.
 Do not copy example hashes or invent rule evidence.
+
+Stable BMAD `stories` role uses its actual `stories.yaml` inventory and colocated
+story records. Bind it as a plan; its complete ordered ID set is tracked across
+updates. `planning_duties` declares where real responsibilities are fulfilled,
+not that planning or review has already completed. Native Finalize, audit and
+applicable reviewer obligations on PRD/architecture artifacts still apply.
 
 ## Freshness and recovery
 

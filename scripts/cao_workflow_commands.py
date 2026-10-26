@@ -10,6 +10,7 @@ import uuid
 from pathlib import Path
 from typing import Any
 
+from scripts.bmad_project import output_dirs as bmad_output_dirs
 from scripts.cao_artifacts import artifact_reference
 from scripts.cao_instructions import cao_invocation
 from scripts.cao_native_sync import native_sync_state, reconcile_native_sdd_state
@@ -216,7 +217,7 @@ def cmd_sdd_workflow(args: argparse.Namespace) -> int:
                 "reason": dir_check["reason"],
                 "provider": provider,
                 "offending": dir_check["offending"],
-                "next": f"Record only files the native workflow produced under {', '.join(provider_output_dirs(provider)) or 'the provider directory'}; product source files are not SDD artifacts.",
+                "next": f"Record only files the native workflow produced under {', '.join(provider_output_dirs(provider, repo)) or 'the provider directory'}; product source files are not SDD artifacts.",
             }, ensure_ascii=False, indent=2)); return 2
         refs = []
         try:
@@ -288,7 +289,7 @@ def cmd_sdd_spec(args: argparse.Namespace) -> int:
         print(json.dumps({"ok": False, "error": "NO_ACTIVE_WORK_ITEM"})); return 2
     try:
         binding = make_binding(repo, work, args.spec, args.criteria, args.criteria_section,
-                               provider_output_dirs(work["sdd"]["provider"]))
+                               provider_output_dirs(work["sdd"]["provider"], repo))
         previous = work["sdd"].get("spec_binding")
         if previous == binding:
             reconcile_native_sdd_state(repo, work)
@@ -350,7 +351,7 @@ def _cmd_sdd_review_locked(args: argparse.Namespace) -> int:
         if work.get('sdd', {}).get('provider') != 'bmad':
             raise ValueError('NATIVE_REVIEW_NOT_APPLICABLE')
         from scripts.native_obligations import require_review_integrity
-        if args.review_action not in {'begin', 'prepare', 'status'}:
+        if args.review_action not in {'begin', 'prepare', 'status', 'loopback'}:
             require_review_integrity(repo, work)
         records = work.setdefault("sdd", {}).setdefault("native_reviews", {})
         identity = host_session_identity(None)
@@ -361,7 +362,12 @@ def _cmd_sdd_review_locked(args: argparse.Namespace) -> int:
             canonical = runtime_model_name(args.model, (observed or {}).get('observed_model'), (observed or {}).get('observed_provider'))
             if args.review_action != 'attach' or canonical == (records.get(args.layer) or {}).get('model'):
                 args.model = canonical
-        if args.review_action == "prepare":
+        if args.review_action == 'loopback':
+            from scripts.review_dispatch import coordinator
+            coordinator(repo, identity)
+            from scripts.native_loopback import begin
+            output = begin(repo, work, args.reason, args.keep, args.path, args.extend)
+        elif args.review_action == "prepare":
             from scripts.review_dispatch import prepare_batch
             output = prepare_batch(repo, work, args, identity)
         elif args.review_action == "begin":
@@ -406,7 +412,7 @@ def _cmd_sdd_review_locked(args: argparse.Namespace) -> int:
                                  for key, value in records.items() if key != '_contract'}}
             print(json.dumps(output, ensure_ascii=False)); return 0
         elif args.review_action == 'findings':
-            source = provider_artifact(repo, args.source, ['_bmad-output'])
+            source = provider_artifact(repo, args.source, bmad_output_dirs(repo))
             output = {'ok': True, 'source': source.relative_to(repo).as_posix(),
                       'source_sha256': sha256_file(source), 'findings': load_findings(source)}
             print(json.dumps(output, ensure_ascii=False)); return 0

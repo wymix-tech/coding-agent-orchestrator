@@ -174,7 +174,7 @@ def dispatch(args) -> int:
                         raise ValueError('TASK_ACCEPTANCE_SOURCE_REQUIRED')
                     mode = 'command' if getattr(args, 'executor_command', None) else 'skill'
                     entries = []
-                    dirs = provider_output_dirs(work['sdd']['provider'])
+                    dirs = provider_output_dirs(work['sdd']['provider'], repo)
                     for item in derived:
                         try:
                             provider_artifact(repo, item['source'], dirs)
@@ -195,9 +195,9 @@ def dispatch(args) -> int:
                     declaration = normalize_declaration({**declaration, 'lifecycle_metadata': 'bmad-dispatch-status-v1'})
                 elif declaration.get('lifecycle_metadata'):
                     raise ValueError('SDD_ACCEPTANCE_METADATA_POLICY_NOT_APPLICABLE')
-                source_hashes(repo, declaration, provider_output_dirs(work["sdd"]["provider"]))
+                source_hashes(repo, declaration, provider_output_dirs(work["sdd"]["provider"], repo))
                 previous = work["sdd"].get("acceptance") or {}
-                output_paths(repo, declaration, provider_output_dirs(work["sdd"]["provider"]), work["id"], previous.get("owned_outputs") or {})
+                output_paths(repo, declaration, provider_output_dirs(work["sdd"]["provider"], repo), work["id"], previous.get("owned_outputs") or {})
                 if previous.get("declaration") and previous["declaration"] != declaration and not args.replace:
                     raise ValueError("SDD_ACCEPTANCE_REPLACE_REQUIRED")
                 changed = configure_record(work, declaration)

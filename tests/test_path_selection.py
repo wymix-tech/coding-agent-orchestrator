@@ -35,6 +35,8 @@ class PathSelectionTests(unittest.TestCase):
             (repo / "openspec/config.yaml").write_text("context: test\n", encoding="utf-8")
         elif provider == "bmad":
             (repo / "_bmad").mkdir()
+            from tests.helpers import provision_bmad
+            provision_bmad(repo)
         elif provider == "speckit":
             (repo / ".specify").mkdir()
         (repo / "requirements").mkdir()

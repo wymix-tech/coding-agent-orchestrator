@@ -20,6 +20,11 @@ def spec_task_state(repo: Path, work: dict[str, Any], dirs: list[str],
                     task_reader: Callable[[str], list[dict]]) -> dict[str, Any]:
     decision = direct_build_decision(work)
     if not decision:
+        route = (work.get('sdd') or {}).get('route_decision') or {}
+        if (route.get('provider') == 'bmad' and route.get('route') == 'full-planning'
+                and route.get('planning_duties') and route.get('requirement_sha256') == work['requirement']['sha256']):
+            decision = route
+    if not decision:
         return {"ready": True, "state": "not_applicable"}
     sources = {decision["primary_artifact"]}
     sources.update(item["path"] for item in decision.get("required_artifacts", [])
@@ -82,8 +87,12 @@ def merge_plan_states(sprint: dict[str, Any], spec: dict[str, Any]) -> dict[str,
         return spec
     result = dict(sprint)
     result["observations"] = {**sprint["observations"], **spec["observations"]}
+    if spec.get('scope'):
+        plans = {item['path']: item for item in (sprint.get('scope') or {}).get('plans', [])}
+        plans.update({item['path']: item for item in spec['scope'].get('plans', [])})
+        result['scope'] = {**sprint.get('scope', {}), **spec['scope'], 'plans': list(plans.values())}
     result["pending_plan_items"] = sprint["pending_plan_items"] + spec["pending_plan_items"]
-    result["spec_task_scope"] = spec["spec_task_scope"]
+    result["spec_task_scope"] = spec.get("spec_task_scope", {})
     if not spec["ready"]:
         result.update(ready=False, state="pending", reason=spec["reason"], next=spec["next"],
                       raw="in_progress", canonical="in_progress")

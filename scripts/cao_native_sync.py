@@ -8,6 +8,7 @@ import re
 from pathlib import Path
 from typing import Any
 
+from scripts.bmad_project import output_dirs as bmad_output_dirs
 from scripts.cao_artifacts import artifact_reference
 from scripts.cao_defaults import SDD_CATALOG
 from scripts.cao_instructions import cao_invocation
@@ -68,7 +69,7 @@ def _slug(value: str) -> str:
 
 
 def _native_md_files(repo: Path, provider: str, root: Path, *, recursive: bool = True) -> list[Path]:
-    dirs = [directory for directory in provider_output_dirs(provider)
+    dirs = [directory for directory in provider_output_dirs(provider, repo)
             if (repo.resolve() / directory).resolve() == repo.resolve() / directory]
     files = []
     for path in (root.rglob("*.md") if recursive else root.glob("*.md")):
@@ -99,7 +100,7 @@ def _native_candidates(repo: Path, provider: str, work: dict[str, Any], native_r
             return [], None
     if native_ref:
         try:
-            dirs = [directory for directory in provider_output_dirs(provider)
+            dirs = [directory for directory in provider_output_dirs(provider, repo)
                     if (repo.resolve() / directory).resolve() == repo.resolve() / directory]
             ref_path = provider_artifact(repo, native_ref, dirs)
         except (ValueError, OSError, RuntimeError):
@@ -251,7 +252,7 @@ def bmad_progress_observation(repo: Path, work: dict, plan: dict) -> dict:
     if decision.get('provider') != 'bmad' or not decision.get('primary_artifact'):
         return {}
     try:
-        path = native_owned_file(repo, decision['primary_artifact'], ['_bmad-output'])
+        path = native_owned_file(repo, decision['primary_artifact'], bmad_output_dirs(repo))
     except (ValueError, OSError, RuntimeError):
         return {'progress_conflict': {'reason': 'bound SPEC unavailable'},
                 'next': 'Restore the bound native SPEC; do not adopt another file or infer execution from plan state.'}
@@ -276,7 +277,7 @@ def native_route_state(repo: Path, work: dict) -> dict:
     # Historical providers without this capability retain their native contracts.
     required = bool(sdd.get("native_route_required")) or provider == "bmad" and any(
         item["name"] == "bmad-build" for item in provider_native_skills(repo, provider))
-    return route_state(repo, work, provider_output_dirs(provider), required)
+    return route_state(repo, work, provider_output_dirs(provider, repo), required)
 
 
 def route_preparation_action(repo: Path, work: dict, state: dict) -> dict:
@@ -306,7 +307,7 @@ def route_preparation_action(repo: Path, work: dict, state: dict) -> dict:
                         f'--entrypoint "{entry}" --work {work["id"]}` before preparing the route. ')
     else:
         ref = (work.get("sdd") or {}).get("native_ref")
-        diagnostics = spec_preparation_diagnostics(repo, work, provider_output_dirs(provider))
+        diagnostics = spec_preparation_diagnostics(repo, work, provider_output_dirs(provider, repo))
         if diagnostics:
             common["reason"] = "NATIVE_SPEC_PREPARATION_REQUIRED"
             common.update(diagnostic=diagnostics[0], diagnostics=diagnostics)
@@ -382,7 +383,7 @@ def implementation_write_guard(repo: Path, work: dict, raw: dict, session_id: st
     preparation = work['sdd'].get('implementation_preparation') or {}
     if preparation.get('contract') != contract or preparation.get('route_id') != work['sdd']['route_decision']['id']:
         return state
-    spec = native_owned_file(repo, work['sdd']['route_decision']['primary_artifact'], ['_bmad-output'])
+    spec = native_owned_file(repo, work['sdd']['route_decision']['primary_artifact'], bmad_output_dirs(repo))
     text = spec.read_text()
     status, _, _, _ = _read_native_status('bmad', [spec])
     if status not in {'in_progress', 'in_review', 'done'} or not re.search(r'(?m)^baseline_commit:\s*\S+', text):
@@ -472,7 +473,7 @@ def cmd_sdd_route(args: argparse.Namespace) -> int:
             raise ValueError("NATIVE_ROUTE_DECLARATION_FILE_MISSING")
         raw = read_route_declaration(declaration)
         provider = work["sdd"]["provider"]
-        decision = normalize_route_decision(repo, work, raw, provider_output_dirs(provider),
+        decision = normalize_route_decision(repo, work, raw, provider_output_dirs(provider, repo),
                                             provider_native_skills(repo, provider))
         if args.route_action == "check":
             print(json.dumps({"ok": True, "status": "validated", "declaration_path": rel(declaration, repo),
@@ -498,6 +499,8 @@ def cmd_sdd_route(args: argparse.Namespace) -> int:
                         declaration={"path": rel(declaration, repo), "sha256": sha256_file(declaration)},
                         supersedes=old.get("id") if old else None,
                         previous_route=old.get("route") if old else None)
+        from scripts.bmad_units import archive as archive_native_unit
+        archive_native_unit(repo, work, decision['primary_artifact'])
         work["sdd"].setdefault("route_history", []).append(decision)
         work["sdd"]["route_decision"] = decision
         work["sdd"]["native_ref"] = decision["primary_artifact"]
@@ -575,7 +578,7 @@ def cmd_sdd_artifact_bind(args: argparse.Namespace) -> int:
     if not work or work.get("status") != "active":
         print(json.dumps({"ok": False, "error": "NO_ACTIVE_WORK_ITEM"})); return 2
     try:
-        path = native_owned_file(repo, args.artifact, provider_output_dirs(work["sdd"]["provider"]))
+        path = native_owned_file(repo, args.artifact, provider_output_dirs(work["sdd"]["provider"], repo))
         value = rel(path, repo)
         decision = work["sdd"].get("route_decision")
         if decision and decision["primary_artifact"] != value:
@@ -609,7 +612,7 @@ def cmd_sdd_approval(args: argparse.Namespace) -> int:
         state = native_route_state(repo, work)
         if not decision or (not state["ready"] and state["reason"] != "NATIVE_SPEC_APPROVAL_REQUIRED"):
             print(json.dumps({"ok": False, "error": state.get("reason", "NATIVE_ROUTE_REQUIRED")})); return 2
-        path = native_owned_file(repo, decision["primary_artifact"], provider_output_dirs(work["sdd"]["provider"]))
+        path = native_owned_file(repo, decision["primary_artifact"], provider_output_dirs(work["sdd"]["provider"], repo))
         existing = work["sdd"].get("spec_approval") or {}
         if (existing.get("route_decision_id") == decision["id"]
                 and existing.get("intent_sha256") == intent_hash(path)
@@ -662,6 +665,8 @@ def reconcile_native_sdd_state(repo: Path, work: dict[str, Any]) -> bool:
     provider = str(sdd.get("provider") or "").lower()
     if provider not in {"bmad", "openspec", "speckit"} or work.get("status") not in {"active", "suspended"}:
         return False
+    if provider == 'bmad' and (sdd.get('native_loopback') or {}).get('status') == 'reimplementing':
+        return False  # The old native terminal status cannot undo an explicit loopback.
     changed = False
     native_ref = str(sdd.get("native_ref") or "").strip()
     candidates, anchor = _native_candidates(repo, provider, work, native_ref)

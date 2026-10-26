@@ -28,6 +28,8 @@ def resolve(repo, rules, build_route):
     content = review.read_text(encoding='utf-8-sig')
     layers = sorted(set(re.findall(r'(?m)^####[^\n]*\(`?([a-z][a-z0-9-]*)`?\)', content)))
     if not layers:
+        if 'HALT with blocking condition `no active review layers`' in content:
+            raise ValueError('NATIVE_REVIEW_DISABLED: stable BMAD itself halts with no active review layers; enable a native review layer and render again')
         raise ValueError('NATIVE_ROUTE_REVIEW_LAYERS_REQUIRED: ' + review.relative_to(repo).as_posix())
     files = {'implementation': root / 'step-03-implement.md', 'review': review}
     for index, name in enumerate(sorted(set(re.findall(r'\bstep-05-[a-z-]+\.md\b', content)))):

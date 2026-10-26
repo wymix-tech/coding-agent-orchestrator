@@ -66,6 +66,11 @@ def cmd_bootstrap(args: argparse.Namespace) -> int:
     installed = status["installed"]
     active_id = load_index(repo).get("active_work")
     work = load_work(repo, active_id) if active_id else None
+    bmad = next((item for item in status['providers'] if item['provider'] == 'bmad' and item.get('detected')), None)
+    if bmad and not bmad.get('healthy', True) and restart_state(repo, getattr(args, 'host', None) or detect_current_host())['ready'] and (selected == 'bmad' or (work or {}).get('sdd', {}).get('provider') == 'bmad'):
+        print(json.dumps({'ok': False, 'mode': 'sdd_install_required', 'sdd': bmad,
+            'work_item': work_summary(work) if work else None,
+            'next': action('agent', 'Repair the selected stable BMAD installation with `cao sdd install --provider bmad --host <host> --yes`, then bootstrap again. Keep the current Work and confirmed project decisions.', reason='SDD_INSTALL_UNHEALTHY')}, ensure_ascii=False)); return 2
     # Bootstrap is a state-read boundary too. Reconcile native SDD state before
     # constructing a new-session context so a previous Agent's phase cursor
     # cannot remain stale after the native workflow has advanced.

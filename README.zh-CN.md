@@ -14,7 +14,7 @@ CAO 记录项目技术选型，将每个需求管理为一个 **Work Item（工�
 
 ### 1. 安装 CAO
 
-需要 **Python 3.10+**、用于克隆仓库的 Git，以及已安装的编程 Agent 宿主。Python 核心使用标准库。Pi 集成声明的版本为 **Pi 1.1.0**、**Node.js 22.18.0+**。Provider 安装器会检查各自的 Node.js、uv 等前置条件；`cao sdd list` 用于查看已检测到的 Provider 和 CLI。
+需要 **Python 3.10+**、用于克隆仓库的 Git，以及已安装的编程 Agent 宿主。Python 3.10 读取 BMAD TOML 配置需要 `tomli`，通过 pip 安装 CAO 时会自动安装；Python 3.11+ 使用标准库解析器。Pi 集成声明的版本为 **Pi 1.1.0**、**Node.js 22.18.0+**。Provider 安装器会检查各自的 Node.js、uv 等前置条件；`cao sdd list` 用于查看 Provider 的检测结果和安装健康状态。BMAD 默认固定安装稳定版 **6.12.4**。
 
 从源码仓库安装到虚拟环境。以下激活命令适用于 macOS/Linux；Windows PowerShell 使用 `.venv\Scripts\Activate.ps1`。如果你的 Python 3.10+ 命令名是 `python3` 或 `py -3`，请相应替换。
 

@@ -129,6 +129,18 @@ def current_work_action(repo: Path, work: dict | None, *, check_completion: bool
     route = native_route_state(repo, work)
     if not route["ready"]:
         return route_preparation_action(repo, work, route)
+    loopback = (work.get('sdd') or {}).get('native_loopback') or {}
+    if loopback.get('status') == 'reimplementing':
+        return action('agent', 'Follow the recorded native loopback: preserve KEEP, revert only recorded product files, resolve human intent gaps, refresh route/approval, then reimplement from step-03. When complete, run `cao sdd review prepare` for a new round.', stage='recovery', reason='NATIVE_REVIEW_REIMPLEMENTATION_REQUIRED')
+    if work.get('sdd', {}).get('provider') == 'bmad':
+        from scripts.cao_plans import provider_verification_plan_state
+        from scripts.native_obligations import review_state, commit_state
+        from scripts.cao_snapshot import code_snapshot
+        from scripts.cao_defaults import SNAPSHOT_IGNORE_DIRS
+        plan = provider_verification_plan_state(repo, work)
+        if plan.get('reason') == 'BMAD_PLAN_NOT_DONE' and 'bmad-code-review' in (plan.get('next') or ''):
+            if review_state(repo, work, code_snapshot)['ready'] and commit_state(repo, work, SNAPSHOT_IGNORE_DIRS)['ready']:
+                return action('agent', plan['next'], stage='execution', reason='NATIVE_STORY_CLOSE_REQUIRED')
     from scripts.review_dispatch import acceptance_preflight
     from scripts.native_obligations import review_source
     try:

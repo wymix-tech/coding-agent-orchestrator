@@ -16,6 +16,8 @@ class TechnologyGuidance(RepairCase):
         code, out = self.run_cli("init", "--host", "pi", "--sdd", "bmad")
         self.assertEqual(code, 0, out)
         (self.repo / "_bmad").mkdir()
+        from tests.helpers import provision_bmad
+        provision_bmad(self.repo)
         skill = self.repo / ".agents/skills/bmad-build/SKILL.md"
         skill.parent.mkdir(parents=True)
         skill.write_text("---\nname: bmad-build\ndescription: Native fixture\n---\nFollow native planning.\n")

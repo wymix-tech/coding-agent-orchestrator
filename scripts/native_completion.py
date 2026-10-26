@@ -1,6 +1,7 @@
 """Native terminal state is a closure obligation, not a second code review."""
 import re
 
+from scripts.bmad_project import output_dirs as bmad_output_dirs
 from scripts.path_guard import provider_artifact
 
 
@@ -10,7 +11,7 @@ def state(repo, work):
     if sdd.get('provider') != 'bmad' or decision.get('build_route') != 'dispatch':
         return {'ready': True, 'state': 'not_applicable'}
     try:
-        path = provider_artifact(repo, decision['primary_artifact'], ['_bmad-output'])
+        path = provider_artifact(repo, decision['primary_artifact'], bmad_output_dirs(repo))
         text = path.read_text(encoding='utf-8-sig')
         header = re.match(r'\A---\s*\n(.*?)\n---(?:\n|$)', text, re.S)
         status = re.search(r"(?m)^status:\s*['\"]?([a-z-]+)", header[1]) if header else None

@@ -30,7 +30,7 @@ python tools/release/build_release.py --version v0.1.0 --output dist
 
 ### 1. Install CAO
 
-You need **Python 3.10+**, Git to clone the repository, and an installed coding-agent host. The Python core uses the standard library. Pi integration declares **Pi 1.1.0** and **Node.js 22.18.0+**. Provider installers check their own Node.js/uv prerequisites; `cao sdd list` shows detected providers and CLIs.
+You need **Python 3.10+**, Git to clone the repository, and an installed coding-agent host. Reading BMAD TOML on Python 3.10 requires `tomli`, installed automatically by pip with CAO; Python 3.11+ uses the standard-library parser. Pi integration declares **Pi 1.1.0** and **Node.js 22.18.0+**. Provider installers check their own Node.js/uv prerequisites; `cao sdd list` reports provider detection and installation health. The default BMAD installer is pinned to stable **6.12.4**.
 
 Install from the repository in a virtual environment. The activation command below is for macOS/Linux; on Windows PowerShell use `.venv\Scripts\Activate.ps1` instead. Use your Python 3.10+ executable if it is named `python3` or `py -3`.
 

@@ -23,7 +23,7 @@ jobs:
           python-version: ${{ matrix.python-version }}
       - name: Install CLI package
         run: |
-          python -m pip install --no-deps -e .
+          python -m pip install -e .
           cao --help
       - name: Run tests
         run: python -m unittest discover -s tests -v
@@ -31,7 +31,7 @@ jobs:
         run: |
           python -m pip wheel --no-deps . -w dist
           python -m venv "$RUNNER_TEMP/cao-wheel"
-          "$RUNNER_TEMP/cao-wheel/bin/python" -m pip install --no-deps dist/*.whl
+          "$RUNNER_TEMP/cao-wheel/bin/python" -m pip install dist/*.whl
           cd "$RUNNER_TEMP"
           "$RUNNER_TEMP/cao-wheel/bin/cao" --help
           "$RUNNER_TEMP/cao-wheel/bin/cao" init --help

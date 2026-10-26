@@ -27,14 +27,20 @@ from scripts.verification_setup import (
 )
 
 
-def native_output_dirs() -> list[str]:
+def native_output_dirs(repo: Path | None = None) -> list[str]:
     """Every provider-owned SDD output directory across the catalog."""
     dirs: list[str] = []
     for meta in SDD_CATALOG.values():
         for out in meta.get("output_dirs") or []:
             if out not in dirs:
                 dirs.append(out)
-    return dirs
+    if repo is not None:
+        from scripts.bmad_project import output_dirs
+        try:
+            dirs.extend(output_dirs(repo))
+        except (ValueError, OSError, RuntimeError):
+            pass  # No custom-directory exemption when provider config is invalid.
+    return list(dict.fromkeys(dirs))
 
 
 # Compared against lower-cased keys, so every entry must be lower-case too.
@@ -433,7 +439,7 @@ def dependency_setup_advice(repo, raw):
     return None
 
 
-def intake_writable_dirs() -> list[str]:
+def intake_writable_dirs(repo: Path | None = None) -> list[str]:
     """Directories that stay writable before a Work Item exists.
 
     - provider-owned SDD output dirs: requirement/PRD/spec artifacts, which are
@@ -445,7 +451,7 @@ def intake_writable_dirs() -> list[str]:
     written. Only `.orchestrator/requirements/` is exempt — the rest of
     `.orchestrator/` holds CAO state the Agent must not hand-edit.
     """
-    return native_output_dirs() + [f"{REQUIREMENT_DIR.as_posix()}/"]
+    return native_output_dirs(repo) + [f"{REQUIREMENT_DIR.as_posix()}/"]
 
 
 def write_targets_native_sdd_output(repo: Path, raw: dict[str, Any]) -> bool:
@@ -463,7 +469,7 @@ def write_targets_native_sdd_output(repo: Path, raw: dict[str, Any]) -> bool:
         except ValueError:
             return False
         if not any((repo.resolve() / directory).resolve() == repo.resolve() / directory
-                   and inside(path, repo.resolve() / directory) for directory in intake_writable_dirs()):
+                   and inside(path, repo.resolve() / directory) for directory in intake_writable_dirs(repo)):
             return False
     return True
 

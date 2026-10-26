@@ -36,7 +36,7 @@ class RepairTests(unittest.TestCase):
         args = argparse.Namespace(host="claude-code", tools=None)
         cmd = cao.build_bmad_project_command(args, pathlib.Path("/tmp/demo"))
         self.assertEqual(cmd, [
-            "npx", "bmad-method", "install",
+            "npx", "bmad-method@6.12.4", "install",
             "--directory", "/tmp/demo",
             "--modules", "bmm",
             "--tools", "claude-code",

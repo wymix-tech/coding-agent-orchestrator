@@ -537,7 +537,7 @@ def build_dashboard_overview(repo: Path, stale_after_minutes: int = 30) -> dict[
             except (OSError, ValueError, KeyError, RuntimeError):
                 fresh = False
         independent = sdd_acceptance_state(repo, work)
-        spec_state = (light_spec_state(repo, work, provider_output_dirs(sdd.get("provider")))
+        spec_state = (light_spec_state(repo, work, provider_output_dirs(sdd.get("provider"), repo))
                       if (assessment or {}).get("profile") == "light" else
                       {"ready": True, "state": "not_applicable", "reason": None})
         workflow = sdd.get("workflow") or {}

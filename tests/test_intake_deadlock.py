@@ -49,6 +49,8 @@ def provisioned_repo(repo):
     run(repo, "init", "--host", "pi", env_extra=NO_HOST_ENV)
     run(repo, "sdd", "select", "--provider", "bmad")
     (repo / "_bmad").mkdir(exist_ok=True)  # BMAD's project marker
+    from tests.helpers import provision_bmad
+    provision_bmad(repo)
     rc, out, _ = run(repo, "bootstrap", env_extra=NO_HOST_ENV)
     assert out.get("mode") == "select", f"bootstrap did not reach Work intake: {out}"
     assert out.get("work_item") is None

@@ -33,8 +33,15 @@ class RepairCase(unittest.TestCase):
                                "--test-script", self.test_command)
         self.assertEqual(rc, 0, out)
         (self.repo / "_bmad").mkdir()
+        from tests.helpers import provision_bmad
+        provision_bmad(self.repo)
 
     def run_cli(self, *args, payload=None) -> tuple[int, dict]:
+        # Tests install synthetic Build skills in stages. Supply the native
+        # runtime fixture, while leaving selected rendered contracts untouched.
+        if (self.repo / '.agents/skills/bmad-build/SKILL.md').is_file():
+            from tests.helpers import provision_bmad
+            provision_bmad(self.repo)
         env = dict(os.environ)
         for key in HOST_KEYS:
             env.pop(key, None)

@@ -53,12 +53,17 @@ def bmad_project(repo: pathlib.Path) -> None:
     run(repo, "init", "--host", "pi", env_extra=NO_HOST_ENV)
     run(repo, "sdd", "select", "--provider", "bmad")
     (repo / "_bmad").mkdir(exist_ok=True)
+    from tests.helpers import provision_bmad
+    provision_bmad(repo)
 
 
 def install_skill(repo: pathlib.Path, name: str, root: str = ".agents/skills") -> None:
     skill = repo / root / name
     skill.mkdir(parents=True, exist_ok=True)
     (skill / "SKILL.md").write_text(f"---\nname: {name}\ndescription: {name}\n---\nDo the {name} workflow.\n", encoding="utf-8")
+    if name == "bmad-build":
+        from tests.helpers import provision_bmad
+        provision_bmad(repo)
 
 
 class SkillDiscovery(unittest.TestCase):
