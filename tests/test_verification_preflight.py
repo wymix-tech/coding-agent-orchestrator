@@ -69,9 +69,9 @@ class VerificationPreflightTests(RepairCase):
                 rc, out = self.run_cli("bootstrap", "--host", "pi")
                 self.assertEqual(rc, 0, out)
                 self.assertEqual(out["mode"], "verification_setup")
-                self.assertEqual(out["work_item"]["id"], wid)
-                self.assertEqual(out["context"]["execution"]["step"], "test-login")
-                self.assertEqual(out["context"]["decisions"][-1]["decision"], "Use sessions")
+                self.assertEqual(out["pending_work"]["id"], wid)
+                self.assertNotIn("execution", out["context"])
+                self.assertNotIn("decisions", out["context"])
                 self.assertEqual((self.repo / cao.WORK_DIR / (wid + ".json")).read_bytes(), before)
 
     def test_start_and_prompt_guidance_are_model_visible(self):
@@ -97,7 +97,7 @@ class VerificationPreflightTests(RepairCase):
         out = self.event("prompt_submit")
         self.assertEqual(out["decision"], "allow")
         self.assertIn(wid, out["additional_context"])
-        self.assertIn("Keep chosen stack", out["additional_context"])
+        self.assertNotIn("Keep chosen stack", out["additional_context"])
         self.assertIn("verification setup", out["additional_context"].lower())
 
     def test_missing_configuration_blocks_product_writes_but_allows_setup(self):

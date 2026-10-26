@@ -267,3 +267,86 @@ class ProjectVerificationBootstrap(unittest.TestCase):
         self.assertIn("cd 'api module' &&", command)
         self.assertIn('../.orchestrator/scripts/verification/root/check.py', command)
         self.assertEqual('passed', setup.check(self.repo, 'root')['status'])
+
+    def pending_work(self):
+        self.existing()
+        secret = 'BUSINESS_ACCEPTANCE_ONLY_8d32f1'
+        (self.repo / 'openspec/feature.md').write_text('# Feature\n## Acceptance\n- ' + secret + '\n')
+        self.call('verification', 'configure', '--test-script', 'python3 -m unittest discover -s tests -v')
+        self.call('verification', 'check')
+        wid = self.call('start', '--requirement', 'openspec/feature.md')['work_item']['id']
+        return wid, secret, self.repo / '.orchestrator/work' / (wid + '.json')
+
+    def test_existing_active_work_baseline_context_excludes_business_requirement(self):
+        wid, secret, path = self.pending_work()
+        cfg = config(self.repo)
+        cfg['verification']['scripts'] = []
+        atomic_json(self.repo / '.orchestrator/config.json', cfg)
+        work = json.loads(path.read_text())
+        work['sdd']['native_note'] = secret
+        atomic_json(path, work)
+        before = path.read_bytes()
+        out = self.call('bootstrap')
+        self.assertEqual('project', out['next']['owner'])
+        self.assertIsNone(out['work_item'])
+        self.assertEqual(wid, out['pending_work']['id'])
+        self.assertNotIn(secret, json.dumps(out))
+        self.assertNotIn('requirement', out['context'])
+        next_out = self.call('next')
+        self.assertIsNone(next_out['work_item'])
+        self.assertEqual('project', next_out['action']['owner'])
+        self.assertNotIn(secret, json.dumps(next_out))
+        event = self.call('host-event', '--host', 'pi', payload={'event': 'prompt_submit',
+            'session_id': 'pending-project-fixture', 'prompt': 'continue'})
+        self.assertIn('# CAO Project Preparation', event['additional_context'])
+        self.assertNotIn(secret, event['additional_context'])
+        self.assertEqual(before, path.read_bytes())
+
+    def test_resume_does_not_reactivate_or_register_work_before_project_preparation(self):
+        wid, secret, path = self.pending_work()
+        work = json.loads(path.read_text())
+        work['status'] = 'suspended'
+        from scripts.cao_work_store import save_work
+        save_work(self.repo, work)
+        cfg = config(self.repo)
+        cfg['verification']['scripts'] = []
+        atomic_json(self.repo / '.orchestrator/config.json', cfg)
+        before = path.read_bytes()
+        out = self.call('resume', '--work', wid, '--reactivate', '--session', 'deferred-project-session', expected=2)
+        self.assertEqual('project', out['next']['owner'])
+        self.assertEqual(wid, out['context']['pending_work']['id'])
+        self.assertNotIn(secret, json.dumps(out))
+        self.assertEqual(before, path.read_bytes())
+        from scripts.cao_sessions import load_session
+        self.assertIsNone(load_session(self.repo, 'deferred-project-session', host='unknown'))
+        self.call('verification', 'configure', '--test-script', 'python3 -m unittest discover -s tests -v')
+        self.call('verification', 'check', '--project')
+        result = subprocess.run([sys.executable, str(Path(__file__).resolve().parents[1] / 'scripts/cao.py'),
+            'resume', '--work', wid, '--reactivate', '--session', 'deferred-project-session', '--repo', str(self.repo)],
+            capture_output=True, text=True, timeout=30)
+        self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+        self.assertEqual('active', json.loads(path.read_text())['status'])
+
+    def test_configured_but_unchecked_baseline_blocks_existing_work_resume(self):
+        wid, secret, path = self.pending_work()
+        probe.project_result_path(self.repo, 'root').unlink()
+        before = path.read_bytes()
+        out = self.call('resume', '--work', wid, '--session', 'unchecked-project-session', expected=2)
+        self.assertEqual('PROJECT_VERIFICATION_CHECK_REQUIRED', out['error'])
+        self.assertIn('check --project', out['next']['instruction'])
+        self.assertEqual(before, path.read_bytes())
+        self.assertNotIn(secret, json.dumps(out))
+
+    def test_previous_readiness_policy_requires_project_review_before_resume(self):
+        wid, secret, path = self.pending_work()
+        result_path = probe.project_result_path(self.repo, 'root')
+        result = json.loads(result_path.read_text())
+        result['standard'].pop('preparation_policy')
+        atomic_json(result_path, result)
+        before = path.read_bytes()
+        out = self.call('resume', '--work', wid, '--session', 'previous-policy-session', expected=2)
+        self.assertEqual('PROJECT_VERIFICATION_CHECK_REQUIRED', out['error'])
+        self.assertIn('project-wide quality standards', out['next']['instruction'])
+        self.assertEqual(before, path.read_bytes())
+        self.call('verification', 'check', '--project')
+        self.assertTrue(probe.project_state(self.repo)['ready'])

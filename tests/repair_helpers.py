@@ -58,6 +58,9 @@ class RepairCase(unittest.TestCase):
         if args and args[0] == "init" and result.returncode == 0:
             from tests.helpers import provision_fixture_background
             provision_fixture_background(self.repo)
+        if (args[:2] in {("verification", "configure"), ("acceptance", "configure")} or args[:3] == ("sdd", "acceptance", "configure")) and result.returncode == 0:
+            from tests.helpers import seed_project_preparation
+            seed_project_preparation(self.repo)
         return result.returncode, out
 
     def start(self, title="a", profile="light") -> str:

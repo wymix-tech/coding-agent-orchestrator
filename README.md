@@ -2,6 +2,8 @@
 
 
 Project setup order: confirm technology → generate/reuse scaffold → establish actual project checks and pass initialization → create business Work. CAO wrappers live in `.orchestrator/scripts/verification/`; reserve exact inputs with `cao verification prepare --path <exact-path>`, then configure/check. Native tests/build files stay in place. Existing products use `cao verification check`; existing Work can use `--project` without losing progress. Standards are inherited; Work verification and SDD requirement acceptance need current evidence. See [verification baseline](references/verification-setup.md).
+Project preparation also precedes Work resume. During baseline preparation, bootstrap/next expose only project inputs and `pending_work` identity; `resume --reactivate` cannot bypass this boundary. Historical preparation records require a one-time policy-v2 review/check.
+
 
 English | [简体中文](https://github.com/wymix-tech/coding-agent-orchestrator/blob/main/README.zh-CN.md)
 

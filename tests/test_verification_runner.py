@@ -190,6 +190,8 @@ class RunnerBindingsTests(RepairCase):
         cfg = cao.config(self.repo)
         cfg["verification"]["timeout_seconds"] = timeout
         cao.save_json(self.repo / ".orchestrator/config.json", cfg)
+        from tests.helpers import seed_project_preparation
+        seed_project_preparation(self.repo)
 
     def test_timeout_changes_standard_requires_reanchor_and_is_bound_on_both_sides(self):
         wid = self.start()

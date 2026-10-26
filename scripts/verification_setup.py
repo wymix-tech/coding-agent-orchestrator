@@ -6,6 +6,9 @@ from scripts.completion_policy import normalize_scripts, required_entries
 from scripts.technology_guidance import technology_instruction
 
 
+PROJECT_PREPARATION_POLICY = 2
+
+
 SCAFFOLD_ROOTS = ("tests", "test", "acceptance-tests", "src/test", "scripts/verification", ".venv", "venv")
 SCAFFOLD_MANIFESTS = frozenset({
     "requirements.txt", "requirements-dev.txt", "pyproject.toml", "pytest.ini", "setup.cfg", "uv.lock",
@@ -67,11 +70,11 @@ def setup_instruction(command: str) -> str:
         "CAO verification setup: establish and explicitly accept a configured baseline before feature development; product writes are blocked until then, while native artifacts, manifests, tests and verification wrappers remain writable. "
         "Run bootstrap first and honor explicit SDD selection/install authorization. "
         "Empty products first use `cao project setup rules`, `draft`, `plan`, `apply` and `check` without a business Work; resume the original request after setup is ready. "
-        "For existing products, establish actual required checks and run `cao verification check` before creating business Work; plan-only does not establish readiness. Existing active Work repairs missing baselines in place. "
+        "For existing products, establish actual required checks and run `cao verification check` before creating business Work; plan-only does not establish readiness. Existing Work stays pending while missing project baselines are repaired at project level; use `cao verification check --project` before resuming it. "
         "For an existing project, analyze product manifests, source, tests and CI; reuse meaningful verification. "
-        "Do not infer the product tech stack from .orchestrator derived state, .agents, .pi, host assets, SDD tools/outputs or caches; current user requirements remain relevant. "
+        "Do not infer the product tech stack from .orchestrator derived state, .agents, .pi, host assets, SDD tools/outputs or caches; explicit project technology choices remain relevant. "
         + technology_instruction(command) +
-        "Generate project-owned verification scripts or reuse suitable existing scripts. "
+        "Generate project-wide scripts from accepted project technology, manifests, native build/test/CI entries and project quality standards; reuse suitable existing scripts. Never use the pending Work requirement, business acceptance criteria, Work decisions or handoff to generate the project baseline. SDD owns task-specific behavior tests and acceptance. "
         + scaffold_instruction() +
         "Zero tests, missing tools or missing dependencies must fail/block, not echo/true a pass. Preserve the user's selected framework and test runner; do not replace JUnit 5 with a main program when dependencies are missing. For Java/Jupiter use JUnit5-capable Surefire and fail on zero tests. "
         f'Configure through `{command} verification configure --test-script "<actual project test wrapper>" --verify-script "<actual general check>"` using only applicable scripts; register a combined general/tests wrapper once as a test script; do not hand-edit config or use init --force. '
@@ -83,8 +86,11 @@ def setup_instruction(command: str) -> str:
 def verification_setup_context(work: dict[str, Any] | None) -> dict[str, Any] | None:
     if not work:
         return None
-    return {key: work.get(key) for key in ("id", "title", "status", "requirement", "sdd",
-            "execution", "resume", "decisions", "blockers")}
+    review = work.get('verification_review') or {}
+    return {'id': work['id'], 'status': work['status'], 'purpose': 'work_baseline_adoption',
+            'review': {key: review[key] for key in ('id', 'status', 'config_sha256') if key in review},
+            'instruction': 'Adopt/review the project-owned standard for this Work; do not generate baseline scripts from its requirement. Resume full task context after baseline preparation/adoption.'}
+
 
 
 def prepare_config(raw: dict[str, Any], scripts: list[dict[str, Any]], replace: bool,

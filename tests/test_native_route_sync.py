@@ -58,6 +58,9 @@ class RouteSync(unittest.TestCase):
         if args and args[0] == "init" and proc.returncode == 0:
             from tests.helpers import provision_fixture_background
             provision_fixture_background(self.repo)
+        if args[:2] == ("verification", "configure") and proc.returncode == 0:
+            from tests.helpers import seed_project_preparation
+            seed_project_preparation(self.repo)
         self.assertEqual(expected, proc.returncode, proc.stdout + proc.stderr)
         return json.loads(proc.stdout)
 

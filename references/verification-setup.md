@@ -4,7 +4,7 @@ Contents: [Enter when](#enter-when) · [Execute](#execute) · [Script contract](
 
 ## Enter when
 
-Bootstrap reports `mode: verification_setup` before Work creation, or existing Work needs baseline repair/review.
+Bootstrap reports `mode: verification_setup` before Work creation/resumption, or a project baseline needs repair/review.
 
 
 ## Project preparation before Work
@@ -31,14 +31,14 @@ Project readiness inherits standards, never Work verification results. Ordinary 
 
 ## Execute
 
-Empty products complete [project initialization](project-initialization.md) without a business Work. Existing active Work keeps its stage and can trial configured entries with `cao verification check --work <id>` before acceptance/review. Trial results never satisfy formal verification gates. A plan-only declaration is not executable evidence. See [Project context](project-context.md).
+Empty products complete [project initialization](project-initialization.md) without a business Work. Existing Work keeps its stage and stays pending while project preparation is missing. Run `cao verification check --project` before resuming; `--work <id>` may select a suspended migration owner without making it the baseline owner. Work requirements and acceptance criteria are excluded from baseline-authoring context. Trial results never satisfy formal verification gates. A plan-only declaration is not executable evidence. See [Project context](project-context.md).
 
 After honoring SDD selection/install authorization and preparing the project scaffold, `mode: verification_setup` means the verification
 configuration is empty, invalid or optional-only. Before feature development:
 
 1. Existing project: analyze product manifests, source, tests and CI; reuse meaningful checks. Host assets,
    `.orchestrator` derived state, `.agents`, `.pi`, SDD tools/outputs and caches do not identify the product
-   stack; current requirements remain relevant, including intake documents.
+   stack; explicit project technology choices remain relevant; business acceptance criteria stay with SDD.
 2. Apply [technology clarification](work-intake.md#technology-clarification-before-planning-or-scaffolding) before generating wrappers/manifests. New project: honor explicit choices or scoped delegation; otherwise ask the user about the remaining material language/framework/build/test choices and wait. Agent-written requirements, SPECs and newly generated manifests do not establish user authorization. Existing product evidence is different from scaffolding generated for this request. If unable to ask, report `TECH_STACK_CLARIFICATION_REQUIRED` and stop stack-dependent work. Restore recorded choices after restart instead of asking again.
 3. Generate project-owned wrappers or reuse existing scripts. Zero tests, missing tools or missing
    dependencies must fail/block, never produce a fake `echo`/`true` pass. Java/Jupiter requires
@@ -211,3 +211,11 @@ Use `cao sdd review check` for reviewer experiments in a disposable working copy
 these results do not satisfy the final verification or acceptance gates.
 
 Change verification timeout using `cao verification configure --timeout-seconds 300 --replace`; review/approval and reanchor rules apply.
+
+## Resume and upgrade boundary
+
+`bootstrap`, `next`, host model context and `resume --reactivate` enforce the same project prerequisite. A blocked resume does not reactivate Work, reconcile its native business phase or register its new Work session. `pending_work` contains only ID/status; full requirement, SDD artifacts, decisions and handoff return after preparation. Baseline adoption/approval uses minimal Work identity and the existing project standard, not task-specific script generation.
+
+Preparation policy v2 requires one project-level review/check of historical readiness records that lack this boundary. Inspect existing scripts against accepted technology, manifests and build/test/CI entrypoints; retain valid project-wide checks and repair task-specific wrappers only when needed. A missing policy marker never silently certifies old scripts. This does not clear Work progress or automatically overwrite scripts.
+
+Upgrading the package does not overwrite existing project instruction files. Refresh the managed CAO block with `cao instructions update --host <host> --apply`, then reload the host as directed. Custom project text is preserved.

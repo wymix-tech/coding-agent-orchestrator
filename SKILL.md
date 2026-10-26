@@ -95,9 +95,9 @@ require reanchoring. Any input change can require fresh reviews/bindings/verific
 - Empty products complete exact scope-owned `project setup` without Work. After ready, create/resume Work before business code. Existing products and active Work reuse their setup; see [project initialization](references/project-initialization.md). New
   inline requirements use `cao requirement next-id`; use an existing requirement file directly.
 - Save project background with `project context set`, establish actual verification entries and run project preparation checks before starting a product Work; plan-only does not establish readiness. Project technology is independent of Work decisions. Confirm material technology choices before stack-dependent planning/scaffolding. Preserve the existing product stack or explicit user choices/delegation; ask and wait for missing choices. Agent-written requirements/SPECs alone do not authorize choices. Restore recorded choices after restart; see the intake guide.
-- Establish actual project verification before the first Work; preserve accepted baseline checks before business implementation, then assess
-  the path and satisfy native prerequisites. Initial build/test scaffolding may fail; passing tests
-  are not a prerequisite to creating Work or beginning implementation after its prerequisites.
+- Prepare project checks before creating/resuming Work. Baseline preparation exposes project inputs
+  and pending Work ID/status only; defer task context until ready. Work-level adoption approves
+  inheritance of a project standard. SDD owns task-specific behavior tests and acceptance.
 - Keep CAO profile (`light`, `standard`, `comprehensive`) separate from native route. Light still
   follows native prerequisites, actual task scope and required independent reviews. Do not
   manufacture workflow/plan/no-plan records merely for light. Prove actual native Intent/criteria behavior with current task acceptance evidence.

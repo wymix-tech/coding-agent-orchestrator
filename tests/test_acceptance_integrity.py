@@ -69,6 +69,8 @@ def change_test_standard(repo):
     cfg = json.loads(path.read_text(encoding="utf-8"))
     cfg["verification"]["scripts"][0]["command"] += " --buffer"
     path.write_text(json.dumps(cfg), encoding="utf-8")
+    rc, out = run(repo, 'verification', 'check', '--project')
+    assert rc == 0, out
 
 
 def read_work(repo, wid):

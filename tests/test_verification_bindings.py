@@ -61,6 +61,10 @@ class VerificationTests(RepairCase):
         cfg = json.loads(path.read_text(encoding="utf-8"))
         cfg["verification"]["scripts"] = scripts
         path.write_text(json.dumps(cfg), encoding="utf-8")
+        from scripts.verification_setup import setup_state
+        if setup_state(cfg)['ready']:
+            from tests.helpers import seed_project_preparation
+            seed_project_preparation(self.repo)
 
     def python_command(self, code):
         argv = [sys.executable, "-c", code]
@@ -164,6 +168,8 @@ class VerificationTests(RepairCase):
         cfg = cao.config(self.repo)
         cfg["verification"]["scripts"][0]["gates"] = []
         (self.repo / ".orchestrator/config.json").write_text(json.dumps(cfg), encoding="utf-8")
+        from tests.helpers import seed_project_preparation
+        seed_project_preparation(self.repo)
         rc, out = self.run_cli("verify")
         self.assertEqual(rc, 2, out)
         self.assertEqual(out.get("error"), "VERIFICATION_STANDARD_CHANGED")

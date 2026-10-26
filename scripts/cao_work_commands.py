@@ -281,11 +281,17 @@ def cmd_status(args: argparse.Namespace) -> int:
 def cmd_next(args: argparse.Namespace) -> int:
     repo = repo_root(args.repo); ensure_initialized(repo)
     index = load_index(repo); work = load_work(repo, args.work or index.get("active_work")) if (args.work or index.get("active_work")) else None
-    if work and restart_state(repo, detect_current_host())["ready"] and reconcile_native_sdd_state(repo, work):
-        work = load_work(repo, work["id"]) or work
     current = current_work_action(repo, work)
+    if work and current.get('owner') != 'project' and restart_state(repo, detect_current_host())["ready"] and reconcile_native_sdd_state(repo, work):
+        work = load_work(repo, work['id']) or work
+        current = current_work_action(repo, work)
     out = {"ok": True, "action": current, "work_item": work_summary(work) if work else None,
            "guidance": agent_guidance(repo, work, next_action=current)}
+    if current.get('owner') == 'project' or current.get('stage') == 'verification_setup':
+        from scripts.project_verification import preparation_context
+        out['context'] = preparation_context(repo, work, purpose='project_baseline_preparation' if current.get('owner') == 'project' else 'work_baseline_adoption')
+        out['pending_work'] = out['context']['pending_work']
+        out['work_item'] = None
     if out["work_item"]:
         out["work_item"]["next_action"] = current
     print(json.dumps(out, ensure_ascii=False, indent=2)); return 0
@@ -484,13 +490,24 @@ def cmd_resume(args: argparse.Namespace) -> int:
         else:
             print(json.dumps({"ok": False, "error": "NO_RESUMABLE_WORK"}, ensure_ascii=False, indent=2))
         return 2
-    if reconcile_native_sdd_state(repo, work):
-        work = load_work(repo, work["id"]) or work
     ready, detected = work_sdd_ready(repo, work)
     if not ready:
-        provider = ((work.get("sdd") or {}).get("provider") or "auto")
-        print(json.dumps({"ok": False, "error": "SDD_NOT_INSTALLED", "provider": provider, "status": detected, "next": f"cao sdd install --provider {provider} --yes"}, ensure_ascii=False, indent=2))
+        provider = ((work.get('sdd') or {}).get('provider') or 'auto')
+        print(json.dumps({'ok': False, 'error': 'SDD_NOT_INSTALLED', 'provider': provider,
+                          'status': detected, 'next': f'cao sdd install --provider {provider} --yes'}))
         return 2
+    restart = restart_state(repo, args.host or detect_current_host())
+    if not restart['ready']:
+        print(json.dumps({'ok': False, 'error': restart['reason'], 'next': restart['next']}))
+        return 2
+    from scripts.project_verification import project_prerequisite, preparation_context
+    project = project_prerequisite(repo, work)
+    if project:
+        print(json.dumps({'ok': False, 'error': project['reason'], 'next': project,
+                          'context': preparation_context(repo, work)}, ensure_ascii=False, indent=2))
+        return 2
+    if reconcile_native_sdd_state(repo, work):
+        work = load_work(repo, work['id']) or work
     if work.get("status") == "suspended" and args.reactivate:
         if _activation_denied(repo, work["id"]):
             return 2
