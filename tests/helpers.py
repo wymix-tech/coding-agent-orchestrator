@@ -115,7 +115,7 @@ def bind_fixture_reviewer(repo, ticket, layer, model, reviewer_cli=None):
         assert result.returncode == 0, (result.stdout, result.stderr)
         return json.loads(result.stdout)
     invoke('host-event', '--host', 'pi', payload={'event': 'subagent_start',
-           'session_id': 'fixture-parent', 'subagent_id': session_id,
+           'session_id': 'fixture-parent', 'subagent_id': session_id, 'model': model,
            'prompt': __import__('scripts.review_observation', fromlist=['task_marker']).task_marker(ticket, layer)})
     out = invoke('sdd', 'review', 'attach', '--layer', layer, '--run', ticket['id'],
                  '--input-sha256', ticket['input_sha256'], '--model', model)
@@ -139,7 +139,7 @@ def fixture_native_review(repo, run, wid=None, reviewer_cli=None):
         script.write_text("from pathlib import Path\nimport sys\np=Path(sys.argv[1])\nassert p.is_dir()\nprint('- F1: Independently inspect the local fixture source and verification setup.')\n")
         findings=subprocess.check_output([sys.executable,str(script),str(repo)],text=True)
     raw=directory/'findings.md';raw.write_text(findings)
-    publish_fixture_review(repo, reviewer, findings)
+    publish_fixture_review(repo, reviewer, findings, reviewer_cli)
     report=directory/'report.json'
     report.write_text(json.dumps({'run_id':ticket['id'],'input_sha256':ticket['input_sha256'],
         'reviewer':reviewer,
@@ -179,12 +179,13 @@ def provision_fixture_background(repo):
     path.write_text(json.dumps(cfg, ensure_ascii=False))
 
 
-def publish_fixture_review(repo, reviewer, text):
+def publish_fixture_review(repo, reviewer, text, reviewer_cli=None):
     """Publish a local fixture reviewer's actual output via the real host event API."""
     env = {**os.environ, 'CAO_HOST': 'pi', 'PI_SESSION_ID': reviewer['session_id'], 'PI_MODEL': reviewer['model']}
     payload = {'event': 'turn_end', 'kind': 'subagent', 'subagent_id': reviewer['session_id'],
                'last_assistant_message': text}
-    result = subprocess.run([sys.executable, str(pathlib.Path(__file__).resolve().parents[1] / 'scripts/cao.py'),
+    launcher = [str(reviewer_cli)] if reviewer_cli else [sys.executable, str(pathlib.Path(__file__).resolve().parents[1] / 'scripts/cao.py')]
+    result = subprocess.run([*launcher,
         'host-event', '--host', 'pi', '--repo', str(repo)], input=json.dumps(payload),
         text=True, capture_output=True, env=env, timeout=30)
     assert result.returncode == 0, (result.stdout, result.stderr)

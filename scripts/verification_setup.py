@@ -66,8 +66,8 @@ def setup_instruction(command: str) -> str:
     return (
         "CAO verification setup: establish and explicitly accept a configured baseline before feature development; product writes are blocked until then, while native artifacts, manifests, tests and verification wrappers remain writable. "
         "Run bootstrap first and honor explicit SDD selection/install authorization. "
-        "Create or resume an active Work before writing product or verification scaffolding; "
-        "an empty verification configuration does not prevent cao start. "
+        "Empty products first use `cao project setup rules`, `draft`, `plan`, `apply` and `check` without a business Work; resume the original request after setup is ready. "
+        "For existing products, create or resume the Work before business implementation; missing verification configuration alone does not prevent cao start. "
         "For an existing project, analyze product manifests, source, tests and CI; reuse meaningful verification. "
         "Do not infer the product tech stack from .orchestrator derived state, .agents, .pi, host assets, SDD tools/outputs or caches; current user requirements remain relevant. "
         + technology_instruction(command) +
@@ -75,7 +75,7 @@ def setup_instruction(command: str) -> str:
         + scaffold_instruction() +
         "Zero tests, missing tools or missing dependencies must fail/block, not echo/true a pass. Preserve the user's selected framework and test runner; do not replace JUnit 5 with a main program when dependencies are missing. For Java/Jupiter use JUnit5-capable Surefire and fail on zero tests. "
         f'Configure through `{command} verification configure --test-script "<actual project test wrapper>" --verify-script "<actual general check>"` using only applicable scripts; register a combined general/tests wrapper once as a test script; do not hand-edit config or use init --force. '
-        "Do not overwrite existing scripts or install dependencies automatically. Configuration readiness is not verification success: within an active Work, initial scaffolding/tests may be written before tests pass. Do not expand verification setup into business implementation; configure wrappers, rerun bootstrap and follow the path assessment/native SDD instructions first. "
+        "Do not overwrite existing scripts. Resolve normal declared dependencies through the accepted project toolchain; global installation and unknown remote scripts require separate authorization. Configuration readiness is not verification success: within an active Work, initial scaffolding/tests may be written before tests pass. Do not expand verification setup into business implementation; configure wrappers, rerun bootstrap and follow the path assessment/native SDD instructions first. "
         "Rerun bootstrap after configuration; if an active Work already has an acceptance anchor, review and explicitly reanchor instead of silently changing it."
     )
 

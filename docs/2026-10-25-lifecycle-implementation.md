@@ -54,3 +54,20 @@ or exempt other provider regressions, actual language/toolchain checks or packag
 Phase checkpoint: 49 existing core tests passed before the new shared-executor
 extensions; 43 setup/native/snapshot/protocol boundary tests passed afterward.
 Complete regression, packaging and actual toolchain validation remain in progress.
+
+Second implementation checkpoint restores actual host model/provider observation
+(including default-model selection without worker environment assumptions), explicit
+review round/task counts, a complete product input manifest and a Work-start
+baseline for NO_VCS projects. Git inventories include renames/deletions and
+untracked resources. Input manifest tampering blocks affected reviews.
+
+Exact planned-file repairs are now permitted without Work while initialization
+is incomplete; ready projects and plan-external writes remain denied. Confirmed
+identity fields reuse their original per-field user provenance. Adapter version,
+runner compatibility and mandatory capability changes cannot silently reuse ready.
+Runtime instructions, templates and quick starts now describe this same sequence.
+
+Fresh execution results so far: 91 provenance/lifecycle regressions passed, 65
+provider/recovery regressions passed, and all four actual compiler matrix cases
+(Go, TypeScript, Java/Maven and Java/Gradle) passed. Pi typecheck and 37 adapter
+tests passed. A fresh full regression and installed-package validation are running.

@@ -13,6 +13,17 @@ def runtime_model_name(model, runtime_model=None, provider=None):
     return model
 
 
+def observed_model_matches(session, requested):
+    observed = session.get('observed_model')
+    if not isinstance(observed, str) or not observed.strip():
+        return False
+    aliases = {observed}
+    provider = session.get('observed_provider')
+    if provider:
+        aliases.add(provider + '/' + observed)
+    return requested in aliases
+
+
 def attach_reviewer(run, inputs, identity, session, model, run_id, input_sha256):
     if not isinstance(run.get('existing_session_ids'), list):
         raise ValueError('NATIVE_REVIEW_RESTART_REQUIRED')
@@ -39,6 +50,8 @@ def attach_reviewer(run, inputs, identity, session, model, run_id, input_sha256)
         if session.get('review_ticket') != expected:
             invalid('NATIVE_REVIEW_TASK_MISMATCH', 'session.review_ticket', expected,
                     session.get('review_ticket'))
+        if not observed_model_matches(session, model):
+            invalid('NATIVE_REVIEW_MODEL_UNOBSERVED', 'reviewer.model', model, session.get('observed_model'))
     reviewer = {'mode': 'subagent' if session.get('kind') == 'subagent' else 'external-session',
                 'session_id': identity[1], 'model': model}
     previous = run.get('execution_binding')
@@ -60,7 +73,7 @@ def delegated_reviewer(repo, run, inputs, coordinator_identity, child_ref, model
         invalid('NATIVE_REVIEW_CHILD_REQUIRED', 'reviewer_session', 'a host-observed child of this coordinator', child_ref)
     if 'read' not in (child.get('observed_tools') or []):
         invalid('NATIVE_REVIEW_TOOLS_UNOBSERVED', 'reviewer.tools', 'observed read capability', child.get('observed_tools'))
-    if child.get('observed_model') != model:
+    if not observed_model_matches(child, model):
         invalid('NATIVE_REVIEW_MODEL_UNOBSERVED', 'reviewer.model', model, child.get('observed_model'))
     identity = (child['host'], child['host_session_id'])
     attached = attach_reviewer(run, inputs, identity, child, model, run_id, input_sha256)

@@ -106,6 +106,7 @@ class ReviewLaunchAndRecovery(unittest.TestCase):
         self.source = '_bmad/render/bmad-build/step-04-review.md'
         self.t.write(self.source, '#### Blind (`blind-hunter`)\n')
         self.t.env.update(CAO_HOST='pi', PI_SESSION_ID='primary-fixture', PI_MODEL='deepseek-flash', PI_PROVIDER='deepseek')
+        self.t.hook('prompt_submit', prompt='Continue the existing work', model='deepseek-flash', provider='deepseek')
 
     def begin(self, model='deepseek/deepseek-flash', *extra):
         return self.t.run_cli('sdd', 'review', 'begin', '--layer', 'blind-hunter',
@@ -121,14 +122,21 @@ class ReviewLaunchAndRecovery(unittest.TestCase):
         self.assertNotEqual(first['review']['id'], restarted['review']['id'])
         out = self.t.run_cli('sdd', 'review', 'begin', '--layer', 'blind-hunter', '--model', 'other/deepseek-flash',
                              '--instructions', self.source, expected=2)
-        self.assertEqual('NATIVE_REVIEW_MODEL_MISMATCH', out['error'])
-        self.assertEqual('deepseek-flash', out['expected_model'])
+        self.assertEqual('NATIVE_REVIEW_RESTART_REQUIRED', out['error'])
         self.assertEqual(restarted['review']['id'], self.t.work()['sdd']['native_reviews']['blind-hunter']['id'])
+
+    def test_default_model_comes_from_observed_host_even_with_stale_worker_environment(self):
+        self.t.env['PI_MODEL'] = 'stale-worker-model'
+        out = self.t.run_cli('sdd', 'review', 'begin', '--layer', 'blind-hunter', '--instructions', self.source)
+        self.assertEqual('deepseek-flash', out['review']['model'])
+        self.assertEqual('host_observation', out['model_source'])
 
     def test_native_markdown_survives_attach_classify_patch_and_idempotent_resume(self):
         t = self.t
         ticket = self.begin()['review']
-        t.hook('subagent_start', subagent_id='review-child')
+        t.hook('subagent_start', subagent_id='review-child', model='deepseek-flash', provider='deepseek')
+        from scripts.review_observation import task_marker
+        t.hook('prompt_submit', subagent_id='review-child', prompt=task_marker(ticket, 'blind-hunter'))
         t.env['PI_SESSION_ID'] = 'review-child'
         t.run_cli('bootstrap', '--host', 'pi')
         self.assertEqual('subagent', cao.load_session(t.repo, 'review-child', host='pi')['kind'])
@@ -138,6 +146,7 @@ class ReviewLaunchAndRecovery(unittest.TestCase):
         raw = '# Findings\n\n- Real bug\n  - Nested proof\n\n```python\n- example\n```\n\n- Another bug\n'
         path = '_bmad-output/reviews/raw.md'
         t.write(path, raw)
+        t.hook('turn_end', subagent_id='review-child', last_assistant_message=raw)
         before = (t.repo / '.orchestrator/work' / (t.wid + '.json')).read_bytes()
         parsed = t.run_cli('sdd', 'review', 'findings', '--source', path)
         self.assertEqual(['finding-1', 'finding-2'], [f['id'] for f in parsed['findings']])

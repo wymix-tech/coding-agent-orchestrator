@@ -63,6 +63,9 @@ def main():
                     return subprocess.list2cmdline(argv) if os.name == "nt" else shlex.join(argv)
                 tests = repo / "acceptance-tests"
                 tests.mkdir()
+                # This matrix exercises an existing product. Empty-project
+                # initialization has its own public-CLI load/test regression.
+                (repo / 'pyproject.toml').write_text('[project]\nname = "installed-fixture"\nversion = "0.1.0"\n')
                 (tests / "test_acceptance.py").write_text("import unittest\nclass Acceptance(unittest.TestCase):\n    def test_pass(self): self.assertEqual(2+2,4)\n", encoding="utf-8")
                 cli("init", "--host", "codex", "--sdd", provider)
                 assert cli('bootstrap')['mode'] == 'project_context_setup'
@@ -157,7 +160,7 @@ def main():
                 executor = repo / "fixture-final.py"
                 executor.write_text("import json,os,subprocess,sys\nr=json.loads(os.environ['CAO_SDD_ACCEPTANCE_REQUEST'])\n"
                     "rc=subprocess.run([sys.executable,'-m','unittest','discover','-s','acceptance-tests','-v'],stdout=sys.stderr,stderr=sys.stderr).returncode\n"
-                    "print(json.dumps({'run_id':r['run_id'],'input_sha256':r['input_sha256'],'provider':r['provider'],'items':[{'id':'AC-1','status':'passed' if rc==0 else 'failed','evidence':[{'path':'acceptance-tests/test_acceptance.py','reason':'Actual fixture unittest execution'}]}]}))\nsys.exit(rc)\n", encoding="utf-8")
+                    "print(json.dumps({'run_id':r['run_id'],'input_sha256':r['input_sha256'],'provider':r['provider'],'items':[{'id':'AC-1','check':{'criterion_id':'AC-1','run_id':r['run_id'],'selector':'test_acceptance.Acceptance.test_pass','assertion':'2+2 equals 4','observed':'unittest exit '+str(rc)},'status':'passed' if rc==0 else 'failed','evidence':[{'path':'acceptance-tests/test_acceptance.py','reason':'Actual fixture unittest execution'}]}]}))\nsys.exit(rc)\n", encoding="utf-8")
                 declaration = {"spec": artifact, "criteria": [{"id": "AC-1", "source": artifact, "kind": "requirement", "description": "Fixture unittest passes"}],
                     "executor": {"mode": "command", "entrypoint": shell([args.python, executor.name])}}
                 declaration["criteria"][0]["covers"] = [item["id"] for item in cli("acceptance", "criteria")["criteria"]]

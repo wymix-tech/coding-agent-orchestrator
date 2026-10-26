@@ -113,6 +113,17 @@ def review_integrity(repo, work, snapshot=None, inputs=None):
     if len(models) > 1 or (expected and models and models != {expected}):
         return {'ready': False, 'reason': 'NATIVE_REVIEW_MODEL_MISMATCH'}
     from scripts.cao_snapshot import code_snapshot
+    for layer in layers:
+        run = records.get(layer) or {}
+        if not run.get('input_manifest'):
+            continue
+        ref = run['input_manifest']
+        try:
+            valid_manifest = digest(json.loads(repo_file(repo, ref['path']).read_text())) == ref['content_sha256']
+        except (ValueError, OSError, RuntimeError):
+            valid_manifest = False
+        if not valid_manifest:
+            return {'ready': False, 'reason': 'NATIVE_REVIEW_INPUT_MANIFEST_STALE', 'layer': layer, 'file': ref['path']}
     current = inputs if inputs is not None else (review_inputs(repo, work, snapshot or code_snapshot)
                                                 if any(records.get(layer) for layer in layers) else {})
     for layer in layers:
@@ -122,9 +133,15 @@ def review_integrity(repo, work, snapshot=None, inputs=None):
         if run.get('status') not in {'running', 'classified', 'passed'}:
             return {'ready': False, 'reason': 'NATIVE_REVIEW_RESTART_REQUIRED', 'layer': layer, 'field': 'status'}
         # Classified evidence deliberately keeps the original pre-patch snapshot.
-        if any(run.get('inputs', {}).get(key) != value for key, value in current.items()
-               if key != 'code_snapshot' or run.get('status') != 'classified'):
-            return {'ready': False, 'reason': 'NATIVE_REVIEW_STALE', 'layer': layer, 'field': 'inputs'}
+        changed = [key for key, value in current.items() if run.get('inputs', {}).get(key) != value
+                   and (key != 'code_snapshot' or run.get('status') != 'classified')]
+        if changed:
+            affected = [name for name in layers if records.get(name) and any(
+                records[name].get('inputs', {}).get(key) != value and (key != 'code_snapshot' or records[name].get('status') != 'classified')
+                for key, value in current.items())]
+            return {'ready': False, 'reason': 'NATIVE_REVIEW_STALE', 'layer': layer, 'field': 'inputs',
+                    'changed_inputs': sorted(changed), 'affected_layers': affected,
+                    'still_valid_layers': [name for name in layers if records.get(name) and name not in affected]}
         if run.get('status') in {'classified', 'passed'}:
             try:
                 validate_reviewer(run, {'reviewer': run.get('reviewer')})

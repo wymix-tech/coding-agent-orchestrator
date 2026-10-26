@@ -4,6 +4,7 @@ import copy
 import hashlib
 import json
 import os
+import subprocess
 from pathlib import Path
 import sys
 import tempfile
@@ -83,6 +84,46 @@ class SetupRecovery(unittest.TestCase):
         self.assertTrue(setup.writable_input(self.repo, {'toolName': 'apply_patch', 'input': {'patch': prefix + path.relative_to(self.repo).as_posix() + suffix}}))
         self.assertFalse(setup.writable_input(self.repo, {'toolName': 'apply_patch', 'input': {'patch': prefix + 'src/business.py' + suffix}}))
 
+    def test_confirmed_identity_fields_reuse_their_actual_original_evidence(self):
+        from scripts.project_context import load_context, commit_context
+        from scripts.project_sources import observe_prompt
+        raw = self.plan()
+        plan = setup.normalize_plan(self.repo, 'root', raw)
+        context = load_context(self.repo)
+        candidate = copy.deepcopy(context)
+        candidate['scopes']['root']['identity'] = {'values': plan['identity'], 'rule': plan['rule'], 'sources': plan['identity_sources']}
+        commit_context(self.repo, candidate, context['revision'])
+        raw['evidence'] = observe_prompt(self.repo, 'Change only the check command; preserve the existing identities.', 'pi', 'new-session')
+        inherited = setup.normalize_plan(self.repo, 'root', raw)
+        self.assertEqual(plan['identity_sources'], inherited['identity_sources'])
+        raw['identity']['name'] = 'unauthorized-new-name'
+        with self.assertRaisesRegex(ValueError, 'FIELD_NOT_COVERED'):
+            setup.normalize_plan(self.repo, 'root', raw)
+
+    def test_adapter_version_change_invalidates_ready_without_rewriting_files(self):
+        from scripts.setup_rules import RULES
+        self.install(self.plan())
+        self.assertEqual('passed', setup.check(self.repo, 'root')['status'])
+        with patch.dict(RULES['python-unittest'], {'version': 2}):
+            self.assertEqual('PROJECT_SETUP_RULE_STALE', setup.state(self.repo)['reason'])
+
+    def test_repair_authorizes_exact_planned_files_only_until_ready(self):
+        self.install(self.plan())
+        edit = {'toolName': 'edit', 'input': {'path': 'tests/test_baseline.py', 'oldText': 'True', 'newText': 'True'}}
+        self.assertTrue(setup.writable_scaffold(self.repo, edit))
+        edit['input']['path'] = 'demo_import/business.py'
+        self.assertFalse(setup.writable_scaffold(self.repo, edit))
+        self.assertEqual('passed', setup.check(self.repo, 'root')['status'])
+        edit['input']['path'] = 'tests/test_baseline.py'
+        self.assertFalse(setup.writable_scaffold(self.repo, edit))
+
+    def test_runtime_rules_cannot_downgrade_required_test_capability(self):
+        raw = self.plan()
+        raw['required_capabilities'] = ['load']
+        raw.update(delivery_kind='non-runtime', no_tests_reason='pretend documentation')
+        with self.assertRaisesRegex(ValueError, 'CAPABILITIES_INCOMPLETE'):
+            setup.normalize_plan(self.repo, 'root', raw)
+
 
 class NativeContracts(unittest.TestCase):
     def test_current_renderer_requires_complete_review_and_referenced_finalize(self):
@@ -105,6 +146,16 @@ class NativeContracts(unittest.TestCase):
             (root / 'step-05-present.md').write_text('Changed obligations')
             with self.assertRaisesRegex(ValueError, 'CONTRACT_STALE'):
                 validate(repo, contracts)
+
+    def test_explicit_missing_implementation_reference_is_rejected(self):
+        from scripts.native_contracts import resolve
+        with tempfile.TemporaryDirectory() as td:
+            repo = Path(td)
+            root = repo / '_bmad/render/current'
+            root.mkdir(parents=True)
+            (root / 'step-02-plan.md').write_text('Follow step-03-implement.md')
+            with self.assertRaisesRegex(ValueError, 'CONTRACT_FILE_REQUIRED'):
+                resolve(repo, [{'path': '_bmad/render/current/step-02-plan.md'}], 'dispatch')
 
     def test_only_versioned_primary_spec_status_transition_preserves_evidence(self):
         from scripts.native_metadata import POLICY, semantic_hash
@@ -142,6 +193,15 @@ class NativeContracts(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'MODEL_UNOBSERVED'):
                 effective_model(Path('.'), args, ('pi', 'parent'))
 
+    def test_round_counts_do_not_invent_missing_historical_rounds(self):
+        from scripts.review_dispatch import review_counts
+        layers = ['blind-hunter', 'edge-case-hunter', 'verification-gap']
+        work = {'sdd': {'native_reviews': {'_contract': {'layers': layers, 'round_id': 'round-2'},
+                  **{layer: {'id': 'new-' + layer, 'round_id': 'round-2'} for layer in layers}},
+                'native_review_history': [{'review': {'id': 'old-' + layer, 'round_id': 'round-1'}} for layer in layers]}}
+        counts = review_counts(work)
+        self.assertEqual((3, 2, 6), (counts['layer_count'], counts['observed_round_count'], counts['total_task_count']))
+
 
 class AcceptanceBoundaries(unittest.TestCase):
     def test_catalog_separates_metadata_tasks_and_negative_constraints(self):
@@ -174,3 +234,55 @@ class AcceptanceBoundaries(unittest.TestCase):
             self.assertEqual(before, acceptance_review_scope(repo, work)[1])
             work['sdd']['acceptance']['declaration']['criteria'][0]['description'] = 'Different intent'
             self.assertNotEqual(before, acceptance_review_scope(repo, work)[1])
+
+
+class CompleteChangeInventory(unittest.TestCase):
+    def test_git_baseline_includes_renames_deletions_and_untracked_resources(self):
+        from scripts.review_changes import capture_baseline, freeze, inventory
+        with tempfile.TemporaryDirectory() as td:
+            repo = Path(td)
+            def git(*args):
+                return subprocess.run(['git', *args], cwd=repo, check=True, capture_output=True)
+            git('init', '-q')
+            (repo / 'old.txt').write_text('rename content')
+            (repo / 'remove.bin').write_bytes(b'\x00old')
+            git('add', '.')
+            git('-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.test', 'commit', '-qm', 'baseline')
+            work = {'id': 'work-git', 'requirement': {'path': '.orchestrator/requirements/request.md'}, 'sdd': {}}
+            capture_baseline(repo, work)
+            git('mv', 'old.txt', 'new.txt')
+            (repo / 'remove.bin').unlink()
+            (repo / 'data').mkdir()
+            (repo / 'data/.gitkeep').write_bytes(b'')
+            snapshot, _ = inventory(repo, work)
+            value = freeze(repo, work, snapshot)
+            changes = {item['path']: item for item in value['changes']}
+            self.assertTrue(changes['new.txt']['status'].startswith('R'))
+            self.assertEqual('old.txt', changes['new.txt']['previous_path'])
+            self.assertEqual('D', changes['remove.bin']['status'])
+            self.assertEqual('A', changes['data/.gitkeep']['status'])
+
+    def test_no_vcs_baseline_includes_deleted_binary_and_empty_resource(self):
+        from scripts.review_changes import capture_baseline, freeze, inventory
+        with tempfile.TemporaryDirectory() as td:
+            repo = Path(td)
+            (repo / 'src').mkdir()
+            (repo / 'src/old.txt').write_text('old resource')
+            (repo / 'data').mkdir()
+            (repo / 'data/.gitkeep').write_bytes(b'')
+            (repo / 'data/image.bin').write_bytes(b'\x00\xffold')
+            work = {'id': 'work-1', 'requirement': {'path': '.orchestrator/requirements/request.md'}, 'sdd': {}}
+            capture_baseline(repo, work)
+            (repo / 'src/old.txt').unlink()
+            (repo / 'data/image.bin').write_bytes(b'\x00\xffnew')
+            (repo / 'src/new.yaml').write_text('enabled: true\n')
+            snapshot, files = inventory(repo, work)
+            value = freeze(repo, work, snapshot)
+            self.assertEqual('work_start', value['baseline']['kind'])
+            self.assertIn('data/.gitkeep', {item['path'] for item in files})
+            changes = {item['path']: item['status'] for item in value['changes']}
+            self.assertEqual({'src/old.txt': 'D', 'data/image.bin': 'M', 'src/new.yaml': 'A'}, changes)
+            baseline = repo / work['review_baseline']['path']
+            baseline.write_text('{}')
+            with self.assertRaisesRegex(ValueError, 'BASELINE_STALE'):
+                freeze(repo, work, snapshot)

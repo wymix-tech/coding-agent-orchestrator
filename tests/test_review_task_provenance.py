@@ -24,7 +24,7 @@ class ReviewTaskProvenance(unittest.TestCase):
 
     def child(self, layer):
         return {'id': 'session-' + layer, 'status': 'active', 'work_item_id': 'work-1',
-                'kind': 'subagent', 'review_ticket': ticket(self.runs[layer], layer)}
+                'kind': 'subagent', 'observed_model': 'model', 'review_ticket': ticket(self.runs[layer], layer)}
 
     def test_every_cross_layer_attachment_rejected_before_mutation(self):
         for layer, run in reversed(list(self.runs.items())):

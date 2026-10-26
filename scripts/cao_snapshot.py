@@ -17,7 +17,7 @@ from scripts.snapshot_scope import (
 )
 
 
-def code_snapshot(repo: Path, excluded: set[str] | None = None, additional_ignore_dirs: set[str] | None = None, *, include_roots=None) -> str:
+def code_snapshot(repo: Path, excluded: set[str] | None = None, additional_ignore_dirs: set[str] | None = None, *, include_roots=None, manifest=None) -> str:
     """Versioned content, execution bits and link topology; bounded internal traversal."""
     repo = repo.resolve()
     excluded = excluded or set()
@@ -108,6 +108,8 @@ def code_snapshot(repo: Path, excluded: set[str] | None = None, additional_ignor
                 raise RuntimeError("SNAPSHOT_READ_FAILED: " + relative) from exc
             records.append((relative, meta, content))
     for relative, meta, content in sorted(records):
+        if manifest is not None:
+            manifest.append({'path': relative, **meta, 'sha256': content.hex() if content else None})
         h.update(relative.encode())
         h.update(b"\0")
         h.update(json.dumps(meta, sort_keys=True).encode())

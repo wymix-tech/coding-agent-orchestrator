@@ -11,6 +11,10 @@ from scripts.path_guard import repo_file
 
 def resolve(repo, rules, build_route):
     roots = list(dict.fromkeys(repo_file(repo, item['path']).parent for item in rules))
+    for item in rules:
+        source = repo_file(repo, item['path'])
+        if 'step-03-implement.md' in source.read_text(encoding='utf-8-sig') and not (source.parent / 'step-03-implement.md').is_file():
+            raise ValueError('NATIVE_ROUTE_CONTRACT_FILE_REQUIRED: current implementation step is missing')
     roots = [root for root in roots if (root / 'step-03-implement.md').is_file()]
     if not roots:
         return {}

@@ -77,19 +77,30 @@ def normalize_plan(repo, scope, raw):
     source = raw.get('source', 'user-specified')
     if source not in ('user-specified', 'user-delegated'):
         raise ValueError('PROJECT_SETUP_SOURCE_REQUIRED')
-    evidence = user_evidence(repo, raw.get('evidence'), identity, source == 'user-delegated')
+    from scripts.setup_identity import resolve
+    evidence_records, identity_sources = resolve(repo, scope, identity, raw, context)
+    evidence = evidence_records[0]
     rule = raw.get('rule') or {'id': 'explicit', 'version': 1}
-    if not isinstance(rule, dict) or rule.get('version') != 1 or not isinstance(rule.get('id'), str):
+    if not isinstance(rule, dict) or not isinstance(rule.get('version'), int) or not isinstance(rule.get('id'), str):
         raise ValueError('PROJECT_SETUP_RULE_INVALID')
     if rule.get('id') != 'explicit':
         from scripts.setup_rules import validate_identity
         spec = validate_identity(rule['id'], identity)
+        if rule['version'] != spec['version']:
+            raise ValueError('PROJECT_SETUP_RULE_INVALID')
         from scripts.project_sources import compact
         actual = context['scopes'][scope]['technology']['language']['value']
         if compact(actual) != compact(spec['language']):
             raise ValueError('PROJECT_SETUP_RULE_CONTEXT_MISMATCH')
+        technology = context['scopes'][scope]['technology']
+        for field, allowed in spec.get('technology', {}).items():
+            accepted = technology.get(field, {})
+            if accepted.get('status') == 'accepted' and compact(accepted['value']) not in {compact(v) for v in allowed}:
+                raise ValueError('PROJECT_SETUP_RULE_CONTEXT_MISMATCH: ' + field + '; adapt an explicit plan to the confirmed runner')
     elif not isinstance(raw.get('basis'), str) or not raw['basis'].strip():
         raise ValueError('PROJECT_SETUP_EXPLICIT_BASIS_REQUIRED')
+    elif rule['version'] != 1:
+        raise ValueError('PROJECT_SETUP_RULE_INVALID')
     framework = context['scopes'][scope]['technology'].get('framework', {})
     if framework.get('status') == 'accepted' and raw.get('framework_support') != framework.get('value'):
         raise ValueError('PROJECT_SETUP_FRAMEWORK_PLAN_REQUIRED: extend the draft with the confirmed framework entry and real startup/load check; record framework_support, or use an explicit plan')
@@ -143,10 +154,14 @@ def normalize_plan(repo, scope, raw):
     capabilities = set(raw['required_capabilities'])
     if not checks or not capabilities or not capabilities <= {c['capability'] for c in checks}:
         raise ValueError('PROJECT_SETUP_CAPABILITIES_INCOMPLETE')
+    if rule['id'] != 'explicit' and not set(spec['capabilities']) <= capabilities:
+        raise ValueError('PROJECT_SETUP_CAPABILITIES_INCOMPLETE: the selected rule requires ' + ', '.join(spec['capabilities']))
     if 'test' not in capabilities:
         # Non-runtime artifacts may explicitly declare a different applicable contract.
         if raw.get('delivery_kind') != 'non-runtime' or not raw.get('no_tests_reason'):
             raise ValueError('PROJECT_SETUP_REAL_TEST_REQUIRED')
+        if context['scopes'][scope]['technology'].get('test_framework', {}).get('status') != 'not_applicable':
+            raise ValueError('PROJECT_SETUP_TEST_APPLICABILITY_CONFLICT: preserve the confirmed runtime test contract')
         user_evidence(repo, raw.get('evidence'), {'delivery': 'non-runtime'}, source == 'user-delegated')
     from scripts.snapshot_scope import paths
     outputs = paths(raw.get('outputs', []), 'setup.outputs')
@@ -164,6 +179,7 @@ def normalize_plan(repo, scope, raw):
             'context_sha256': fingerprint(context, [scope]), 'bases': bases, 'rule': rule,
             'basis': raw.get('basis'), 'files': files, 'checks': checks,
             'required_capabilities': sorted(capabilities), 'outputs': outputs,
+            'identity_sources': identity_sources, 'identity_evidence': evidence_records,
             **({'generated_output_suffixes': generated} if generated else {})}
     plan['id'] = 'setup-' + digest(plan)
     return plan
@@ -193,11 +209,24 @@ def current_inputs(repo, plan):
 
 
 def state(repo, scope='root'):
+    background = context_state(repo, [scope])
+    if not background['ready']:
+        return {**background, 'stage': 'context_required'}
     record = read(scope_path(repo, scope))
     if not record:
         return {'ready': False, 'stage': 'identity_required', 'reason': 'PROJECT_SETUP_REQUIRED',
                 'next': 'Run `cao project setup rules`; confirm applicable identity/layout, then draft/plan/apply/check.'}
     plan = record['plan']
+    if plan['rule']['id'] != 'explicit':
+        from scripts.setup_rules import describe
+        try:
+            current_rule = describe(plan['rule']['id'])
+        except ValueError:
+            return {'ready': False, 'stage': 'identity_required', 'reason': 'PROJECT_SETUP_RULE_UNAVAILABLE',
+                    'next': 'Restore the recorded adapter or review an explicit replacement plan; do not reuse its old result silently.'}
+        if current_rule['version'] != plan['rule']['version']:
+            return {'ready': False, 'stage': 'identity_required', 'reason': 'PROJECT_SETUP_RULE_STALE',
+                    'next': 'Review the current adapter rule/version and create an updated plan; preserve existing files.'}
     if fingerprint(load_context(repo), [scope]) != plan['context_sha256']:
         return {'ready': False, 'stage': 'context_required', 'reason': 'PROJECT_SETUP_CONTEXT_STALE',
                 'next': 'Review changed project context and create an updated setup plan; keep current files.'}
@@ -211,7 +240,7 @@ def state(repo, scope='root'):
             return {'ready': True, 'stage': 'ready', 'plan_id': plan['id'], 'result': result}
         return {'ready': False, 'stage': 'check_pending', 'reason': 'PROJECT_SETUP_BASELINE_STALE',
                 'next': 'Review changed baseline and run `cao project setup check --scope ' + scope + '`.'}
-    stage = 'check_pending' if applied else 'scaffold_pending'
+    stage = 'check_pending' if record.get('applied') or applied else 'scaffold_pending'
     return {'ready': False, 'stage': stage, 'reason': 'PROJECT_SETUP_REQUIRED', 'plan_id': plan['id'],
             'result': result, 'next': 'Run `cao project setup ' + ('check' if applied else 'apply') + ' --scope ' + scope + '`.'}
 
@@ -360,7 +389,11 @@ def dispatch(args):
     action = args.setup_action
     if action == 'rules':
         from scripts.setup_rules import describe
-        out = {'rules': describe(), 'explicit_plan': 'project setup draft --scope S, edit exact files/checks/basis, then plan/apply/check'}
+        context = load_context(repo) or {}
+        scope = context.get('scopes', {}).get(args.scope, {})
+        values = (scope.get('identity') or {}).get('values', {})
+        out = {'rules': {key: {**rule, 'missing_identity_fields': [field for field in rule['fields'] if not values.get(field)]} for key, rule in describe().items()},
+               'confirmed_identity': values, 'explicit_plan': 'project setup draft --scope S, edit exact files/checks/basis, then plan/apply/check'}
     elif action == 'status':
         out = state(repo, args.scope)
     elif action == 'draft':
@@ -368,11 +401,15 @@ def dispatch(args):
             path = input_path(repo, args.scope)
             if not path.exists():
                 if args.rule:
-                    from scripts.setup_rules import scaffold
-                    raw = scaffold(args.rule, json.loads(args.identity or '{}'))
                     context = load_context(repo)
                     if not context or args.scope not in context['scopes']:
                         raise ValueError('PROJECT_CONTEXT_REQUIRED')
+                    from scripts.setup_rules import scaffold, describe
+                    fields = describe(args.rule)['fields']
+                    inherited = context['scopes'][args.scope].get('identity', {}).get('values', {})
+                    values = {key: value for key, value in inherited.items() if key in fields}
+                    values.update(json.loads(args.identity or '{}'))
+                    raw = scaffold(args.rule, values)
                     base = context['scopes'][args.scope]['paths'][0]
                     if base != '.':
                         for entry in raw['files']:
@@ -403,13 +440,14 @@ def dispatch(args):
             if previous and previous.get('running'):
                 raise ValueError('PROJECT_SETUP_CHECK_RUNNING')
             context = load_context(repo)
-            identity = {'values': plan['identity'], 'rule': plan['rule']}
+            identity = {'values': plan['identity'], 'rule': plan['rule'], 'sources': plan['identity_sources']}
             if context['scopes'][args.scope].get('identity') != identity:
                 from scripts.project_context import commit_context
                 candidate = deepcopy(context)
                 candidate['scopes'][args.scope]['identity'] = identity
-                if plan['evidence'] not in candidate['evidence']:
-                    candidate['evidence'].append(plan['evidence'])
+                for evidence in plan['identity_evidence']:
+                    if evidence not in candidate['evidence']:
+                        candidate['evidence'].append(evidence)
                 candidate['previous_revision'] = context['revision']
                 context = commit_context(repo, candidate, context['revision'])
                 plan['context_sha256'] = fingerprint(context, [args.scope])
@@ -446,16 +484,45 @@ def register(actions):
         parser.set_defaults(fn=dispatch)
 
 
-def writable_input(repo, raw):
+def write_targets(raw):
     from scripts.cao_tool_policy import _collect_path_strings, SHELL_TOOLS, _event_key
     if _event_key(raw, 'tool_name', 'toolName', 'name').lower() not in {'write', 'edit', 'apply_patch'}:
-        return False
+        return []
     targets = _collect_path_strings(raw.get('tool_input') or raw.get('input') or raw.get('arguments') or {})
     if _event_key(raw, 'tool_name', 'toolName', 'name').lower() == 'apply_patch':
         payload = raw.get('tool_input') or raw.get('input') or raw.get('arguments') or {}
         patch = payload if isinstance(payload, str) else payload.get('patch') or payload.get('input') or ''
         if isinstance(patch, str):
             targets += re.findall(r'(?m)^\*\*\* (?:Add File|Update File|Delete File|Move to): (.+)$', patch)
+    return targets
+
+
+def writable_scaffold(repo, raw):
+    targets = write_targets(raw)
+    if not targets:
+        return False
+    context = load_context(repo)
+    if not context:
+        return False
+    allowed = set()
+    for scope in context['scopes']:
+        record = read(scope_path(repo, scope))
+        if not record or not record.get('applied') or record.get('running'):
+            continue
+        plan = record['plan']
+        if fingerprint(context, [scope]) != plan['context_sha256'] or state(repo, scope)['ready']:
+            continue
+        allowed.update(safe_product(repo, f['path'], plan['bases']) for f in plan['files'])
+    for value in targets:
+        path = Path(value)
+        path = path if path.is_absolute() else repo / path
+        if path.absolute() not in allowed or path.resolve() != path.absolute():
+            return False
+    return True
+
+
+def writable_input(repo, raw):
+    targets = write_targets(raw)
     if not targets:
         return False
     for value in targets:

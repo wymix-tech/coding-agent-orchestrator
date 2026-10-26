@@ -89,12 +89,12 @@ require reanchoring. Any input change can require fresh reviews/bindings/verific
   freshness. The selected SDD owns PRD/spec/design/tasks/stories and native workflow. Store native
   references; do not copy artifacts just to make their format uniform.
 - Agent-authored CAO inputs are `requirements/` and only the active Work's exact
-  `.orchestrator/inputs/WORK_ID/route.json` returned by `next`. Other `.orchestrator/` files are derived state. Never edit config,
+  `.orchestrator/inputs/WORK_ID/route.json` returned by `next`. The exact prepared `.orchestrator/inputs/project-SCOPE/setup.json` is also Agent-editable. Other `.orchestrator/` files are derived state. Never edit config,
   index, Work, sessions, handoffs or lifecycle files by hand; use their CAO commands.
 - Respect the current user's instructions and language. Read `language.user` through `cao language
   show`; apply an ongoing changed preference with `cao language set --language <locale>`. Write
   native artifacts in that language while preserving code/API names, commands and required tokens.
-- Create/resume Work before product code, configuration, tests or verification scaffolding. New
+- Empty products complete exact scope-owned `project setup` without Work. After ready, create/resume Work before business code. Existing products and active Work reuse their setup; see [project initialization](references/project-initialization.md). New
   inline requirements use `cao requirement next-id`; use an existing requirement file directly.
 - Save project background with `project context set` before starting a product Work; use `verification configure --plan-only` when actual entries do not exist. Project technology is independent of Work decisions. Confirm material technology choices before stack-dependent planning/scaffolding. Preserve the existing product stack or explicit user choices/delegation; ask and wait for missing choices. Agent-written requirements/SPECs alone do not authorize choices. Restore recorded choices after restart; see the intake guide.
 - Establish an accepted required verification baseline before business implementation, then assess

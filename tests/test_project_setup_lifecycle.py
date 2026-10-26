@@ -76,8 +76,7 @@ class ProjectSetupLifecycle(unittest.TestCase):
 
     def test_no_test_zero_exit_is_blocked(self):
         raw = self.plan()
-        raw['checks'] = [{'name': 'test', 'command': 'true', 'capability': 'test'}]
-        raw['required_capabilities'] = ['test']
+        raw['checks'][1]['command'] = 'true'
         self.install(raw)
         result = setup.check(self.repo, 'root')
         self.assertEqual('blocked', result['status'])
@@ -181,7 +180,14 @@ class ProjectSetupLifecycle(unittest.TestCase):
         background = call('project', 'context', 'show')['context']
         self.assertEqual('sample_import', background['scopes']['root']['identity']['values']['import_name'])
         call('project', 'setup', 'apply')
+        event = {'event': 'pre_tool', 'session_id': 'actual-cli-fixture', 'toolName': 'edit',
+                 'input': {'path': 'tests/test_baseline.py', 'oldText': 'True', 'newText': 'True'}}
+        self.assertEqual('allow', call('host-event', '--host', 'pi', payload=event)['decision'])
+        event['input']['path'] = 'sample_import/business.py'
+        self.assertEqual('deny', call('host-event', '--host', 'pi', payload=event)['decision'])
         call('project', 'setup', 'check')
+        event['input']['path'] = 'tests/test_baseline.py'
+        self.assertEqual('deny', call('host-event', '--host', 'pi', payload=event)['decision'])
         self.assertTrue(call('project', 'setup', 'status')['ready'])
         (self.repo / 'openspec/feature.md').write_text('# Feature\n## Acceptance\n- The new operation works.\n')
         work = call('start', '--requirement', 'openspec/feature.md')['work_item']

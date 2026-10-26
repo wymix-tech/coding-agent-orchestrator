@@ -108,7 +108,7 @@ class SessionConformance(unittest.TestCase):
         for package in packages:
             layer = package['layer']
             child = 'child-' + layer
-            t.hook('subagent_start', subagent_id=child, prompt=package['task_marker'])
+            t.hook('subagent_start', subagent_id=child, prompt=package['task_marker'], model='fixture-model')
             t.env['PI_SESSION_ID'] = child
             out = t.run_cli('sdd', 'review', 'attach', '--layer', layer, '--run', package['run_id'],
                             '--input-sha256', package['input_sha256'], '--model', 'fixture-model')

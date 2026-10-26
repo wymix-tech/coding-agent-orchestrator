@@ -34,7 +34,7 @@ class OpenSpecLifecycleRepairs(RepairCase):
         script.write_text("""import json, os, subprocess, sys
 r=json.loads(os.environ['CAO_SDD_ACCEPTANCE_REQUEST'])
 p=subprocess.run([sys.executable,'-m','unittest','discover','-s','acceptance-tests','-v'], stdout=sys.stderr, stderr=sys.stderr)
-print(json.dumps({**{k:r[k] for k in ('run_id','input_sha256','provider')},'items':[{'id':c['id'],'status':'passed' if p.returncode==0 else 'failed','evidence':[{'path':'acceptance-tests/test_acceptance.py','reason':'Executed the calculation check'}]} for c in r['declaration']['criteria']]}))
+print(json.dumps({**{k:r[k] for k in ('run_id','input_sha256','provider')},'items':[{'id':c['id'],'check':{'criterion_id':c['id'],'run_id':r['run_id'],'selector':'Acceptance.test_ok','assertion':c['description'],'observed':'actual fixture unittest run'},'status':'passed' if p.returncode==0 else 'failed','evidence':[{'path':'acceptance-tests/test_acceptance.py','reason':'Executed the calculation check'}]} for c in r['declaration']['criteria']]}))
 sys.exit(p.returncode)
 """)
         declaration = {"spec": spec, "criteria": [{"id": "AC-1", "source": spec,

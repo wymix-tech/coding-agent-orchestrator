@@ -215,7 +215,7 @@ class ReviewFollowup(unittest.TestCase):
                 "r=json.loads(os.environ['CAO_SDD_ACCEPTANCE_REQUEST'])\n"
                 "p=subprocess.run([sys.executable,'-m','unittest','discover','-s','tests'],stdout=sys.stderr,stderr=sys.stderr)\n"
                 "print(json.dumps({'run_id':r['run_id'],'input_sha256':r['input_sha256'],'provider':r['provider'],"
-                "'items':[{'id':'AC-1','status':'passed' if p.returncode==0 else 'failed',"
+                "'items':[{'id':'AC-1','check':{'criterion_id':'AC-1','run_id':r['run_id'],'selector':'test_real','assertion':'fixture unittest succeeds','observed':'actual fixture unittest run'},'status':'passed' if p.returncode==0 else 'failed',"
                 "'evidence':[{'path':'tests/test_real.py','reason':'Executed local fixture unittest'}]}]}))\n"
                 "sys.exit(p.returncode)\n")
         argv = [sys.executable, "fixture-acceptance.py"]

@@ -211,6 +211,8 @@ class ImplementationHandoff(unittest.TestCase):
         source = '_bmad/render/bmad-build/step-03-implement.md'
         text = '# Implement\nLaunch a subagent with no prior conversation context.\nRead the SPEC and implement it.\n'
         fixture.write(source, text)
+        fixture.write('_bmad/render/bmad-build/step-04-review.md', '#### Blind (`blind-hunter`)\nFollow step-05-present.md\n')
+        fixture.write('_bmad/render/bmad-build/step-05-present.md', 'Finalize the native workflow.\n')
         fixture.propose()
         fixture.approve()
         spec = fixture.repo / fixture.spec

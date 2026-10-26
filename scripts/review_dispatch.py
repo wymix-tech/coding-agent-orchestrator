@@ -26,6 +26,20 @@ def coordinator(repo, identity):
         invalid('NATIVE_REVIEW_COORDINATOR_REQUIRED', 'session.kind', 'coordinator creates/restarts tickets; reviewer only attaches and reviews', 'subagent')
 
 
+def review_counts(work):
+    sdd = work.get('sdd') or {}
+    records = sdd.get('native_reviews') or {}
+    current = [value for key, value in records.items() if key != '_contract' and value.get('id')]
+    history = [row.get('review', {}) for row in sdd.get('native_review_history', [])]
+    tasks = {row['id']: row for row in [*history, *current] if row.get('id')}
+    rounds = {row['round_id'] for row in tasks.values() if row.get('round_id')}
+    return {'layer_count': len((records.get('_contract') or {}).get('layers', [])),
+            'current_task_count': len({row['id'] for row in current}), 'total_task_count': len(tasks),
+            'observed_round_count': len(rounds),
+            'legacy_tasks_without_round': sum(not row.get('round_id') for row in tasks.values()),
+            'current_round_id': (records.get('_contract') or {}).get('round_id')}
+
+
 def effective_model(repo, args, identity):
     explicit = getattr(args, 'model', None)
     if isinstance(explicit, str) and explicit.strip():
@@ -42,7 +56,9 @@ def begin_review(repo, work, args, identity):
     if work.get('sdd', {}).get('provider') != 'bmad':
         raise ValueError('NATIVE_REVIEW_NOT_APPLICABLE')
     records = work.setdefault('sdd', {}).setdefault('native_reviews', {})
-    args.model, model_source = effective_model(repo, args, identity)
+    model, model_source = effective_model(repo, args, identity)
+    args = argparse.Namespace(**vars(args))
+    args.model = model
     path = repo_file(repo, args.instructions)
     expected_name = "step-04-review.md" if dispatch_review(work) else "step-oneshot.md"
     if path.name != expected_name or not inside(path, repo / "_bmad/render") or (repo / "_bmad/render").resolve() != repo / "_bmad/render" or not path.is_file():
@@ -66,6 +82,11 @@ def begin_review(repo, work, args, identity):
             raise ValueError('NATIVE_REVIEW_CONTRACT_MISMATCH')
     proposed = {"sources": [path.relative_to(repo).as_posix()], "layers": layers, "model": args.model}
     old_contract = records.get('_contract') or {}
+    target = records.get(args.layer) or {}
+    round_id = old_contract.get('round_id') or new_id('review-round')
+    if args.restart and target and target.get('round_id') == old_contract.get('round_id'):
+        round_id = new_id('review-round')
+    proposed['round_id'] = round_id
     previous_contract = dict(old_contract)
     # Compute prospective inputs without persisting a changed contract.
     records['_contract'] = proposed
@@ -96,6 +117,7 @@ def begin_review(repo, work, args, identity):
         records['_contract'] = previous_contract
         raise ValueError('NATIVE_REVIEW_RESTART_REQUIRED')
     if args.restart and contract_changed:
+        proposed['round_id'] = new_id('review-round')
         from scripts.cao_runtime import now
         for key in list(records):
             if key != '_contract':
@@ -125,10 +147,18 @@ def begin_review(repo, work, args, identity):
     run = existing if reused else {"id": new_id("review"), "status": "running", "inputs": inputs,
            "input_sha256": native_digest(inputs), "model": args.model,
            "task_binding_version": 1, "layer": args.layer,
+           "round_id": proposed['round_id'],
            "model_source": model_source,
            "existing_session_ids": [session['id'] for session in list_sessions(repo)],
            "primary_session_ids": primary_ids}
     records[args.layer] = run
+    if not reused and not getattr(args, '_defer_input_manifest', False):
+        from scripts.review_changes import freeze
+        manifest = freeze(repo, work, inputs['code_snapshot'])
+        root = bundle_root(repo, work, args.layer, run)
+        manifest_path = root / 'input-manifest.json'
+        run['input_manifest'] = {'path': manifest_path.relative_to(repo).as_posix(), 'content_sha256': native_digest(manifest)}
+        atomic_json(manifest_path, manifest)
     output = {"ok": True, "review": run, "active_layers": layers, 'reused': reused, 'model_source': run.get('model_source', model_source)}
     output['reviewer_start'] = (f'{cao_invocation()["command"]} sdd review attach --work {work["id"]} '
         f'--layer {args.layer} --run {run["id"]} --input-sha256 {run["input_sha256"]} --model {shlex.quote(args.model)}')
@@ -227,10 +257,20 @@ def prepare_batch(repo, work, args, identity):
     import copy
     planned = copy.deepcopy(work)
     prepared = []
+    manifest = None
     for layer in layers:
         item_args = argparse.Namespace(**vars(args))
         item_args.layer = layer
+        item_args._defer_input_manifest = True
         prepared.append((layer, begin_review(repo, planned, item_args, identity)))
+    if any(not output.get('reused') for _, output in prepared):
+        from scripts.review_changes import freeze
+        manifest = freeze(repo, planned, prepared[0][1]['review']['inputs']['code_snapshot'])
+        for layer, output in prepared:
+            if not output.get('reused'):
+                run = output['review']
+                path = bundle_root(repo, work, layer, run) / 'input-manifest.json'
+                run['input_manifest'] = {'path': path.relative_to(repo).as_posix(), 'content_sha256': native_digest(manifest)}
     work.clear()
     work.update(planned)
     outputs = []
@@ -242,6 +282,11 @@ def prepare_batch(repo, work, args, identity):
             continue
         root = bundle_root(repo, work, layer, run)
         root.mkdir(parents=True, exist_ok=True)
+        if run.get('input_manifest') and not output.get('reused'):
+            from scripts.review_changes import freeze
+            if manifest is None:
+                manifest = freeze(repo, work, run['inputs']['code_snapshot'])
+            atomic_json(repo_file(repo, run['input_manifest']['path']), manifest)
         report = root / 'report.json'
         if not report.exists():
             atomic_json(report, {'run_id': run['id'], 'input_sha256': run['input_sha256'],
@@ -251,6 +296,9 @@ def prepare_batch(repo, work, args, identity):
         package = {'layer': layer, 'run_id': run['id'], 'input_sha256': run['input_sha256'],
                    'inputs': run['inputs'], 'reviewer_start': output['reviewer_start'],
                    'task_marker': output['task_marker'],
+                   'round_id': run.get('round_id'),
+                   'input_manifest': run.get('input_manifest'),
+                   'context_boundary': 'Follow only this layer\'s actual native instructions. Blind diff-only roles receive product changes without SPEC content; this manifest contains product paths/hashes, never requirement text.',
                    'report': report.relative_to(repo).as_posix(), 'capability': capability,
                    'task_contract': {'role': 'reviewer', 'product_writes': False, 'evidence': ['original-findings', 'review-input', 'reviewer-identity']},
                    'next': output['next'], 'status': run['status'],

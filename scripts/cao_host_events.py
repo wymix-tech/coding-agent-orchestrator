@@ -166,7 +166,9 @@ def host_event(args: argparse.Namespace) -> int:
         if isinstance(observed_model, str) and observed_model:
             from scripts.review_binding import runtime_model_name
             from scripts.cao_sessions import save_session
-            session['observed_model'] = runtime_model_name(observed_model, os.environ.get('PI_MODEL'), os.environ.get('PI_PROVIDER'))
+            session['observed_model'] = observed_model
+            if isinstance(raw.get('provider'), str) and raw['provider'].strip():
+                session['observed_provider'] = raw['provider'].strip()
             save_session(repo, session)
         if isinstance(raw.get('host_tools'), list) and all(isinstance(tool, str) for tool in raw['host_tools']):
             from scripts.cao_sessions import save_session
@@ -244,7 +246,7 @@ def host_event(args: argparse.Namespace) -> int:
         # `requirements/` stays writable (the Agent authors those), and CAO
         # itself writes state through commands, not through this hook.
         from scripts.project_setup import writable_input as writable_setup_input
-        setup_input_write = writable_setup_input(repo, raw)
+        setup_input_write = kind == 'primary' and writable_setup_input(repo, raw)
         protected = write_targets_protected_state(repo, raw, work)
         if protected and tool_is_mutating(raw) and not setup_input_write:
             result = {
@@ -260,7 +262,9 @@ def host_event(args: argparse.Namespace) -> int:
                              and all(writable_input(repo, target, work) for target in analysis["targets"]))
         native_write = (route_input_write or write_targets_native_sdd_output(repo, raw)
                         or native_intake_shell(repo, raw) or diagnostic_shell_write(repo, raw))
-        native_write = native_write or setup_input_write
+        from scripts.project_setup import writable_scaffold
+        setup_repair = not work and kind == 'primary' and writable_scaffold(repo, raw)
+        native_write = native_write or setup_input_write or setup_repair
         if tool_is_mutating(raw) and not native_write:
             if not work or work.get("status") != "active":
                 advice_work = work

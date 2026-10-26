@@ -23,6 +23,19 @@ RULES = {
     'cpp-cmake': {'language': 'c++', 'fields': ['name', 'target_name', 'cpp_standard'], 'layout': 'library', 'capabilities': ['build', 'test']},
 }
 
+for _rule, _constraints in {
+    'python-unittest': {'test_framework': ['unittest', 'python unittest']},
+    'node-test': {'build_tool': ['npm'], 'test_framework': ['node:test', 'node test'], 'package_manager': ['npm']},
+    'typescript-node': {'build_tool': ['npm', 'tsc', 'typescript'], 'test_framework': ['node:test', 'node test'], 'package_manager': ['npm']},
+    'go-module': {'build_tool': ['go', 'go modules'], 'test_framework': ['testing', 'go test']},
+    'java-maven': {'build_tool': ['maven', 'mvn'], 'test_framework': ['junit', 'junit5', 'junit jupiter']},
+    'java-gradle': {'build_tool': ['gradle'], 'test_framework': ['junit', 'junit5', 'junit jupiter']},
+    'rust-cargo': {'build_tool': ['cargo'], 'test_framework': ['cargo test', 'rust test']},
+    'dotnet-library': {'build_tool': ['dotnet', 'msbuild'], 'test_framework': ['console assertions']},
+    'cpp-cmake': {'build_tool': ['cmake'], 'test_framework': ['ctest']},
+}.items():
+    RULES[_rule]['technology'] = _constraints
+
 
 def describe(rule=None):
     if rule is None:
@@ -51,11 +64,17 @@ def validate_identity(rule, identity):
             if set(parts) & reserved:
                 raise ValueError('PROJECT_IDENTITY_RESERVED: ' + field)
         elif field == 'module_path':
-            if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9./_-]*', value) or '..' in value.split('/'):
+            if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9./_~-]*', value) or any(p in {'', '.', '..'} for p in value.split('/')):
                 raise ValueError('PROJECT_IDENTITY_INVALID: module_path')
         elif field == 'name' and rule in {'node-test', 'typescript-node'}:
-            if not re.fullmatch(r'(?:@[a-z0-9_-]+/)?[a-z0-9][a-z0-9._-]*', value):
+            if len(value) > 214 or not re.fullmatch(r'(?:@[a-z0-9_-]+/)?[a-z0-9][a-z0-9._-]*', value):
                 raise ValueError('PROJECT_IDENTITY_INVALID: npm name')
+        elif field == 'name' and rule == 'python-unittest':
+            if not re.fullmatch(r'[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?', value):
+                raise ValueError('PROJECT_IDENTITY_INVALID: distribution name')
+        elif field == 'name' and rule == 'rust-cargo':
+            if not re.fullmatch(r'[A-Za-z_][A-Za-z0-9_-]*', value):
+                raise ValueError('PROJECT_IDENTITY_INVALID: Cargo package name')
         elif not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.-]*', value):
             raise ValueError('PROJECT_IDENTITY_INVALID: ' + field)
     return spec
@@ -137,7 +156,7 @@ def scaffold(rule, identity):
         check('build', 'cmake -S . -B build && cmake --build build', 'build')
         check('test', 'ctest --test-dir build --output-on-failure', 'test')
         outputs = ['build/']
-    return {'schema_version': 1, 'rule': {'id': rule, 'version': 1}, 'identity': identity,
+    return {'schema_version': 1, 'rule': {'id': rule, 'version': spec['version']}, 'identity': identity,
             'files': files, 'checks': checks, 'outputs': outputs,
             **({'generated_output_suffixes': {'dist/': ['.js']}} if rule == 'typescript-node' else {}),
             **({'generated_output_suffixes': {'build/': ['.js']}} if rule == 'java-gradle' else {}),

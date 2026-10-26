@@ -72,7 +72,13 @@ def summarize(repo, work, lifecycle=None):
         instruction = task.get('next') or 'Run `cao acceptance criteria`; configure complete native acceptance and execute the actual checks.'
     if not instruction:
         instruction = lifecycle.get('next') or ('Run `cao done`.' if not blockers else 'Resolve the remaining native lifecycle obligations.')
+    from scripts.review_dispatch import review_counts
+    from scripts.native_completion import state as native_completion
+    unverified = ((work.get('sdd') or {}).get('workflow') or {}).get('unverified') or {}
+    exceptions = [{'kind': 'native_workflow_unverified', **unverified}] if unverified.get('allowed') else []
     return {'work_id': work['id'], 'historical': historical, 'technical_acceptance': technical,
+            'native_review_counts': review_counts(work), 'native_completion': native_completion(repo, work),
+            'unverified_exceptions': exceptions,
             'task_acceptance': task, 'lifecycle_ready': lifecycle['ready'], 'ready': not blockers,
             'blockers': blockers, 'next': {'type': 'agent', 'instruction': instruction},
             'reason': blockers[0] if blockers else None}

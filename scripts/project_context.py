@@ -59,7 +59,7 @@ def semantic(context, scopes=None):
                         'technology': {key: {'value': compact(item.get('value')), 'status': item['status']}
                                        for key, item in sorted(scope['technology'].items())},
                         'versions': scope.get('versions', {}),
-                        **({'identity': scope['identity']} if scope.get('identity') else {})}
+                        **({'identity': {key: value for key, value in scope['identity'].items() if key != 'sources'}} if scope.get('identity') else {})}
     return result
 
 

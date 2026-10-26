@@ -43,7 +43,10 @@
       }
     },
     "evidence": {
-      "type": "string",
+      "type": [
+        "string",
+        "null"
+      ],
       "pattern": "^user-[a-f0-9]{64}$"
     },
     "source": {
@@ -161,6 +164,36 @@
           "type": "string",
           "pattern": "^\\.[a-z0-9]+$"
         }
+      }
+    },
+    "identity_evidence": {
+      "type": "object",
+      "additionalProperties": {
+        "oneOf": [
+          {
+            "type": "string",
+            "pattern": "^user-[a-f0-9]{64}$"
+          },
+          {
+            "type": "object",
+            "required": [
+              "id",
+              "source"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^user-[a-f0-9]{64}$"
+              },
+              "source": {
+                "enum": [
+                  "user-specified",
+                  "user-delegated"
+                ]
+              }
+            }
+          }
+        ]
       }
     }
   }
