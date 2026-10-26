@@ -71,10 +71,12 @@ def cmd_bootstrap(args: argparse.Namespace) -> int:
         print(json.dumps({'ok': False, 'mode': 'sdd_install_required', 'sdd': bmad,
             'work_item': work_summary(work) if work else None,
             'next': action('agent', 'Repair the selected stable BMAD installation with `cao sdd install --provider bmad --host <host> --yes`, then bootstrap again. Keep the current Work and confirmed project decisions.', reason='SDD_INSTALL_UNHEALTHY')}, ensure_ascii=False)); return 2
+    from scripts.project_verification import project_prerequisite
+    pending_project = project_prerequisite(repo, work) if work and work.get('status') != 'completed' else None
     # Bootstrap is a state-read boundary too. Reconcile native SDD state before
     # constructing a new-session context so a previous Agent's phase cursor
     # cannot remain stale after the native workflow has advanced.
-    if (work and work.get("status") in {"active", "suspended"}
+    if (work and not pending_project and work.get("status") in {"active", "suspended"}
             and restart_state(repo, getattr(args, "host", None) or detect_current_host())["ready"]
             and reconcile_native_sdd_state(repo, work)):
         work = load_work(repo, active_id) or work
@@ -83,7 +85,7 @@ def cmd_bootstrap(args: argparse.Namespace) -> int:
     # installed. When the runtime exposes a host and a native session id, attach
     # the Session here as well so `cao sessions list` is never empty.
     identity = host_session_identity(getattr(args, "host", None))
-    bootstrap_session = register_session(repo, work, identity[1], identity[0], event="bootstrap") if identity else None
+    bootstrap_session = register_session(repo, None if pending_project else work, identity[1], identity[0], event="bootstrap") if identity else None
 
     # Report, do not install. Adapters load when the host process starts, so a
     # bootstrap-time install could never deliver this session's SessionStart.
@@ -183,19 +185,25 @@ def cmd_bootstrap(args: argparse.Namespace) -> int:
     mode = "project_context_setup" if current.get("stage") == "project_setup" else "verification_setup" if current.get("stage") == "verification_setup" else "resume" if work else "select"
     if current.get("stage") == "project_setup" and current.get("reason") in {"PROJECT_VERIFICATION_PLAN_REQUIRED", "PROJECT_VERIFICATION_CONTEXT_MISMATCH"}:
         mode = "project_verification_plan"
+    preparing_project = current.get('owner') == 'project' or current.get('stage') == 'verification_setup'
+    from scripts.project_verification import preparation_context
     next_out = {
         "ok": True, "mode": mode,
         "pending_request": pending_request(repo) if not work else None,
-        "work_item": work_summary(work) if work else None,
+        "work_item": work_summary(work) if work and not preparing_project else None,
         "sdd": sdd_status(repo),
-        "context": verification_setup_context(work) if mode == "verification_setup" else resume_payload(repo, work, next_action=current) if work else None,
+        "context": preparation_context(repo, work, purpose='project_baseline_preparation' if current.get('owner') == 'project' else 'work_baseline_adoption') if preparing_project else resume_payload(repo, work, next_action=current) if work else None,
         "next": current,
     }
+    if preparing_project:
+        next_out['pending_work'] = next_out['context']['pending_work']
+        next_out['work_item'] = None
+        next_out['pending_request'] = None
     if next_out["work_item"]:
         next_out["work_item"]["next_action"] = current
     next_out["verification_setup"] = inspection
     from scripts.project_context import context_state
-    next_out["project_context"] = context_state(repo, work=work)
+    next_out["project_context"] = next_out["context"]["project_context"] if preparing_project else context_state(repo, work=work)
     if bootstrap_session:
         next_out["session"] = bootstrap_session
     if bootstrap_adapter is not None:

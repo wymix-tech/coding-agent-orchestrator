@@ -105,7 +105,9 @@ def host_event(args: argparse.Namespace) -> int:
         bound_work = (known_session or parent_session or {}).get('work_item_id')
         if bound_work:
             work = load_work(repo, bound_work)
-    if work and restart_state(repo, args.host)["ready"] and event in {"session_start", "subagent_start", "prompt_submit", "pre_tool", "stop", "turn_end", "before_settle"}:
+    from scripts.project_verification import project_prerequisite
+    pending_project = project_prerequisite(repo, work) if work and work.get('status') != 'completed' else None
+    if work and not pending_project and restart_state(repo, args.host)["ready"] and event in {"session_start", "subagent_start", "prompt_submit", "pre_tool", "stop", "turn_end", "before_settle"}:
         # Refresh before exposing context or writing a handoff, including edits
         # performed outside this host. Derived observations never reanchor input hashes.
         reconcile_native_sdd_state(repo, work)
@@ -157,9 +159,9 @@ def host_event(args: argparse.Namespace) -> int:
     session = None
     if host_session_id:
         if event in {"session_start", "subagent_start"}:
-            session = register_session(repo, work, host_session_id, args.host, event=event, kind=kind, parent_session_id=parent_id)
+            session = register_session(repo, None if pending_project else work, host_session_id, args.host, event=event, kind=kind, parent_session_id=parent_id)
         else:
-            session = update_session_event(repo, host_session_id, args.host, event, work, kind=kind, parent_session_id=parent_id)
+            session = update_session_event(repo, host_session_id, args.host, event, None if pending_project else work, kind=kind, parent_session_id=parent_id)
 
     if session:
         observed_model = raw.get('model')
@@ -279,7 +281,7 @@ def host_event(args: argparse.Namespace) -> int:
             else:
                 from scripts.project_verification import project_prerequisite
                 project = project_prerequisite(repo, work)
-                if project:
+                if project and not (project['reason'] in {'VERIFICATION_BASELINE_REQUIRED', 'PROJECT_VERIFICATION_CHECK_REQUIRED'} and verification_scaffold_write(repo, raw)):
                     return respond({"decision": "deny", "reason": project["reason"] + ": " + project["instruction"]})
                 baseline = verification_baseline_state(repo, work)
                 if not baseline["ready"] and not verification_scaffold_write(repo, raw):
@@ -362,11 +364,11 @@ def host_event(args: argparse.Namespace) -> int:
                 queue_event(work, {"event": "sdd.spec.approved", "work_item_id": work["id"],
                                    "approval": approval, "occurred_at": now()})
                 save_work(repo, work)
-        if work and tool_is_mutating(raw):
+        if work and not pending_project and tool_is_mutating(raw):
             if (work.get("verification") or {}).get("status") == "passed":
                 work.setdefault("resume", {})["summary"] = "Code changed after the last verification; verification is now stale."
             save_work(repo, work)
-        if work:
+        if work and not pending_project:
             reconcile_native_sdd_state(repo, work)
         if work:
             prerequisite = work_prerequisite_action(repo, work)

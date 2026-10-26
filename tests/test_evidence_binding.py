@@ -30,6 +30,8 @@ class EvidenceTests(RepairCase):
         # Retaining configured_at deliberately models an attempted timestamp bypass.
         cfg["verification"]["scripts"][0]["command"] += " --buffer"
         path.write_text(json.dumps(cfg), encoding="utf-8")
+        rc, out = self.run_cli('verification', 'check', '--project')
+        self.assertEqual(0, rc, out)
 
     def test_anchor_exists_before_verify(self):
         work = self.read_work(self.start())

@@ -61,10 +61,6 @@ def declaration_state(repo, cfg, scopes=None, work=None):
         if any(recorded.get(scope) != sha for scope, sha in expected.items()):
             return {'ready': False, 'reason': 'PROJECT_VERIFICATION_CONTEXT_MISMATCH',
                     'next': 'Review affected build/test entries, then `cao verification configure` with the correct --scope; preserve baseline review/reanchor.'}
-    if not binding and work:
-        from scripts.verification_setup import setup_state
-        if not setup_state(cfg)['ready']:
-            return {'ready': True, 'state': 'legacy_baseline_missing'}
     if not binding:
         return {'ready': False, 'reason': 'PROJECT_VERIFICATION_PLAN_REQUIRED',
                 'next': 'Reuse actual project entries with `cao verification configure`, then run `cao verification check`. To create wrappers first reserve exact paths with `cao verification prepare --path .orchestrator/scripts/verification/root/check.py`. A plan-only declaration cannot unlock Work.'}
@@ -72,8 +68,6 @@ def declaration_state(repo, cfg, scopes=None, work=None):
     try:
         scripts = configured_scripts(cfg)
     except ValueError:
-        if work:
-            return {'ready': True, 'state': 'legacy_baseline_invalid', 'context_binding': binding}
         return {'ready': False, 'reason': 'VERIFICATION_BASELINE_REQUIRED', 'next': setup_instruction('cao')}
     plan = verification.get('plan') or {}
     try:
@@ -83,10 +77,6 @@ def declaration_state(repo, cfg, scopes=None, work=None):
                 'next': 'Restore entries matching the accepted project runners, then configure and review/reanchor the actual baseline.'}
     from scripts.verification_setup import setup_state
     if not setup_state(cfg)['ready']:
-        if work:
-            # Legacy active Work repairs the missing baseline through the normal
-            # baseline gate, which permits narrow manifest/test scaffolding.
-            return {'ready': True, 'state': 'legacy_baseline_missing', 'context_binding': binding}
         return {'ready': False, 'reason': 'VERIFICATION_BASELINE_REQUIRED', 'next': setup_instruction('cao')}
     return {'ready': True, 'state': 'configured' if scripts else 'planned', 'context_binding': binding}
 
@@ -101,10 +91,32 @@ def project_prerequisite(repo, work=None, scopes=None):
         if setup:
             return setup
         state = declaration_state(repo, config(repo), scopes, work)
-    if state['ready'] and not work:
+    if state['ready']:
         from scripts.verification_probe import project_state
-        state = project_state(repo, scopes)
+        state = project_state(repo, selected_scopes(load_context(repo), scopes, work), work=work)
     if state['ready']:
         return None
-    return {'type': 'agent', 'stage': 'verification_setup' if state['reason'] in {'VERIFICATION_BASELINE_REQUIRED', 'PROJECT_VERIFICATION_CHECK_REQUIRED'} else 'project_setup', 'instruction': state['next'] + ' ' + technology_instruction('cao'),
+    return {'type': 'agent', 'owner': 'project', 'stage': 'verification_setup' if state['reason'] in {'VERIFICATION_BASELINE_REQUIRED', 'PROJECT_VERIFICATION_CHECK_REQUIRED'} else 'project_setup', 'instruction': state['next'] + ' ' + technology_instruction('cao'),
             'reason': state['reason'], 'project_state': state}
+
+
+def preparation_context(repo, work=None, *, purpose='project_baseline_preparation'):
+    """Project inputs only. Work identity is a deferred continuation pointer."""
+    from scripts.cao_runtime import config
+    from scripts.verification_setup import setup_state, PROJECT_PREPARATION_POLICY
+    context = load_context(repo) or {}
+    try:
+        scopes = selected_scopes(context, work=work) if context else []
+    except ValueError:
+        scopes = []
+    project = context_state(repo, scopes, work)
+    project['technology'] = {name: {'paths': scope.get('paths', []),
+        'technology': {field: {key: value[key] for key in ('value', 'status', 'version') if key in value}
+                       for field, value in scope.get('technology', {}).items()},
+        'identity': (scope.get('identity') or {}).get('values', {})}
+        for name, scope in project.get('technology', {}).items()}
+    return {'owner': 'project', 'purpose': purpose, 'preparation_policy': PROJECT_PREPARATION_POLICY,
+            'scopes': scopes, 'project_context': project,
+            'verification_setup': setup_state(config(repo)),
+            'pending_work': {'id': work['id'], 'status': work['status']} if work else None,
+            'baseline_basis': 'Use accepted project technology, product manifests, native build/test/CI entries and project-wide quality standards. Work requirements, acceptance criteria, decisions and handoff content are not baseline-generation inputs. SDD owns business behavior tests and task acceptance.'}

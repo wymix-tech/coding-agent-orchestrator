@@ -35,7 +35,7 @@ For explicit modules pass --scope and --path. Root constraints apply to modules.
 For an empty product, follow [project initialization](project-initialization.md):
 confirm applicable identity/layout, plan/apply exact minimal files, then execute
 real project checks before business Work. `verification configure --plan-only`
-remains a non-executable declaration; it cannot make any project ready. Existing products reuse actual entries and run `cao verification check` before creating Work, without template overwrite.
+remains a non-executable declaration; it cannot make any project ready. Existing products reuse actual entries and run `cao verification check` before creating or resuming Work, without template overwrite. Baseline generation uses project inputs; Work requirement tests remain SDD-owned.
 
 New Work: `cao start --requirement <path> --scope <module>` inherits background.
 Legacy Work: establish background and use `cao project bind --work <id>`; preserve

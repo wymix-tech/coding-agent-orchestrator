@@ -15,6 +15,7 @@ from scripts.cao_providers import detect_current_host
 from scripts.state_store import atomic_json, repo_transaction
 from scripts.runtime_store import safe_path
 from scripts.verification_runner import run_script
+from scripts.verification_setup import PROJECT_PREPARATION_POLICY
 
 
 def command(args):
@@ -24,18 +25,17 @@ def command(args):
         restart = restart_state(repo, detect_current_host())
         if not restart['ready']:
             raise ValueError(restart['reason'])
-        if getattr(args, 'project', False) and args.work:
-            raise ValueError('VERIFICATION_PROBE_SCOPE_CONFLICT')
-        work = None if getattr(args, 'project', False) else resolve_work(repo, args.work)
+        context_owner = resolve_work(repo, args.work)
+        work = None if getattr(args, 'project', False) else context_owner
         if work and work.get('status') != 'active':
             raise ValueError('VERIFICATION_PROBE_ACTIVE_WORK_REQUIRED')
         cfg = config(repo)
         from scripts.project_context import load_context, context_state, selected_scopes
         if not work and not load_context(repo):
             raise ValueError('PROJECT_CONTEXT_REQUIRED')
-        scopes = selected_scopes(load_context(repo), getattr(args, 'scope', None)) if not work else None
+        scopes = selected_scopes(load_context(repo), getattr(args, 'scope', None), context_owner) if not work else None
         if not work:
-            background = context_state(repo, scopes, check_sources=True)
+            background = context_state(repo, scopes, work=context_owner, check_sources=True)
             if not background['ready']:
                 raise ValueError(background['reason'])
             cfg = scoped_config(repo, cfg, scopes)
@@ -134,7 +134,7 @@ def scoped_config(repo, cfg, scopes):
 
 def project_standard(repo, scope):
     from scripts.project_context import fingerprint, load_context
-    return {'context': fingerprint(load_context(repo), [scope]),
+    return {'preparation_policy': PROJECT_PREPARATION_POLICY, 'context': fingerprint(load_context(repo), [scope]),
             'verification': verification_snapshot(scoped_config(repo, config(repo), [scope]), repo, managed_scopes=[scope])}
 
 
@@ -145,15 +145,16 @@ def probe_inputs(repo, cfg, scopes):
             'standards': {scope: project_standard(repo, scope) for scope in scopes}}
 
 
-def project_state(repo, scopes=None):
+def project_state(repo, scopes=None, work=None):
     from scripts.project_context import load_context, selected_scopes
     from scripts.project_setup import state as setup_state
-    for scope in selected_scopes(load_context(repo), scopes):
-        if setup_state(repo, scope).get('ready'):
+    for scope in selected_scopes(load_context(repo), scopes, work):
+        initialization = setup_state(repo, scope)
+        if initialization.get('ready') and (initialization.get('result') or {}).get('preparation_policy') == PROJECT_PREPARATION_POLICY:
             continue
         record = read_project_result(repo, scope)
         if record.get('status') != 'passed' or record.get('standard') != project_standard(repo, scope):
             return {'ready': False, 'reason': 'PROJECT_VERIFICATION_CHECK_REQUIRED',
-                    'next': 'Run `cao verification check --scope ' + scope + '`; inspect failures and repair project verification before creating Work.',
+                    'next': 'Review existing checks against accepted project technology and project-wide quality standards, then run `cao verification check --project --scope ' + scope + '`; inspect failures and repair project-wide checks before creating or resuming Work. Keep the pending Work unchanged; do not derive baseline scripts from its requirement.',
                     'scope': scope, 'last_status': record.get('status')}
     return {'ready': True}

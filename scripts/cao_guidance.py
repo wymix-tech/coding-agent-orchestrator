@@ -231,20 +231,21 @@ def render_context(repo: Path, work: dict[str, Any] | None, *, session_id: str |
     current = current_work_action(repo, work)
     project = context_state(repo, work=work) if current.get("stage") != "startup" else {}
     navigation = "## Read before acting\n" + json.dumps(agent_guidance(repo, work, next_action=current), ensure_ascii=False)
+    if current.get('owner') == 'project':
+        from scripts.project_verification import preparation_context
+        return '# CAO Project Preparation\n' + navigation + '\n' + current['instruction'] + '\n' + json.dumps(preparation_context(repo, work), ensure_ascii=False)
     if not work or work.get("status") in {"todo", "suspended", "completed"}:
         instruction = STARTUP_ORDER if current.get('stage') == 'startup' else current['instruction']
         return "# Coding Agent Orchestrator Work Intake\n" + navigation + "\n" + instruction + "\nProject background: " + json.dumps(project, ensure_ascii=False) + request_context(repo)
     if current.get("stage") == "project_setup":
         return "# CAO Project Setup\n" + navigation + "\n" + current["instruction"] + "\n" + json.dumps(current.get("project_state", {}), ensure_ascii=False) + request_context(repo)
     baseline = verification_baseline_state(repo, work)
-    if not baseline["ready"]:
-        # Preserve continuity without calculating completion from invalid declarations.
-        return "\n".join([
-            "# Coding Agent Orchestrator Verification Setup",
-            navigation,
-            baseline["next"],
-            json.dumps({"verification_setup": inspection, "project_context": project, "work": verification_setup_context(work),
-                        "session_id": session_id, "host": host}, ensure_ascii=False),
+    if not baseline["ready"] or current.get('stage') == 'verification_setup':
+        from scripts.project_verification import preparation_context
+        return '\n'.join([
+            '# CAO Project Baseline Adoption', navigation,
+            baseline.get('next') or current['instruction'],
+            json.dumps(preparation_context(repo, work, purpose='work_baseline_adoption'), ensure_ascii=False),
         ])
     p = resume_payload(repo, work, session_id=session_id, host=host, next_action=current)
     e = p["execution"] or {}

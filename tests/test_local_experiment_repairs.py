@@ -62,6 +62,8 @@ class ShellAndBaseline(RepairCase):
         work['sdd']['native_route_required'] = True
         cao.save_work(self.repo, work)
         script.write_text('#!/bin/sh\nexit 0\n')
+        from tests.helpers import seed_project_preparation
+        seed_project_preparation(self.repo)
         self.assertEqual(cao.verification_baseline_state(self.repo, self.read_work(wid))['reason'], 'VERIFICATION_STANDARD_CHANGED')
         rc, out = self.run_cli('verification', 'configure', '--test-script', 'scripts/verification/test.sh')
         self.assertTrue(out['acceptance_review_required'], out)

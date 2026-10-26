@@ -26,7 +26,7 @@ class VerificationGuidanceDocuments(unittest.TestCase):
         self.assertIn("before Work creation", text)
         for token in ("product manifests", "ask the user", "Zero tests", "JUnit5", "Surefire",
                       "verification configure", "--replace", "init --force", "reanchor",
-                      "not verification success", "existing scripts", "requirements remain relevant"):
+                      "not verification success", "existing scripts", "project technology choices remain relevant"):
             self.assertIn(token, text)
 
     def test_readme_and_design_document_safe_configuration_contract(self):

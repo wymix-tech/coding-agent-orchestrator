@@ -2,6 +2,8 @@
 
 
 项目初始化顺序：确认技术栈 → 生成或复用骨架 → 建立真实项目验证基线并运行初始化检查 → 创建业务 Work。CAO 管理的包装脚本存于 `.orchestrator/scripts/verification/`，用 `cao verification prepare --path <exact-path>` 授权精确输入，再 configure/check；原生测试与构建文件保留原位。已有项目用 `cao verification check` 完成准备；已有 Work 用 `--project` 补齐项目准备，不回退进度。标准可继承，每个 Work 的正式验证及 SDD 需求验收证据需独立满足。详见[验证基线](references/verification-setup.md)。
+项目准备同样先于恢复 Work：基线准备阶段仅展示项目输入和待恢复 Work 标识，`resume --reactivate` 不能绕过。历史准备记录需按 v2 策略复核并执行一次项目级检查；基线不再以当前 Work 的需求、决策或验收条目作为编写依据。
+
 
 [English](README.md) | 简体中文
 

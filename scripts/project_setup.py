@@ -392,7 +392,9 @@ def check(repo, scope, recover_run=None):
                   else 'failed' if any(r['status'] == 'failed' for r in results)
                   else 'blocked' if any(r['status'] == 'blocked' for r in results) else 'passed')
         from scripts.cao_snapshot import verification_snapshot
+        from scripts.verification_setup import PROJECT_PREPARATION_POLICY
         result = {'id': run_id, 'owner': {'kind': 'project', 'scope': scope}, 'purpose': 'initialization',
+                  'preparation_policy': PROJECT_PREPARATION_POLICY,
                   'status': status, 'inputs': before, 'results': results,
                   'verification_sha256': before['verification_sha256']}
         latest.setdefault('history', []).append(result)
