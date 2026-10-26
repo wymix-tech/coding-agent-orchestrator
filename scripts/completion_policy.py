@@ -84,6 +84,10 @@ def reset_requirement(work: dict, requirement: dict) -> bool:
         work["gate_status"] = {}
         work["verification"] = None
         sdd = work.setdefault("sdd", {})
+        loopback = sdd.pop('native_loopback', None)
+        if loopback:
+            sdd.setdefault('native_loopback_history', []).append({**loopback,
+                'status': 'superseded', 'replacement_reason': 'requirement changed'})
         sdd.pop("spec_binding", None)
         sdd.pop("acceptance", None)
         previous = sdd.get("workflow") or {}

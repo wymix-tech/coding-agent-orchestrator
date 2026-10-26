@@ -561,7 +561,7 @@ def cmd_reopen(args: argparse.Namespace) -> int:
         work["reanchored_at"] = now()
         record = work["sdd"].get("acceptance") or {}
         if record.get("declaration") and ((work.get("path_assessment") or {}).get("profile") != "light" or work.get("project_binding")):
-            sources = source_hashes(repo, record["declaration"], provider_output_dirs(work["sdd"]["provider"]))
+            sources = source_hashes(repo, record["declaration"], provider_output_dirs(work["sdd"]["provider"], repo))
             reanchor_record(work, sources)
     reopening_message = (
         "The active Work Item's verification standard was re-anchored after explicit review."

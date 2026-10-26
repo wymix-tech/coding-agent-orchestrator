@@ -122,13 +122,20 @@ def bind_fixture_reviewer(repo, ticket, layer, model, reviewer_cli=None):
     return out['review']['execution_binding']['reviewer']
 
 
-def fixture_native_review(repo, run, wid=None, reviewer_cli=None):
-    """Recorded, independently executed local review fixture; not a real model review."""
-    import tempfile
+def fixture_native_review_source(repo):
+    """Stable rendered fixture shared by route binding and reviewer execution."""
     repo = pathlib.Path(repo)
     source = repo / '_bmad/render/cao-fixture/step-oneshot.md'
     source.parent.mkdir(parents=True, exist_ok=True)
     source.write_text('### Review\n#### Blind Hunter (`blind-hunter`)\nRun an independent fixture inspection.\n### Classify\nRecord each finding.\n### Commit\nCommit when Git is available.\n')
+    return source
+
+
+def fixture_native_review(repo, run, wid=None, reviewer_cli=None):
+    """Recorded, independently executed local review fixture; not a real model review."""
+    import tempfile
+    repo = pathlib.Path(repo)
+    source = fixture_native_review_source(repo)
     args = ['sdd','review','begin','--restart','--layer','blind-hunter','--model','fixture-model','--instructions',source.relative_to(repo).as_posix()]
     if wid: args += ['--work',wid]
     rc,out = run(repo,*args);assert rc==0,out
@@ -149,6 +156,36 @@ def fixture_native_review(repo, run, wid=None, reviewer_cli=None):
     if wid:args+=['--work',wid]
     rc,out=run(repo,*args);assert rc==0,out
     return report
+
+
+def provision_bmad(repo):
+    """Install explicit native assets for tests that used a bare BMAD marker.
+
+    Generic lifecycle fixtures exercise the retained legacy workflow protocol;
+    fixtures already exposing Build get its stable runtime prerequisites too.
+    Real upstream rendering is covered separately against the source checkout.
+    """
+    from pathlib import Path
+    repo = Path(repo)
+    def write(relative, text):
+        path = repo / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if not path.exists():
+            path.write_text(text, encoding='utf-8')
+    skill = next((repo / root / 'bmad-build' for root in ('.agents/skills', '.claude/skills', '.codex/skills', 'skills')
+                  if (repo / root / 'bmad-build/SKILL.md').is_file()), None)
+    write('_bmad/bmm/config.yaml', 'communication_language: English\n')
+    if skill is None:
+        write('_bmad/bmm/workflows/fixture/workflow.yaml', 'name: fixture\ninstructions: Follow the test native workflow.\n')
+        write('_bmad/config.toml', '[core]\ncommunication_language="English"\ndocument_output_language="English"\n')
+        return
+    write('_bmad/config.toml', '[core]\ncommunication_language="English"\ndocument_output_language="English"\n')
+    write('_bmad/scripts/render_skill.py', '# Test fixture renderer; actual official renderer is tested separately.\n')
+    write('_bmad/scripts/config_utils.py', '# Fixture runtime config loader.\n')
+    for name in ('workflow.md', 'step-01-clarify-and-route.md', 'step-02-plan.md', 'step-03-implement.md',
+                 'step-04-review.md', 'step-05-present.md', 'step-oneshot.md', 'customize.toml'):
+        write(str(skill.relative_to(repo) / name), '# Stable fixture contract\n')
+    write(str(skill.relative_to(repo) / 'spec-template.md'), "---\nroute: dispatch\nstatus: draft\n---\n")
 
 
 def provision_fixture_background(repo):

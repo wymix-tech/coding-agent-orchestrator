@@ -46,6 +46,8 @@ def init_repo(repo, provider="bmad"):
     subprocess.run(["git", "init", "-q"], cwd=repo, check=True, timeout=20)
     if provider == "bmad":
         (repo / "_bmad").mkdir()
+        from tests.helpers import provision_bmad
+        provision_bmad(repo)
     elif provider == "openspec":
         (repo / "openspec").mkdir()
         (repo / "openspec" / "config.yaml").write_text("context: test\n", encoding="utf-8")
@@ -203,6 +205,8 @@ class SessionFallbackTests(unittest.TestCase):
             repo = pathlib.Path(td)
             subprocess.run(["git", "init", "-q"], cwd=repo, check=True, timeout=20)
             (repo / "_bmad").mkdir()
+            from tests.helpers import provision_bmad
+            provision_bmad(repo)
             (repo / "requirements").mkdir()
             (repo / "requirements" / "login.md").write_text("Implement login", encoding="utf-8")
             env = {"CAO_HOST": "pi", "PI_SESSION_ID": "pi-session-1"}
@@ -224,6 +228,8 @@ class SessionFallbackTests(unittest.TestCase):
             repo = pathlib.Path(td)
             subprocess.run(["git", "init", "-q"], cwd=repo, check=True, timeout=20)
             (repo / "_bmad").mkdir()
+            from tests.helpers import provision_bmad
+            provision_bmad(repo)
             (repo / "requirements").mkdir()
             (repo / "requirements" / "login.md").write_text("Implement login", encoding="utf-8")
             env = {"CAO_HOST": "", "PI_SESSION_ID": "", "CLAUDE_SESSION_ID": "", "CLAUDE_CODE_SESSION_ID": "", "CODEX_THREAD_ID": "", "PI_CODING_AGENT": "", "CLAUDE_CODE": "", "CODEX_SANDBOX": "", "CODEX_HOME": ""}

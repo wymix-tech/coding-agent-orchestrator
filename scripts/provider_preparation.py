@@ -27,6 +27,11 @@ def bmad_preparation(repo, tokens):
         relative = candidate.relative_to(repo).as_posix()
     except (ValueError, OSError, RuntimeError):
         return False
+    from scripts.cao_provider_workflows import PROVIDER_SKILL_ROOTS
+    for root in PROVIDER_SKILL_ROOTS:
+        if relative.startswith(root + '/'):
+            relative = '.agents/skills/' + relative[len(root) + 1:]
+            break
     modes = {
         '_bmad/scripts/resolve_config.py': ({'--project-root', '--key'}, set(), set(), None),
         '_bmad/scripts/resolve_customization.py': ({'--project-root', '--skill', '--key'}, set(), set(), None),
@@ -64,10 +69,12 @@ def bmad_preparation(repo, tokens):
                     if resolved != repo:
                         return False
                 elif key == '--skill':
-                    if not resolved.is_relative_to(repo / '.agents/skills') or not (resolved / 'SKILL.md').is_file():
+                    if not any(resolved.is_relative_to(repo / root) for root in PROVIDER_SKILL_ROOTS) or not (resolved / 'SKILL.md').is_file():
                         return False
-                elif not resolved.is_relative_to(repo / '_bmad-output'):
-                    return False
+                else:
+                    from scripts.bmad_project import output_dirs
+                    if not any(resolved.is_relative_to(repo / root) for root in output_dirs(repo)):
+                        return False
             except (OSError, ValueError, RuntimeError):
                 return False
     if relative.endswith(('resolve_config.py', 'resolve_customization.py')):

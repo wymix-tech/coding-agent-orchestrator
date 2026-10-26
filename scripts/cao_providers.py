@@ -72,12 +72,18 @@ def detect_sdd(repo: Path, provider: str, include_cli_version: bool = False) -> 
         rc, out, err = command_output([cli, "--version"])
         if rc == 0:
             cli_version = out or err
+    health = {}
+    if provider == 'bmad':
+        from scripts.bmad_project import health as bmad_health
+        health = bmad_health(repo)
     return {
         "provider": provider,
         "name": meta.get("name", provider),
         "description": meta.get("description", ""),
-        "installed": bool(markers),
-        "initialized": bool(markers),
+        "detected": bool(markers),
+        "installed": bool(markers) and health.get('healthy', True),
+        "initialized": bool(markers) and health.get('healthy', True),
+        **health,
         "project_markers": markers,
         "cli_installed": cli_installed,
         "cli_version": cli_version,
@@ -111,6 +117,7 @@ def sdd_options(status: dict[str, Any]) -> list[dict[str, Any]]:
             "installed": item["installed"],
             "cli_installed": item["cli_installed"],
             "project_markers": item["project_markers"],
+            **{key: item[key] for key in ('detected', 'healthy', 'compatible', 'reason', 'missing') if key in item},
         })
     return options
 
@@ -271,6 +278,9 @@ def cmd_sdd_list(args: argparse.Namespace) -> int:
 def cmd_sdd_select(args: argparse.Namespace) -> int:
     repo = repo_root(args.repo); ensure_initialized(repo)
     detected = detect_sdd(repo, args.provider)
+    if detected.get('detected') and not detected.get('healthy', True):
+        print(json.dumps({'ok': False, 'error': 'SDD_INSTALL_UNHEALTHY', 'status': detected,
+                          'next': 'Repair the stable BMAD installation with `cao sdd install --provider bmad --host <host> --yes`; preserve project config and current Work.'})); return 2
     if not detected["installed"]:
         print(json.dumps({
             "ok": False,
@@ -436,7 +446,7 @@ def cmd_sdd_install(args: argparse.Namespace) -> int:
         return 2
 
     detected = detect_sdd(repo, provider)
-    if detected["installed"] and not getattr(args, "upgrade", False):
+    if detected["installed"] and detected.get('healthy', True) and not getattr(args, "upgrade", False):
         select_sdd_provider(repo, provider)
         try:
             language_configuration = apply_provider_language(repo, provider)
@@ -510,7 +520,7 @@ def cmd_sdd_install(args: argparse.Namespace) -> int:
             return 1
 
     final = detect_sdd(repo, provider)
-    if not final["installed"]:
+    if not final["installed"] or not final.get('healthy', True):
         print(json.dumps({"ok": False, "error": "SDD_INSTALL_NOT_DETECTED", "provider": provider, "results": results, "status": final}, ensure_ascii=False, indent=2))
         return 1
     select_sdd_provider(repo, provider)

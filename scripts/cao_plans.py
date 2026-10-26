@@ -110,7 +110,7 @@ def _plan_pattern(repo: Path, provider: str, value: str) -> str:
     """Normalize explicit tracked-file globs without widening provider ownership."""
     if ".." in Path(value).parts:
         raise ValueError("PLAN_SOURCE_INVALID: " + value)
-    dirs = [directory for directory in provider_output_dirs(provider)
+    dirs = [directory for directory in provider_output_dirs(provider, repo)
             if (repo.resolve() / directory).resolve() == repo.resolve() / directory]
     path = provider_artifact(repo, value, dirs)
     return path.relative_to(repo.resolve()).as_posix()
@@ -138,7 +138,7 @@ def _associated_task_roots(repo: Path, work: dict) -> set[Path]:
     if provider not in {"openspec", "speckit"}:
         return set()
     root = repo.resolve() / ("openspec/changes" if provider == "openspec" else "specs")
-    dirs = [directory for directory in provider_output_dirs(provider)
+    dirs = [directory for directory in provider_output_dirs(provider, repo)
             if (repo.resolve() / directory).resolve() == repo.resolve() / directory]
     refs = [sdd.get("native_ref"), *((sdd.get("workflow") or {}).get("artifacts") or [])]
     binding = sdd.get("spec_binding")
@@ -171,7 +171,7 @@ def bind_plan_scope(repo: Path, work: dict, plan_paths: list[str],
 
     repo = repo.resolve()
     sdd = work.get("sdd") or {}
-    roots = [(repo / directory).resolve() for directory in provider_output_dirs(sdd.get("provider"))]
+    roots = [(repo / directory).resolve() for directory in provider_output_dirs(sdd.get("provider"), repo)]
     patterns = sorted(set((sdd.get("plan_scope") or {}).get("patterns") or []) |
                       {_plan_pattern(repo, sdd.get("provider"), str(value)) for value in plan_paths if glob.has_magic(str(value))})
     paths = {resolve_artifact_path(repo, value)[1] for value in plan_paths if not glob.has_magic(str(value))}
@@ -194,7 +194,7 @@ def bind_plan_scope(repo: Path, work: dict, plan_paths: list[str],
     ambiguous = False
     public_roots = set(roots) | {(repo / "openspec/changes").resolve(), (repo / "specs").resolve()}
     for anchor in anchors:
-        for name in ("tasks.md", *SPRINT_STATUS_NAMES):
+        for name in ("tasks.md", "stories.yaml", *SPRINT_STATUS_NAMES):
             path = anchor / name
             if path.is_file():
                 discovered.add(path.relative_to(repo).as_posix())
@@ -224,7 +224,7 @@ def bind_plan_scope(repo: Path, work: dict, plan_paths: list[str],
     for value in sorted(paths):
         path, relative = resolve_artifact_path(repo, value)
         try:
-            provider_artifact(repo, relative, provider_output_dirs(sdd.get("provider")))
+            provider_artifact(repo, relative, provider_output_dirs(sdd.get("provider"), repo))
         except ValueError as exc:
             raise ValueError("PLAN_SOURCE_INVALID: " + relative) from exc
         if not path.is_file():
@@ -240,6 +240,9 @@ def bind_plan_scope(repo: Path, work: dict, plan_paths: list[str],
                 ids = sorted(set(ids) | set(selected))
             except ValueError as exc:
                 raise ValueError("PLAN_ITEM_INVALID: " + relative + ": " + str(exc)) from exc
+        elif sdd.get('provider') == 'bmad' and path.name == 'stories.yaml':
+            from scripts.bmad_stories import story_states
+            ids, _states, _files = story_states(repo, relative, ids)
         elif (path.name != "tasks.md" and not (sdd.get("provider") == "openspec" and path.suffix.lower() == ".md")) or ids:
             raise ValueError("PLAN_FORMAT_UNSUPPORTED: " + relative)
         plan = {"path": relative, "item_ids": ids}
@@ -268,7 +271,7 @@ def provider_pending_plan_items(repo: Path, work: dict) -> list[str]:
     for plan in scope["plans"]:
         path, relative = resolve_artifact_path(repo, plan["path"])
         try:
-            provider_artifact(repo, relative, provider_output_dirs((work.get("sdd") or {}).get("provider")))
+            provider_artifact(repo, relative, provider_output_dirs((work.get("sdd") or {}).get("provider"), repo))
         except ValueError as exc:
             raise ValueError("PLAN_SOURCE_INVALID: " + plan["path"]) from exc
         if not path.is_file():
@@ -280,6 +283,10 @@ def provider_pending_plan_items(repo: Path, work: dict) -> list[str]:
             states = _sprint_selected_states(path, ids)
             pending.extend(f"{relative}#{item} ({state})" for item, state in states.items()
                            if state not in SPRINT_DONE_STATES)
+        elif (work.get('sdd') or {}).get('provider') == 'bmad' and path.name == 'stories.yaml':
+            from scripts.bmad_stories import story_states
+            _ids, states, _files = story_states(repo, relative, plan.get('item_ids', []))
+            pending.extend(f'{relative}#{item} ({state})' for item, state in states.items() if state != 'done')
         elif path.name == "tasks.md" or ((work.get("sdd") or {}).get("provider") == "openspec" and path.suffix.lower() == ".md"):
             pending.extend(f"{relative}: {item}" for item in _pending_checkbox_tasks(path))
         else:
@@ -296,7 +303,13 @@ def bmad_verification_plan_state(repo: Path, work: dict) -> dict:
         return {"ready": True, "state": "not_applicable"}
     scope = sdd.get("plan_scope") or {}
     plans = [plan for plan in scope.get("plans", []) if Path(plan.get("path", "")).name in SPRINT_STATUS_NAMES]
-    spec = spec_task_state(repo, work, provider_output_dirs("bmad"), _checkbox_tasks)
+    spec = spec_task_state(repo, work, provider_output_dirs("bmad", repo), _checkbox_tasks)
+    from scripts.bmad_stories import state as stories_state
+    stories = stories_state(repo, work)
+    if stories['state'] == 'blocked':
+        return stories
+    if stories['state'] != 'not_applicable':
+        spec = merge_plan_states(stories, spec)
     if spec["state"] in {"pending", "done"}:
         candidates, _ = _native_candidates(repo, "bmad", work, str(sdd.get("native_ref") or ""))
         raw_status, _, _, _ = _read_native_status("bmad", candidates)
@@ -307,10 +320,11 @@ def bmad_verification_plan_state(repo: Path, work: dict) -> dict:
         elif not spec["ready"] and canonical == "in_progress":
             spec.update(raw=raw_status, canonical=canonical)
     decision = direct_build_decision(work)
-    if decision and not plans and not any(item.get("role") == "sprint"
-                                         for item in decision.get("required_artifacts", [])):
+    selected_route = sdd.get('route_decision') or {}
+    if (decision or stories['state'] != 'not_applicable' or selected_route.get('planning_duties')) and not plans and not any(item.get("role") == "sprint"
+                                         for item in selected_route.get("required_artifacts", [])):
         return spec
-    candidates = {repo / "_bmad-output" / name for name in SPRINT_STATUS_NAMES}
+    candidates = {repo / directory / name for directory in provider_output_dirs('bmad', repo) for name in SPRINT_STATUS_NAMES}
     candidates.update(repo / "_bmad-output/implementation-artifacts" / name for name in SPRINT_STATUS_NAMES)
     for ref in [sdd.get("native_ref"), ((sdd.get("spec_binding") or {}).get("spec") or {}).get("path"),
                 *((sdd.get("workflow") or {}).get("artifacts") or [])]:
@@ -330,7 +344,7 @@ def bmad_verification_plan_state(repo: Path, work: dict) -> dict:
         observations = {}
         pending = []
         for plan in plans:
-            dirs = [directory for directory in provider_output_dirs("bmad")
+            dirs = [directory for directory in provider_output_dirs("bmad", repo)
                     if (repo.resolve() / directory).resolve() == repo.resolve() / directory]
             path = provider_artifact(repo, plan["path"], dirs)
             if not path.is_file():
@@ -359,6 +373,9 @@ def bmad_verification_plan_state(repo: Path, work: dict) -> dict:
                 "raw": raw, "canonical": _canonical_native_state(raw),
                 "reason": "BMAD_PLAN_NOT_DONE" if pending else None,
                 "scope": effective_scope, "pending_plan_items": pending, "observations": observations, "next": next_step if pending else None}
+        reviewing = [item for item in pending if item.endswith("(review)")]
+        if reviewing:
+            sprint["next"] = ("Invoke the installed bmad-code-review Skill for the completed Build SPEC and matching story key: " + ", ".join(reviewing) + ". Stable BMAD Build marks the sprint story review; native Code Review closes it to done. Do not rerun Build or edit status to skip that workflow.")
         return merge_plan_states(sprint, spec)
     except (ValueError, OSError, UnicodeError, RuntimeError) as exc:
         return {"ready": False, "state": "blocked", "reason": str(exc), "scope": effective_scope, "next": next_step}
@@ -397,7 +414,7 @@ def provider_verification_plan_state(repo: Path, work: dict) -> dict:
             if scope.get("mode") == "bound":
                 raise ValueError("PLAN_SCOPE_UNRESOLVED")
             return {"ready": True, "state": "not_applicable"}
-        dirs = [directory for directory in provider_output_dirs(provider)
+        dirs = [directory for directory in provider_output_dirs(provider, repo)
                 if (repo.resolve() / directory).resolve() == repo.resolve() / directory]
         observations = {}
         pending = []

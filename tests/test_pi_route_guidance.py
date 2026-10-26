@@ -19,6 +19,8 @@ class PiRouteGuidance(RepairCase):
         self.repo = Path(self.tmp.name)
         self.run_cli("init", "--host", "pi", "--sdd", "bmad")
         (self.repo / "_bmad").mkdir()
+        from tests.helpers import provision_bmad
+        provision_bmad(self.repo)
         self.skill = ".agents/skills/bmad-build/SKILL.md"
         path = self.repo / self.skill
         path.parent.mkdir(parents=True)
@@ -113,11 +115,18 @@ class PiRouteGuidance(RepairCase):
             result = self.hook("pre_tool", tool_name="write", tool_input={"path": value, "content": "{}"})
             self.assertEqual(result["decision"], expected, result)
         work = self.read_work(self.wid)
+        # A complete installed Build must cite the current rendered contract.
+        rule_source = '_bmad/render/fixture/step-02-plan.md'
+        rendered = self.repo / rule_source
+        rendered.parent.mkdir(parents=True)
+        rendered.write_text(self.rule)
+        (rendered.parent / 'step-03-implement.md').write_text('Native implementation fixture.\n')
+        (rendered.parent / 'step-oneshot.md').write_text('#### Blind (`blind-hunter`)\nReview independently.\n')
         raw = {"provider": "bmad", "provider_version": "fixture", "profile": "standard",
                "requirement_sha256": work["requirement"]["sha256"], "workflow": "bmad-build",
                "route": "direct-build", "build_route": "oneshot", "reason": "The installed fixture rule permits this route.",
                "primary_artifact": spec, "required_artifacts": [{"path": spec, "role": "spec"}],
-               "rules": [{"path": self.skill, "sha256": hashlib.sha256((self.repo / self.skill).read_bytes()).hexdigest(), "quote": self.rule}],
+               "rules": [{"path": rule_source, "sha256": hashlib.sha256(rendered.read_bytes()).hexdigest(), "quote": self.rule}],
                "omitted": [{"name": "standalone planning", "reason": "The fixture SPEC carries the bounded native intent.", "replaced_by": spec}]}
         target = self.repo / declaration
         target.parent.mkdir(parents=True)

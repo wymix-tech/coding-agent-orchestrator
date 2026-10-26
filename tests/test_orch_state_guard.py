@@ -43,6 +43,8 @@ def provisioned(repo: pathlib.Path) -> str:
     run(repo, "init", "--host", "pi")
     run(repo, "sdd", "select", "--provider", "bmad")
     (repo / "_bmad").mkdir(exist_ok=True)
+    from tests.helpers import provision_bmad
+    provision_bmad(repo)
     rc, out = run(repo, "requirement", "next-id", "--title", "login")
     path = out["path"]
     (repo / path).write_text("# Fixture\nRecord a bounded local state transition.\n", encoding="utf-8")

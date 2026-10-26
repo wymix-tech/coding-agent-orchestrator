@@ -245,16 +245,27 @@ def normalize_decision(repo, work, raw, dirs, skills):
     if provider == "bmad":
         if build_route(repo / primary) != build:
             raise field_error("NATIVE_ROUTE_SPEC_ROUTE_MISMATCH", "$.build_route", build_route(repo / primary), build)
-        if route == "full-planning" and not {"prd", "architecture", "epics", "sprint"}.issubset(
-                {a["role"] for a in artifacts}):
-            raise field_error("NATIVE_ROUTE_FULL_PLANNING_ARTIFACTS_REQUIRED", "$.required_artifacts", "real native prd, architecture, epics and sprint roles for full-planning", [a["role"] for a in artifacts])
+        if route == "full-planning" and not {"prd", "architecture", "epics", "sprint"}.issubset({a["role"] for a in artifacts}):
+            duties = raw.get('planning_duties')
+            names = {'requirements', 'design', 'execution'}
+            if (not isinstance(duties, list) or {item.get('name') for item in duties if isinstance(item, dict)} != names
+                    or len(duties) != len(names) or any(not isinstance(item, dict)
+                        or item.get('artifact') not in {a['path'] for a in artifacts}
+                        or item.get('native_rule') not in {rule['path'] for rule in normalized}
+                        or item.get('name') == 'execution' and item.get('artifact') not in {
+                            artifact['path'] for artifact in artifacts if artifact['role'] in {'spec', 'sprint', 'stories'}}
+                        or not isinstance(item.get('reason'), str) or not item['reason'].strip() for item in duties)):
+                raise field_error("NATIVE_ROUTE_FULL_PLANNING_ARTIFACTS_REQUIRED", "$.planning_duties",
+                    "native-rule-backed requirements/design/execution duties mapped to bound planning artifacts, or the legacy prd/architecture/epics/sprint set", duties)
     from scripts.route_omissions import normalize_omissions
     omissions = normalize_omissions(raw.get("omitted", []), artifacts, normalized, provider, route, build)
     contracts = {}
     if provider == 'bmad':
         from scripts.native_contracts import resolve
         contracts = resolve(repo, normalized, build)
-    return {**({'contracts': contracts} if contracts else {}), "provider": provider, "requirement_sha256": requirement,
+    return {**({'contracts': contracts} if contracts else {}),
+            **({'planning_duties': raw['planning_duties']} if provider == 'bmad' and route == 'full-planning' and raw.get('planning_duties') else {}),
+            **({'provider_outputs': dirs} if provider == 'bmad' else {}), "provider": provider, "requirement_sha256": requirement,
             "assessment_revision": assessment.get("revision"), "profile": assessment.get("profile"),
             "required_gates": assessment.get("required_gates", []),
             "workflow": workflow["name"], "entrypoint": workflow["entrypoint"],
@@ -289,6 +300,8 @@ def route_state(repo, work, dirs, required=False):
     try:
         from scripts.native_contracts import validate
         validate(repo, record.get('contracts', {}))
+        if record.get('provider_outputs') is not None and record['provider_outputs'] != dirs:
+            return blocked('NATIVE_ROUTE_OUTPUT_CONFIG_CHANGED')
         if file_hash(repo / work["requirement"]["path"]) != record["requirement_sha256"]:
             return blocked("NATIVE_ROUTE_STALE")
         for rule in record["rules"]:
@@ -296,7 +309,7 @@ def route_state(repo, work, dirs, required=False):
                 return blocked("NATIVE_ROUTE_RULES_CHANGED")
         for artifact in record["required_artifacts"]:
             path = owned_file(repo, artifact["path"], dirs)
-            if artifact["role"] != "sprint" and intent_hash(path) != artifact["intent_sha256"]:
+            if artifact["role"] not in {"sprint", "stories"} and intent_hash(path) != artifact["intent_sha256"]:
                 return blocked("NATIVE_ROUTE_INTENT_CHANGED")
         if sdd.get("native_ref") != record["primary_artifact"]:
             return blocked("NATIVE_ROUTE_SOURCE_CHANGED")

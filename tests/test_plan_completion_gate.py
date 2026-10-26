@@ -68,6 +68,8 @@ def ready_to_close(repo: pathlib.Path, provider: str, artifact: str, profile: st
     pathlib.Path(repo / artifact).write_text("# artifact\n", encoding="utf-8")
     if provider == "bmad":
         (repo / "_bmad").mkdir(exist_ok=True)
+        from tests.helpers import provision_bmad
+        provision_bmad(repo)
     if provider == "openspec":
         (repo / "openspec").mkdir(exist_ok=True)
     if provider == "speckit":

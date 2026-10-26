@@ -10,7 +10,15 @@ from scripts.cao_defaults import PLACEHOLDER_ENTRYPOINT_COMMANDS, SDD_CATALOG
 from scripts.path_guard import provider_artifact, repo_file
 
 
-def provider_output_dirs(provider: str) -> list[str]:
+def provider_output_dirs(provider: str, repo: Path | None = None) -> list[str]:
+    if provider == "bmad" and repo is not None:
+        from scripts.bmad_project import output_dirs
+        try:
+            return output_dirs(repo)
+        except (ValueError, OSError, RuntimeError):
+            # Health/bootstrap expose the configuration diagnostic. Consumers
+            # get no ownership grants, rather than crashing or using an unsafe root.
+            return []
     meta = SDD_CATALOG.get(provider) or {}
     return [str(item) for item in (meta.get("output_dirs") or [])]
 
@@ -267,7 +275,7 @@ def validate_workflow_entrypoint(provider: str, name: str, entrypoint: str) -> d
 
 def validate_workflow_artifacts(repo: Path, provider: str, paths: list[str]) -> dict[str, Any]:
     """Require native workflow outputs to live inside the provider's own directories."""
-    dirs = provider_output_dirs(provider)
+    dirs = provider_output_dirs(provider, repo)
     if not dirs:
         return {"ok": True, "offending": [], "reason": None}
     offending: list[str] = []

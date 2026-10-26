@@ -136,6 +136,8 @@ class RequirementWriteIsNotBlocked(unittest.TestCase):
         run(repo, "init", "--host", "pi", env_extra=NO_HOST_ENV)
         run(repo, "sdd", "select", "--provider", "bmad")
         (repo / "_bmad").mkdir(exist_ok=True)
+        from tests.helpers import provision_bmad
+        provision_bmad(repo)
         return repo
 
     def test_requirement_document_is_writable_without_a_work_item(self):

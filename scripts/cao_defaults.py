@@ -152,7 +152,7 @@ SDD_CATALOG: dict[str, dict[str, Any]] = {
             # BMad requires host-specific tool selection for a fresh non-interactive install.
             # Placeholders are rendered by build_bmad_project_command().
             "project_command": [
-                "npx", "bmad-method", "install",
+                "npx", "bmad-method@6.12.4", "install",
                 "--directory", "{repo}",
                 "--modules", "bmm",
                 "--tools", "{tool}",

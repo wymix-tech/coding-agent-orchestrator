@@ -26,6 +26,8 @@ class RouteSync(unittest.TestCase):
         self.run_cli("init", "--sdd", "bmad")
         self.write("_bmad/bmm/config.yaml", "communication_language: Simplified Chinese\n")
         self.write(".agents/skills/bmad-build/SKILL.md", "---\nname: bmad-build\ndescription: Build\n---\nUse the project renderer and follow routing rules.\n")
+        from tests.helpers import provision_bmad
+        provision_bmad(self.repo)
         self.rule = "_bmad/render/bmad-build/step-02-plan.md"
         self.quote = "Otherwise write the full spec. Set route: 'dispatch' and continue."
         self.write(self.rule, self.quote + "\nApprove and continue or approve and stop before implementation.\n")
@@ -242,7 +244,9 @@ class RouteSync(unittest.TestCase):
 
     def test_removing_skill_does_not_remove_required_route(self):
         (self.repo / ".agents/skills/bmad-build/SKILL.md").unlink()
-        self.assertIn("NATIVE_ROUTE_REQUIRED", self.product_write()["reason"])
+        result = self.product_write()
+        self.assertEqual("deny", result["decision"])
+        self.assertIn("SDD_NOT_INSTALLED", result["reason"])
 
     def test_required_artifact_cannot_escape_through_symlink(self):
         with tempfile.TemporaryDirectory() as external:

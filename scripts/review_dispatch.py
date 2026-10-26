@@ -7,6 +7,7 @@ import shlex
 import shutil
 from pathlib import Path
 
+from scripts.bmad_project import output_dirs as bmad_output_dirs
 from scripts.cao_instructions import cao_invocation, host_adapter_status
 from scripts.cao_providers import detect_current_host
 from scripts.cao_runtime import new_id
@@ -59,6 +60,17 @@ def begin_review(repo, work, args, identity):
     model, model_source = effective_model(repo, args, identity)
     args = argparse.Namespace(**vars(args))
     args.model = model
+    loopback = work['sdd'].get('native_loopback') or {}
+    if loopback.get('status') == 'reimplementing':
+        from scripts.cao_native_sync import native_route_state
+        from scripts.native_obligations import implementation_state
+        from scripts.native_progress import spec_task_state
+        from scripts.cao_plans import _checkbox_tasks
+        if not native_route_state(repo, work)['ready'] or not implementation_state(repo, work)['ready']:
+            raise ValueError('NATIVE_LOOPBACK_IMPLEMENTATION_REQUIRED')
+        tasks = spec_task_state(repo, work, bmad_output_dirs(repo), _checkbox_tasks)
+        if not tasks['ready']:
+            raise ValueError('NATIVE_LOOPBACK_TASKS_PENDING')
     path = repo_file(repo, args.instructions)
     expected_name = "step-04-review.md" if dispatch_review(work) else "step-oneshot.md"
     if path.name != expected_name or not inside(path, repo / "_bmad/render") or (repo / "_bmad/render").resolve() != repo / "_bmad/render" or not path.is_file():
@@ -159,6 +171,9 @@ def begin_review(repo, work, args, identity):
         manifest_path = root / 'input-manifest.json'
         run['input_manifest'] = {'path': manifest_path.relative_to(repo).as_posix(), 'content_sha256': native_digest(manifest)}
         atomic_json(manifest_path, manifest)
+    if loopback.get('status') == 'reimplementing':
+        loopback['status'] = 'reviewing'
+        loopback['review_round_id'] = proposed['round_id']
     output = {"ok": True, "review": run, "active_layers": layers, 'reused': reused, 'model_source': run.get('model_source', model_source)}
     output['reviewer_start'] = (f'{cao_invocation()["command"]} sdd review attach --work {work["id"]} '
         f'--layer {args.layer} --run {run["id"]} --input-sha256 {run["input_sha256"]} --model {shlex.quote(args.model)}')
@@ -179,7 +194,7 @@ def begin_review(repo, work, args, identity):
 
 def bundle_root(repo, work, layer, run):
     relative = f"_bmad-output/cao-reviews/{identifier(work['id'])}/{identifier(run['id'])}/{identifier(layer)}"
-    path = provider_artifact(repo, relative + '/report.json', ['_bmad-output']).parent
+    path = provider_artifact(repo, relative + '/report.json', bmad_output_dirs(repo)).parent
     for part in (path, *path.parents):
         if part == repo:
             break
@@ -326,7 +341,7 @@ def import_review(repo, work, layer, report):
     require_review_integrity(repo, work)
     run = ((work.get('sdd') or {}).get('native_reviews') or {}).get(layer) or {}
     if run.get('status') == 'passed':
-        source = provider_artifact(repo, report, ['_bmad-output'])
+        source = provider_artifact(repo, report, bmad_output_dirs(repo))
         hashes = run.get('evidence_hashes') or {}
         if (run.get('inputs') != review_inputs(repo, work, code_snapshot)
                 or source.relative_to(repo).as_posix() not in hashes
@@ -349,7 +364,7 @@ def draft_report(repo, work, layer, source):
     validate_reviewer(run, {'reviewer': binding.get('reviewer')})
     if run.get('status') != 'running' or run.get('inputs') != review_inputs(repo, work, code_snapshot):
         raise ValueError('NATIVE_REVIEW_RUN_STALE_OR_MISMATCH')
-    raw = provider_artifact(repo, source, ['_bmad-output'])
+    raw = provider_artifact(repo, source, bmad_output_dirs(repo))
     validate_source(repo, run, raw)
     findings = load_findings(raw)
     ids = [item.get('id') for item in findings]
@@ -386,7 +401,7 @@ def classify_batch(repo, work, report_path):
     from copy import deepcopy
     from scripts.native_obligations import classify_review
     from scripts.review_diagnostics import read_report
-    mapping = read_report(provider_artifact(repo, report_path, ['_bmad-output']))
+    mapping = read_report(provider_artifact(repo, report_path, bmad_output_dirs(repo)))
     layers = active_layers(repo, work)
     if set(mapping) != set(layers) or any(not isinstance(path, str) or not path for path in mapping.values()):
         invalid('NATIVE_REVIEW_BATCH_LAYERS_REQUIRED', '$', layers, mapping)

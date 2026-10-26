@@ -5,6 +5,7 @@ import re
 import shutil
 import subprocess
 from pathlib import Path
+from scripts.bmad_project import output_dirs as bmad_output_dirs
 from scripts.light_spec_policy import _oneshot, _lines, _section
 from scripts.path_guard import repo_file, provider_artifact
 from scripts.spec_intent import frozen_intent
@@ -72,7 +73,7 @@ def load_findings(path):
 
 def dispatch_review_next(records, layers, inputs):
     if any((records.get(layer) or {}).get('loopback_required') for layer in layers):
-        return ('Follow the native intent_gap/bad_spec loopback first: resolve frozen intent conflicts with the human and refresh route/approval evidence, '
+        return ('Run `cao sdd review loopback --reason "<native finding>" --keep "<KEEP instructions>" --path <product-file>` (repeat --path for all affected files) before reverting. Follow the native intent_gap/bad_spec loopback first: resolve frozen intent conflicts with the human and refresh route/approval evidence, '
                 'or amend the non-frozen design for bad_spec; preserve native KEEP instructions and rederive the code. '
                 'After completing that native loopback, use `cao sdd review begin --restart` for ALL active layers to start the new review round. '
                 'Restarting tickets alone does not resolve a known intent conflict.')
@@ -223,7 +224,7 @@ def oneshot_source(repo, work):
         source = (binding.get('spec') or {}).get('path')
     if not source:
         return None
-    path = provider_artifact(repo, source, ['_bmad-output'])
+    path = provider_artifact(repo, source, bmad_output_dirs(repo))
     raw = path.read_bytes()
     if not _oneshot(raw, _lines(raw)):
         if decision:
@@ -251,7 +252,7 @@ def review_inputs(repo, work, code_snapshot):
     from scripts.review_scope import acceptance_review_scope
     excluded, acceptance_standard = acceptance_review_scope(repo, work)
     result = {'instructions': instructions, 'work_id': work['id'], 'requirement_sha256': work['requirement']['sha256'],
-              'code_snapshot': code_snapshot(repo, {work['requirement']['path'], *excluded}, {'_bmad-output', '_bmad', '.agents', '.pi', 'openspec', '.specify', 'specs'}), **source}
+              'code_snapshot': code_snapshot(repo, {work['requirement']['path'], *excluded}, {'_bmad-output', '_bmad', '.agents', '.pi', 'openspec', '.specify', 'specs', *bmad_output_dirs(repo)}), **source}
     if acceptance_standard is not None:
         result['acceptance_standard_sha256'] = digest(acceptance_standard)
     return result
@@ -345,7 +346,7 @@ def planning_state(repo, work):
             role = artifact.get('role')
             if role not in {'prd', 'architecture'}:
                 continue
-            path = provider_artifact(repo, artifact['path'], ['_bmad-output'])
+            path = provider_artifact(repo, artifact['path'], bmad_output_dirs(repo))
             text = path.read_text()
             header = re.match(r'\A---\s*\n(.*?)\n---(?:\s*\n|\Z)', text, re.S)
             statuses = re.findall(r'(?m)^status:\s*(.*?)\s*$', header[1]) if header else []
@@ -354,7 +355,7 @@ def planning_state(repo, work):
             skill = repo / '.agents/skills' / ('bmad-prd' if role == 'prd' else 'bmad-architecture') / 'SKILL.md'
             rules = skill.read_text() if skill.is_file() else ''
             if '.memlog.md' in rules:
-                audit = provider_artifact(repo, path.parent / '.memlog.md', ['_bmad-output'])
+                audit = provider_artifact(repo, path.parent / '.memlog.md', bmad_output_dirs(repo))
                 if not audit.is_file() or not audit.read_text().strip():
                     raise ValueError('NATIVE_PLANNING_AUDIT_REQUIRED: ' + artifact['path'])
             if role == 'architecture' and (work.get('path_assessment') or {}).get('profile') == 'comprehensive' and 'reviewer-gate' in rules:
@@ -372,7 +373,7 @@ def review_source(repo, work):
     decision = work['sdd']['route_decision']
     if decision.get('requirement_sha256') != work['requirement']['sha256']:
         raise ValueError('NATIVE_REVIEW_SOURCE_STALE')
-    path = provider_artifact(repo, decision['primary_artifact'], ['_bmad-output'])
+    path = provider_artifact(repo, decision['primary_artifact'], bmad_output_dirs(repo))
     content = path.read_text(encoding='utf-8-sig')
     intent = frozen_intent(content, required=True)
     return {'path': path.relative_to(repo.resolve()).as_posix(), 'intent_sha256': digest(intent)}
@@ -498,7 +499,7 @@ def classify_review(repo, work, layer, report_path, code_snapshot):
     if any((records.get(key) or {}).get('inputs') != inputs for key in active_layers(repo, work)):
         raise ValueError('NATIVE_REVIEW_ALL_LAYERS_REQUIRED')
     run = records.get(layer) or {}
-    report_file = provider_artifact(repo, report_path, ['_bmad-output'])
+    report_file = provider_artifact(repo, report_path, bmad_output_dirs(repo))
     report = read_report(report_file)
     if not isinstance(report, dict):
         raise ValueError('NATIVE_REVIEW_REPORT_INVALID')
@@ -507,7 +508,7 @@ def classify_review(repo, work, layer, report_path, code_snapshot):
     validate_reviewer(run, report)
     if run.get('status') != 'running' or report.get('run_id') != run.get('id') or report.get('input_sha256') != digest(inputs):
         raise ValueError('NATIVE_REVIEW_RUN_STALE_OR_MISMATCH')
-    findings_file = provider_artifact(repo, str(report.get('findings_file') or ''), ['_bmad-output'])
+    findings_file = provider_artifact(repo, str(report.get('findings_file') or ''), bmad_output_dirs(repo))
     from scripts.review_observation import validate_source
     validate_source(repo, run, findings_file)
     raw = load_findings(findings_file)
@@ -558,7 +559,7 @@ def resolve_review(repo, work, layer, report_path, code_snapshot):
     run = work['sdd']['native_reviews'].get(layer) or {}
     if run.get('status') != 'classified':
         raise ValueError('NATIVE_REVIEW_CLASSIFY_REQUIRED')
-    path = provider_artifact(repo, report_path, ['_bmad-output'])
+    path = provider_artifact(repo, report_path, bmad_output_dirs(repo))
     report = read_report(path)
     report.setdefault('run_id', run.get('id'))
     resolved = report.get('resolved_ids')
@@ -577,7 +578,7 @@ def submit_review(repo, work, layer, report_path, code_snapshot):
         raise ValueError('NATIVE_REVIEW_CLASSIFY_REQUIRED: dispatch uses classify before patches, then resolve')
     require_review_integrity(repo, work, code_snapshot)
     run = (work.get('sdd') or {}).get('native_reviews', {}).get(layer) or {}
-    report_file = provider_artifact(repo, report_path, ['_bmad-output'])
+    report_file = provider_artifact(repo, report_path, bmad_output_dirs(repo))
     report = read_report(report_file)
     if not isinstance(report, dict):
         raise ValueError('NATIVE_REVIEW_REPORT_INVALID')
@@ -606,7 +607,7 @@ def submit_review(repo, work, layer, report_path, code_snapshot):
         raise ValueError('NATIVE_REVIEW_RUN_STALE_OR_MISMATCH')
     validate_reviewer(run, report)
     reviewer = report['reviewer']
-    findings_file = provider_artifact(repo, str(report.get('findings_file') or ''), ['_bmad-output'])
+    findings_file = provider_artifact(repo, str(report.get('findings_file') or ''), bmad_output_dirs(repo))
     if findings_file == report_file or not findings_file.read_text().strip():
         raise ValueError('NATIVE_REVIEW_FINDINGS_REQUIRED')
     from scripts.review_observation import validate_source

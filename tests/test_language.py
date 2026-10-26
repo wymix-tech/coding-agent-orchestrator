@@ -83,6 +83,8 @@ class UserLanguageTests(unittest.TestCase):
         with temp:
             bmad = repo / "_bmad"
             bmad.mkdir()
+            from tests.helpers import provision_bmad
+            provision_bmad(repo)
             cfg = bmad / "config.toml"
             cfg.write_text('[core]\nproject_name = "demo"\ncommunication_language = "English"\n\n[modules.bmm]\nuser_skill_level = "advanced"\n', encoding="utf-8")
             (bmad / "config.user.toml").write_text('[core]\nuser_name = "Dev"\n', encoding="utf-8")
@@ -105,6 +107,8 @@ class UserLanguageTests(unittest.TestCase):
         with temp:
             bmad_config = repo / "_bmad" / "bmm" / "config.yaml"
             bmad_config.parent.mkdir(parents=True)
+            from tests.helpers import provision_bmad
+            provision_bmad(repo)
             bmad_config.write_text("project_name: demo\ncommunication_language: English\ndocument_output_language: English\n", encoding="utf-8")
             code, payload = run(repo, "language", "set", "--language", "ja-JP")
             self.assertEqual(code, 0, payload)
@@ -127,6 +131,8 @@ class UserLanguageTests(unittest.TestCase):
             legacy.parent.mkdir()
             legacy.write_text("project_name: demo\ncommunication_language: English\n"
                               "document_output_language: English\n", encoding="utf-8")
+            from tests.helpers import provision_bmad
+            provision_bmad(repo)
             code, payload = run(repo, "bootstrap")
             self.assertEqual(code, 0, payload)
             for path in paths:
@@ -167,6 +173,8 @@ class UserLanguageTests(unittest.TestCase):
             (repo / "openspec").mkdir()
             (repo / "openspec" / "config.yaml").write_text("schema: spec-driven\n", encoding="utf-8")
             (repo / "_bmad").mkdir()
+            from tests.helpers import provision_bmad
+            provision_bmad(repo)
             (repo / ".specify").mkdir()
             code, payload = run(repo, "language", "set", "--language", "ja-JP")
             self.assertEqual(code, 0, payload)

@@ -44,6 +44,8 @@ class ProviderRestartTests(unittest.TestCase):
                 root = self.repo / {"bmad": "_bmad", "openspec": "openspec", "speckit": ".specify"}[provider]
                 root.mkdir(exist_ok=True)
                 if provider == "bmad":
+                    from tests.helpers import provision_bmad
+                    provision_bmad(self.repo)
                     (root / "config.user.toml").write_text(
                         '[core]\nuser_name = "Dev"\ncommunication_language = "English"\n'
                         'document_output_language = "English"\n', encoding="utf-8")
@@ -136,6 +138,8 @@ class ProviderRestartTests(unittest.TestCase):
 
     def test_existing_work_and_requirement_survive_restart(self):
         (self.repo / "_bmad").mkdir()
+        from tests.helpers import provision_bmad
+        provision_bmad(self.repo)
         req = self.repo / ".orchestrator/requirements/001-login.md"
         req.parent.mkdir(exist_ok=True)
         req.write_text("# Login\nImplement confirmed login scope.\n", encoding="utf-8")

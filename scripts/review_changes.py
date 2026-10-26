@@ -18,7 +18,9 @@ def inventory(repo, work):
     from scripts.review_scope import acceptance_review_scope
     excluded, _ = acceptance_review_scope(repo, work)
     files = []
-    snapshot = code_snapshot(repo, {work['requirement']['path'], *excluded}, NATIVE_ROOTS, manifest=files)
+    from scripts.bmad_project import output_dirs
+    roots = NATIVE_ROOTS | set(output_dirs(repo)) if (work.get('sdd') or {}).get('provider') == 'bmad' else NATIVE_ROOTS
+    snapshot = code_snapshot(repo, {work['requirement']['path'], *excluded}, roots, manifest=files)
     return snapshot, files
 
 
@@ -76,7 +78,9 @@ def freeze(repo, work, expected_snapshot):
             from scripts.review_scope import acceptance_review_scope
             excluded, _ = acceptance_review_scope(repo, work)
             def included(path):
-                return path not in {work['requirement']['path'], *excluded} and not excluded_input(path, scope, keys, additional_roots=NATIVE_ROOTS)
+                from scripts.bmad_project import output_dirs
+                roots = NATIVE_ROOTS | set(output_dirs(repo)) if (work.get('sdd') or {}).get('provider') == 'bmad' else NATIVE_ROOTS
+                return path not in {work['requirement']['path'], *excluded} and not excluded_input(path, scope, keys, additional_roots=roots)
             changes, index = [], 0
             while index < len(tokens) and tokens[index]:
                 status, name = tokens[index:index + 2]

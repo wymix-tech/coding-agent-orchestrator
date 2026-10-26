@@ -28,6 +28,8 @@ def provisioned_repo(td: str) -> pathlib.Path:
         subprocess.run([sys.executable, str(CAO), *args], cwd=repo, env=env,
                        text=True, capture_output=True, timeout=60)
     (repo / "_bmad").mkdir(exist_ok=True)
+    from tests.helpers import provision_bmad
+    provision_bmad(repo)
     return repo
 
 

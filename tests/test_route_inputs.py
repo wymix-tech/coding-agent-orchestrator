@@ -113,8 +113,12 @@ class RouteInputs(RepairCase):
         self.assertFalse(errors[1]["sha256_matches"])
 
     def test_installed_skill_steps_and_references_are_real_rule_sources(self):
+        root = (self.repo / self.source).parent
+        (root / 'step-03-implement.md').write_text('Native implementation.\n')
+        (root / 'step-04-review.md').write_text('#### Blind (`blind-hunter`)\nIndependent review.\n')
         self.draft()
         self.fill()
+        self.run_cli("sdd", "route", "rule", "--source", self.source, "--start-line", "3", "--end-line", "4")
         for relative in ("step-02-plan.md", "spec-template.md", "references/routing.md"):
             source = (self.repo / self.skill).parent / relative
             source.parent.mkdir(parents=True, exist_ok=True)
@@ -154,6 +158,7 @@ class RouteInputs(RepairCase):
     def test_linked_skill_sources_cannot_be_used_as_rule_evidence(self):
         self.draft()
         linked = (self.repo / self.skill).parent / "step-02-plan.md"
+        linked.unlink()  # Replace the installed native fixture file with the alias under test.
         try:
             linked.symlink_to(self.repo / self.spec)
         except OSError:

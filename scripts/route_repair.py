@@ -13,9 +13,12 @@ def relocate(repo, old, proposed):
         raise ValueError('NATIVE_ROUTE_REPAIR_EXISTING_DECISION_REQUIRED')
     fields = ('provider', 'requirement_sha256', 'assessment_revision', 'profile', 'required_gates',
               'workflow', 'entrypoint', 'route', 'build_route', 'provider_version',
-              'required_artifacts', 'primary_artifact', 'omitted', 'approval_required')
+              'required_artifacts', 'primary_artifact', 'omitted', 'approval_required', 'planning_duties')
     if any(old.get(key) != proposed.get(key) for key in fields):
         raise ValueError('NATIVE_ROUTE_REPAIR_SEMANTIC_CHANGE')
+    outputs = old.get('provider_outputs')
+    if outputs is not None and outputs != proposed.get('provider_outputs'):
+        raise ValueError('NATIVE_ROUTE_REPAIR_OUTPUT_CONFIG_CHANGED')
     before, after = old.get('rules', []), proposed.get('rules', [])
     if not before or len(before) != len(after):
         raise ValueError('NATIVE_ROUTE_REPAIR_RULES_NOT_EQUIVALENT')

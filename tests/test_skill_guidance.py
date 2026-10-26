@@ -147,7 +147,7 @@ class RuntimeNavigation(RepairCase):
             self.assert_guides(out, "execution", ["execution.md", "provider-bmad.md"])
 
     def test_startup_intake_scope_recovery_and_handoff(self):
-        (self.repo / "_bmad").rmdir()
+        shutil.rmtree(self.repo / "_bmad")
         rc, out = self.run_cli("bootstrap")
         self.assertEqual(rc, 0, out)
         self.assert_guides(out, "startup", ["startup.md"])
@@ -155,6 +155,8 @@ class RuntimeNavigation(RepairCase):
         self.assert_guides(next_out, "startup", ["startup.md"])
         self.assertIn("bootstrap", next_out["action"]["instruction"])
         (self.repo / "_bmad").mkdir()
+        from tests.helpers import provision_bmad
+        provision_bmad(self.repo)
         rc, out = self.run_cli("bootstrap")
         self.assert_guides(out, "intake", ["work-intake.md"])
         wid = self.start()

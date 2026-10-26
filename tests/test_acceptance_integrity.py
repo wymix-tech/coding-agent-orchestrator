@@ -39,6 +39,8 @@ def active_work(repo, command=None):
     configure_verification(repo, command)
     run(repo, "sdd", "select", "--provider", "bmad")
     (repo / "_bmad").mkdir(exist_ok=True)
+    from tests.helpers import provision_bmad
+    provision_bmad(repo)
     rc, out = run(repo, "requirement", "next-id", "--title", "login")
     req = repo / out["path"]
     # This suite exercises baseline/reanchor integrity, not authentication risk.

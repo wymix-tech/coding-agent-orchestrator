@@ -11,7 +11,7 @@ import subprocess
 import tempfile
 import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from tests.helpers import fixture_native_review, complete_acceptance
+from tests.helpers import fixture_native_review, fixture_native_review_source, complete_acceptance, provision_bmad
 
 
 def main():
@@ -78,6 +78,8 @@ def main():
                 repo = base / f"{provider}-{host}"
                 repo.mkdir()
                 (repo / marker).mkdir()
+                if provider == 'bmad':
+                    provision_bmad(repo)
                 def cli(*argv, payload=None, expected=0):
                     result = subprocess.run([args.cao, *argv, "--repo", str(repo)], cwd=repo, env=env,
                                             text=True, capture_output=True, timeout=30,
@@ -219,6 +221,11 @@ def main():
                     skill = repo / '.agents/skills/bmad-build/SKILL.md'
                     skill.parent.mkdir(parents=True, exist_ok=True)
                     skill.write_text('---\nname: bmad-build\ndescription: Explicit local fixture\n---\nUse the native oneshot route for this fixture.\n', encoding='utf-8')
+                    provision_bmad(repo)
+                    rendered_review = fixture_native_review_source(repo)
+                    native_rule = rendered_review.parent / 'rule.md'
+                    native_rule.write_text('Use the native oneshot route for this fixture.\n')
+                    (rendered_review.parent / 'step-03-implement.md').write_text('Native implementation fixture.\n')
                     cli('sdd', 'artifact', 'bind', '--artifact', '_bmad-output/spec-oneshot.md')
                     prepared = cli('sdd', 'route', 'prepare')
                     route_path = prepared['declaration_path']
@@ -227,7 +234,7 @@ def main():
                     draft.update(provider_version='local-fixture', route='direct-build', reason='Installed native fixture rule.',
                                  omitted=[{'name':'separate planning', 'reason':'Bounded explicit fixture intent.', 'replaced_by':'_bmad-output/spec-oneshot.md'}])
                     (repo / route_path).write_text(json.dumps(draft), encoding='utf-8')
-                    cli('sdd', 'route', 'rule', '--source', '.agents/skills/bmad-build/SKILL.md', '--start-line', '5', '--end-line', '5')
+                    cli('sdd', 'route', 'rule', '--source', native_rule.relative_to(repo).as_posix(), '--start-line', '1', '--end-line', '1')
                     assert cli('sdd', 'route', 'check')['status'] == 'validated'
                     cli('sdd', 'route', 'propose', '--declaration', route_path)
                     sprint = repo / '_bmad-output/sprint-status.yml'

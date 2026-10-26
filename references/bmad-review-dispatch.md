@@ -48,9 +48,24 @@ to explicitly replace a failed ticket. Classified is not resolved. If a worker o
 provider fails, inspect partial edits, resume the same worker (or apply the native
 fallback), rerun checks and resolve remaining layers. Do not restart all reviews
 or report old tests as validation of the partially patched tree.
-For a native intent_gap/bad_spec loopback, complete its clarification/design and
-code re-derivation first, then use `begin --restart` for all active layers. This
-starts the new review round rather than reusing the classified loopback tickets.
+For a native intent_gap/bad_spec loopback, first classify every active layer, then
+run `cao sdd review loopback --reason "<native cause>" --keep "<KEEP instructions>"
+--path <product-file>` with repeated exact `--path` values for all affected files.
+This archives the old round and records the original baseline and bounded repair
+scope; it does not undo code or count as a new review. Before replanning, restore
+recorded existing files with `git restore --source <returned-baseline-commit>
+--worktree -- <exact-files>`; delete only returned `added_files` with `rm -- <files>`.
+Unbounded reset/restore commands are not allowed. Without Git, exact original
+content writes are allowed when their SHA-256 matches a recorded baseline receipt.
+Resolve intent gaps with the human (old approval is revoked), refresh changed
+route/approval evidence, then follow native step-03 and its real implementation
+handoff to rederive the code. Reimplementation is limited to the recorded paths;
+accepted configured verification commands remain available. Prepare a fresh
+review round after reimplementation; old classified tickets cannot certify it.
+If the native replan identifies another necessary product file, repeat the
+loopback command with `--extend --reason "<why needed>" --keep "<preserved KEEP>"
+--path <new-file>`. This appends an audited scope change without resetting the
+loopback, approvals or history; it cannot include provider outputs or CAO state.
 
 ## Classify report fields
 

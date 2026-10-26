@@ -38,6 +38,8 @@ class CoreTests(unittest.TestCase):
             (repo / "requirements").mkdir()
             (repo / "requirements/spring-boot-auth-login.md").write_text("Implement bounded fixture behavior", encoding="utf-8")
             (repo / "_bmad").mkdir()
+            from tests.helpers import provision_bmad
+            provision_bmad(repo)
             run(repo, "init"); run(repo, "sdd", "select", "--provider", "bmad")
             run(repo, "start", "--requirement", "requirements/spring-boot-auth-login.md")
             run(repo, "path", "assess", "--profile", "standard", "--reason", "Feature with planning")
@@ -80,6 +82,8 @@ class CoreTests(unittest.TestCase):
             (repo / "requirements").mkdir()
             (repo / "requirements/spring-boot-auth-login.md").write_text("Implement bounded fixture behavior", encoding="utf-8")
             (repo / "_bmad").mkdir()
+            from tests.helpers import provision_bmad
+            provision_bmad(repo)
             run(repo, "init"); run(repo, "sdd", "select", "--provider", "bmad")
             configure_verification(repo)
             run(repo, "start", "--requirement", "requirements/spring-boot-auth-login.md")
@@ -102,6 +106,8 @@ class CoreTests(unittest.TestCase):
             (repo / "requirements").mkdir()
             (repo / "requirements/spring-boot-auth-login.md").write_text("Implement bounded fixture behavior", encoding="utf-8")
             (repo / "_bmad").mkdir()
+            from tests.helpers import provision_bmad
+            provision_bmad(repo)
             run(repo, "init"); run(repo, "sdd", "select", "--provider", "bmad")
             run(repo, "start", "--requirement", "requirements/spring-boot-auth-login.md")
             run(repo, "path", "assess", "--profile", "standard", "--reason", "Feature with planning")
@@ -121,6 +127,8 @@ class CoreTests(unittest.TestCase):
             (repo / "requirements").mkdir()
             (repo / "requirements/spring-boot-auth-login.md").write_text("Implement bounded fixture behavior", encoding="utf-8")
             (repo / "_bmad").mkdir()
+            from tests.helpers import provision_bmad
+            provision_bmad(repo)
             run(repo, "init"); run(repo, "sdd", "select", "--provider", "bmad")
             run(repo, "start", "--requirement", "requirements/spring-boot-auth-login.md")
             run(repo, "path", "assess", "--profile", "standard", "--reason", "Feature with planning")
@@ -216,6 +224,8 @@ class CoreTests(unittest.TestCase):
         td, repo = self.init_repo()
         with td:
             (repo / "_bmad").mkdir()
+            from tests.helpers import provision_bmad
+            provision_bmad(repo)
             (repo / "requirements").mkdir(); (repo / "requirements/login.md").write_text("Generate a local status report", encoding="utf-8")
             run(repo, "init"); run(repo, "sdd", "select", "--provider", "bmad")
             configure_verification(repo)

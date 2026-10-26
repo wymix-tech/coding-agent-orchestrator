@@ -51,7 +51,7 @@ class VerificationPreflightTests(RepairCase):
 
     def test_sdd_authorization_still_precedes_setup(self):
         self.scripts([])
-        (self.repo / "_bmad").rmdir()
+        shutil.rmtree(self.repo / "_bmad")
         rc, out = self.run_cli("bootstrap")
         self.assertEqual(rc, 0, out)
         self.assertEqual(out["mode"], "sdd_select")

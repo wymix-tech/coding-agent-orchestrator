@@ -221,7 +221,7 @@ def host_event(args: argparse.Namespace) -> int:
                                    "review": review, "occurred_at": now()})
                 save_work(repo, work)
             approval = approve_observed_response(repo, work, raw, event, args.host, host_session_id,
-                provider_output_dirs(work["sdd"]["provider"]), now())
+                provider_output_dirs(work["sdd"]["provider"], repo), now())
             if approval:
                 queue_event(work, {"event": "sdd.spec.approved", "work_item_id": work["id"],
                                    "approval": approval, "occurred_at": now()})
@@ -260,7 +260,8 @@ def host_event(args: argparse.Namespace) -> int:
         analysis = tool_effect(raw, repo)
         route_input_write = (not analysis["diagnostics"] and bool(analysis["targets"])
                              and all(writable_input(repo, target, work) for target in analysis["targets"]))
-        native_write = (route_input_write or write_targets_native_sdd_output(repo, raw)
+        from scripts.native_loopback import rollback_write
+        native_write = (rollback_write(repo, work, raw) or route_input_write or write_targets_native_sdd_output(repo, raw)
                         or native_intake_shell(repo, raw) or diagnostic_shell_write(repo, raw))
         from scripts.project_setup import writable_scaffold
         setup_repair = not work and kind == 'primary' and writable_scaffold(repo, raw)
@@ -294,6 +295,10 @@ def host_event(args: argparse.Namespace) -> int:
                     implementation = implementation_write_guard(repo, work, raw, host_session_id, kind)
                     if not implementation['ready']:
                         return respond({'decision': 'deny', 'reason': implementation['reason'] + ': ' + implementation['next']})
+                from scripts.native_loopback import write_state as loopback_write_state
+                loopback_scope = loopback_write_state(repo, work, raw)
+                if not loopback_scope['ready']:
+                    return respond({'decision': 'deny', 'reason': loopback_scope['reason'] + ': ' + loopback_scope['next']})
                 review_patches = dispatch_patch_state(repo, work, code_snapshot)
                 if not review_patches["ready"]:
                     return respond({"decision": "deny", "reason": review_patches["reason"] + ": classify every active native layer before patching; follow native loopback for intent/spec gaps."})
@@ -304,7 +309,7 @@ def host_event(args: argparse.Namespace) -> int:
                         next_step = completion_next_instruction(repo, work, path_state) + " " + next_step
                     result["additional_context"] = f"CAO reminder: {path_state['reason']}. {next_step} Clarify open questions before reassessment."
                 elif (work.get("path_assessment") or {}).get("profile") == "light":
-                    state = light_spec_state(repo, work, provider_output_dirs((work.get("sdd") or {}).get("provider")))
+                    state = light_spec_state(repo, work, provider_output_dirs((work.get("sdd") or {}).get("provider"), repo))
                     if not state["ready"]:
                         result["additional_context"] = "CAO light reminder: " + (state.get("next") or state["reason"])
                 else:
@@ -350,7 +355,7 @@ def host_event(args: argparse.Namespace) -> int:
                                    'review': review, 'occurred_at': now()})
                 save_work(repo, work)
             approval = approve_observed_response(repo, work, raw, event, args.host, host_session_id,
-                provider_output_dirs(work["sdd"]["provider"]), now())
+                provider_output_dirs(work["sdd"]["provider"], repo), now())
             if approval:
                 queue_event(work, {"event": "sdd.spec.approved", "work_item_id": work["id"],
                                    "approval": approval, "occurred_at": now()})
