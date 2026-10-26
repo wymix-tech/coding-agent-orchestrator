@@ -35,7 +35,7 @@ Example: “这是新项目。技术栈是否有要求？建议 Java + Spring Bo
 
 An Agent-written requirement, native SPEC, POM or decision cannot turn its proposal into user authorization. Keep relevant project choices pending and complete project setup before product Work start; do not finalize a technology-dependent architecture, generate scaffolding or implement against an unconfirmed choice. Preserve native formats; no extra CAO artifact is required.
 
-Save authorized project choices before Work with `cao project context set`; use observed user evidence IDs or established product paths from `cao project inspect`. See [Project context](project-context.md). Work decisions remain local implementation choices, never the project technology source. A pending proposal stays pending in the requirement/handoff. Recover original evidence for unsupported old “confirmed” notes instead of assuming approval or restarting intake.
+Before creating new Work, complete project scaffold preparation and actual project verification checks; plan-only is insufficient. Existing active Work repairs its baseline without restarting intake. Save authorized project choices before Work with `cao project context set`; use observed user evidence IDs or established product paths from `cao project inspect`. See [Project context](project-context.md). Work decisions remain local implementation choices, never the project technology source. A pending proposal stays pending in the requirement/handoff. Recover original evidence for unsupported old “confirmed” notes instead of assuming approval or restarting intake.
 
 ### Progress and durable choices
 

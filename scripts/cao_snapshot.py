@@ -123,7 +123,7 @@ def verification_timeout(cfg: dict[str, Any]) -> float:
     return normalize_timeout((cfg.get("verification") or {}).get("timeout_seconds", 300.0))
 
 
-def verification_snapshot(cfg: dict[str, Any], repo: Path | None = None) -> str:
+def verification_snapshot(cfg: dict[str, Any], repo: Path | None = None, *, managed_scopes=None) -> str:
     from scripts.cao_provider_workflows import workflow_command_identities
 
     scope = validate_scope(repo.resolve(), cfg) if repo is not None else scope_config(cfg)
@@ -145,6 +145,11 @@ def verification_snapshot(cfg: dict[str, Any], repo: Path | None = None) -> str:
                     files[path.relative_to(repo).as_posix()] = sha256_file(path)
                 elif path.suffix in {".sh", ".py", ".ps1", ".cmd", ".bat"} and path.is_relative_to(repo):
                     files[path.relative_to(repo).as_posix()] = "missing"
+    if repo is not None:
+        from scripts.managed_verification import input_hashes
+        managed = input_hashes(repo, managed_scopes)
+        if managed:
+            return native_digest({"config": config_hash, "wrappers": files, "managed_inputs": managed})
     return native_digest({"config": config_hash, "wrappers": files}) if files else config_hash
 
 

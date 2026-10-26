@@ -1,0 +1,587 @@
+{
+  "date": "2026-10-26",
+  "base_commit": "285fd24",
+  "branch": "fix/project-verification-bootstrap",
+  "python": {
+    "files": 88,
+    "tests": 1057,
+    "passed": 1053,
+    "skipped": 4,
+    "failed": 0,
+    "execution": "unittest discovery per file, four isolated subprocesses in parallel",
+    "file_results": [
+      {
+        "file": "test_acceptance_integrity.py",
+        "tests": 13,
+        "skipped": 0,
+        "exit_code": 0
+      },
+      {
+        "file": "test_acceptance_protocol_template.py",
+        "tests": 12,
+        "skipped": 0,
+        "exit_code": 0
+      },
+      {
+        "file": "test_active_work_integrity.py",
+        "tests": 9,
+        "skipped": 0,
+        "exit_code": 0
+      },
+      {
+        "file": "test_audit_recovery.py",
+        "tests": 18,
+        "skipped": 0,
+        "exit_code": 0
+      },
+      {
+        "file": "test_bmad_stable_compatibility.py",
+        "tests": 27,
+        "skipped": 1,
+        "exit_code": 0
+      },
+      {
+        "file": "test_bmad_verify_plan.py",
+        "tests": 15,
+        "skipped": 0,
+        "exit_code": 0
+      },
+      {
+        "file": "test_bootstrap.py",
+        "tests": 4,
+        "skipped": 0,
+        "exit_code": 0
+      },
+      {
+        "file": "test_cao_module_boundaries.py",
+        "tests": 4,
+        "skipped": 0,
+        "exit_code": 0
+      },
+      {
+        "file": "test_cli_entry.py",
+        "tests": 10,
+        "skipped": 0,
+        "exit_code": 0
+      },
+      {
+        "file": "test_conformance_knowledge.py",
+        "tests": 19,
+        "skipped": 0,
+        "exit_code": 0
+      },
+      {
+        "file": "test_core.py",
+        "tests": 25,
+        "skipped": 0,
+        "exit_code": 0
+      },
+      {
+        "file": "test_dashboard.py",
+        "tests": 19,
+        "skipped": 0,
+        "exit_code": 0
+      },
+      {
+        "file": "test_dashboard_completion_state.py",
+        "tests": 8,
+        "skipped": 0,
+        "exit_code": 0
+      },
+      {
+        "file": "test_demo2_usage_flow.py",
+        "tests": 11,
+        "skipped": 0,
+        "exit_code": 0
+      },
+      {
+        "file": "test_evidence_binding.py",
+        "tests": 14,
+        "skipped": 0,
+        "exit_code": 0
+      },
+      {
+        "file": "test_handoffs.py",
+        "tests": 7,
+        "skipped": 0,
+        "exit_code": 0
+      },
+      {
+        "file": "test_host_adapters.py",
+        "tests": 14,
+        "skipped": 0,
+        "exit_code": 0
+      },
+      {
+        "file": "test_host_event_gate.py",
+        "tests": 3,
+        "skipped": 0,
+        "exit_code": 0
+      },
+      {
+        "file": "test_host_lifecycle_contract.py",
+        "tests": 17,
+        "skipped": 0,
+        "exit_code": 0
+      },
+      {
+        "file": "test_host_output.py",
+        "tests": 2,
+        "skipped": 0,
+        "exit_code": 0
+      },
+      {
+        "file": "test_intake_deadlock.py",
+        "tests": 8,
+        "skipped": 0,
+        "exit_code": 0
+      },
+      {
+        "file": "test_intake_route_recovery.py",
+        "tests": 5,
+        "skipped": 0,
+        "exit_code": 0
+      },
+      {
+        "file": "test_language.py",
+        "tests": 11,
+        "skipped": 0,
+        "exit_code": 0
+      },
+      {
+        "file": "test_lifecycle_completion_matrix.py",
+        "tests": 21,
+        "skipped": 0,
+        "exit_code": 0
+      },
+      {
+        "file": "test_lifecycle_repair_boundaries.py",
+        "tests": 7,
+        "skipped": 0,
+        "exit_code": 0
+      },
+      {
+        "file": "test_light_spec_completion.py",
+        "tests": 11,
+        "skipped": 0,
+        "exit_code": 0
+      },
+      {
+        "file": "test_local_experiment_repairs.py",
+        "tests": 13,
+        "skipped": 0,
+        "exit_code": 0
+      },
+      {
+        "file": "test_login_acceptance_example.py",
+        "tests": 2,
+        "skipped": 0,
+        "exit_code": 0
+      },
+      {
+        "file": "test_native_omissions.py",
+        "tests": 15,
+        "skipped": 0,
+        "exit_code": 0
+      },
+      {
+        "file": "test_native_route_sync.py",
+        "tests": 22,
+        "skipped": 0,
+        "exit_code": 0
+      },
+      {
+        "file": "test_native_skill_guidance.py",
+        "tests": 11,
+        "skipped": 0,
+        "exit_code": 0
+      },
+      {
+        "file": "test_native_sync_binding.py",
+        "tests": 15,
+        "skipped": 0,
+        "exit_code": 0
+      },
+      {
+        "file": "test_no_work_guard.py",
+        "tests": 16,
+        "skipped": 0,
+        "exit_code": 0
+      },
+      {
+        "file": "test_openspec_lifecycle_repairs.py",
+        "tests": 11,
+        "skipped": 0,
+        "exit_code": 0
+      },
+      {
+        "file": "test_orch_state_guard.py",
+        "tests": 9,
+        "skipped": 0,
+        "exit_code": 0
+      },
+      {
+        "file": "test_path_boundaries.py",
+        "tests": 19,
+        "skipped": 0,
+        "exit_code": 0
+      },
+      {
+        "file": "test_path_selection.py",
+        "tests": 11,
+        "skipped": 0,
+        "exit_code": 0
+      },
+      {
+        "file": "test_pi_bootstrap_repairs.py",
+        "tests": 5,
+        "skipped": 0,
+        "exit_code": 0
+      },
+      {
+        "file": "test_pi_log_contract.py",
+        "tests": 9,
+        "skipped": 0,
+        "exit_code": 0
+      },
+      {
+        "file": "test_pi_route_guidance.py",
+        "tests": 7,
+        "skipped": 0,
+        "exit_code": 0
+      },
+      {
+        "file": "test_pi_session_repairs.py",
+        "tests": 19,
+        "skipped": 0,
+        "exit_code": 0
+      },
+      {
+        "file": "test_plan_completion_gate.py",
+        "tests": 8,
+        "skipped": 0,
+        "exit_code": 0
+      },
+      {
+        "file": "test_plan_scope.py",
+        "tests": 15,
+        "skipped": 0,
+        "exit_code": 0
+      },
+      {
+        "file": "test_project_context_acceptance.py",
+        "tests": 40,
+        "skipped": 0,
+        "exit_code": 0
+      },
+      {
+        "file": "test_project_instructions.py",
+        "tests": 19,
+        "skipped": 0,
+        "exit_code": 0
+      },
+      {
+        "file": "test_project_setup_lifecycle.py",
+        "tests": 12,
+        "skipped": 0,
+        "exit_code": 0
+      },
+      {
+        "file": "test_project_verification_bootstrap.py",
+        "tests": 13,
+        "skipped": 0,
+        "exit_code": 0
+      },
+      {
+        "file": "test_protocol_consistency.py",
+        "tests": 8,
+        "skipped": 0,
+        "exit_code": 0
+      },
+      {
+        "file": "test_provider_light_adaptation.py",
+        "tests": 11,
+        "skipped": 0,
+        "exit_code": 0
+      },
+      {
+        "file": "test_provider_restart.py",
+        "tests": 5,
+        "skipped": 0,
+        "exit_code": 0
+      },
+      {
+        "file": "test_registered_launchers.py",
+        "tests": 2,
+        "skipped": 0,
+        "exit_code": 0
+      },
+      {
+        "file": "test_release_packaging.py",
+        "tests": 3,
+        "skipped": 0,
+        "exit_code": 0
+      },
+      {
+        "file": "test_repair_helpers.py",
+        "tests": 1,
+        "skipped": 0,
+        "exit_code": 0
+      },
+      {
+        "file": "test_repair_r1_r9.py",
+        "tests": 16,
+        "skipped": 0,
+        "exit_code": 0
+      },
+      {
+        "file": "test_repairs.py",
+        "tests": 12,
+        "skipped": 0,
+        "exit_code": 0
+      },
+      {
+        "file": "test_requirements.py",
+        "tests": 15,
+        "skipped": 0,
+        "exit_code": 0
+      },
+      {
+        "file": "test_review_convergence.py",
+        "tests": 19,
+        "skipped": 0,
+        "exit_code": 0
+      },
+      {
+        "file": "test_review_followup.py",
+        "tests": 18,
+        "skipped": 0,
+        "exit_code": 0
+      },
+      {
+        "file": "test_review_round_integrity.py",
+        "tests": 18,
+        "skipped": 0,
+        "exit_code": 0
+      },
+      {
+        "file": "test_review_task_provenance.py",
+        "tests": 5,
+        "skipped": 0,
+        "exit_code": 0
+      },
+      {
+        "file": "test_route_inputs.py",
+        "tests": 24,
+        "skipped": 0,
+        "exit_code": 0
+      },
+      {
+        "file": "test_runtime_host.py",
+        "tests": 6,
+        "skipped": 0,
+        "exit_code": 0
+      },
+      {
+        "file": "test_runtime_logs.py",
+        "tests": 6,
+        "skipped": 0,
+        "exit_code": 0
+      },
+      {
+        "file": "test_runtime_recovery.py",
+        "tests": 7,
+        "skipped": 0,
+        "exit_code": 0
+      },
+      {
+        "file": "test_runtime_store.py",
+        "tests": 7,
+        "skipped": 0,
+        "exit_code": 0
+      },
+      {
+        "file": "test_sdd_acceptance_cli.py",
+        "tests": 15,
+        "skipped": 0,
+        "exit_code": 0
+      },
+      {
+        "file": "test_sdd_acceptance_files.py",
+        "tests": 15,
+        "skipped": 0,
+        "exit_code": 0
+      },
+      {
+        "file": "test_sdd_acceptance_policy.py",
+        "tests": 16,
+        "skipped": 0,
+        "exit_code": 0
+      },
+      {
+        "file": "test_sdd_acceptance_runtime.py",
+        "tests": 4,
+        "skipped": 0,
+        "exit_code": 0
+      },
+      {
+        "file": "test_sdd_bootstrap.py",
+        "tests": 12,
+        "skipped": 0,
+        "exit_code": 0
+      },
+      {
+        "file": "test_session_integration_repairs.py",
+        "tests": 13,
+        "skipped": 0,
+        "exit_code": 0
+      },
+      {
+        "file": "test_sessions.py",
+        "tests": 10,
+        "skipped": 0,
+        "exit_code": 0
+      },
+      {
+        "file": "test_setup_toolchains.py",
+        "tests": 5,
+        "skipped": 3,
+        "exit_code": 0
+      },
+      {
+        "file": "test_skill_guidance.py",
+        "tests": 14,
+        "skipped": 0,
+        "exit_code": 0
+      },
+      {
+        "file": "test_snapshot_integrity.py",
+        "tests": 8,
+        "skipped": 0,
+        "exit_code": 0
+      },
+      {
+        "file": "test_snapshot_scope.py",
+        "tests": 15,
+        "skipped": 0,
+        "exit_code": 0
+      },
+      {
+        "file": "test_state_store.py",
+        "tests": 12,
+        "skipped": 0,
+        "exit_code": 0
+      },
+      {
+        "file": "test_state_transactions.py",
+        "tests": 19,
+        "skipped": 0,
+        "exit_code": 0
+      },
+      {
+        "file": "test_task_provider_verify.py",
+        "tests": 17,
+        "skipped": 0,
+        "exit_code": 0
+      },
+      {
+        "file": "test_technology_guidance.py",
+        "tests": 4,
+        "skipped": 0,
+        "exit_code": 0
+      },
+      {
+        "file": "test_test_discovery.py",
+        "tests": 6,
+        "skipped": 0,
+        "exit_code": 0
+      },
+      {
+        "file": "test_verification_bindings.py",
+        "tests": 17,
+        "skipped": 0,
+        "exit_code": 0
+      },
+      {
+        "file": "test_verification_guidance.py",
+        "tests": 5,
+        "skipped": 0,
+        "exit_code": 0
+      },
+      {
+        "file": "test_verification_preflight.py",
+        "tests": 12,
+        "skipped": 0,
+        "exit_code": 0
+      },
+      {
+        "file": "test_verification_runner.py",
+        "tests": 14,
+        "skipped": 0,
+        "exit_code": 0
+      },
+      {
+        "file": "test_verification_setup.py",
+        "tests": 14,
+        "skipped": 0,
+        "exit_code": 0
+      },
+      {
+        "file": "test_workflow_contract.py",
+        "tests": 12,
+        "skipped": 0,
+        "exit_code": 0
+      },
+      {
+        "file": "test_workflow_execution_integrity.py",
+        "tests": 10,
+        "skipped": 0,
+        "exit_code": 0
+      }
+    ],
+    "skip_details": [
+      "test_official_stable_renderer_contract (test_bmad_stable_compatibility.StableContracts.test_official_stable_renderer_contract) ... skipped 'set CAO_BMAD_STABLE_SOURCE to the official v6.12.4 checkout for cross-source verification'",
+      "test_real_go_module (test_setup_toolchains.RealToolchains.test_real_go_module) ... skipped 'Go unavailable'",
+      "test_real_gradle_junit (test_setup_toolchains.RealToolchains.test_real_gradle_junit) ... skipped 'Gradle/JDK unavailable'",
+      "test_real_maven_junit (test_setup_toolchains.RealToolchains.test_real_maven_junit) ... skipped 'Maven/JDK unavailable'"
+    ]
+  },
+  "targeted": {
+    "new_project_verification_tests": 13,
+    "existing_project_setup_tests": 12,
+    "status": "passed",
+    "note": "Rerun after final managed-path and ignore-rule edits."
+  },
+  "static": {
+    "compileall": "passed",
+    "git_diff_check": "passed",
+    "typescript_check_pi": "passed"
+  },
+  "pi": {
+    "tests": 37,
+    "passed": 28,
+    "failed": 9,
+    "baseline_tests": 37,
+    "baseline_passed": 28,
+    "baseline_failed": 9,
+    "same_failure_names": true,
+    "failure_names": [
+      "real Pi hooks permit host installation and literal probes before Work and baseline setup",
+      "real Pi hooks stop after provider installation and acknowledge host resource reload",
+      "real Pi intake delivers technology clarification before authoring requirements after restart",
+      "real Pi route preparation follows baseline, assessment, native workflow and SPEC",
+      "real Pi runtime correlates late tool results without changing result content or full model context",
+      "real Pi tool_result synchronizes a bound BMAD SPEC with a Chinese Work title",
+      "real Python core handles Pi tool_result with null verification",
+      "real core blocks Pi business writes without Work and preserves CAO/native intake",
+      "real core setup reaches Pi model with blocked product writes and preserved Work"
+    ],
+    "baseline_worktree": "Unmodified HEAD 285fd24; same dependencies and Node runtime"
+  },
+  "limits": [
+    "Pi suite has nine pre-existing failures on unmodified main; this change does not repair its BMAD installation fixtures.",
+    "Provider workflow tests use local contract fixtures; no claim of live model-driven BMAD/OpenSpec/Spec Kit end-to-end acceptance.",
+    "Historical project-readiness records are mocked only in unrelated legacy unit-test fixtures; new bootstrap tests execute real CLI checks.",
+    "Migration only moves proven setup-owned wrappers and retains old files for rollback; unknown user-owned scripts stay compatible in place."
+  ]
+}

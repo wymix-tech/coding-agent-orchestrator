@@ -1,5 +1,8 @@
 # Coding Agent Orchestrator
 
+
+项目初始化顺序：确认技术栈 → 生成或复用骨架 → 建立真实项目验证基线并运行初始化检查 → 创建业务 Work。CAO 管理的包装脚本存于 `.orchestrator/scripts/verification/`，用 `cao verification prepare --path <exact-path>` 授权精确输入，再 configure/check；原生测试与构建文件保留原位。已有项目用 `cao verification check` 完成准备；已有 Work 用 `--project` 补齐项目准备，不回退进度。标准可继承，每个 Work 的正式验证及 SDD 需求验收证据需独立满足。详见[验证基线](references/verification-setup.md)。
+
 [English](README.md) | 简体中文
 
 ## 项目概要
@@ -67,13 +70,13 @@ Agent 应按以下顺序推进：
 
 1. 恢复重启后 bootstrap 返回的待处理需求，再通过 `cao project inspect`、`cao project context show` 检查已有产品和保存的项目背景。
 2. 保留已确定的技术选型，只确认缺失部分。使用 `cao project context set` 保存，并引用检查结果中的真实用户证据 ID 或已有产品清单路径。保存项目背景 **不需要先创建 Work Item**。
-3. 复用已有验证入口。空项目先在无 Work 状态下完成 `cao project setup rules`、`draft`、`plan`、`apply`、`check`。只确认缺失的身份、版本与布局，按已选框架调整确切计划，见[项目初始化](references/project-initialization.md)。仅有 `verification configure --plan-only` 不能使空项目 ready。
+3. 复用已有验证入口。空项目先在无 Work 状态下完成 `cao project setup rules`、`draft`、`plan`、`apply`、`check`。只确认缺失的身份、版本与布局，按已选框架调整确切计划，见[项目初始化](references/project-initialization.md)。仅有 `verification configure --plan-only` 不能使项目 ready。
 4. 使用已有需求文件，或通过 `cao requirement next-id --title "用户登录"` 分配路径并填写返回的文件，再执行 `cao start --requirement <requirement-path> --title "用户登录"`。
 5. 已初始化项目继承真实验证入口；已有活动 Work 可修复基线并通过 `cao verification check --work <id>` 试跑；按提示审查验证基线、评估执行路径，再进入所选 Provider 的原生流程。
 
 命令中的 `<...>` 需要替换为实际返回的值。项目背景字段可通过 `cao project context set --help` 查看。仅填写来源标签、或由 Agent 自行编写一份规范，都不能作为用户技术选型的授权证据。
 
-`cao next` 返回当前动作和 `guidance.read_before_action` 路径。读取对应阶段及 Provider 指引后，从当前状态继续。已有产品的试跑失败不妨碍创建 Work；空项目必须先通过初始化检查；开始业务实现前，需要具备已接受的验证基线并满足原生流程前置条件。
+`cao next` 返回当前动作和 `guidance.read_before_action` 路径。读取对应阶段及 Provider 指引后，从当前状态继续。创建新 Work 前必须建立真实基线并通过项目准备检查；已有 Work 可原地补齐基线；开始业务实现前，需要具备已接受的验证基线并满足原生流程前置条件。
 
 ### 5. 验证、验收与关闭
 
@@ -183,6 +186,7 @@ Agent 负责评估范围，CAO 对声明的风险标记执行最低档位约束�
 
 | 位置 | 用途 |
 | --- | --- |
+| `.orchestrator/scripts/verification/` | CAO 管理的项目级验证脚本 |
 | `.orchestrator/config.json` | 项目配置与验证声明 |
 | `.orchestrator/project/` | 当前背景、不可变版本、来源和迁移记录 |
 | `.orchestrator/work/<work-id>.json` | 权威任务状态及接受的证据 |

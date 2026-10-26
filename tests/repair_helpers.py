@@ -64,6 +64,8 @@ class RepairCase(unittest.TestCase):
         req = self.repo / f".orchestrator/requirements/{title}.md"
         req.parent.mkdir(exist_ok=True)
         req.write_text(f"# {title}\nOriginal scope\n", encoding="utf-8")
+        from tests.helpers import seed_project_preparation
+        seed_project_preparation(self.repo)
         rc, out = self.run_cli("start", "--requirement", req.relative_to(self.repo))
         self.assertEqual(rc, 0, out)
         wid = out["work_item"]["id"]

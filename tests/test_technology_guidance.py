@@ -59,7 +59,7 @@ class TechnologyGuidance(RepairCase):
 
     def test_agent_written_confirmed_stack_is_not_promoted_to_authorization(self):
         out = self.start_work("# 登录\n开发登录系统。\n已确认技术栈：Java + Spring Boot + Maven + JUnit 5\n")
-        self.assertEqual(out["action"], "VERIFICATION_SETUP")
+        self.assertEqual(out["action"], "ASSESS_PATH")
         self.assert_policy(out["next_action"]["instruction"])
         wid = out["work_item"]["id"]
         self.assertEqual(self.read_work(wid)["decisions"], [])
@@ -75,7 +75,7 @@ class TechnologyGuidance(RepairCase):
         folder.mkdir(exist_ok=True)
         (folder / "test_fixture.py").write_text("import unittest\nclass Fixture(unittest.TestCase):\n def test_ok(self): self.assertTrue(True)\n")
         code, out = self.run_cli("verification", "configure", "--test-script",
-                                 shlex.join([sys.executable, "-m", "unittest", "discover", "-s", "acceptance-tests"]))
+                                 shlex.join([sys.executable, "-m", "unittest", "discover", "-s", "acceptance-tests", "-v"]))
         self.assertEqual(code, 0, out)
         code, out = self.run_cli("path", "assess", "--profile", "standard", "--reason", "Planning fixture")
         self.assertEqual(code, 0, out)

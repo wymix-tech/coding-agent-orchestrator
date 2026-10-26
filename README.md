@@ -1,5 +1,8 @@
 # Coding Agent Orchestrator
 
+
+Project setup order: confirm technology → generate/reuse scaffold → establish actual project checks and pass initialization → create business Work. CAO wrappers live in `.orchestrator/scripts/verification/`; reserve exact inputs with `cao verification prepare --path <exact-path>`, then configure/check. Native tests/build files stay in place. Existing products use `cao verification check`; existing Work can use `--project` without losing progress. Standards are inherited; Work verification and SDD requirement acceptance need current evidence. See [verification baseline](references/verification-setup.md).
+
 English | [简体中文](https://github.com/wymix-tech/coding-agent-orchestrator/blob/main/README.zh-CN.md)
 
 ## Project overview
@@ -89,7 +92,7 @@ The agent follows this order:
 
 Commands containing `<...>` require actual returned values. Use `cao project context set --help` to inspect background fields. A source label or agent-written specification is not evidence of a user's technology choice.
 
-`cao next` returns the current action and `guidance.read_before_action` paths. Read those stage/provider instructions and continue from the current state. Existing-product trial failures do not prevent creating a Work; empty products must first pass their initialization checks; an accepted verification baseline and native prerequisites must be in place before business implementation.
+`cao next` returns the current action and `guidance.read_before_action` paths. Read those stage/provider instructions and continue from the current state. New Work requires actual project checks and successful project preparation; existing active Work can repair its baseline in place; an accepted verification baseline and native prerequisites must be in place before business implementation.
 
 ### 5. Verify, accept, and close
 
@@ -199,6 +202,7 @@ State is local, with no separate database service:
 
 | Location | Purpose |
 | --- | --- |
+| `.orchestrator/scripts/verification/` | CAO-managed project verification inputs |
 | `.orchestrator/config.json` | Project configuration and verification declarations |
 | `.orchestrator/project/` | Current context, immutable revisions, provenance, and migrations |
 | `.orchestrator/work/<work-id>.json` | Authoritative task state and accepted evidence |

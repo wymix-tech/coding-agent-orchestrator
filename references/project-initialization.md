@@ -31,7 +31,7 @@ in provider outputs. Existing products are reused and active Work retains progre
    `basis`, identity/evidence/source, exact files with content and purposes
    (manifest/entry/test/resource/verification), checks with name/command/capability,
    required_capabilities, and exact generated outputs. No new plugin is needed.
-   Files and check cwd must be within the accepted scope. Prefix module paths in
+   Product files and check cwd must be within the accepted scope. Exact verification inputs may additionally live in `.orchestrator/scripts/verification/<scope>/` with purpose `verification`. Prefix module paths in
    file/output entries; check cwd defaults to that module's first root.
 5. Review the concrete plan, then run:
 
@@ -93,3 +93,5 @@ rechecking the affected project preparation.
 Existing active Work may use `cao verification check --work <id>` before native
 review or baseline acceptance to trial its current declared checks. This is a
 preparation result, not final `cao verify` or SDD acceptance. Keep formal gates.
+
+Existing products establish actual required entries and run `cao verification check` before creating new Work. For wrapper preparation, migration and exact write grants see [verification baseline](verification-setup.md#project-preparation-before-work).

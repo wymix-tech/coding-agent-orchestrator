@@ -61,13 +61,19 @@ def declaration_state(repo, cfg, scopes=None, work=None):
         if any(recorded.get(scope) != sha for scope, sha in expected.items()):
             return {'ready': False, 'reason': 'PROJECT_VERIFICATION_CONTEXT_MISMATCH',
                     'next': 'Review affected build/test entries, then `cao verification configure` with the correct --scope; preserve baseline review/reanchor.'}
+    if not binding and work:
+        from scripts.verification_setup import setup_state
+        if not setup_state(cfg)['ready']:
+            return {'ready': True, 'state': 'legacy_baseline_missing'}
     if not binding:
         return {'ready': False, 'reason': 'PROJECT_VERIFICATION_PLAN_REQUIRED',
-                'next': 'Reuse actual project entries with `cao verification configure`, or save `cao verification configure --plan-only --test-script "<planned command>"`; no product files are needed.'}
+                'next': 'Reuse actual project entries with `cao verification configure`, then run `cao verification check`. To create wrappers first reserve exact paths with `cao verification prepare --path .orchestrator/scripts/verification/root/check.py`. A plan-only declaration cannot unlock Work.'}
     from scripts.verification_setup import configured_scripts, setup_instruction
     try:
         scripts = configured_scripts(cfg)
     except ValueError:
+        if work:
+            return {'ready': True, 'state': 'legacy_baseline_invalid', 'context_binding': binding}
         return {'ready': False, 'reason': 'VERIFICATION_BASELINE_REQUIRED', 'next': setup_instruction('cao')}
     plan = verification.get('plan') or {}
     try:
@@ -75,9 +81,13 @@ def declaration_state(repo, cfg, scopes=None, work=None):
     except ValueError as exc:
         return {'ready': False, 'reason': 'PROJECT_VERIFICATION_CONTEXT_MISMATCH', 'difference': str(exc),
                 'next': 'Restore entries matching the accepted project runners, then configure and review/reanchor the actual baseline.'}
-    if not scripts and not plan.get('scripts'):
-        return {'ready': False, 'reason': 'PROJECT_VERIFICATION_PLAN_REQUIRED',
-                'next': 'Declare actual entries or use `cao verification configure --plan-only --test-script "<planned command>"`.'}
+    from scripts.verification_setup import setup_state
+    if not setup_state(cfg)['ready']:
+        if work:
+            # Legacy active Work repairs the missing baseline through the normal
+            # baseline gate, which permits narrow manifest/test scaffolding.
+            return {'ready': True, 'state': 'legacy_baseline_missing', 'context_binding': binding}
+        return {'ready': False, 'reason': 'VERIFICATION_BASELINE_REQUIRED', 'next': setup_instruction('cao')}
     return {'ready': True, 'state': 'configured' if scripts else 'planned', 'context_binding': binding}
 
 
@@ -91,7 +101,10 @@ def project_prerequisite(repo, work=None, scopes=None):
         if setup:
             return setup
         state = declaration_state(repo, config(repo), scopes, work)
+    if state['ready'] and not work:
+        from scripts.verification_probe import project_state
+        state = project_state(repo, scopes)
     if state['ready']:
         return None
-    return {'type': 'agent', 'stage': 'verification_setup' if state['reason'] == 'VERIFICATION_BASELINE_REQUIRED' else 'project_setup', 'instruction': state['next'] + ' ' + technology_instruction('cao'),
+    return {'type': 'agent', 'stage': 'verification_setup' if state['reason'] in {'VERIFICATION_BASELINE_REQUIRED', 'PROJECT_VERIFICATION_CHECK_REQUIRED'} else 'project_setup', 'instruction': state['next'] + ' ' + technology_instruction('cao'),
             'reason': state['reason'], 'project_state': state}

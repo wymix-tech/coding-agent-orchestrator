@@ -247,8 +247,12 @@ def host_event(args: argparse.Namespace) -> int:
         # itself writes state through commands, not through this hook.
         from scripts.project_setup import writable_input as writable_setup_input
         setup_input_write = kind == 'primary' and writable_setup_input(repo, raw)
+        from scripts.managed_verification import writable as writable_verification_input
+        verification_input_write = kind == 'primary' and writable_verification_input(repo, raw)
+        from scripts.project_setup import writable_scaffold
+        setup_repair = not work and kind == 'primary' and writable_scaffold(repo, raw)
         protected = write_targets_protected_state(repo, raw, work)
-        if protected and tool_is_mutating(raw) and not setup_input_write:
+        if protected and tool_is_mutating(raw) and not (setup_input_write or verification_input_write or setup_repair):
             result = {
                 "decision": "deny",
                 "reason": (
@@ -263,9 +267,7 @@ def host_event(args: argparse.Namespace) -> int:
         from scripts.native_loopback import rollback_write
         native_write = (rollback_write(repo, work, raw) or route_input_write or write_targets_native_sdd_output(repo, raw)
                         or native_intake_shell(repo, raw) or diagnostic_shell_write(repo, raw))
-        from scripts.project_setup import writable_scaffold
-        setup_repair = not work and kind == 'primary' and writable_scaffold(repo, raw)
-        native_write = native_write or setup_input_write or setup_repair
+        native_write = native_write or setup_input_write or setup_repair or verification_input_write
         if tool_is_mutating(raw) and not native_write:
             if not work or work.get("status") != "active":
                 advice_work = work

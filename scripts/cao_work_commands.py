@@ -107,10 +107,6 @@ def _prepare_start(args: argparse.Namespace):
             return 1
     from scripts.project_verification import project_prerequisite
     from scripts.project_context import make_binding
-    project = project_prerequisite(repo, scopes=getattr(args, "scope", None))
-    if project:
-        print(json.dumps({"ok": False, "error": project["reason"], "next": project}))
-        return 2
     p = resolve_requirement(repo, args.requirement)
     if p is None:
         if args.requirement:
@@ -134,6 +130,10 @@ def _prepare_start(args: argparse.Namespace):
                           "next": f"Fill the actual user request in `{rel(p, repo)}`, then rerun the same cao start command. Keep the existing file and current Work; do not allocate another requirement."}, ensure_ascii=False))
         return 2
     existing = load_work(repo, wid)
+    project = project_prerequisite(repo, existing, scopes=getattr(args, "scope", None))
+    if project:
+        print(json.dumps({"ok": False, "error": project["reason"], "next": project}))
+        return 2
     is_new_work = existing is None
     if existing and existing.get("status") == "completed" and not args.reopen:
         print(json.dumps({"ok": False, "error": "WORK_ITEM_ALREADY_COMPLETED", "work_item": work_summary(existing)}, ensure_ascii=False, indent=2))

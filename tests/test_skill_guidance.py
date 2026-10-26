@@ -1,5 +1,6 @@
 """Exercise installed navigation, stage transitions and safe instruction migration."""
 import hashlib
+import shutil
 from pathlib import Path
 import re
 import tempfile

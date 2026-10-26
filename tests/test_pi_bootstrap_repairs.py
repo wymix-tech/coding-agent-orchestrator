@@ -21,10 +21,10 @@ class PiBootstrapRepairs(RepairCase):
                      [sys.executable, str(ROOT / "scripts/cao.py")])
         for active in (False, True):
             if active:
+                self.start()
                 cfg = cao.config(self.repo)
                 cfg["verification"]["scripts"] = []
                 cao.save_json(self.repo / cao.CONFIG_REL, cfg)
-                self.start()
             for launcher in launchers:
                 for subcommand in ("install", "status"):
                     command = shlex.join([*launcher, "host", subcommand, "--host", "pi"])
@@ -55,9 +55,9 @@ class PiBootstrapRepairs(RepairCase):
 
     def test_setup_denial_explains_the_allowed_wrapper_location(self):
         cfg = cao.config(self.repo)
+        self.start()
         cfg["verification"]["scripts"] = []
         cao.save_json(self.repo / cao.CONFIG_REL, cfg)
-        self.start()
         rc, out = self.run_cli("host-event", "--host", "pi", payload={
             "event": "pre_tool", "session_id": "bootstrap-pi", "toolName": "write",
             "input": {"path": "scripts/check.py", "content": "raise SystemExit(1)"},

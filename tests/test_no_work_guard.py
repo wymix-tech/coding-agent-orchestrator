@@ -137,9 +137,8 @@ class NoWorkGuardTests(RepairCase):
         self.assertEqual(self.event("write", {"path": path, "content": "Login using sessions"})["decision"], "allow")
         (self.repo / path).write_text("# Login\nLogin using sessions\n")
         rc, out = self.run_cli("start", "--requirement", path)
-        self.assertEqual(rc, 0, out)
-        self.assertEqual(out["work_item"]["status"], "active")
-        self.assertFalse(out["verification_setup"]["ready"])
+        self.assertEqual(rc, 2, out)
+        self.assertEqual(out['error'], 'VERIFICATION_BASELINE_REQUIRED')
         rc, out = self.run_cli("bootstrap", "--host", "pi")
         self.assertEqual(out["mode"], "verification_setup")
 
@@ -149,11 +148,11 @@ class NoWorkGuardTests(RepairCase):
         cao.save_json(self.repo / cao.CONFIG_REL, cfg)
         rc, out = self.run_cli("bootstrap", "--host", "pi")
         self.assertEqual(rc, 0, out)
-        self.assertEqual(out["mode"], "select")
+        self.assertEqual(out["mode"], "verification_setup")
         self.assertFalse(out["verification_setup"]["ready"])
-        self.assertIn("requirement next-id", out["next"]["instruction"])
+        self.assertIn("verification configure", out["next"]["instruction"])
         text = cao.render_context(self.repo, None)
-        self.assertIn("start --requirement", text)
+        self.assertIn("verification", text)
         self.assertIn("before", text.lower())
 
     def test_suspended_work_requires_resume_instead_of_new_intake(self):

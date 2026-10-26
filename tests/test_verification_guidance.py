@@ -17,13 +17,13 @@ class VerificationGuidanceDocuments(unittest.TestCase):
                 self.assertIn("mode: sdd_select", text)
                 self.assertIn("wait for explicit selection", text)
                 self.assertIn("guidance.read_before_action", text)
-                self.assertIn("failing tests do not prevent start", text)
+                self.assertIn("pass project preparation before creating Work", text)
 
     def test_skill_explains_work_before_setup_and_no_false_pass(self):
         text = (ROOT / "SKILL.md").read_text(encoding="utf-8")
         self.assertIn("references/verification-setup.md", text)
         text = (ROOT / "references/verification-setup.md").read_text(encoding="utf-8")
-        self.assertIn("active Work exists", text)
+        self.assertIn("before Work creation", text)
         for token in ("product manifests", "ask the user", "Zero tests", "JUnit5", "Surefire",
                       "verification configure", "--replace", "init --force", "reanchor",
                       "not verification success", "existing scripts", "requirements remain relevant"):
