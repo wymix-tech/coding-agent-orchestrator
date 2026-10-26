@@ -150,3 +150,10 @@ class AcceptanceProtocolTests(unittest.TestCase):
         p, items = self.run_executor({'AC-1': {'command': [sys.executable, 'check.py'], 'evidence': ['check.py']}})
         self.assertEqual(2, p.returncode)
         self.assertEqual('blocked', items[0]['status'])
+
+    def test_malformed_shared_result_container_blocks_instead_of_crashing(self):
+        (self.repo / 'check.py').write_text("print('{\"checks\": []}')\n")
+        p, items = self.run_executor({'AC-1': {'command': [sys.executable, 'check.py'],
+                    'evidence': ['check.py'], 'result_key': 'missing'}})
+        self.assertEqual(2, p.returncode, p.stderr)
+        self.assertEqual('blocked', items[0]['status'])

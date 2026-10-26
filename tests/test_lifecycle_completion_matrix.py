@@ -69,6 +69,14 @@ class SetupRecovery(unittest.TestCase):
         raw['rule']['version'] = 2
         with self.assertRaisesRegex(ValueError, 'RULE_INVALID'):
             setup.normalize_plan(self.repo, 'root', raw)
+        for field in ('schema_version', 'rule'):
+            raw = self.plan()
+            if field == 'rule':
+                raw['rule']['version'] = True
+            else:
+                raw['schema_version'] = True
+            with self.subTest(field=field), self.assertRaises(ValueError):
+                setup.normalize_plan(self.repo, 'root', raw)
 
     def test_dependency_missing_is_blocked_and_assertion_failure_is_failed(self):
         from scripts.preparation_result import status

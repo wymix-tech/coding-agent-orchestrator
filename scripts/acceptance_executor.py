@@ -63,7 +63,8 @@ def execute(criterion, check, root, *, request=None, executions=None):
             if not isinstance(result_key, str) or not result_key:
                 raise ValueError('check.result_key must identify an executed assertion')
             payload = json.loads(result.stdout)
-            outcome = payload.get('checks', {}).get(result_key) if isinstance(payload, dict) else None
+            checks = payload.get('checks') if isinstance(payload, dict) else None
+            outcome = checks.get(result_key) if isinstance(checks, dict) else None
             if (not isinstance(outcome, dict) or outcome.get('status') not in {'passed', 'failed', 'blocked'}
                     or not isinstance(outcome.get('observed'), str) or not outcome['observed'].strip()):
                 raise ValueError('Missing actual per-assertion result for ' + result_key)

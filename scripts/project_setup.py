@@ -75,7 +75,7 @@ def normalize_plan(repo, scope, raw):
     state = context_state(repo, [scope])
     if not state['ready']:
         raise ValueError(state['reason'])
-    if not isinstance(raw, dict) or raw.get('schema_version') != 1:
+    if not isinstance(raw, dict) or type(raw.get('schema_version')) is not int or raw['schema_version'] != 1:
         raise ValueError('PROJECT_SETUP_PLAN_INVALID')
     identity = raw.get('identity')
     if not isinstance(identity, dict) or not identity or any(not isinstance(v, str) or not v.strip() for v in identity.values()):
@@ -87,7 +87,7 @@ def normalize_plan(repo, scope, raw):
     evidence_records, identity_sources = resolve(repo, scope, identity, raw, context)
     evidence = evidence_records[0]
     rule = raw.get('rule') or {'id': 'explicit', 'version': 1}
-    if not isinstance(rule, dict) or not isinstance(rule.get('version'), int) or not isinstance(rule.get('id'), str):
+    if not isinstance(rule, dict) or type(rule.get('version')) is not int or not isinstance(rule.get('id'), str):
         raise ValueError('PROJECT_SETUP_RULE_INVALID')
     if rule.get('id') != 'explicit':
         from scripts.setup_rules import validate_identity

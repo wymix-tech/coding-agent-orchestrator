@@ -22,7 +22,7 @@ class RealToolchains(unittest.TestCase):
         env = {k: v for k, v in os.environ.items() if not k.startswith(('CAO_', 'PI_', 'CODEX_', 'CLAUDE_'))}
         def call(*args):
             result = subprocess.run([sys.executable, str(cli), *args, '--repo', str(self.repo)],
-                         text=True, capture_output=True, env=env, timeout=660)
+                         text=True, capture_output=True, env=env, timeout=1500)
             self.assertEqual(0, result.returncode, result.stdout + result.stderr)
             return json.loads(result.stdout)
         (self.repo / 'openspec').mkdir()

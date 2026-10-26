@@ -1,5 +1,7 @@
 # Independent SDD acceptance contract
 
+Contents: [Inspect protocol](#inspect-the-authoritative-protocol) · [Configure](#configure-a-declaration) · [Request/report](#request-and-report) · [Examples](#illustrative-request-and-blocked-report) · [Dual acceptance](#project-bound-dual-acceptance) · [Per-item checks](#criterion-specific-checks-for-new-declarations)
+
 Read when configuring or repairing independent final acceptance for
 standard/comprehensive Work. This contract applies to all Providers; native
 review and archive rules remain in their Provider guides. Light does not need
