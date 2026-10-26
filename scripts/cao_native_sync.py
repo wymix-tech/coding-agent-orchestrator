@@ -779,7 +779,7 @@ def reconcile_native_sdd_state(repo: Path, work: dict[str, Any]) -> bool:
         current_step = str(execution.get("step") or "").lower()
         phase = execution_phase(execution)
         later_checkpoint = phase in {"verification", "review", "audit", "release", "done"}
-        aggregate_pending_review = plan["state"] == "pending" and current_step == "review"
+        aggregate_pending_review = (plan["state"] == "pending" or canonical in {"in_progress", "in_review"}) and current_step == "review"
         if aggregate_pending_review:
             later_checkpoint = False  # A single completed SPEC cannot finish the whole requirement.
         if canonical == "ready" and (current_step in {"reopened", "path-selected", "planning", "plan-selected", "sdd-planning", "native-sdd-workflow-selected"} or aggregate_pending_review):
@@ -788,17 +788,17 @@ def reconcile_native_sdd_state(repo: Path, work: dict[str, Any]) -> bool:
             execution["next_action"] = action("agent", f"Native {provider} work is ready; begin implementation using the bound native work item.")
             work.setdefault("resume", {})["summary"] = f"Native SDD reports ready for implementation ({provider})."
             changed = True
-        elif canonical == "in_progress" and current_step != "implementation" and not later_checkpoint:
+        elif canonical in {"in_progress", "in_review"} and current_step != "implementation" and not later_checkpoint:
             execution["step"] = "implementation"
             execution["phase"] = "implementation"
             execution["next_action"] = action("agent", f"Continue implementation using the native {provider} work item; phase synchronized from explicit native status/task progress.")
             work.setdefault("resume", {})["summary"] = f"Native SDD reports implementation in progress ({provider}); CAO phase reconciled."
             changed = True
-        elif canonical in {"completed", "in_review"} and not later_checkpoint:
+        elif canonical == "completed" and not later_checkpoint:
             execution["step"] = "review"
             execution["phase"] = "review"
-            execution["next_action"] = action("agent", "Native implementation is ready for review; complete implementation review and CAO verification before closing the Work Item.")
-            work.setdefault("resume", {})["summary"] = f"Native SDD reports review/implementation completion ({provider}); CAO moved to review, not closed."
+            execution["next_action"] = action("agent", "Native scope reports completion; check bound process and artifact evidence with `cao conformance check`, then run the project baseline with `cao verify`.")
+            work.setdefault("resume", {})["summary"] = f"Native SDD reports scope completion ({provider}); CAO moved to review, not closed."
             changed = True
         elif canonical == "blocked":
             blockers = work.setdefault("blockers", [])
