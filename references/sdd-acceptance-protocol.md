@@ -91,3 +91,16 @@ Only its exact project-owned entry file under `scripts/verification/` can then b
 separated from native product-review snapshots. Its bytes remain technical/task
 verification inputs. Product/test dependencies remain review inputs; a directory
 name alone never excludes all verification code. Review this role deliberately.
+
+`criteria` contains standards requiring acceptance. `source_items` is the fuller
+source catalog: functional items, constraints, requirements, implementation tasks
+and document metadata retain category, stable identity and location. Catalog
+counts are not functional acceptance counts. Structural extraction and mapping
+are not a general semantic coverage proof; preserve negative and nonfunctional
+requirements when reviewing declarations.
+
+Transport or declaration-file relocation does not itself change canonical
+acceptance standards. An explicitly scoped acceptance-only executor remains an
+input to technical verification and task acceptance even when omitted from
+product review inputs. Fresh receipts bind the current acceptance request;
+reused technical evidence retains its original source run identity.

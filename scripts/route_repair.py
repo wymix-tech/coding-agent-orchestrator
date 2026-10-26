@@ -42,8 +42,17 @@ def relocate(repo, old, proposed):
     if old.get('contracts') or proposed.get('contracts'):
         old_contracts = old.get('contracts')
         if old_contracts is None:
-            from scripts.native_contracts import resolve
-            old_contracts = resolve(repo, before, old.get('build_route'))
+            # Historical routes can point at templates. Migrate only when every
+            # rendered contract has a known, byte-identical old counterpart.
+            inverse = {new: previous for previous, new in moves.items()}
+            old_contracts = deepcopy(proposed.get('contracts', {}))
+            for role, item in old_contracts.items():
+                if role == 'layers':
+                    continue
+                previous = inverse.get(item['path'])
+                if not previous or hashlib.sha256(repo_file(repo, previous).read_bytes()).hexdigest() != item['sha256']:
+                    raise ValueError('NATIVE_ROUTE_REPAIR_CONTRACT_NOT_EQUIVALENT')
+                item['path'] = previous
         def semantics(value):
             return {k: ({x: y for x, y in v.items() if x != 'path'} if isinstance(v, dict) else v) for k, v in value.items()}
         if semantics(old_contracts or {}) != semantics(proposed.get('contracts', {})):

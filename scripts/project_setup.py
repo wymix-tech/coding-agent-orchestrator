@@ -44,6 +44,12 @@ def safe_product(repo, name, bases):
         raise ValueError('PROJECT_SCOPE_INVALID')
     name = relative(repo, name)
     path = repo / name
+    parent = repo
+    for component in Path(name).parts:
+        if parent.is_dir() and any(child.name.casefold() == component.casefold() and child.name != component
+                                   for child in parent.iterdir()):
+            raise ValueError('PROJECT_SETUP_CASE_COLLISION: ' + name)
+        parent = parent / component
     if any(part in {'.orchestrator', '.git', '.agents', '.pi', '_bmad', '_bmad-output', 'openspec', '.specify', 'specs'} for part in Path(name).parts):
         raise ValueError('PROJECT_SETUP_PROTECTED_PATH: ' + name)
     if not any(path.is_relative_to(repo / base) for base in bases):
@@ -387,6 +393,12 @@ def dispatch(args):
     repo = repo_root(args.repo)
     ensure_initialized(repo)
     action = args.setup_action
+    if action not in {'rules', 'status'}:
+        from scripts.provider_restart import restart_state
+        from scripts.cao_providers import detect_current_host
+        restart = restart_state(repo, detect_current_host())
+        if not restart['ready']:
+            raise ValueError(restart['reason'])
     if action == 'rules':
         from scripts.setup_rules import describe
         context = load_context(repo) or {}

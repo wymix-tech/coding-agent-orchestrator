@@ -41,6 +41,9 @@ is optional and cannot reopen or block a completed Work. See
 For BMAD dispatch, a native SPEC still `in-review` is not terminal completion.
 Follow the current installed Finalize step and reach native `done` before CAO
 closure. CAO does not silently edit the SPEC to manufacture completion. Refresh
-only evidence affected by substantive changes. Under criterion-checks-v1, a
-frontmatter status-only transition is lifecycle metadata; body/criteria changes
-still invalidate task evidence. NO_VCS does not require an invented commit.
+only evidence affected by substantive changes. The versioned
+`lifecycle_metadata: bmad-dispatch-status-v1` policy applies only to the bound
+BMAD dispatch primary SPEC. Its frontmatter status-only transition preserves
+semantic evidence; body/criteria changes still invalidate it. This is not a
+generic Markdown or other-provider exclusion. NO_VCS does not require an invented
+commit.

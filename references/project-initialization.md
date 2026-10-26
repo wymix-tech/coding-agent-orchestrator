@@ -56,6 +56,29 @@ failed commands, changed inputs and zero tests do not establish ready. Repair th
 actual scaffold/test/entry, then rerun check. Normal dependency resolution stays
 within the agreed project toolchain; global installation is not authorized.
 
+After apply and before ready, host write/edit/patch may repair only the exact
+planned scaffold files. Plan-external business files remain denied. Then rerun
+`project setup check`; do not reapply an old version over the repair. Prepared
+setup input is independently editable, but derived setup state is command-owned.
+
+Identity fields retain individual evidence in `identity.sources`. A later plan
+reuses unchanged values and their original proof; changed values require observed
+user evidence covering them. Use the optional `identity_evidence` field to bind
+different fields to different observed evidence IDs instead of asking again for
+the whole identity.
+
+Generated source suffix grants use `generated_output_suffixes`, keyed by a
+declared output directory, for example `{"dist/": [".js"]}`. They never authorize
+preexisting product source or protected manifests/checker scripts as disposable
+outputs. Tracked inputs remain inputs. Rule version changes invalidate readiness
+and require a new applicable plan/check.
+
+An interrupted check records its exact run ID and process owner. Inspect status;
+after that owner has exited, recover only that run with
+`cao project setup check --recover-run <run-id>`. A live owner is not overridden.
+Unsuccessful post-run input reads persist stale and release the running owner;
+changed configuration or product inputs cannot create a fresh ready result.
+
 Initialize all applicable capabilities: build/syntax/type/load/startup/test.
 Non-runtime artifacts need explicit applicability and evidence; never force a
 server entry into a library or demand compilation from an interpreted package.

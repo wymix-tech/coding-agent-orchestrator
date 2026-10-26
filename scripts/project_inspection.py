@@ -83,7 +83,7 @@ def inspect(repo, scopes=None, work=None):
                         candidates.extend(itertools.islice(directory.rglob('*'), 2000))
                 for candidate in candidates:
                     if (candidate.is_file() and not candidate.is_symlink()
-                            and candidate.suffix in {'.py', '.java', '.kt', '.js', '.mjs', '.ts', '.go', '.rs', '.c', '.cpp', '.cs'}
+                            and candidate.suffix in {'.py', '.java', '.kt', '.js', '.mjs', '.ts', '.go', '.rs', '.c', '.cpp', '.cs', '.rb', '.php', '.swift', '.dart', '.sh', '.ps1'}
                             and not any(part in {'test', 'tests', '__pycache__', 'node_modules'} for part in candidate.relative_to(root).parts)
                             and candidate.resolve().is_relative_to(repo.resolve())):
                         product_paths.append(candidate.relative_to(repo).as_posix())
@@ -101,7 +101,11 @@ def inspect(repo, scopes=None, work=None):
                                        and int(result.stdout.strip()) < work.get('created_at', 0))
                 observations.append({'scope': name, 'path': relative_path, 'sha256': sha,
                                      'technology': facts, 'established': established})
-    return {'schema_version': 1, 'observations': observations, 'empty_product': not observations and not product_paths, 'product_paths': sorted(set(product_paths))}
+    empty = not observations and not product_paths
+    return {'schema_version': 1, 'observations': observations, 'empty_product': empty,
+            'product_state': 'empty' if empty else ('existing' if observations else 'partial'),
+            'product_paths': sorted(set(product_paths)),
+            'note': 'Observed files and technology do not prove successful build or test execution.'}
 
 
 def save_observation(repo, context=None, work=None):

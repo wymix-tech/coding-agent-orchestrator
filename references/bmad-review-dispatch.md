@@ -118,3 +118,22 @@ unobserved originals cannot be imported as current findings. This establishes
 source provenance, not proof of semantic review quality. A read-only reviewer
 needs no shell: the coordinator attaches its observed task/session mapping and
 copies the unmodified output.
+
+## Observed identities and frozen change manifest
+
+Omit `--model` to use the current session's host-observed model; the result names
+`model_source`. A stale worker environment is not evidence. An explicit model
+must be observed on the actual reviewer, including provider-qualified aliases
+when the host supplies provider identity. Missing observation remains blocked.
+
+Each new task binds its round/layer/run/input digest to an observed ticket in the
+actual child prompt and the original final-output hash. The coordinator performs
+attach for read-only reviewers using that association. Session order, equal
+models and return order cannot establish role identity.
+
+New reviews freeze a complete product manifest, including non-code resources,
+removals and Git renames. NO_VCS uses a persisted Work-start baseline; unavailable
+historical baselines are labeled explicitly. Manifest tampering blocks affected
+reviews. Context provided to each layer still follows its native independence
+contract. Review status and acceptance summary expose layer, task and observed
+round counts; historical tasks without a round are reported separately.

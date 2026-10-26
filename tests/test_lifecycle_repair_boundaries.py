@@ -43,6 +43,17 @@ class EvidenceRelocation(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'CONTRACT_NOT_EQUIVALENT'):
             relocate(self.repo, self.old, self.new)
 
+    def test_legacy_template_route_migrates_only_complete_identical_contracts(self):
+        self.new['contracts'] = {'layers': ['blind-hunter']}
+        for role, name in [('implementation', 'step-03-implement.md'), ('review', 'step-04-review.md'), ('finalize-1', 'step-05-finish.md')]:
+            self.new['contracts'][role] = {'path': 'new/' + name,
+                'sha256': hashlib.sha256((self.repo / 'new' / name).read_bytes()).hexdigest()}
+        result, _ = relocate(self.repo, self.old, self.new)
+        self.assertEqual(self.new['contracts'], result['contracts'])
+        self.new['contracts']['finalize-1']['path'] = 'unmapped/final.md'
+        with self.assertRaisesRegex(ValueError, 'CONTRACT_NOT_EQUIVALENT'):
+            relocate(self.repo, self.old, self.new)
+
     def test_changed_intent_and_old_source_tampering_are_rejected(self):
         new = {**self.new, 'build_route': 'oneshot'}
         with self.assertRaisesRegex(ValueError, 'SEMANTIC_CHANGE'):

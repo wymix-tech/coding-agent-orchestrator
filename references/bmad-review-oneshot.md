@@ -71,3 +71,10 @@ initial host-observed prompt. Bind by actual task/session metadata, never sessio
 list order. The child's adapter records its final output; preserve that original
 before draft/submit. The same task and raw-output provenance rules as dispatch
 apply, while oneshot keeps its own native prompts and report obligations.
+
+Default reviewer model comes from current host observation (`model_source`), not
+worker environment defaults. New tasks bind their round/layer/run/input digest to
+an observed child ticket and original output hash. Missing runtime association
+remains pending; do not infer it from session order. Frozen product manifests and
+observed round/task counts follow the same provenance rules as
+[dispatch review](bmad-review-dispatch.md#observed-identities-and-frozen-change-manifest).

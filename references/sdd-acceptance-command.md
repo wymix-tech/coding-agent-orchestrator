@@ -14,6 +14,8 @@ Populate a project-owned checks file with actual commands and evidence:
 ```json
 {
   "AC-1": {
+    "selector": "cli.test.js: correct CLI result",
+    "assertion": "The command returns the specified result",
     "command": ["node", "--test", "--test-name-pattern", "correct CLI result", "tests/cli.test.js"],
     "evidence": ["tests/cli.test.js"],
     "timeout_seconds": 60
@@ -44,3 +46,23 @@ For criterion-checks-v1 also supply `selector` (the relevant test/assertion/chec
 identity) and `assertion` (the behavior to verify) in every mapping. A bare command
 exit is insufficient. The executor emits request-bound `check` receipts per item;
 logs remain on stderr and stdout remains one JSON report. An unmapped item blocks.
+
+## Share an execution, retain individual outcomes
+
+Mappings may set the same nonempty `shared_run` with identical argv and timeout.
+The template executes that command once per acceptance request. Each mapping
+still names its own selector, assertion and evidence. For a command returning
+several assertion results, set each mapping's `result_key` to its actual result:
+
+```json
+{"checks":{"login":{"status":"passed","observed":"valid credentials returned a session"},"lockout":{"status":"failed","observed":"sixth invalid attempt was accepted"}}}
+```
+
+For example, AC-LOGIN can select `login`, while AC-LOCKOUT selects `lockout` from
+the same run. The command emits this JSON on stdout and diagnostics on stderr;
+its checks must actually execute the assertions. With command exit 0, the first
+item passes and the second fails; acceptance fails. A missing result key blocks
+that item. Nonzero command exits cannot be overridden with a passed assertion.
+The per-item receipt includes the current request run, selector, assertion,
+observed result and shared execution identity. This mapping does not certify the
+semantic adequacy of arbitrary project scripts; review the assertions themselves.

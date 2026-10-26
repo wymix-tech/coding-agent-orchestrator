@@ -48,6 +48,31 @@ class ReviewTaskProvenance(unittest.TestCase):
             attach_reviewer(run, self.inputs, ('pi', child['id']), child,
                             'model', run['id'], run['input_sha256'])
 
+    def test_original_session_suffix_cycle_is_rejected_and_correct_mapping_works(self):
+        observed = {'dafdcc3da427': 'edge-case-hunter', '59fcbf7b37a1': 'verification-gap',
+                    'b97d30711bcd': 'blind-hunter'}
+        wrong = {'dafdcc3da427': 'blind-hunter', '59fcbf7b37a1': 'edge-case-hunter',
+                 'b97d30711bcd': 'verification-gap'}
+        for session_id, layer in reversed(list(observed.items())):
+            child = {**self.child(layer), 'id': session_id}
+            run = self.runs[wrong[session_id]]
+            with self.assertRaisesRegex(ValueError, 'TASK_MISMATCH'):
+                attach_reviewer(run, self.inputs, ('pi', session_id), child, 'model', run['id'], run['input_sha256'])
+            run = self.runs[layer]
+            attach_reviewer(run, self.inputs, ('pi', session_id), child, 'model', run['id'], run['input_sha256'])
+
+    def test_second_round_rejects_old_ticket_and_observes_task_wrapper(self):
+        layer = 'blind-hunter'
+        child = self.child(layer)
+        run = self.runs[layer]
+        run['id'] = 'second-round-blind'
+        with self.assertRaisesRegex(ValueError, 'TASK_MISMATCH'):
+            attach_reviewer(run, self.inputs, ('pi', child['id']), child, 'model', run['id'], run['input_sha256'])
+        child.pop('review_ticket')
+        with patch('scripts.review_observation.save_session'):
+            observe(self.repo, self.work, child, {'prompt': 'Task: ' + task_marker(run, layer)}, 'prompt_submit')
+        self.assertEqual(ticket(run, layer), child['review_ticket'])
+
     def test_task_prompt_observation_and_original_output_hash(self):
         run = self.runs['blind-hunter']
         child = self.child('blind-hunter')

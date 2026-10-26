@@ -75,6 +75,25 @@ class SetupRecovery(unittest.TestCase):
         self.assertEqual('blocked', status({'exit_code': 1, 'stderr_tail': "ModuleNotFoundError: No module named 'missing'"}))
         self.assertEqual('failed', status({'exit_code': 1, 'stderr_tail': 'AssertionError: incorrect value'}))
         self.assertEqual('blocked', status({'exit_code': 124}))
+        for output in ('no required module provides package example.test/missing',
+                       'failed to get `missing` as a dependency',
+                       'Unable to load the service index for source',
+                       'Could not resolve dependencies for project'):
+            self.assertEqual('blocked', status({'exit_code': 1, 'stderr_tail': output}))
+
+    def test_filesystem_case_collision_is_rejected_before_scaffold_write(self):
+        (self.repo / 'Tests').mkdir()
+        with self.assertRaisesRegex(ValueError, 'CASE_COLLISION'):
+            setup.normalize_plan(self.repo, 'root', self.plan())
+
+    def test_setup_mutations_respect_pending_host_resource_restart(self):
+        from scripts.provider_restart import require_restart
+        require_restart(self.repo, 'bmad', ['pi'])
+        for action in ('draft', 'plan', 'apply', 'check'):
+            args = argparse.Namespace(repo=str(self.repo), setup_action=action, scope='root')
+            with self.subTest(action=action), patch('scripts.cao_providers.detect_current_host', return_value='pi'):
+                with self.assertRaisesRegex(ValueError, 'HOST_RESTART_REQUIRED'):
+                    setup.dispatch(args)
 
     def test_patch_payload_can_only_edit_the_prepared_input(self):
         path = setup.input_path(self.repo, 'root')
