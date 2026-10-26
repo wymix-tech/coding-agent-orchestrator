@@ -152,8 +152,6 @@ def context_state(repo, scopes=None, work=None, check_sources=False):
     for name, scope in semantic(context, scopes).items():
         # A root containing only common constraints does not need its own stack.
         keys = REQUIRED if name in scopes else ()
-        if name in scopes and scope['technology'].get('language', {}).get('value') == 'java':
-            keys = (*keys, 'framework')
         for key in keys:
             if scope['technology'].get(key, {}).get('status') not in {'accepted', 'not_applicable'}:
                 missing.append(name + '.' + key)

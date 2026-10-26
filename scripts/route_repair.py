@@ -26,7 +26,10 @@ def relocate(repo, old, proposed):
         for item in (a, b):
             if hashlib.sha256(repo_file(repo, item['path']).read_bytes()).hexdigest() != item['sha256']:
                 raise ValueError('NATIVE_ROUTE_REPAIR_SOURCE_STALE')
-        for name in ('step-03-implement.md', 'step-04-review.md', 'step-05-finish.md'):
+        roots = [repo_file(repo, value['path']).parent for value in (a, b)]
+        names = {'step-03-implement.md', 'step-04-review.md', 'step-oneshot.md'}
+        names.update(path.name for root in roots for path in root.glob('step-05-*.md'))
+        for name in sorted(names):
             left, right = (repo_file(repo, value['path']).parent / name for value in (a, b))
             if left.is_file() != right.is_file() or left.is_file() and left.read_bytes() != right.read_bytes():
                 raise ValueError('NATIVE_ROUTE_REPAIR_CONTRACT_NOT_EQUIVALENT: ' + name)
@@ -36,6 +39,16 @@ def relocate(repo, old, proposed):
     result = deepcopy(old)
     result['rules'] = deepcopy(after)
     result['reason'] = proposed['reason']
+    if old.get('contracts') or proposed.get('contracts'):
+        old_contracts = old.get('contracts')
+        if old_contracts is None:
+            from scripts.native_contracts import resolve
+            old_contracts = resolve(repo, before, old.get('build_route'))
+        def semantics(value):
+            return {k: ({x: y for x, y in v.items() if x != 'path'} if isinstance(v, dict) else v) for k, v in value.items()}
+        if semantics(old_contracts or {}) != semantics(proposed.get('contracts', {})):
+            raise ValueError('NATIVE_ROUTE_REPAIR_CONTRACT_NOT_EQUIVALENT')
+        result['contracts'] = deepcopy(proposed.get('contracts', {}))
     return result, moves
 
 

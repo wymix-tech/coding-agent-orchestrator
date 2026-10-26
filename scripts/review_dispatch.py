@@ -26,17 +26,30 @@ def coordinator(repo, identity):
         invalid('NATIVE_REVIEW_COORDINATOR_REQUIRED', 'session.kind', 'coordinator creates/restarts tickets; reviewer only attaches and reviews', 'subagent')
 
 
+def effective_model(repo, args, identity):
+    explicit = getattr(args, 'model', None)
+    if isinstance(explicit, str) and explicit.strip():
+        return explicit.strip(), 'explicit_argument'
+    session = load_session(repo, identity[1], host=identity[0]) if identity else None
+    observed = (session or {}).get('observed_model')
+    if not isinstance(observed, str) or not observed.strip():
+        invalid('NATIVE_REVIEW_MODEL_UNOBSERVED', 'model', 'current coordinator host must observe its model; alternatively supply an explicit supported --model; do not guess from environment or old workers')
+    return observed, 'host_observation'
+
+
 def begin_review(repo, work, args, identity):
     coordinator(repo, identity)
     if work.get('sdd', {}).get('provider') != 'bmad':
         raise ValueError('NATIVE_REVIEW_NOT_APPLICABLE')
     records = work.setdefault('sdd', {}).setdefault('native_reviews', {})
-    if not args.model.strip():
-        raise ValueError("NATIVE_REVIEW_MODEL_REQUIRED")
+    args.model, model_source = effective_model(repo, args, identity)
     path = repo_file(repo, args.instructions)
     expected_name = "step-04-review.md" if dispatch_review(work) else "step-oneshot.md"
     if path.name != expected_name or not inside(path, repo / "_bmad/render") or (repo / "_bmad/render").resolve() != repo / "_bmad/render" or not path.is_file():
         raise ValueError("NATIVE_REVIEW_INSTRUCTIONS_INVALID")
+    declared = work.get('sdd', {}).get('route_decision', {}).get('contracts', {}).get('review')
+    if declared and (path.relative_to(repo).as_posix() != declared['path'] or hashlib.sha256(path.read_bytes()).hexdigest() != declared['sha256']):
+        raise ValueError('NATIVE_REVIEW_CONTRACT_MISMATCH')
     content = path.read_text()
     layers = sorted(set(re.findall(r"(?m)^####[^\n]*\(`?([a-z][a-z0-9-]*)`?\)", content)))
     if not layers or args.layer not in layers:
@@ -112,10 +125,11 @@ def begin_review(repo, work, args, identity):
     run = existing if reused else {"id": new_id("review"), "status": "running", "inputs": inputs,
            "input_sha256": native_digest(inputs), "model": args.model,
            "task_binding_version": 1, "layer": args.layer,
+           "model_source": model_source,
            "existing_session_ids": [session['id'] for session in list_sessions(repo)],
            "primary_session_ids": primary_ids}
     records[args.layer] = run
-    output = {"ok": True, "review": run, "active_layers": layers, 'reused': reused}
+    output = {"ok": True, "review": run, "active_layers": layers, 'reused': reused, 'model_source': run.get('model_source', model_source)}
     output['reviewer_start'] = (f'{cao_invocation()["command"]} sdd review attach --work {work["id"]} '
         f'--layer {args.layer} --run {run["id"]} --input-sha256 {run["input_sha256"]} --model {shlex.quote(args.model)}')
     output['task_marker'] = task_marker(run, args.layer)

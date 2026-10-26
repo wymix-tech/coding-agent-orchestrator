@@ -163,9 +163,7 @@ def host_event(args: argparse.Namespace) -> int:
 
     if session:
         observed_model = raw.get('model')
-        if not isinstance(observed_model, str):
-            observed_model = os.environ.get('PI_MODEL') if os.environ.get('PI_SESSION_ID') == host_session_id else None
-        if observed_model:
+        if isinstance(observed_model, str) and observed_model:
             from scripts.review_binding import runtime_model_name
             from scripts.cao_sessions import save_session
             session['observed_model'] = runtime_model_name(observed_model, os.environ.get('PI_MODEL'), os.environ.get('PI_PROVIDER'))

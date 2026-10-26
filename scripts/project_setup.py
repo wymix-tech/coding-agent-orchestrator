@@ -6,6 +6,7 @@ command is trusted project code, not an OS sandbox. No blanket src/ exemption.
 import argparse
 import hashlib
 import json
+import os
 import re
 import uuid
 from copy import deepcopy
@@ -39,6 +40,8 @@ def input_path(repo, scope):
 
 
 def safe_product(repo, name, bases):
+    if not isinstance(name, str) or not name or name != name.strip():
+        raise ValueError('PROJECT_SCOPE_INVALID')
     name = relative(repo, name)
     path = repo / name
     if any(part in {'.orchestrator', '.git', '.agents', '.pi', '_bmad', '_bmad-output', 'openspec', '.specify', 'specs'} for part in Path(name).parts):
@@ -50,6 +53,8 @@ def safe_product(repo, name, bases):
             break
         if part.is_symlink():
             raise ValueError('PROJECT_SETUP_SYMLINK: ' + name)
+    if any(part.endswith(('.', ' ')) for part in Path(name).parts):
+        raise ValueError('PROJECT_SETUP_RESERVED_PATH: ' + name)
     if any(part.casefold().split('.')[0] in {'con', 'prn', 'aux', 'nul', *(f'com{i}' for i in range(1, 10)), *(f'lpt{i}' for i in range(1, 10))} for part in Path(name).parts):
         raise ValueError('PROJECT_SETUP_RESERVED_PATH: ' + name)
     return path
@@ -70,10 +75,12 @@ def normalize_plan(repo, scope, raw):
     if not isinstance(identity, dict) or not identity or any(not isinstance(v, str) or not v.strip() for v in identity.values()):
         raise ValueError('PROJECT_IDENTITY_REQUIRED')
     source = raw.get('source', 'user-specified')
-    if source not in {'user-specified', 'user-delegated'}:
+    if source not in ('user-specified', 'user-delegated'):
         raise ValueError('PROJECT_SETUP_SOURCE_REQUIRED')
     evidence = user_evidence(repo, raw.get('evidence'), identity, source == 'user-delegated')
     rule = raw.get('rule') or {'id': 'explicit', 'version': 1}
+    if not isinstance(rule, dict) or rule.get('version') != 1 or not isinstance(rule.get('id'), str):
+        raise ValueError('PROJECT_SETUP_RULE_INVALID')
     if rule.get('id') != 'explicit':
         from scripts.setup_rules import validate_identity
         spec = validate_identity(rule['id'], identity)
@@ -90,15 +97,21 @@ def normalize_plan(repo, scope, raw):
     if delivery.get('status') == 'accepted' and raw.get('delivery_support') != delivery.get('value'):
         raise ValueError('PROJECT_SETUP_DELIVERY_PLAN_REQUIRED: adapt the scaffold/checks to the accepted delivery shape and record delivery_support')
     bases = context['scopes'][scope]['paths']
-    files, seen = [], set()
+    files, seen, spellings = [], set(), {}
     if not isinstance(raw.get('files'), list) or not raw['files']:
         raise ValueError('PROJECT_SETUP_FILES_REQUIRED')
     for entry in raw['files']:
-        if not isinstance(entry, dict) or entry.get('purpose') not in PURPOSES or not isinstance(entry.get('content'), str):
+        if (not isinstance(entry, dict) or not isinstance(entry.get('purpose'), str)
+                or entry['purpose'] not in PURPOSES or not isinstance(entry.get('content'), str)):
             raise ValueError('PROJECT_SETUP_FILE_INVALID')
         path = safe_product(repo, entry.get('path'), bases)
         name = path.relative_to(repo).as_posix()
         key = name.casefold()
+        for parent in [*Path(name).parents, Path(name)]:
+            spelling = parent.as_posix()
+            if spelling.casefold() in spellings and spellings[spelling.casefold()] != spelling:
+                raise ValueError('PROJECT_SETUP_FILE_COLLISION: ' + name)
+            spellings[spelling.casefold()] = spelling
         if key in seen or len(entry['content'].encode()) > 1024 * 1024:
             raise ValueError('PROJECT_SETUP_FILE_COLLISION: ' + name)
         seen.add(key)
@@ -108,11 +121,14 @@ def normalize_plan(repo, scope, raw):
         if path.exists() and file_hash(path) != expected:
             raise ValueError('PROJECT_SETUP_FILE_CONFLICT: ' + name)
         files.append({**entry, 'path': name, 'sha256': expected})
+    if not isinstance(raw.get('checks'), list) or not isinstance(raw.get('required_capabilities'), list):
+        raise ValueError('PROJECT_SETUP_CHECK_INVALID')
     checks, names = [], set()
     for check in raw.get('checks', []):
-        if not isinstance(check, dict) or check.get('capability') not in CAPABILITIES:
+        if (not isinstance(check, dict) or not isinstance(check.get('capability'), str)
+                or check['capability'] not in CAPABILITIES):
             raise ValueError('PROJECT_SETUP_CHECK_INVALID')
-        if not re.fullmatch(r'[A-Za-z0-9_-]+', check.get('name', '')) or check['name'] in names:
+        if (not isinstance(check.get('name'), str) or not re.fullmatch(r'[A-Za-z0-9_-]+', check['name']) or check['name'] in names):
             raise ValueError('PROJECT_SETUP_CHECK_INVALID')
         names.add(check['name'])
         if not isinstance(check.get('command'), str) or not check['command'].strip():
@@ -122,7 +138,9 @@ def normalize_plan(repo, scope, raw):
         if cwd not in bases:
             raise ValueError('PROJECT_SETUP_CHECK_SCOPE_ESCAPE')
         checks.append({**check, 'cwd': cwd, 'timeout_seconds': normalize_timeout(check.get('timeout_seconds', 300))})
-    capabilities = set(raw.get('required_capabilities', []))
+    if any(not isinstance(c, str) or c not in CAPABILITIES for c in raw['required_capabilities']):
+        raise ValueError('PROJECT_SETUP_CAPABILITIES_INVALID')
+    capabilities = set(raw['required_capabilities'])
     if not checks or not capabilities or not capabilities <= {c['capability'] for c in checks}:
         raise ValueError('PROJECT_SETUP_CAPABILITIES_INCOMPLETE')
     if 'test' not in capabilities:
@@ -136,18 +154,41 @@ def normalize_plan(repo, scope, raw):
         safe_product(repo, name.rstrip('/'), bases)
         if any(f['path'] == name.rstrip('/') or f['path'].startswith(name.rstrip('/') + '/') for f in files):
             raise ValueError('PROJECT_SETUP_OUTPUT_OVERLAPS_INPUT')
+    generated = raw.get('generated_output_suffixes', {})
+    from scripts.snapshot_scope import scope_config, validate_scope
+    scope_config({'verification': {'outputs': outputs, 'generated_output_suffixes': generated}})
+    initial = deepcopy(config(repo))
+    initial.setdefault('verification', {})['outputs'] = sorted(set(initial.get('verification', {}).get('outputs', []) + outputs))
+    validate_scope(repo, initial)
     plan = {'schema_version': 1, 'scope': scope, 'identity': identity, 'evidence': evidence,
             'context_sha256': fingerprint(context, [scope]), 'bases': bases, 'rule': rule,
             'basis': raw.get('basis'), 'files': files, 'checks': checks,
-            'required_capabilities': sorted(capabilities), 'outputs': outputs}
+            'required_capabilities': sorted(capabilities), 'outputs': outputs,
+            **({'generated_output_suffixes': generated} if generated else {})}
     plan['id'] = 'setup-' + digest(plan)
     return plan
 
 
+def baseline_snapshot(repo, plan):
+    from scripts.cao_snapshot import verification_snapshot
+    cfg = deepcopy(config(repo))
+    verification = cfg.get('verification', {})
+    prefix = 'setup-' + plan['scope'] + '-'
+    verification['scripts'] = [c for c in verification.get('scripts', []) if c['name'].startswith(prefix) or not c['name'].startswith('setup-')]
+    def selected(path):
+        return any(base == '.' or path.rstrip('/') == base or path.startswith(base + '/') for base in plan['bases'])
+    verification['outputs'] = [p for p in verification.get('outputs', []) if selected(p)]
+    if 'generated_output_suffixes' in verification:
+        verification['generated_output_suffixes'] = {p: s for p, s in verification['generated_output_suffixes'].items() if selected(p)}
+    cfg.setdefault('snapshot', {})['exclude_paths'] = [p for p in cfg.get('snapshot', {}).get('exclude_paths', []) if selected(p)]
+    return verification_snapshot(cfg, repo)
+
+
 def current_inputs(repo, plan):
     from scripts.cao_snapshot import code_snapshot
-    return {'context_sha256': fingerprint(load_context(repo), [plan['scope']]),
-            'plan_id': plan['id'], 'code_snapshot': code_snapshot(repo),
+    return {'verification_sha256': baseline_snapshot(repo, plan),
+            'context_sha256': fingerprint(load_context(repo), [plan['scope']]),
+            'plan_id': plan['id'], 'code_snapshot': code_snapshot(repo, include_roots=plan['bases']),
             'files': {f['path']: file_hash(safe_product(repo, f['path'], plan['bases'])) for f in plan['files']}}
 
 
@@ -166,7 +207,7 @@ def state(repo, scope='root'):
     result = record.get('result') or {}
     if result.get('status') == 'passed':
         from scripts.cao_snapshot import verification_snapshot
-        if result.get('verification_sha256') == verification_snapshot(config(repo), repo):
+        if result.get('verification_sha256') == baseline_snapshot(repo, plan):
             return {'ready': True, 'stage': 'ready', 'plan_id': plan['id'], 'result': result}
         return {'ready': False, 'stage': 'check_pending', 'reason': 'PROJECT_SETUP_BASELINE_STALE',
                 'next': 'Review changed baseline and run `cao project setup check --scope ' + scope + '`.'}
@@ -207,6 +248,10 @@ def apply(repo, scope):
         plan = record['plan']
         if fingerprint(load_context(repo), [scope]) != plan['context_sha256']:
             raise ValueError('PROJECT_SETUP_CONTEXT_STALE')
+        from scripts.snapshot_scope import validate_scope
+        initial = deepcopy(config(repo))
+        initial.setdefault('verification', {})['outputs'] = sorted(set(initial.get('verification', {}).get('outputs', []) + plan['outputs']))
+        validate_scope(repo, initial)
         for f in plan['files']:
             target = safe_product(repo, f['path'], plan['bases'])
             if target.exists() and file_hash(target) != f['sha256']:
@@ -235,6 +280,7 @@ def apply(repo, scope):
         validate_entries(repo, scripts[-len(plan['checks']):], [scope])
         verification['scripts'] = normalize_scripts(scripts)
         verification['context_binding'] = verification_binding(repo, list(load_context(repo)['scopes']))
+        verification['generated_output_suffixes'] = {**verification.get('generated_output_suffixes', {}), **plan.get('generated_output_suffixes', {})}
         verification['outputs'] = sorted(set(verification.get('outputs', []) + plan['outputs']))
         verification.pop('plan', None)
         from scripts.snapshot_scope import validate_scope
@@ -245,27 +291,39 @@ def apply(repo, scope):
         return {'status': 'applied', 'plan_id': plan['id'], 'next': 'cao project setup check --scope ' + scope}
 
 
-def check(repo, scope):
+def check(repo, scope, recover_run=None):
     with repo_transaction(repo):
         path = scope_path(repo, scope)
         record = read(path)
         if not record or not record.get('applied'):
             raise ValueError('PROJECT_SETUP_APPLY_REQUIRED')
-        if (record.get('running') or {}).get('id'):
-            raise ValueError('PROJECT_SETUP_CHECK_RUNNING: wait for its owner; do not delete the state lock')
+        running = record.get('running') or {}
+        if running.get('id'):
+            if recover_run != running['id']:
+                raise ValueError('PROJECT_SETUP_CHECK_RUNNING: use check --recover-run RUN_ID only after the owner exits')
+            owner = running.get('owner_pid')
+            if not isinstance(owner, int) or owner <= 0:
+                raise ValueError('PROJECT_SETUP_OWNER_UNKNOWN')
+            try:
+                os.kill(owner, 0)
+            except ProcessLookupError:
+                record.setdefault('history', []).append({**running, 'status': 'abandoned'})
+            else:
+                raise ValueError('PROJECT_SETUP_OWNER_STILL_RUNNING')
         plan = record['plan']
         before = current_inputs(repo, plan)
         if before['context_sha256'] != plan['context_sha256']:
             raise ValueError('PROJECT_SETUP_CONTEXT_STALE')
         run_id = 'setup-check-' + uuid.uuid4().hex
-        record['running'] = {'id': run_id, 'inputs': before}
+        record['running'] = {'id': run_id, 'inputs': before, 'owner_pid': os.getpid()}
         atomic_json(path, record)
     results = []
     try:
         for c in plan['checks']:
             result = run_script(c['command'], repo / c['cwd'], c['timeout_seconds'])
             discovery = result.get('test_discovery') or {}
-            status = {0: 'passed', 1: 'failed', 2: 'blocked'}.get(result['exit_code'], 'error')
+            from scripts.preparation_result import status as preparation_status
+            status = preparation_status(result)
             if c['capability'] == 'test' and (not discovery.get('observed') or discovery.get('maximum_count', 0) < 1):
                 status = 'blocked'
                 result['reason'] = 'PROJECT_SETUP_NONEMPTY_TEST_EVIDENCE_REQUIRED'
@@ -276,14 +334,18 @@ def check(repo, scope):
         latest = read(path)
         if not latest or (latest.get('running') or {}).get('id') != run_id:
             raise ValueError('PROJECT_SETUP_RUN_CHANGED')
-        after = current_inputs(repo, plan)
+        try:
+            after = current_inputs(repo, plan)
+        except (ValueError, OSError, RuntimeError) as exc:
+            after = None
+            results.append({'status': 'stale', 'reason': str(exc)})
         status = ('stale' if before != after else 'error' if any(r['status'] == 'error' for r in results)
                   else 'failed' if any(r['status'] == 'failed' for r in results)
                   else 'blocked' if any(r['status'] == 'blocked' for r in results) else 'passed')
         from scripts.cao_snapshot import verification_snapshot
         result = {'id': run_id, 'owner': {'kind': 'project', 'scope': scope}, 'purpose': 'initialization',
                   'status': status, 'inputs': before, 'results': results,
-                  'verification_sha256': verification_snapshot(config(repo), repo)}
+                  'verification_sha256': before['verification_sha256']}
         latest.setdefault('history', []).append(result)
         latest['history'] = latest['history'][-20:]
         latest['result'] = result
@@ -308,6 +370,18 @@ def dispatch(args):
                 if args.rule:
                     from scripts.setup_rules import scaffold
                     raw = scaffold(args.rule, json.loads(args.identity or '{}'))
+                    context = load_context(repo)
+                    if not context or args.scope not in context['scopes']:
+                        raise ValueError('PROJECT_CONTEXT_REQUIRED')
+                    base = context['scopes'][args.scope]['paths'][0]
+                    if base != '.':
+                        for entry in raw['files']:
+                            entry['path'] = base + '/' + entry['path']
+                        raw['outputs'] = [base + '/' + value for value in raw['outputs']]
+                        if raw.get('generated_output_suffixes'):
+                            raw['generated_output_suffixes'] = {base + '/' + p: s for p, s in raw['generated_output_suffixes'].items()}
+                        for entry in raw['checks']:
+                            entry['cwd'] = base
                 else:
                     raw = {'schema_version': 1, 'rule': {'id': 'explicit', 'version': 1},
                            'basis': '', 'identity': {}, 'files': [], 'checks': [],
@@ -349,7 +423,7 @@ def dispatch(args):
     elif action == 'apply':
         out = apply(repo, args.scope)
     else:
-        out = check(repo, args.scope)
+        out = check(repo, args.scope, getattr(args, 'recover_run', None))
     print(json.dumps({'ok': out.get('status') not in {'failed', 'blocked', 'error', 'stale'}, **out}, ensure_ascii=False, indent=2))
     return {'failed': 1, 'blocked': 2, 'error': 3, 'stale': 2}.get(out.get('status'), 0)
 
@@ -367,6 +441,8 @@ def register(actions):
             parser.add_argument('--source', choices=['user-specified', 'user-delegated'], default='user-specified')
         if name == 'plan':
             parser.add_argument('--declaration', help='Explicit repository JSON plan; default is the prepared scope input')
+        if name == 'check':
+            parser.add_argument('--recover-run', help='Recover this exact abandoned run only after its owner exits')
         parser.set_defaults(fn=dispatch)
 
 
@@ -375,6 +451,11 @@ def writable_input(repo, raw):
     if _event_key(raw, 'tool_name', 'toolName', 'name').lower() not in {'write', 'edit', 'apply_patch'}:
         return False
     targets = _collect_path_strings(raw.get('tool_input') or raw.get('input') or raw.get('arguments') or {})
+    if _event_key(raw, 'tool_name', 'toolName', 'name').lower() == 'apply_patch':
+        payload = raw.get('tool_input') or raw.get('input') or raw.get('arguments') or {}
+        patch = payload if isinstance(payload, str) else payload.get('patch') or payload.get('input') or ''
+        if isinstance(patch, str):
+            targets += re.findall(r'(?m)^\*\*\* (?:Add File|Update File|Delete File|Move to): (.+)$', patch)
     if not targets:
         return False
     for value in targets:

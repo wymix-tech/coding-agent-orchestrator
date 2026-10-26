@@ -140,7 +140,7 @@ def build_parser() -> argparse.ArgumentParser:
         if name not in {'findings', 'prepare', 'status', 'classify-batch'}:
             sp.add_argument("--layer", required=True)
         if name in {"begin", "prepare"}:
-            sp.add_argument("--model", required=True); sp.add_argument("--instructions", required=True)
+            sp.add_argument("--model", help="Explicit supported reviewer model; default is the current host-observed coordinator model"); sp.add_argument("--instructions", required=True)
             sp.add_argument('--restart', action='store_true', help='Explicitly replace a failed current dispatch ticket')
             if name == 'prepare':
                 capability = sp.add_mutually_exclusive_group()

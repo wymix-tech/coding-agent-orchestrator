@@ -17,7 +17,7 @@ from scripts.snapshot_scope import (
 )
 
 
-def code_snapshot(repo: Path, excluded: set[str] | None = None, additional_ignore_dirs: set[str] | None = None) -> str:
+def code_snapshot(repo: Path, excluded: set[str] | None = None, additional_ignore_dirs: set[str] | None = None, *, include_roots=None) -> str:
     """Versioned content, execution bits and link topology; bounded internal traversal."""
     repo = repo.resolve()
     excluded = excluded or set()
@@ -28,8 +28,24 @@ def code_snapshot(repo: Path, excluded: set[str] | None = None, additional_ignor
     tracked_dirs = {path_key(parent.as_posix()) for name in tracked for parent in Path(name).parents}
     extra = {path_key(name.rstrip("/")) for name in (additional_ignore_dirs or set())}
 
+    roots = None
+    if include_roots is not None:
+        from scripts.project_context import relative
+        roots = [relative(repo, value) for value in include_roots]
+        if not roots:
+            raise ValueError('SNAPSHOT_SCOPE_REQUIRED')
+        if '.' in roots:
+            roots = None
+    def selected(name, directory=False):
+        return roots is None or any(name == root or name.startswith(root + '/') or directory and root.startswith(name + '/') for root in roots)
+    if roots is not None:
+        for key in ('exclude_paths', 'outputs'):
+            scope[key] = [value for value in scope[key] if selected(value.rstrip('/'))]
+        if scope.get('generated_output_suffixes'):
+            scope['generated_output_suffixes'] = {p: s for p, s in scope['generated_output_suffixes'].items() if selected(p.rstrip('/'))}
+
     def skip(relative, directory=False):
-        return excluded_input(relative, scope, tracked_keys,
+        return not selected(relative, directory) or excluded_input(relative, scope, tracked_keys,
                               tracked_dirs if directory else (), extra)
 
     h = hashlib.sha256()

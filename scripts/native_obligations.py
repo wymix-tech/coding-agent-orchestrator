@@ -285,6 +285,12 @@ def dispatch(work):
 def implementation_contract(repo, work):
     if not dispatch(work):
         return None
+    contracts = work['sdd']['route_decision'].get('contracts', {})
+    if contracts.get('implementation'):
+        from scripts.native_contracts import validate
+        validate(repo, contracts)
+        item = contracts['implementation']
+        return {**item, 'subagent_default': bool(re.search(r'(?i)launch a subagent', repo_file(repo, item['path']).read_text()))}
     for rule in work['sdd']['route_decision'].get('rules', []):
         path = repo_file(repo, repo_file(repo, rule['path']).parent / 'step-03-implement.md')
         if path.is_file():
@@ -356,6 +362,11 @@ def review_source(repo, work):
 
 
 def active_layers(repo, work):
+    contracts = ((work.get('sdd') or {}).get('route_decision') or {}).get('contracts', {})
+    if contracts:
+        from scripts.native_contracts import validate
+        validate(repo, contracts)
+        return contracts['layers']
     records = (work.get('sdd') or {}).get('native_reviews') or {}
     if not dispatch(work):
         contract = records.get('_contract') or {}

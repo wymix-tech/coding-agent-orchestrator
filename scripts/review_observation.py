@@ -26,12 +26,14 @@ def observe(repo, work, session, raw, event):
         prompt = raw.get('prompt')
         if not isinstance(prompt, str) or len(prompt.encode()) > 128 * 1024:
             return
-        markers = re.findall(r'(?m)^' + PREFIX + r'(\{[^\n]+\})\s*$', prompt)
+        markers = re.findall(r'(?m)^(?:Task:[ \t]*)?' + PREFIX + r'(\{[^\n]+\})\s*$', prompt)
         if len(markers) != 1:
             return
         try:
             value = json.loads(markers[0])
         except ValueError:
+            return
+        if not isinstance(value, dict) or not isinstance(value.get('layer'), str):
             return
         reviews = (work.get('sdd') or {}).get('native_reviews') or {}
         run = reviews.get(value.get('layer')) or {}

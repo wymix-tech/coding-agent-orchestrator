@@ -131,3 +131,22 @@ class AcceptanceProtocolTests(unittest.TestCase):
         p, items = self.run_executor({'AC-1': {'command': [sys.executable, 'check.py'], 'evidence': ['check.py']}})
         self.assertEqual(2, p.returncode)
         self.assertEqual('blocked', items[0]['status'])
+
+    def test_one_actual_execution_retains_distinct_assertion_outcomes(self):
+        self.request['declaration']['evidence_policy'] = 'criterion-checks-v1'
+        self.request['declaration']['criteria'].append({**self.request['declaration']['criteria'][0], 'id': 'AC-2'})
+        (self.repo / 'shared.py').write_text("import json\nfrom pathlib import Path\np=Path('executions.txt');p.write_text(p.read_text()+'x' if p.exists() else 'x')\nprint(json.dumps({'checks':{'login':{'status':'passed','observed':'valid password accepted'},'reject':{'status':'failed','observed':'invalid password was accepted'}}}))\n")
+        common = {'command': [sys.executable, 'shared.py'], 'evidence': ['shared.py'], 'shared_run': 'auth-suite'}
+        p, items = self.run_executor({
+            'AC-1': {**common, 'selector': 'login', 'assertion': 'valid login succeeds', 'result_key': 'login'},
+            'AC-2': {**common, 'selector': 'reject', 'assertion': 'invalid login fails', 'result_key': 'reject'}})
+        self.assertEqual(1, p.returncode, p.stderr)
+        self.assertEqual(['passed', 'failed'], [item['status'] for item in items])
+        self.assertEqual('x', (self.repo / 'executions.txt').read_text())
+        self.assertEqual(items[0]['check']['execution_id'], items[1]['check']['execution_id'])
+
+    def test_all_skipped_test_output_cannot_certify_a_criterion(self):
+        (self.repo / 'check.py').write_text("print('Ran 2 tests in 0.001s')\nprint('OK (skipped=2)')\n")
+        p, items = self.run_executor({'AC-1': {'command': [sys.executable, 'check.py'], 'evidence': ['check.py']}})
+        self.assertEqual(2, p.returncode)
+        self.assertEqual('blocked', items[0]['status'])

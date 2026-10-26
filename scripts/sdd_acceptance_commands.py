@@ -190,6 +190,11 @@ def dispatch(args) -> int:
                 previous_declaration = (work['sdd'].get('acceptance') or {}).get('declaration')
                 if declaration != previous_declaration:
                     declaration = normalize_declaration({**declaration, 'evidence_policy': 'criterion-checks-v1'})
+                route = work['sdd'].get('route_decision') or {}
+                if work['sdd']['provider'] == 'bmad' and route.get('build_route') == 'dispatch' and declaration['spec'] == route.get('primary_artifact'):
+                    declaration = normalize_declaration({**declaration, 'lifecycle_metadata': 'bmad-dispatch-status-v1'})
+                elif declaration.get('lifecycle_metadata'):
+                    raise ValueError('SDD_ACCEPTANCE_METADATA_POLICY_NOT_APPLICABLE')
                 source_hashes(repo, declaration, provider_output_dirs(work["sdd"]["provider"]))
                 previous = work["sdd"].get("acceptance") or {}
                 output_paths(repo, declaration, provider_output_dirs(work["sdd"]["provider"]), work["id"], previous.get("owned_outputs") or {})

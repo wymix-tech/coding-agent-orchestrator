@@ -265,7 +265,7 @@ test('real Pi route preparation follows baseline, assessment, native workflow an
       return f.sent.at(-1)[0].content;
     }
     assert.match(await result('cao start'), /VERIFICATION_BASELINE_REQUIRED/);
-    mkdirSync(path.join(f.dir, 'acceptance-tests'));
+    mkdirSync(path.join(f.dir, 'acceptance-tests'), { recursive: true });
     writeFileSync(path.join(f.dir, 'acceptance-tests/test_fixture.py'),
       'import unittest\nclass Fixture(unittest.TestCase):\n def test_fixture(self): self.assertEqual(2+2,4)\n');
     f.cli('verification', 'configure', '--test-script', JSON.stringify(f.python) + ' -m unittest discover -s acceptance-tests');
@@ -337,7 +337,7 @@ test('real core setup reaches Pi model with blocked product writes and preserved
     const denied = await f.handlers.get('tool_call')({type: 'tool_call', toolName: 'write',
       input: {path: '.orchestrator/index.json', content: '{}'}}, ctx);
     assert.equal(denied.block, true);
-    mkdirSync(path.join(f.dir, 'acceptance-tests'));
+    mkdirSync(path.join(f.dir, 'acceptance-tests'), { recursive: true });
     writeFileSync(path.join(f.dir, 'acceptance-tests/test_project.py'),
       'import unittest\nclass Project(unittest.TestCase):\n    def test_pass(self): self.assertEqual(2+2,4)\n');
     // Host events may update session metadata. First valid setup establishes the initial anchor.

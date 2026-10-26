@@ -169,7 +169,7 @@ def cmd_sdd_workflow(args: argparse.Namespace) -> int:
         workflow["requirement_sha256"] = work["requirement"]["sha256"]
         workflow["provider"] = provider
         workflow["artifacts"] = []
-        for key in ("completed_at", "artifact_hashes", "failure_exception"):
+        for key in ("completed_at", "artifact_hashes", "artifact_semantic_hashes", "artifact_metadata_policy", "failure_exception"):
             workflow.pop(key, None)
         workflow["execution"] = {
             "command": command,
@@ -231,6 +231,12 @@ def cmd_sdd_workflow(args: argparse.Namespace) -> int:
             artifacts.append(ref)
         workflow["artifacts"] = [ref["path"] for ref in refs]
         workflow["artifact_hashes"] = {ref["path"]: ref["sha256"] for ref in refs}
+        decision = work['sdd'].get('route_decision') or {}
+        if provider == 'bmad' and decision.get('build_route') == 'dispatch' and decision.get('primary_artifact') in workflow['artifacts']:
+            from scripts.native_metadata import POLICY, semantic_hash
+            primary = decision['primary_artifact']
+            workflow['artifact_metadata_policy'] = POLICY
+            workflow['artifact_semantic_hashes'] = {primary: semantic_hash(repo / primary)}
         workflow["requirement_sha256"] = work["requirement"]["sha256"]
         workflow["provider"] = provider
         workflow.pop("failure_exception", None)

@@ -41,6 +41,8 @@ class TestDiscovery(unittest.TestCase):
     def test_all_skipped_does_not_count_as_executed(self):
         for value in (b'Ran 3 tests in 0.01s\nOK (skipped=3)\n',
                       b'Tests run: 4, Failures: 0, Errors: 0, Skipped: 4\n',
+                      b'collected 3 items\n3 skipped in 0.01s\n',
+                      b'running 2 tests\ntest result: ok. 0 passed; 0 failed; 2 ignored\n',
                       b'# tests 2\n# skipped 2\n'):
             self.assertEqual({'observed': True, 'maximum_count': 0}, self.receipt(value))
 

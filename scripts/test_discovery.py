@@ -18,6 +18,7 @@ class DiscoveryReceipt:
             self.go_passed += 1
             counts.append(str(self.go_passed).encode())
         skips = re.findall(rb'(?:\bskipped\s*[:=]\s*|#\s*skipped\s+)(\d+)', value, re.I)
+        skips += re.findall(rb'\b(\d+)\s+(?:skipped|ignored)\b', value, re.I)
         if skips:
             self.maximum_skipped = max(self.maximum_skipped, *(int(x) for x in skips))
         if counts:

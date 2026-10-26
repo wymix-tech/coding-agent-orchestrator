@@ -250,7 +250,11 @@ def normalize_decision(repo, work, raw, dirs, skills):
             raise field_error("NATIVE_ROUTE_FULL_PLANNING_ARTIFACTS_REQUIRED", "$.required_artifacts", "real native prd, architecture, epics and sprint roles for full-planning", [a["role"] for a in artifacts])
     from scripts.route_omissions import normalize_omissions
     omissions = normalize_omissions(raw.get("omitted", []), artifacts, normalized, provider, route, build)
-    return {"provider": provider, "requirement_sha256": requirement,
+    contracts = {}
+    if provider == 'bmad':
+        from scripts.native_contracts import resolve
+        contracts = resolve(repo, normalized, build)
+    return {**({'contracts': contracts} if contracts else {}), "provider": provider, "requirement_sha256": requirement,
             "assessment_revision": assessment.get("revision"), "profile": assessment.get("profile"),
             "required_gates": assessment.get("required_gates", []),
             "workflow": workflow["name"], "entrypoint": workflow["entrypoint"],
@@ -283,6 +287,8 @@ def route_state(repo, work, dirs, required=False):
             or record.get("entrypoint") != workflow.get("entrypoint")):
         return blocked("NATIVE_ROUTE_STALE")
     try:
+        from scripts.native_contracts import validate
+        validate(repo, record.get('contracts', {}))
         if file_hash(repo / work["requirement"]["path"]) != record["requirement_sha256"]:
             return blocked("NATIVE_ROUTE_STALE")
         for rule in record["rules"]:

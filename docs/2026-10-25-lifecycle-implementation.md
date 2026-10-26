@@ -38,3 +38,19 @@ A01–A32/B01–B35 result table also require restoration or reimplementation.
 
 Publish this snapshot as a **draft PR**. The accepted complete lifecycle prompt
 remains the target; this recovery publication does not claim complete acceptance.
+
+## Completion work resumed — 2026-10-26
+
+The PR source branch now restores complete rendered native contract binding,
+versioned primary-SPEC terminal metadata, setup recovery and generated-output
+boundaries. It also adds host-observed default reviewer models, structural source
+categories, distinct shared-execution assertion outcomes, and dependency/empty-test
+classification. The earlier recovery-only status above is historical.
+
+Current requested exclusions: actual model-host E2E, framework-combination adapters
+and multi-module workspace scenarios. These exclusions do not weaken shared gates
+or exempt other provider regressions, actual language/toolchain checks or packaging.
+
+Phase checkpoint: 49 existing core tests passed before the new shared-executor
+extensions; 43 setup/native/snapshot/protocol boundary tests passed afterward.
+Complete regression, packaging and actual toolchain validation remain in progress.

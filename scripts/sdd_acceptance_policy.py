@@ -79,10 +79,14 @@ def normalize_declaration(raw: dict) -> dict:
     policy = raw.get('evidence_policy')
     if policy is not None and policy != 'criterion-checks-v1':
         raise ValueError(DECLARATION_INVALID)
+    metadata = raw.get('lifecycle_metadata')
+    if metadata not in {None, 'bmad-dispatch-status-v1'}:
+        raise ValueError(DECLARATION_INVALID)
     impact = executor.get('review_impact')
     if impact not in {None, 'product', 'acceptance_only'}:
         raise ValueError(DECLARATION_INVALID)
     return {**({'evidence_policy': policy} if policy else {}),
+            **({'lifecycle_metadata': metadata} if metadata else {}),
             "spec": spec, "sources": sorted(sources), "criteria": normalized,
             "executor": {"mode": mode, "entrypoint": entrypoint, "timeout_seconds": timeout,
                          **({"review_impact": impact} if impact else {})},

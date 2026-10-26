@@ -39,14 +39,19 @@ def command(args):
     results = []
     for check in checks:
         result = run_script(check['command'], repo, cfg['verification'].get('timeout_seconds', 300))
-        state = {0: 'passed', 1: 'failed', 2: 'blocked'}.get(result['exit_code'], 'error')
+        from scripts.preparation_result import status as preparation_status
+        state = preparation_status(result)
         discovered = result.get('test_discovery') or {}
         if 'tests' in check.get('gates', []) and (not discovered.get('observed') or discovered.get('maximum_count', 0) == 0):
             state = 'blocked'
             result['reason'] = 'VERIFICATION_PROBE_NONEMPTY_TESTS_REQUIRED'
         results.append({**result, 'name': check['name'], 'status': state})
     with repo_transaction(repo):
-        after = {'code': code_snapshot(repo), 'verification': verification_snapshot(config(repo), repo)}
+        try:
+            after = {'code': code_snapshot(repo), 'verification': verification_snapshot(config(repo), repo)}
+        except (ValueError, OSError, RuntimeError) as exc:
+            after = None
+            results.append({'status': 'stale', 'reason': str(exc)})
         status = ('stale' if after != before else 'error' if any(x['status'] == 'error' for x in results)
                   else 'failed' if any(x['status'] == 'failed' for x in results)
                   else 'blocked' if any(x['status'] == 'blocked' for x in results) else 'passed')
