@@ -117,4 +117,12 @@
 
 ## 本次最终执行结果
 
-待验证进程结束后填写；尚未结束的运行不能记为通过。
+- Python 回归：按唯一测试 ID 汇总 **1017 / 1017 通过**，无待补用例。这是分批回归加针对性复跑，不宣称一次连续全量通过；每个 ID 的通过日志和日志哈希见[机器记录](2026-10-26-lifecycle-validation.json)。
+- Pi：类型检查通过，37 项适配器测试全部通过。
+- 真实执行路径：Python、JavaScript、TypeScript、Go、Java/Maven、Java/Gradle、Shell 显式计划。工具链矩阵公共 CLI 均验证 ready、首个 Work 和 preparation probe；Python/JS 另有实际执行用例。
+- 发布：144 文件清单校验、wheel、runtime zip/tar.gz 构建通过；最终安装包在 checkout 外完成 24 个 smoke：21 个业务 fixture 完成，3 个模拟宿主空项目 ready 且首个 Work/probe 成功。
+- 编译检查与 `git diff --check` 通过。
+
+执行途中有一次连续回归无最终摘要、一次文档目录检查失败，以及首次 JVM 下载传输/可执行权限配置问题。保留这些记录，修复后按具体测试复跑；没有将中断、skip 或失败相加成 pass。最后的标准执行器畸形结果和版本布尔值边界也已修复并重新验证。机器记录包含最终发布产物哈希及运行时内容摘要。
+
+上述结果不覆盖用户排除的真实宿主 E2E、框架组合及多模块 workspace，也不把 fixture 当真实模型证据。
