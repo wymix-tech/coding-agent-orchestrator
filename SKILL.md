@@ -20,6 +20,8 @@ description: Coordinate non-trivial repository coding work across sessions and a
    installed native workflow. After meaningful slices checkpoint; after material changes refresh
    only applicable invalidated evidence. A resumed Work continues from its current phase.
 
+Empty runtime product: follow [project initialization](references/project-initialization.md) before creating business Work. Initialize exact scaffold/checks without a temporary Work; project checks never certify business acceptance.
+
 ## Load on demand
 
 | Condition | Read before acting |

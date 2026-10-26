@@ -197,7 +197,8 @@ class LiveWorkNavigation(unittest.TestCase):
                 '--input-sha256', ticket['input_sha256'], '--model', 'm')
         t.env.update(CAO_HOST='pi', PI_SESSION_ID='primary-fixture', PI_MODEL='m')
         self.assertEqual('NATIVE_REVIEW_INDEPENDENT_SESSION_REQUIRED', t.run_cli(*args, expected=2)['error'])
-        t.hook('subagent_start', subagent_id='new-reviewer')
+        from scripts.review_observation import task_marker
+        t.hook('subagent_start', subagent_id='new-reviewer', prompt=task_marker(ticket, 'blind-hunter'))
         t.env['PI_SESSION_ID'] = 'new-reviewer'
         attached = t.run_cli(*args)['review']['execution_binding']
         self.assertEqual('new-reviewer', attached['reviewer']['session_id'])

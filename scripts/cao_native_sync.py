@@ -478,6 +478,19 @@ def cmd_sdd_route(args: argparse.Namespace) -> int:
             print(json.dumps({"ok": True, "status": "validated", "declaration_path": rel(declaration, repo),
                               "decision": decision, "next": "Declaration fields are valid; propose it to record the decision. Native approval and execution remain required."}, ensure_ascii=False)); return 0
         old = work["sdd"].get("route_decision")
+        if getattr(args, 'repair_evidence', False):
+            from scripts.route_repair import relocate, migrate_evidence
+            repaired, moves = relocate(repo, old, decision)
+            repaired.setdefault('evidence_repairs', []).append({'at': now(), 'moves': moves,
+                'declaration': {'path': rel(declaration, repo), 'sha256': sha256_file(declaration)}})
+            work['sdd']['route_decision'] = repaired
+            migrate_evidence(work['sdd'], moves)
+            queue_event(work, {'event': 'sdd.route.evidence_relocated', 'work_item_id': work['id'],
+                              'source': 'cao', 'route_id': repaired['id'], 'moves': moves, 'occurred_at': now()})
+            save_work(repo, work)
+            print(json.dumps({'ok': True, 'status': 'evidence_repaired', 'route': repaired,
+                              'next': 'Continue the current workflow. Frozen review input paths remain historical; inspect affected review evidence rather than restarting implementation.'}, ensure_ascii=False))
+            return 0
         if old and all(old.get(key) == value for key, value in decision.items()):
             print(json.dumps({"ok": True, "status": "unchanged", "route": old,
                               "implementation": native_route_state(repo, work)}, ensure_ascii=False)); return 0

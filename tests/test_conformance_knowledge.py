@@ -108,7 +108,7 @@ class SessionConformance(unittest.TestCase):
         for package in packages:
             layer = package['layer']
             child = 'child-' + layer
-            t.hook('subagent_start', subagent_id=child)
+            t.hook('subagent_start', subagent_id=child, prompt=package['task_marker'])
             t.env['PI_SESSION_ID'] = child
             out = t.run_cli('sdd', 'review', 'attach', '--layer', layer, '--run', package['run_id'],
                             '--input-sha256', package['input_sha256'], '--model', 'fixture-model')
@@ -118,6 +118,7 @@ class SessionConformance(unittest.TestCase):
             self.assertEqual(child, report['reviewer']['session_id'])
             raw = report_path.parent / 'findings.json'
             raw.write_text('[]')
+            t.hook('turn_end', kind='subagent', subagent_id=child, last_assistant_message='[]')
             report['findings_file'] = raw.relative_to(t.repo).as_posix()
             report_path.write_text(json.dumps(report))
             t.env['PI_SESSION_ID'] = 'primary-fixture'

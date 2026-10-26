@@ -76,8 +76,16 @@ def normalize_declaration(raw: dict) -> dict:
     outputs = [_relative(path, DECLARATION_INVALID) for path in raw_outputs]
     if len(set(outputs)) != len(outputs) or sources.intersection(outputs):
         raise ValueError(DECLARATION_INVALID)
-    return {"spec": spec, "sources": sorted(sources), "criteria": normalized,
-            "executor": {"mode": mode, "entrypoint": entrypoint, "timeout_seconds": timeout},
+    policy = raw.get('evidence_policy')
+    if policy is not None and policy != 'criterion-checks-v1':
+        raise ValueError(DECLARATION_INVALID)
+    impact = executor.get('review_impact')
+    if impact not in {None, 'product', 'acceptance_only'}:
+        raise ValueError(DECLARATION_INVALID)
+    return {**({'evidence_policy': policy} if policy else {}),
+            "spec": spec, "sources": sorted(sources), "criteria": normalized,
+            "executor": {"mode": mode, "entrypoint": entrypoint, "timeout_seconds": timeout,
+                         **({"review_impact": impact} if impact else {})},
             "outputs": sorted(outputs)}
 
 
@@ -126,7 +134,16 @@ def normalize_report(raw: dict, declaration: dict, run_id: str, input_sha256: st
             except ValueError as exc:
                 raise AcceptanceValidationError(RESULT_INVALID, ref_field + ".reason", "a nonempty description of the actual check") from exc
             refs.append({"path": path, "reason": reason})
-        results[identity] = {"id": identity, "status": status, "evidence": refs}
+        check = item.get('check')
+        if declaration.get('evidence_policy') == 'criterion-checks-v1' and status != 'blocked':
+            if (not isinstance(check, dict) or check.get('criterion_id') != identity
+                    or check.get('run_id') != run_id
+                    or any(not isinstance(check.get(key), str) or not check[key].strip()
+                           for key in ('selector', 'assertion', 'observed'))):
+                raise AcceptanceValidationError('SDD_ACCEPTANCE_CRITERION_CHECK_REQUIRED', field + '.check',
+                    '{criterion_id, run_id, selector, assertion, observed}: identify the actual criterion-specific check; a shared exit code is insufficient')
+        results[identity] = {"id": identity, "status": status, "evidence": refs,
+                             **({'check': check} if isinstance(check, dict) else {})}
     # Exact coverage is authoritative; an overall claim cannot fill missing items.
     if set(results) != set(expected):
         raise AcceptanceValidationError("SDD_ACCEPTANCE_RESULT_COVERAGE", "$.items", "exact criterion coverage; missing: " + ", ".join(sorted(set(expected) - set(results))))

@@ -22,12 +22,16 @@ def local_file(root, relative):
     return path
 
 
-def execute(criterion, check, root):
+def execute(criterion, check, root, *, request=None):
     fallback = [{"path": criterion["source"], "reason": "No executable check is configured for this criterion"}]
     if not isinstance(check, dict):
         return {"id": criterion["id"], "status": "blocked", "evidence": fallback}, 2
     try:
         command, evidence = check.get("command"), check.get("evidence")
+        strict = (request or {}).get('declaration', {}).get('evidence_policy') == 'criterion-checks-v1'
+        if strict and any(not isinstance(check.get(key), str) or not check[key].strip()
+                          for key in ('selector', 'assertion')):
+            raise ValueError('Each criterion needs a selector and assertion identifying its actual check')
         if not isinstance(command, list) or not command or any(not isinstance(arg, str) or not arg for arg in command):
             raise ValueError("check.command must be a nonempty argv array")
         if not isinstance(evidence, list) or not evidence or not all(local_file(root, value).is_file() for value in evidence):
@@ -43,7 +47,10 @@ def execute(criterion, check, root):
         code = result.returncode if result.returncode in {0, 1, 2} else 3
         reason = f"Executed {shlex.join(command)}; exit_code={result.returncode}. {details}"
         return {"id": criterion["id"], "status": status,
-                "evidence": [{"path": value, "reason": reason} for value in evidence]}, code
+                "evidence": [{"path": value, "reason": reason} for value in evidence],
+                **({'check': {'criterion_id': criterion['id'], 'run_id': request['run_id'],
+                             'selector': check['selector'], 'assertion': check['assertion'],
+                             'observed': reason}} if strict else {})}, code
     except (ValueError, OSError, subprocess.TimeoutExpired) as exc:
         fallback[0]["reason"] = str(exc)
         return {"id": criterion["id"], "status": "blocked", "evidence": fallback}, 2
@@ -64,7 +71,7 @@ def main(argv=None):
             raise ValueError("checks must be an object keyed by criterion ID")
         items, codes = [], []
         for criterion in criteria:
-            item, code = execute(criterion, checks.get(criterion["id"]), root)
+            item, code = execute(criterion, checks.get(criterion["id"]), root, request=request)
             items.append(item)
             codes.append(code)
         report = {**{key: request[key] for key in ("run_id", "input_sha256", "provider")}, "items": items}

@@ -311,3 +311,18 @@ Optional source-bound knowledge collection follows successful reviews and comple
 collection failure never blocks completion. Use `cao knowledge list/collect/refresh`,
 or disable it with `knowledge.enabled: false`. See the
 [conformance and knowledge protocol](references/conformance-knowledge.md).
+
+### Empty-project preparation and evidence integrity
+
+Empty runtime products now have a project-owned lifecycle before business Work:
+`cao project setup rules` → `draft` → `plan` → `apply` → `check` → `status`.
+The draft exposes applicable identity/layout fields and exact files/checks. Other
+stacks use the same explicit-plan schema; built-in examples are conveniences,
+not a language whitelist. See [initialization](references/project-initialization.md).
+`cao verification check --work <id>` trials an existing Work baseline without
+claiming formal verification or bypassing native review.
+
+New native review tickets bind the actual child task, layer and original output,
+not session order. New acceptance declarations require criterion-specific check
+receipts. Native Finalize remains required before `cao done`; CAO checks process
+and evidence rather than adding another functional code review.

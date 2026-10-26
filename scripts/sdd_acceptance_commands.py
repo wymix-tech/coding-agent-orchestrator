@@ -138,9 +138,13 @@ def _finish(repo, wid, request, report, execution, error):
         projection = project_result(repo, wid, run["id"], run)
         codes = {"passed": 0, "failed": 1, "blocked": 2, "stale": 2, "error": 3}
         completion = completion_status(repo, work)
-        return _emit({"ok": run["status"] == "passed", "run": run, "completion": completion,
+        current_error = run.get('reason') or error or (None if run['status'] == 'passed' else 'SDD_ACCEPTANCE_' + run['status'].upper())
+        recovery = ('Inspect the current run error/diagnostic; correct its executor or per-criterion mapping, then rerun acceptance. '
+                    'Do not repeat native code review unless its inputs actually changed.')
+        return _emit({"ok": run["status"] == "passed", "error": current_error,
+                      "diagnostic": run.get('diagnostic'), "run": run, "completion": completion,
                       "runtime_diagnostic": None if projection["ok"] else projection,
-                      "next": completion_next_instruction(repo, work, completion) if not completion["ready"] else "Run `cao done`."}, codes[run["status"]])
+                      "next": recovery if current_error else completion_next_instruction(repo, work, completion) if not completion["ready"] else "Run `cao done`."}, codes[run["status"]])
 
 
 def dispatch(args) -> int:
@@ -160,7 +164,9 @@ def dispatch(args) -> int:
                     from scripts.acceptance_trace import criteria
                     from scripts.path_guard import provider_artifact
                     binding = work['sdd'].get('spec_binding') or {}
-                    spec = getattr(args, 'spec', None) or (binding.get('spec') or {}).get('path')
+                    spec = (getattr(args, 'spec', None) or (binding.get('spec') or {}).get('path')
+                            or (work['sdd'].get('acceptance') or {}).get('declaration', {}).get('spec')
+                            or (work['sdd'].get('route_decision') or {}).get('primary_artifact'))
                     if not spec:
                         raise ValueError('TASK_ACCEPTANCE_NATIVE_SOURCE_REQUIRED: bind the native SPEC/Intent or pass --spec')
                     derived = criteria(repo, work)
@@ -177,9 +183,13 @@ def dispatch(args) -> int:
                             source = spec
                         entries.append({**item, 'source': source, 'covers': [item['id']]})
                     declaration = normalize_declaration({'spec': spec, 'criteria': entries,
+                        'evidence_policy': 'criterion-checks-v1',
                         'executor': {'mode': mode, 'entrypoint': getattr(args, 'executor_command', None) or args.executor_skill},
                         'outputs': getattr(args, 'output', None) or []})
 
+                previous_declaration = (work['sdd'].get('acceptance') or {}).get('declaration')
+                if declaration != previous_declaration:
+                    declaration = normalize_declaration({**declaration, 'evidence_policy': 'criterion-checks-v1'})
                 source_hashes(repo, declaration, provider_output_dirs(work["sdd"]["provider"]))
                 previous = work["sdd"].get("acceptance") or {}
                 output_paths(repo, declaration, provider_output_dirs(work["sdd"]["provider"]), work["id"], previous.get("owned_outputs") or {})
@@ -225,6 +235,10 @@ def dispatch(args) -> int:
                 if original.get("stdout_bytes", len(original.get("stdout_tail", "").encode())) > MAX_REPORT_BYTES:
                     raise ValueError("SDD_ACCEPTANCE_REPORT_TOO_LARGE")
                 repo, wid, request = _start(args, "command")
+                for item in raw['items']:
+                    if isinstance(item.get('check'), dict):
+                        item['check']['source_run_id'] = item['check'].get('run_id')
+                        item['check']['run_id'] = request['run_id']
                 report = {"run_id": request["run_id"], "input_sha256": request["input_sha256"],
                           "provider": request["provider"], "items": raw["items"]}
                 return _finish(repo, wid, request, report,

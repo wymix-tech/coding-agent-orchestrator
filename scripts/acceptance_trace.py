@@ -85,5 +85,7 @@ def coverage(repo, work):
         if any(item['source'] == target['source'] and item['description'].strip() == target['description'] for item in declared):
             covered.add(target['id'])
             mapping[target['id']] += [item['id'] for item in declared if item['source'] == target['source'] and item['description'].strip() == target['description']]
+    for key in mapping:
+        mapping[key] = sorted(set(mapping[key]))
     return {'required': len(expected), 'covered': len({item['id'] for item in expected} & covered),
             'missing': [item for item in expected if item['id'] not in covered], 'mapping': mapping, 'unknown': unknown}

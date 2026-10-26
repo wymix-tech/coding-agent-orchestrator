@@ -773,10 +773,8 @@ def _readonly_tokens(tokens: list[str], cwd: Path | None = None) -> bool:
             return not git_output_targets(tokens) and not any(token in unsafe for token in args[1:]) and (args[0] != "branch" or all(token.startswith("-") for token in args[1:]))
     if name == "sed":
         return sed_effect(tokens)[0] == "read"
-    if name == "pytest" or tokens[:3] in (["python", "-m", "unittest"],):
-        return True
-    if tokens[:2] in (["mvn", "test"], ["gradle", "test"], ["npm", "test"]):
-        return True
+    # Build/test commands write caches and reports. Use registered preparation
+    # or formal execution; never authorize them as generic read-only shell.
     # Standalone CAO commands own their state mutations; their arguments are not hand edits.
     command_tokens = tokens
     if python_probe:

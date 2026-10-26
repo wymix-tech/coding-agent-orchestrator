@@ -14,7 +14,7 @@ def category_conflicts(values, prefix=""):
     for field, value in values.items():
         token = re.sub(r"[\s_.-]+", "", str(value).casefold())
         known = next((kind for kind, names in KNOWN.items() if token in names), None)
-        if known and field != known:
+        if known and field != known and not (field == 'package_manager' and token in {'npm', 'pnpm', 'yarn', 'uv', 'poetry', 'pip'}):
             errors.append({"code": "PROJECT_FIELD_CATEGORY_MISMATCH", "field": prefix + field,
                            "actual": value, "expected_field": prefix + known,
                            "expected": f"{value} is a known {known}; confirm the missing {field} instead of reusing its name"})

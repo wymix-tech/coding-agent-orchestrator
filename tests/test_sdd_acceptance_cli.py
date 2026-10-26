@@ -17,7 +17,7 @@ rc=subprocess.run([sys.executable,'-m','unittest','discover','-s','acceptance-te
 for output in r['declaration']['outputs']:
  p=pathlib.Path(output); p.parent.mkdir(parents=True,exist_ok=True);p.write_text('Checked '+r['run_id'])
 print(json.dumps({'run_id':r['run_id'],'input_sha256':r['input_sha256'],'provider':r['provider'],
- 'items':[{'id':c['id'],'status':'passed' if rc==0 else 'failed','evidence':[{'path':'acceptance-tests/test_acceptance.py','reason':'Actual unittest run'}]} for c in r['declaration']['criteria']]}))
+ 'items':[{'id':c['id'],'check':{'criterion_id':c['id'],'run_id':r['run_id'],'selector':'fixture behavior assertion','assertion':c['description'],'observed':'actual fixture command result'},'status':'passed' if rc==0 else 'failed','evidence':[{'path':'acceptance-tests/test_acceptance.py','reason':'Actual unittest run'}]} for c in r['declaration']['criteria']]}))
 sys.exit(rc)
 ''')
         import shlex
@@ -75,7 +75,7 @@ sys.exit(rc)
         rc, out = self.run_cli("sdd", "acceptance", "begin"); self.assertEqual(rc, 0, out)
         request = out["request"]
         report = {**{k: request[k] for k in ("run_id", "input_sha256", "provider")}, "items": [
-            {"id": "AC-1", "status": "passed", "evidence": [{"path": "acceptance-tests/test_acceptance.py", "reason": "Reviewer checked"}]}]}
+            {"id": "AC-1", "check": {"criterion_id": "AC-1", "run_id": request["run_id"], "selector": "fixture review", "assertion": "fixture behavior checked", "observed": "current fixture review"}, "status": "passed", "evidence": [{"path": "acceptance-tests/test_acceptance.py", "reason": "Reviewer checked"}]}]}
         (self.repo / "report.json").write_text(json.dumps(report))
         # Submit file itself is an input; creating it changes code freshness.
         rc, out = self.run_cli("sdd", "acceptance", "submit", "--run", request["run_id"], "--report", "report.json")
@@ -115,7 +115,7 @@ sys.exit(rc)
         rc, out = self.run_cli("sdd", "acceptance", "begin"); self.assertEqual(rc, 0, out)
         request = out["request"]
         report = {**{k: request[k] for k in ("run_id", "input_sha256", "provider")}, "items": [
-            {"id": "AC-1", "status": "passed", "evidence": [{"path": "acceptance-tests/test_acceptance.py", "reason": "Current reviewer evidence"}]}]}
+            {"id": "AC-1", "check": {"criterion_id": "AC-1", "run_id": request["run_id"], "selector": "fixture review", "assertion": "fixture behavior checked", "observed": "current fixture review"}, "status": "passed", "evidence": [{"path": "acceptance-tests/test_acceptance.py", "reason": "Current reviewer evidence"}]}]}
         file = self.repo / output; file.parent.mkdir(parents=True); file.write_text(json.dumps(report))
         rc, out = self.run_cli("sdd", "acceptance", "submit", "--run", request["run_id"], "--report", output)
         self.assertEqual(rc, 0, out)

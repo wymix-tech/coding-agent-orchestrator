@@ -14,7 +14,7 @@ from pathlib import Path
 from scripts.state_store import atomic_json, repo_transaction
 
 ROOT = Path('.orchestrator/project')
-FIELDS = ('language', 'framework', 'build_tool', 'test_framework', 'storage', 'delivery')
+FIELDS = ('language', 'framework', 'build_tool', 'test_framework', 'storage', 'delivery', 'package_manager', 'runtime')
 REQUIRED = ('language', 'build_tool', 'test_framework')
 STATES = {'accepted', 'pending', 'conflict', 'not_applicable'}
 
@@ -58,7 +58,8 @@ def semantic(context, scopes=None):
         result[name] = {'paths': sorted(scope['paths']),
                         'technology': {key: {'value': compact(item.get('value')), 'status': item['status']}
                                        for key, item in sorted(scope['technology'].items())},
-                        'versions': scope.get('versions', {})}
+                        'versions': scope.get('versions', {}),
+                        **({'identity': scope['identity']} if scope.get('identity') else {})}
     return result
 
 

@@ -50,9 +50,15 @@ def task_inputs(repo, work, cfg):
     from scripts.cao_plans import provider_verification_plan_state
     from scripts.cao_runtime import sha256_file
     sdd = work.get('sdd') or {}
+    native_scope = provider_verification_plan_state(repo, work)
+    if (sdd.get('acceptance') or {}).get('declaration', {}).get('evidence_policy') == 'criterion-checks-v1':
+        from copy import deepcopy
+        native_scope = deepcopy(native_scope)
+        for observation in native_scope.get('observations', {}).values():
+            observation.pop('sha256', None)  # Source semantics are bound separately.
     return {**verification_inputs(repo, work, cfg), 'task_input_version': 1,
             'requirement_sha256': sha256_file(repo / work['requirement']['path']),
             'assessment_revision': (work.get('path_assessment') or {}).get('revision'),
-            'native_scope': provider_verification_plan_state(repo, work),
+            'native_scope': native_scope,
             'spec_binding': sdd.get('spec_binding'), 'route': sdd.get('route_decision'),
             'spec_approval': sdd.get('spec_approval')}

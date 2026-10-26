@@ -33,6 +33,12 @@ def attach_reviewer(run, inputs, identity, session, model, run_id, input_sha256)
         invalid('NATIVE_REVIEW_SESSION_PREDATES_TICKET', 'session.id', 'launch a NEW session AFTER coordinator creates tickets; do not restart tickets in the reviewer', session.get('id'), legacy=legacy)
     if model != run.get('model'):
         invalid('NATIVE_REVIEW_MODEL_MISMATCH', 'reviewer.model', run.get('model'), model, legacy=legacy)
+    if run.get('task_binding_version') == 1:
+        from scripts.review_observation import ticket
+        expected = ticket(run, run['layer'])
+        if session.get('review_ticket') != expected:
+            invalid('NATIVE_REVIEW_TASK_MISMATCH', 'session.review_ticket', expected,
+                    session.get('review_ticket'))
     reviewer = {'mode': 'subagent' if session.get('kind') == 'subagent' else 'external-session',
                 'session_id': identity[1], 'model': model}
     previous = run.get('execution_binding')

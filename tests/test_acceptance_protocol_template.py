@@ -17,7 +17,7 @@ class AcceptanceProtocolTests(unittest.TestCase):
     def test_documented_examples_match_protocol_and_runtime_validation(self):
         root = Path(__file__).resolve().parents[1]
         text = (root / "references/sdd-acceptance-protocol.md").read_text()
-        request, report = [json.loads(block) for block in re.findall(r"```json\n(.*?)\n```", text, re.S)]
+        request, report = [json.loads(block) for block in re.findall(r"```json\n(.*?)\n```", text, re.S)[:2]]
         machine = protocol()
         self.assertEqual(request, machine["request_example"])
         self.assertEqual(report, machine["report_example"])
@@ -111,3 +111,23 @@ class AcceptanceProtocolTests(unittest.TestCase):
             report_hashes(self.repo, [], ["openspec/cao-acceptance/demo/missing.json"])
         self.assertEqual(cm.exception.diagnostic["field"], "$.declaration.outputs[0]")
         self.assertIn("missing.json", cm.exception.diagnostic["expected"])
+
+    def test_strict_policy_rejects_broadcast_pass_without_criterion_receipt(self):
+        self.request['declaration']['evidence_policy'] = 'criterion-checks-v1'
+        report = {key: self.request[key] for key in ('run_id', 'input_sha256', 'provider')}
+        report['items'] = [{'id': 'AC-1', 'status': 'passed',
+                            'evidence': [{'path': 'check.py', 'reason': 'security.sh exit 0'}]}]
+        with self.assertRaisesRegex(ValueError, 'SDD_ACCEPTANCE_CRITERION_CHECK_REQUIRED'):
+            normalize_report(report, self.request['declaration'], self.request['run_id'],
+                             self.request['input_sha256'], self.request['provider'])
+        p, items = self.run_executor({'AC-1': {'command': [sys.executable, 'check.py'],
+                    'evidence': ['check.py'], 'selector': 'check.py: arithmetic assertion',
+                    'assertion': 'result equals four'}})
+        self.assertEqual(0, p.returncode, p.stderr)
+        self.assertEqual('AC-1', items[0]['check']['criterion_id'])
+
+    def test_strict_policy_blocks_missing_assertion_mapping(self):
+        self.request['declaration']['evidence_policy'] = 'criterion-checks-v1'
+        p, items = self.run_executor({'AC-1': {'command': [sys.executable, 'check.py'], 'evidence': ['check.py']}})
+        self.assertEqual(2, p.returncode)
+        self.assertEqual('blocked', items[0]['status'])

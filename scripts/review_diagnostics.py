@@ -66,8 +66,8 @@ def request_identity(repo, work, args):
         identity = value['session']
         child = load_session(repo, child_ref, host=identity[0]) if identity else None
         value['child'] = {key: (child or {}).get(key) for key in
-                          ('id', 'status', 'work_item_id', 'parent_session_id', 'observed_model', 'observed_tools')}
-    paths = [getattr(args, key, None) for key in ('report', 'source')]
+                          ('id', 'status', 'work_item_id', 'parent_session_id', 'observed_model', 'observed_tools', 'review_ticket', 'review_output_sha256')}
+    paths = [getattr(args, key, None) for key in ('report', 'source', 'instructions', 'agent_definition')]
     report = getattr(args, 'report', None)
     if report and args.review_action == 'classify-batch':
         try:

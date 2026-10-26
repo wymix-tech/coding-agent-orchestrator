@@ -73,7 +73,7 @@ def complete_acceptance(repo, run, wid=None, prepare_only=False):
         (repo / script).write_text('''import json, os, subprocess, sys
 r = json.loads(os.environ['CAO_SDD_ACCEPTANCE_REQUEST'])
 p = subprocess.run([sys.executable, '-m', 'unittest', 'discover', '-s', 'acceptance-tests', '-v'], stdout=sys.stderr, stderr=sys.stderr)
-print(json.dumps({'run_id': r['run_id'], 'input_sha256': r['input_sha256'], 'provider': r['provider'], 'items': [{'id': 'AC-FIXTURE', 'status': 'passed' if p.returncode == 0 else 'failed', 'evidence': [{'path': 'acceptance-tests/test_acceptance.py', 'reason': 'Actual fixture unittest execution'}]}]}))
+print(json.dumps({'run_id': r['run_id'], 'input_sha256': r['input_sha256'], 'provider': r['provider'], 'items': [{'id': 'AC-FIXTURE', 'check': {'criterion_id': 'AC-FIXTURE', 'run_id': r['run_id'], 'selector': 'Acceptance.test_ok', 'assertion': 'fixture unittest succeeds', 'observed': 'actual fixture unittest execution'}, 'status': 'passed' if p.returncode == 0 else 'failed', 'evidence': [{'path': 'acceptance-tests/test_acceptance.py', 'reason': 'Actual fixture unittest execution'}]}]}))
 sys.exit(p.returncode)
 ''', encoding='utf-8')
         argv = [sys.executable, script]
@@ -115,7 +115,8 @@ def bind_fixture_reviewer(repo, ticket, layer, model, reviewer_cli=None):
         assert result.returncode == 0, (result.stdout, result.stderr)
         return json.loads(result.stdout)
     invoke('host-event', '--host', 'pi', payload={'event': 'subagent_start',
-           'session_id': 'fixture-parent', 'subagent_id': session_id})
+           'session_id': 'fixture-parent', 'subagent_id': session_id,
+           'prompt': __import__('scripts.review_observation', fromlist=['task_marker']).task_marker(ticket, layer)})
     out = invoke('sdd', 'review', 'attach', '--layer', layer, '--run', ticket['id'],
                  '--input-sha256', ticket['input_sha256'], '--model', model)
     return out['review']['execution_binding']['reviewer']
@@ -138,6 +139,7 @@ def fixture_native_review(repo, run, wid=None, reviewer_cli=None):
         script.write_text("from pathlib import Path\nimport sys\np=Path(sys.argv[1])\nassert p.is_dir()\nprint('- F1: Independently inspect the local fixture source and verification setup.')\n")
         findings=subprocess.check_output([sys.executable,str(script),str(repo)],text=True)
     raw=directory/'findings.md';raw.write_text(findings)
+    publish_fixture_review(repo, reviewer, findings)
     report=directory/'report.json'
     report.write_text(json.dumps({'run_id':ticket['id'],'input_sha256':ticket['input_sha256'],
         'reviewer':reviewer,
@@ -161,6 +163,8 @@ def provision_fixture_background(repo):
     repo = pathlib.Path(repo)
     if load_context(repo):
         return
+    (repo / 'acceptance-tests').mkdir(exist_ok=True)
+    (repo / 'acceptance-tests/pyproject.toml').write_text('[project]\nname = \"existing-fixture\"\nversion = \"0.1.0\"\n')
     ref = observe_prompt(repo, 'Fixture uses Python, unittest and setuptools.', 'fixture', 'fixture-setup')
     values = {'language': 'Python', 'build_tool': 'setuptools', 'test_framework': 'unittest'}
     context = {'schema_version': 1, 'scopes': {'root': {'paths': ['acceptance-tests'],
@@ -173,3 +177,14 @@ def provision_fixture_background(repo):
     cfg['verification']['plan'] = {'version': 1, 'scripts': [{'name': 'planned-fixture',
         'command': 'python -m unittest discover -s acceptance-tests', 'required': True, 'gates': ['tests']}]}
     path.write_text(json.dumps(cfg, ensure_ascii=False))
+
+
+def publish_fixture_review(repo, reviewer, text):
+    """Publish a local fixture reviewer's actual output via the real host event API."""
+    env = {**os.environ, 'CAO_HOST': 'pi', 'PI_SESSION_ID': reviewer['session_id'], 'PI_MODEL': reviewer['model']}
+    payload = {'event': 'turn_end', 'kind': 'subagent', 'subagent_id': reviewer['session_id'],
+               'last_assistant_message': text}
+    result = subprocess.run([sys.executable, str(pathlib.Path(__file__).resolve().parents[1] / 'scripts/cao.py'),
+        'host-event', '--host', 'pi', '--repo', str(repo)], input=json.dumps(payload),
+        text=True, capture_output=True, env=env, timeout=30)
+    assert result.returncode == 0, (result.stdout, result.stderr)

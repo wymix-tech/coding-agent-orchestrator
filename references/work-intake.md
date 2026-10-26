@@ -17,8 +17,8 @@ security minimum during path assessment even if the Agent omits the risk flag.
 2. Resume with `cao resume --host <host> --session <real-session-id>`. Reactivate suspended work with `cao resume --work <id> --reactivate`, then resolve blockers. Do not invent missing runtime IDs.
 3. Before adding technology choices to a new requirement, apply the technology clarification flow below. For a new inline requirement, run `cao requirement next-id --title "<short title>"`. Fill the returned numbered path under `.orchestrator/requirements/`, then run `cao start --requirement <returned-path>`.
 4. If a requirement file already exists, including a native SDD requirement, use that file directly. Do not create a duplicate or move it solely for CAO. Provider output directories being writable is not a direction to create a second intake document there.
-5. Use `--title` for readable Work titles when native filenames are fixed (e.g. `SPEC.md`). Save project context first; actual entries or a plan-only verification declaration permit start, even before tests pass.
-6. Rerun bootstrap after start/resume. Create an active Work before product code, configuration, tests or verification scaffolding. CAO requirement intake and provider-native outputs stay writable without Work; direct managed-state edits remain denied. Never move product code into native outputs to bypass the guard.
+5. Use `--title` for readable Work titles when native filenames are fixed (e.g. `SPEC.md`). Save project context first; empty runtime products must complete project setup/check before start; existing products reuse actual entries and legacy plans as applicable.
+6. Rerun bootstrap after start/resume. Complete an empty product's controlled project setup without a temporary Work. Business writes require active Work; existing Work preparation follows its own checks. CAO requirement intake and provider-native outputs stay writable without Work; direct managed-state edits remain denied. Never move product code into native outputs to bypass the guard.
 
 ### Technology clarification before planning or scaffolding
 

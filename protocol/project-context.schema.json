@@ -15,10 +15,11 @@
         "type": "object", "required": ["paths", "technology"],
         "properties": {
           "paths": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+          "identity": {"type": "object", "required": ["values", "rule"], "properties": {"values": {"type": "object"}, "rule": {"type": "object"}}},
           "versions": {"type": "object", "additionalProperties": {"type": "string"}},
           "technology": {
             "type": "object",
-            "propertyNames": {"enum": ["language", "framework", "build_tool", "test_framework", "storage", "delivery"]},
+            "propertyNames": {"enum": ["language", "framework", "build_tool", "test_framework", "storage", "delivery", "package_manager", "runtime"]},
             "additionalProperties": {
               "type": "object", "required": ["value", "status"],
               "properties": {

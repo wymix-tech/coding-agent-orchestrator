@@ -220,6 +220,8 @@ def finish_change(repo, work):
 def register_parser(sub):
     project = sub.add_parser('project', help='Project background, independent of Work decisions')
     actions = project.add_subparsers(required=True)
+    from scripts.project_setup import register
+    register(actions)
     for name in ('inspect', 'decisions'):
         parser = actions.add_parser(name)
         parser.add_argument('--repo', default='.')

@@ -75,6 +75,8 @@ class ProtocolConsistency(RepairCase):
         reviewer = bind_fixture_reviewer(self.repo, run, 'blind-hunter', 'fixture-model')
         raw = '_bmad-output/protocol-raw.md'
         (self.repo / raw).write_text('- Actual fixture finding\n')
+        from tests.helpers import publish_fixture_review
+        publish_fixture_review(self.repo, reviewer, (self.repo / raw).read_text())
         report = self.repo / '_bmad-output/protocol-triage.json'
         report.write_text(json.dumps({'run_id': run['id'], 'input_sha256': run['input_sha256'], 'reviewer': reviewer, 'findings_file': raw, 'findings': [{'id': 'finding-1', 'verdict': 'false', 'disposition': 'reject', 'evidence': 'Inspected fixture source'}]}))
         return report

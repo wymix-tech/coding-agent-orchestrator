@@ -1,0 +1,40 @@
+# Complete lifecycle repair implementation
+
+Baseline: main cd700566d348925c1ae6cc9779b72ad54834f702.
+Scope: [accepted task](2026-10-25-complete-lifecycle-repair-prompt.md), A01–A32 and B01–B35.
+
+Implementation order:
+1. Reviewer task/session/output provenance and unified batch preparation (B01–B06, B15).
+2. Criterion-specific acceptance receipts and current-error diagnostics (B17–B23, B29).
+3. Scope-owned initialization plan/apply/check without a business Work (A01–A32).
+4. Route evidence recovery, invalidation, control-command access and native closure (B07–B14, B24–B35).
+5. Host/provider regressions, actual toolchain execution, packaging and accurate result matrix.
+
+Do not equate unit/fixture execution with a real model-host E2E. Missing toolchains or host runtimes remain unverified, not passed.
+
+## Recovery and publication status — 2026-10-26
+
+This PR preserves the recoverable working-tree changes from an earlier workspace
+snapshot. The previously reported local commit `fc1c5b5` is absent from the
+restored Git object database and reflog; the remote repair branch did not exist.
+This is a new commit and must not be presented as that previously tested version.
+
+Current validation, repeated against this exact recoverable source:
+
+- `python -m compileall -q scripts`: passed.
+- `python -m unittest tests.test_project_setup_lifecycle tests.test_review_task_provenance tests.test_lifecycle_repair_boundaries -v`: 21 passed.
+- `git diff --check`: passed.
+
+The previous 996-case, installed-package and real-toolchain results cannot be
+carried forward as evidence for this restored snapshot. A fresh complete
+regression and release validation are required before marking this PR ready.
+
+Known later changes missing from this snapshot include complete rendered native
+contract resolution (`native_contracts.py`), narrowly versioned terminal metadata
+hashing (`native_metadata.py`), scope-filtered snapshots and initialization
+recovery refinements, generated-source output grants, and the optional real
+compiler matrix (`test_setup_toolchains.py`). Later fixture fixes and the complete
+A01–A32/B01–B35 result table also require restoration or reimplementation.
+
+Publish this snapshot as a **draft PR**. The accepted complete lifecycle prompt
+remains the target; this recovery publication does not claim complete acceptance.

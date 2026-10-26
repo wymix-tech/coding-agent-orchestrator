@@ -102,3 +102,19 @@ no longer block the active round; newly required layers must complete. A damaged
 single layer under an unchanged contract can restore its original bytes or use
 `begin --restart --layer <layer>` with the same instructions/model. Preserve other
 valid layers. Restart alone never resolves a known frozen-intent conflict.
+
+## Task and original-output provenance
+
+New tickets return `task_marker`, an exact `CAO_REVIEW_TICKET {...}` line. Include
+that line in the actual independent reviewer's initial task prompt. The child's
+host adapter records the ticket from the prompt before attach. Coordinator attach
+checks this task-to-layer binding as well as parent/model/Work/input identity.
+Never map sessions by list order, task timing, or return order. An external
+reviewer needs the same ticket in its real initial host prompt.
+
+The host records the bound reviewer's final textual output. Preserve those bytes
+(as Markdown or JSON) in the raw file before `draft`/`classify`; mismatched or
+unobserved originals cannot be imported as current findings. This establishes
+source provenance, not proof of semantic review quality. A read-only reviewer
+needs no shell: the coordinator attaches its observed task/session mapping and
+copies the unmodified output.

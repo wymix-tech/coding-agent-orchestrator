@@ -63,3 +63,31 @@ sample identities/paths with the current request and actual evidence.
 Use `cao acceptance criteria` to obtain stable source IDs from the confirmed requirement and native criteria/Intent. A declared criterion may include `covers: ["src-..."]` to map original source items; exact source/text matches are also recognized. Reports still cover every declared criterion exactly once with real evidence. Source mapping alone does not establish semantic correctness or independent execution. In light, reuse the bound native Intent rather than manufacturing a formal checklist. Inspect both parts with `cao acceptance status`; technical results, task evidence and original native obligations must all be valid before done.
 
 For an already bound native SPEC/Intent, `cao acceptance configure --executor-command "<actual check>"` or `--executor-skill <native-entrypoint>` derives the declaration from existing source items, preserving IDs and coverage mappings. Use --spec for an explicit native source and --output for exact Work-scoped reports. This is configuration only; actual run/begin/submit or validated reuse is still required.
+
+## Criterion-specific checks for new declarations
+
+Newly configured/changed declarations use `evidence_policy: criterion-checks-v1`.
+Existing unchanged historical declarations remain readable; their history is not
+retroactively recertified. Each passed/failed item must additionally contain:
+
+```json
+{"check":{"criterion_id":"AC-1","run_id":"<current-run>","selector":"tests/auth.test.ts: rejects an expired token","assertion":"Expired tokens return 401","observed":"This assertion executed and passed in the recorded test run"}}
+```
+
+`criterion_id` and `run_id` must match the item and request. A generic security
+script's exit 0 cannot be broadcast to every source item. `blocked` may omit the
+check when no check could execute. Every item still needs real evidence files.
+The template requires a criterion mapping with `selector` and `assertion`, in
+addition to its argv and evidence. Reuse shared test executions only with actual
+criterion-specific assertions/results. CAO validates bindings and protocol; it
+cannot statically prove arbitrary evaluator code is semantically honest.
+
+The source catalog count is not the number of functionally accepted behaviors.
+Inspect source coverage, declared criteria, actual item results and freshness
+separately. Exact ID/text coverage alone does not certify execution.
+
+A command executor may explicitly declare `review_impact: acceptance_only`.
+Only its exact project-owned entry file under `scripts/verification/` can then be
+separated from native product-review snapshots. Its bytes remain technical/task
+verification inputs. Product/test dependencies remain review inputs; a directory
+name alone never excludes all verification code. Review this role deliberately.

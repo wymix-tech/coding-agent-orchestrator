@@ -65,3 +65,9 @@ not resolve it. Keep raw and classification reports unchanged, and submit a sepa
 final report. Oneshot `low + reject` needs concrete evidence but no dispatch-only
 `reject_reason`. The unchanged-code direct submit compatibility entry uses the same
 judgment and ID policy, and cannot omit required active tickets.
+
+New tickets also require the returned `task_marker` in the independent reviewer's
+initial host-observed prompt. Bind by actual task/session metadata, never session
+list order. The child's adapter records its final output; preserve that original
+before draft/submit. The same task and raw-output provenance rules as dispatch
+apply, while oneshot keeps its own native prompts and report obligations.

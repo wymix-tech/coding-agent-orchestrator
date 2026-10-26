@@ -39,3 +39,8 @@ Exit 0 plus all passed items qualifies; exit 1 fails, exit 2 blocks and other
 nonzero exits indicate an execution error. CAO independently validates coverage,
 identity, actual evidence/output files and current frozen inputs. Do not invoke
 `begin`/`submit` to substitute for the configured command execution.
+
+For criterion-checks-v1 also supply `selector` (the relevant test/assertion/check
+identity) and `assertion` (the behavior to verify) in every mapping. A bare command
+exit is insufficient. The executor emits request-bound `check` receipts per item;
+logs remain on stderr and stdout remains one JSON report. An unmapped item blocks.

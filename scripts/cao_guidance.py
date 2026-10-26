@@ -54,7 +54,7 @@ def work_intake_instruction(work: dict[str, Any] | None = None) -> str:
     if work and work.get("status") in {"todo", "suspended"}:
         return f'Resume the existing Work before product writes with `{command} resume --work {work["id"]} --reactivate`; do not create a replacement requirement.'
     return (
-        "Create an active Work before product code, configuration, tests or verification scaffolding. "
+        "For an empty product complete project setup plan/apply/check first; an active Work is required for business changes. "
         "Honor bootstrap's SDD authorization/install instructions first. "
         f"Inspect `{command} list` and resume existing suspended/todo work instead of repeating intake. "
         + technology_instruction(command) +
@@ -62,7 +62,7 @@ def work_intake_instruction(work: dict[str, Any] | None = None) -> str:
         "fill the returned numbered file with the user's confirmed requirement, "
         f"then run `{command} start --requirement <returned-path>`. "
         "If a requirement file already exists, use it directly; do not invent another requirement. "
-        "Verification need not pass before start; the project must have actual entries or a declared plan. After start, rerun bootstrap "
+        "Empty runtime products need a successful setup check before start. Existing products reuse actual entries. After start, rerun bootstrap "
         "for verification setup and follow `next` for path assessment and the native SDD workflow. "
         "CAO commands, numbered requirement documents and native SDD output writes remain allowed; "
         "direct edits to CAO-derived state remain denied."

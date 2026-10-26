@@ -54,6 +54,13 @@ def source_hashes(repo: Path, declaration: dict, provider_dirs: list[str]) -> di
                     if line.strip() and not re.match(r"^\s*#{1,6}(?:\s|$)", line)]
             if not body:
                 raise ValueError("SDD_ACCEPTANCE_SOURCE_INVALID")
+            if declaration.get('evidence_policy') == 'criterion-checks-v1':
+                # Terminal status is lifecycle metadata, not a changed criterion.
+                original = raw.decode('utf-8-sig')
+                header = re.match(r'\A---[ \t]*\r?\n(.*?)\r?\n---[ \t]*(?:\r?\n|\Z)', original, re.S)
+                if header:
+                    semantic_header = re.sub(r'(?m)^status:[^\n]*(?:\n|$)', '', header[1])
+                    raw = (semantic_header + original[header.end():]).encode()
             hashes[relative] = hashlib.sha256(raw).hexdigest()
         return hashes
     except (OSError, UnicodeError, ValueError, RuntimeError) as exc:

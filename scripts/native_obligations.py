@@ -222,7 +222,15 @@ def review_inputs(repo, work, code_snapshot):
     if not source:
         raise ValueError('NATIVE_REVIEW_NOT_APPLICABLE')
     contract = ((work.get('sdd') or {}).get('native_reviews') or {}).get('_contract') or {}
-    instructions = {path: hashlib.sha256(repo_file(repo, path).read_bytes()).hexdigest() for path in contract.get('sources', [])}
+    aliases = (work.get('sdd') or {}).get('evidence_aliases') or {}
+    def canonical(path):
+        seen = set()
+        while path in aliases and path not in seen:
+            seen.add(path)
+            path = aliases[path]
+        return path
+    instructions = {canonical(path): hashlib.sha256(repo_file(repo, path).read_bytes()).hexdigest()
+                    for path in contract.get('sources', [])}
     from scripts.review_scope import acceptance_review_scope
     excluded, acceptance_standard = acceptance_review_scope(repo, work)
     result = {'instructions': instructions, 'work_id': work['id'], 'requirement_sha256': work['requirement']['sha256'],
@@ -472,6 +480,8 @@ def classify_review(repo, work, layer, report_path, code_snapshot):
     if run.get('status') != 'running' or report.get('run_id') != run.get('id') or report.get('input_sha256') != digest(inputs):
         raise ValueError('NATIVE_REVIEW_RUN_STALE_OR_MISMATCH')
     findings_file = provider_artifact(repo, str(report.get('findings_file') or ''), ['_bmad-output'])
+    from scripts.review_observation import validate_source
+    validate_source(repo, run, findings_file)
     raw = load_findings(findings_file)
     findings = report.get('findings')
     if not isinstance(raw, list) or not isinstance(findings, list):
@@ -571,6 +581,8 @@ def submit_review(repo, work, layer, report_path, code_snapshot):
     findings_file = provider_artifact(repo, str(report.get('findings_file') or ''), ['_bmad-output'])
     if findings_file == report_file or not findings_file.read_text().strip():
         raise ValueError('NATIVE_REVIEW_FINDINGS_REQUIRED')
+    from scripts.review_observation import validate_source
+    validate_source(repo, run, findings_file)
     findings = report.get('findings')
     if not isinstance(findings, list) or not findings or len(findings) != len(load_findings(findings_file)):
         raise ValueError('NATIVE_REVIEW_TRIAGE_REQUIRED')

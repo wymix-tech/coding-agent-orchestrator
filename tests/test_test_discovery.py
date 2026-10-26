@@ -37,3 +37,14 @@ class TestDiscovery(unittest.TestCase):
             self.assertEqual(result['exit_code'], 0)
             self.assertNotIn('Ran 0 tests', result['stdout_tail'])
             self.assertEqual(result['test_discovery'], {'observed': True, 'maximum_count': 0})
+
+    def test_all_skipped_does_not_count_as_executed(self):
+        for value in (b'Ran 3 tests in 0.01s\nOK (skipped=3)\n',
+                      b'Tests run: 4, Failures: 0, Errors: 0, Skipped: 4\n',
+                      b'# tests 2\n# skipped 2\n'):
+            self.assertEqual({'observed': True, 'maximum_count': 0}, self.receipt(value))
+
+    def test_go_rust_ctest_and_node_receipts(self):
+        for value in (b'--- PASS: TestReady (0.00s)\n', b'running 1 test\n',
+                      b'100% tests passed, 0 tests failed out of 1\n', b'\xe2\x84\xb9 tests 1\n'):
+            self.assertEqual({'observed': True, 'maximum_count': 1}, self.receipt(value))

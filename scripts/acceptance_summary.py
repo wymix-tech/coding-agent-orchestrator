@@ -86,7 +86,10 @@ def cmd_acceptance(args):
         raise ValueError('NO_WORK_ITEM')
     if args.acceptance_action == 'criteria':
         from scripts.acceptance_trace import criteria
-        out = {'criteria': criteria(repo, work)}
+        catalog = criteria(repo, work)
+        out = {'criteria': catalog, 'catalog_kind': 'source_items', 'source_item_count': len(catalog),
+               'declared_acceptance_count': len(((work.get('sdd') or {}).get('acceptance') or {}).get('declaration', {}).get('criteria', [])),
+               'note': 'Source-item coverage is not proof of criterion-specific execution or functional acceptance.'}
     elif args.acceptance_action == 'status':
         from scripts.cao_completion import completion_status
         out = completion_status(repo, work)
