@@ -15,8 +15,7 @@ Use CAO first for non-trivial repository coding work. Invoke its installed comma
    repair the installation; do not substitute an invented path or workflow.
 4. For `mode: sdd_select`, ask the user which Provider they want and wait for explicit selection
    before installing/selecting. A recommendation is not authorization.
-5. Resume current Work across sessions. Create Work before product code/configuration/tests/setup;
-   establish project background and actual verification entries or a plan before start; failing tests do not prevent start once those declarations are ready. Follow the stage guide
+5. Resume current Work across sessions. Empty products complete the exact `project setup` plan/apply/check without Work, then start the original request. Existing products create Work before business code; failing tests do not prevent start once their declarations are ready. Follow the stage guide
    for numbered intake, baseline setup, assessment, native execution and recovery.
 6. Preserve SDD-native prerequisites, approvals, whole-requirement scope and independent reviews.
    Read installed native Skills fully; rendering loads instructions, not completed execution.
@@ -24,7 +23,7 @@ Use CAO first for non-trivial repository coding work. Invoke its installed comma
    Work; native done or passing tests alone cannot. Never push without authorization.
 
 Everything under `.orchestrator/` except `requirements/` and the active Work's exact
-`inputs/WORK_ID/route.json` is derived state (`config.json`, `index.json`,
+`inputs/WORK_ID/route.json` and the exact prepared `inputs/project-SCOPE/setup.json` is derived state (`config.json`, `index.json`,
 `work/`, `sessions/`, `handoffs/`, `lifecycle/`); never edit those files by hand. Use CAO commands.
 Follow the user's explicit instructions and configured `language.user` for communication/documents.
 Hooks load at host startup: a missing adapter must be installed for the next session; meanwhile call

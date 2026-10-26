@@ -135,7 +135,14 @@ def workflow_ready(work: dict, repo: Path) -> tuple[bool, str | None]:
         if not path.is_relative_to(repo.resolve()) or not path.is_file():
             missing.append(relative)
         elif hashes.get(relative) != hashlib.sha256(path.read_bytes()).hexdigest():
-            changed.append(relative)
+            from scripts.native_metadata import POLICY, semantic_hash
+            metadata_only = (sdd.get('provider') == 'bmad'
+                and workflow.get('artifact_metadata_policy') == POLICY
+                and (sdd.get('route_decision') or {}).get('build_route') == 'dispatch'
+                and relative == (sdd.get('route_decision') or {}).get('primary_artifact')
+                and workflow.get('artifact_semantic_hashes', {}).get(relative) == semantic_hash(path))
+            if not metadata_only:
+                changed.append(relative)
     if missing:
         return False, "native SDD workflow output artifacts are missing: " + ", ".join(missing)
     if changed:

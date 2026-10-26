@@ -54,7 +54,11 @@ def source_hashes(repo: Path, declaration: dict, provider_dirs: list[str]) -> di
                     if line.strip() and not re.match(r"^\s*#{1,6}(?:\s|$)", line)]
             if not body:
                 raise ValueError("SDD_ACCEPTANCE_SOURCE_INVALID")
-            hashes[relative] = hashlib.sha256(raw).hexdigest()
+            if declaration.get('lifecycle_metadata') == 'bmad-dispatch-status-v1' and relative == declaration['spec']:
+                from scripts.native_metadata import semantic_hash
+                hashes[relative] = semantic_hash(path)
+            else:
+                hashes[relative] = hashlib.sha256(raw).hexdigest()
         return hashes
     except (OSError, UnicodeError, ValueError, RuntimeError) as exc:
         raise ValueError("SDD_ACCEPTANCE_SOURCE_INVALID") from exc

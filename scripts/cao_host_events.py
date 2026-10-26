@@ -97,6 +97,14 @@ def host_event(args: argparse.Namespace) -> int:
     known_session = load_session(repo, candidate_id, host=args.host) if candidate_id else None
     kind = "subagent" if (event in {"subagent_start", "subagent_stop"} or raw.get("kind") == "subagent"
                            or (known_session or {}).get("kind") == "subagent") else "primary"
+    if kind == 'subagent':
+        parent_ref = _event_key(raw, 'parent_session_id', 'parentSessionId', 'parent_session')
+        if not parent_ref and event == 'subagent_start':
+            parent_ref = _event_key(raw, 'session_id', 'sessionId')
+        parent_session = load_session(repo, parent_ref, host=args.host) if parent_ref else None
+        bound_work = (known_session or parent_session or {}).get('work_item_id')
+        if bound_work:
+            work = load_work(repo, bound_work)
     if work and restart_state(repo, args.host)["ready"] and event in {"session_start", "subagent_start", "prompt_submit", "pre_tool", "stop", "turn_end", "before_settle"}:
         # Refresh before exposing context or writing a handoff, including edits
         # performed outside this host. Derived observations never reanchor input hashes.
@@ -155,17 +163,21 @@ def host_event(args: argparse.Namespace) -> int:
 
     if session:
         observed_model = raw.get('model')
-        if not isinstance(observed_model, str):
-            observed_model = os.environ.get('PI_MODEL') if os.environ.get('PI_SESSION_ID') == host_session_id else None
-        if observed_model:
+        if isinstance(observed_model, str) and observed_model:
             from scripts.review_binding import runtime_model_name
             from scripts.cao_sessions import save_session
-            session['observed_model'] = runtime_model_name(observed_model, os.environ.get('PI_MODEL'), os.environ.get('PI_PROVIDER'))
+            session['observed_model'] = observed_model
+            if isinstance(raw.get('provider'), str) and raw['provider'].strip():
+                session['observed_provider'] = raw['provider'].strip()
             save_session(repo, session)
         if isinstance(raw.get('host_tools'), list) and all(isinstance(tool, str) for tool in raw['host_tools']):
             from scripts.cao_sessions import save_session
             session['observed_tools'] = raw['host_tools']
             save_session(repo, session)
+
+    if session:
+        from scripts.review_observation import observe as observe_review_task
+        observe_review_task(repo, work, session, raw, event)
 
     if event == 'prompt_submit' and kind == 'primary' and (repo / CONFIG_REL).exists():
         from scripts.project_sources import observe_prompt
@@ -233,8 +245,10 @@ def host_event(args: argparse.Namespace) -> int:
         # CAO's own state narrow enough that it can never deadlock intake:
         # `requirements/` stays writable (the Agent authors those), and CAO
         # itself writes state through commands, not through this hook.
+        from scripts.project_setup import writable_input as writable_setup_input
+        setup_input_write = kind == 'primary' and writable_setup_input(repo, raw)
         protected = write_targets_protected_state(repo, raw, work)
-        if protected and tool_is_mutating(raw):
+        if protected and tool_is_mutating(raw) and not setup_input_write:
             result = {
                 "decision": "deny",
                 "reason": (
@@ -248,6 +262,9 @@ def host_event(args: argparse.Namespace) -> int:
                              and all(writable_input(repo, target, work) for target in analysis["targets"]))
         native_write = (route_input_write or write_targets_native_sdd_output(repo, raw)
                         or native_intake_shell(repo, raw) or diagnostic_shell_write(repo, raw))
+        from scripts.project_setup import writable_scaffold
+        setup_repair = not work and kind == 'primary' and writable_scaffold(repo, raw)
+        native_write = native_write or setup_input_write or setup_repair
         if tool_is_mutating(raw) and not native_write:
             if not work or work.get("status") != "active":
                 advice_work = work

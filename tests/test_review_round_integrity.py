@@ -40,6 +40,8 @@ class RoundIntegrity(RepairCase):
             reviewer = bind_fixture_reviewer(self.repo, run, layer, 'fixture-model')
             raw = self.repo / ('_bmad-output/' + layer + '-raw.md')
             raw.write_text('- Actual fixture finding\n')
+            from tests.helpers import publish_fixture_review
+            publish_fixture_review(self.repo, reviewer, raw.read_text())
             report = raw.with_name(layer + '-triage.json')
             report.write_text(json.dumps({'reviewer': reviewer, 'findings_file': raw.relative_to(self.repo).as_posix(),
                 'findings': [{'id': 'finding-1', 'verdict': 'false', 'disposition': 'reject', 'evidence': 'Inspected source'}]}))
@@ -86,6 +88,8 @@ class RoundIntegrity(RepairCase):
         data = json.loads(report.read_text())
         data['reviewer'] = reviewer
         report.write_text(json.dumps(data))
+        from tests.helpers import publish_fixture_review
+        publish_fixture_review(self.repo, reviewer, (self.repo / data['findings_file']).read_text())
         self.classify('blind-hunter', report)
         final = report.with_name('remaining-final.json')
         final.write_bytes(report.read_bytes())

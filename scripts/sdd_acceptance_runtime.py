@@ -54,6 +54,7 @@ def finish_run(work: dict, run_id: str, inputs: dict, report: dict | None,
     record.setdefault("owned_outputs", {}).update(run["output_hashes"])
     if run["inputs"] != inputs:
         run["status"], run["reason"] = "stale", "SDD acceptance inputs changed during execution"
+        run['changed_inputs'] = sorted(key for key in run['inputs'].keys() | inputs.keys() if run['inputs'].get(key) != inputs.get(key))
         return run
     try:
         if error:
@@ -81,4 +82,5 @@ def acceptance_status(work: dict, inputs: dict, hashes: dict[str, str]) -> dict:
         return {"ready": False, "state": run.get("status", "blocked"), "reason": run.get("reason") or "SDD acceptance has not passed"}
     fresh = is_fresh(run, inputs, hashes)
     return {"ready": fresh, "state": "passed" if fresh else "stale",
+            'changed_inputs': sorted(key for key in run.get('inputs', {}).keys() | inputs.keys() if run.get('inputs', {}).get(key) != inputs.get(key)),
             "reason": None if fresh else "SDD acceptance evidence is stale"}

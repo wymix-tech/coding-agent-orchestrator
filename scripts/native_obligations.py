@@ -113,6 +113,17 @@ def review_integrity(repo, work, snapshot=None, inputs=None):
     if len(models) > 1 or (expected and models and models != {expected}):
         return {'ready': False, 'reason': 'NATIVE_REVIEW_MODEL_MISMATCH'}
     from scripts.cao_snapshot import code_snapshot
+    for layer in layers:
+        run = records.get(layer) or {}
+        if not run.get('input_manifest'):
+            continue
+        ref = run['input_manifest']
+        try:
+            valid_manifest = digest(json.loads(repo_file(repo, ref['path']).read_text())) == ref['content_sha256']
+        except (ValueError, OSError, RuntimeError):
+            valid_manifest = False
+        if not valid_manifest:
+            return {'ready': False, 'reason': 'NATIVE_REVIEW_INPUT_MANIFEST_STALE', 'layer': layer, 'file': ref['path']}
     current = inputs if inputs is not None else (review_inputs(repo, work, snapshot or code_snapshot)
                                                 if any(records.get(layer) for layer in layers) else {})
     for layer in layers:
@@ -122,9 +133,15 @@ def review_integrity(repo, work, snapshot=None, inputs=None):
         if run.get('status') not in {'running', 'classified', 'passed'}:
             return {'ready': False, 'reason': 'NATIVE_REVIEW_RESTART_REQUIRED', 'layer': layer, 'field': 'status'}
         # Classified evidence deliberately keeps the original pre-patch snapshot.
-        if any(run.get('inputs', {}).get(key) != value for key, value in current.items()
-               if key != 'code_snapshot' or run.get('status') != 'classified'):
-            return {'ready': False, 'reason': 'NATIVE_REVIEW_STALE', 'layer': layer, 'field': 'inputs'}
+        changed = [key for key, value in current.items() if run.get('inputs', {}).get(key) != value
+                   and (key != 'code_snapshot' or run.get('status') != 'classified')]
+        if changed:
+            affected = [name for name in layers if records.get(name) and any(
+                records[name].get('inputs', {}).get(key) != value and (key != 'code_snapshot' or records[name].get('status') != 'classified')
+                for key, value in current.items())]
+            return {'ready': False, 'reason': 'NATIVE_REVIEW_STALE', 'layer': layer, 'field': 'inputs',
+                    'changed_inputs': sorted(changed), 'affected_layers': affected,
+                    'still_valid_layers': [name for name in layers if records.get(name) and name not in affected]}
         if run.get('status') in {'classified', 'passed'}:
             try:
                 validate_reviewer(run, {'reviewer': run.get('reviewer')})
@@ -222,7 +239,15 @@ def review_inputs(repo, work, code_snapshot):
     if not source:
         raise ValueError('NATIVE_REVIEW_NOT_APPLICABLE')
     contract = ((work.get('sdd') or {}).get('native_reviews') or {}).get('_contract') or {}
-    instructions = {path: hashlib.sha256(repo_file(repo, path).read_bytes()).hexdigest() for path in contract.get('sources', [])}
+    aliases = (work.get('sdd') or {}).get('evidence_aliases') or {}
+    def canonical(path):
+        seen = set()
+        while path in aliases and path not in seen:
+            seen.add(path)
+            path = aliases[path]
+        return path
+    instructions = {canonical(path): hashlib.sha256(repo_file(repo, path).read_bytes()).hexdigest()
+                    for path in contract.get('sources', [])}
     from scripts.review_scope import acceptance_review_scope
     excluded, acceptance_standard = acceptance_review_scope(repo, work)
     result = {'instructions': instructions, 'work_id': work['id'], 'requirement_sha256': work['requirement']['sha256'],
@@ -277,6 +302,12 @@ def dispatch(work):
 def implementation_contract(repo, work):
     if not dispatch(work):
         return None
+    contracts = work['sdd']['route_decision'].get('contracts', {})
+    if contracts.get('implementation'):
+        from scripts.native_contracts import validate
+        validate(repo, contracts)
+        item = contracts['implementation']
+        return {**item, 'subagent_default': bool(re.search(r'(?i)launch a subagent', repo_file(repo, item['path']).read_text()))}
     for rule in work['sdd']['route_decision'].get('rules', []):
         path = repo_file(repo, repo_file(repo, rule['path']).parent / 'step-03-implement.md')
         if path.is_file():
@@ -348,6 +379,11 @@ def review_source(repo, work):
 
 
 def active_layers(repo, work):
+    contracts = ((work.get('sdd') or {}).get('route_decision') or {}).get('contracts', {})
+    if contracts:
+        from scripts.native_contracts import validate
+        validate(repo, contracts)
+        return contracts['layers']
     records = (work.get('sdd') or {}).get('native_reviews') or {}
     if not dispatch(work):
         contract = records.get('_contract') or {}
@@ -472,6 +508,8 @@ def classify_review(repo, work, layer, report_path, code_snapshot):
     if run.get('status') != 'running' or report.get('run_id') != run.get('id') or report.get('input_sha256') != digest(inputs):
         raise ValueError('NATIVE_REVIEW_RUN_STALE_OR_MISMATCH')
     findings_file = provider_artifact(repo, str(report.get('findings_file') or ''), ['_bmad-output'])
+    from scripts.review_observation import validate_source
+    validate_source(repo, run, findings_file)
     raw = load_findings(findings_file)
     findings = report.get('findings')
     if not isinstance(raw, list) or not isinstance(findings, list):
@@ -571,6 +609,8 @@ def submit_review(repo, work, layer, report_path, code_snapshot):
     findings_file = provider_artifact(repo, str(report.get('findings_file') or ''), ['_bmad-output'])
     if findings_file == report_file or not findings_file.read_text().strip():
         raise ValueError('NATIVE_REVIEW_FINDINGS_REQUIRED')
+    from scripts.review_observation import validate_source
+    validate_source(repo, run, findings_file)
     findings = report.get('findings')
     if not isinstance(findings, list) or not findings or len(findings) != len(load_findings(findings_file)):
         raise ValueError('NATIVE_REVIEW_TRIAGE_REQUIRED')

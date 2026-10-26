@@ -83,13 +83,13 @@ The agent follows this order:
 
 1. Restore any pending request returned by bootstrap after restart. Inspect the existing product and saved background with `cao project inspect` and `cao project context show`.
 2. Preserve established choices and confirm missing ones. Save them with `cao project context set`, using the observed user evidence ID or established manifest path returned by inspection. Project background does **not** require a Work Item.
-3. Reuse existing verification entries. For an empty project, declare a plan first: for example, `cao verification configure --plan-only --test-script "mvn test"` for the Maven project above. This creates no product files and proves no checks passed.
+3. Reuse existing verification entries. Empty products first complete `cao project setup rules`, `draft`, `plan`, `apply`, and `check` without a Work. Confirm only missing identity fields and versions; adapt the exact plan to the selected framework. See [project initialization](references/project-initialization.md). `verification configure --plan-only` alone does not establish initialization readiness.
 4. Use an existing requirement file, or reserve a path with `cao requirement next-id --title "User login"` and fill that returned file. Then run `cao start --requirement <requirement-path> --title "User login"`.
-5. Inside the active Work, create missing build/test scaffolding and configure the real checks without `--plan-only`. Review the baseline as requested, assess the execution path, and follow the selected provider's native workflow.
+5. Existing Work may repair its build/test scaffolding and trial configured checks with `cao verification check --work <id>` before formal review; initialized projects inherit their actual checks. Review the baseline as requested, assess the execution path, and follow the selected provider's native workflow.
 
 Commands containing `<...>` require actual returned values. Use `cao project context set --help` to inspect background fields. A source label or agent-written specification is not evidence of a user's technology choice.
 
-`cao next` returns the current action and `guidance.read_before_action` paths. Read those stage/provider instructions and continue from the current state. Initial failing tests do not prevent creating a Work; an accepted verification baseline and native prerequisites must be in place before business implementation.
+`cao next` returns the current action and `guidance.read_before_action` paths. Read those stage/provider instructions and continue from the current state. Existing-product trial failures do not prevent creating a Work; empty products must first pass their initialization checks; an accepted verification baseline and native prerequisites must be in place before business implementation.
 
 ### 5. Verify, accept, and close
 
@@ -311,3 +311,18 @@ Optional source-bound knowledge collection follows successful reviews and comple
 collection failure never blocks completion. Use `cao knowledge list/collect/refresh`,
 or disable it with `knowledge.enabled: false`. See the
 [conformance and knowledge protocol](references/conformance-knowledge.md).
+
+### Empty-project preparation and evidence integrity
+
+Empty runtime products now have a project-owned lifecycle before business Work:
+`cao project setup rules` → `draft` → `plan` → `apply` → `check` → `status`.
+The draft exposes applicable identity/layout fields and exact files/checks. Other
+stacks use the same explicit-plan schema; built-in examples are conveniences,
+not a language whitelist. See [initialization](references/project-initialization.md).
+`cao verification check --work <id>` trials an existing Work baseline without
+claiming formal verification or bypassing native review.
+
+New native review tickets bind the actual child task, layer and original output,
+not session order. New acceptance declarations require criterion-specific check
+receipts. Native Finalize remains required before `cao done`; CAO checks process
+and evidence rather than adding another functional code review.

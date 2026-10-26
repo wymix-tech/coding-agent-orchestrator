@@ -64,6 +64,12 @@ def workflow_command_identities(entrypoint: str, depth: int = 0) -> list[str]:
                     tokens = tokens[1:2]
                 elif tokens and tokens[0].startswith("-"):
                     tokens = []  # In particular, Python -c data is not a native identity.
+            elif head in {'node', 'nodejs'}:
+                tokens = tokens[1:]
+                while tokens and tokens[0] in {'--enable-source-maps', '--no-warnings'}:
+                    tokens = tokens[1:]
+                if tokens and tokens[0].startswith('-'):
+                    tokens = []  # Inline -e/-p code and unknown options are not file identities.
             elif head in {"npx", "uvx", "uv"}:
                 tokens = tokens[1:]
                 if head == "uv":

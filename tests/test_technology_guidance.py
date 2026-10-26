@@ -70,7 +70,7 @@ class TechnologyGuidance(RepairCase):
     def test_existing_baseline_cannot_hide_technology_policy_during_native_preparation(self):
         out = self.start_work("# 状态页\n开发状态页，技术选择待确认。\n")
         folder = self.repo / "acceptance-tests"
-        folder.mkdir()
+        folder.mkdir(exist_ok=True)
         (folder / "test_fixture.py").write_text("import unittest\nclass Fixture(unittest.TestCase):\n def test_ok(self): self.assertTrue(True)\n")
         code, out = self.run_cli("verification", "configure", "--test-script",
                                  shlex.join([sys.executable, "-m", "unittest", "discover", "-s", "acceptance-tests"]))

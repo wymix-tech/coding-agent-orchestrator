@@ -32,11 +32,11 @@ decision to store the project stack. Missing fields stay pending; mark individua
 irrelevant dimensions with --not-applicable only with actual supporting input.
 For explicit modules pass --scope and --path. Root constraints apply to modules.
 
-An empty project can declare `cao verification configure --plan-only --test-script
-'<planned real command>'`. This writes no pom.xml, product code, tests or wrappers,
-and does not prove anything passed. Start the Work, then create actual entries in
-its permitted setup stage and configure them. Existing project entries are reused,
-not overwritten with templates. Configured does not mean executed or passed.
+For an empty product, follow [project initialization](project-initialization.md):
+confirm applicable identity/layout, plan/apply exact minimal files, then execute
+real project checks before business Work. `verification configure --plan-only`
+remains a non-executable legacy declaration; it does not make an empty product
+ready. Existing products reuse their actual entries without template overwrite.
 
 New Work: `cao start --requirement <path> --scope <module>` inherits background.
 Legacy Work: establish background and use `cao project bind --work <id>`; preserve
@@ -62,7 +62,7 @@ pass and remain fresh, and native approvals/reviews/plans must also be complete.
 
 ## Exit when
 
-Current scope background and its actual verification entries or declared plan are ready; rerun bootstrap and follow its sole next action.
+Current scope background and applicable initialization/verification are ready; rerun bootstrap and follow its sole next action.
 
 ## If blocked
 

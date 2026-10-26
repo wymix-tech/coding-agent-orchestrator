@@ -17,7 +17,7 @@ class AcceptanceProtocolTests(unittest.TestCase):
     def test_documented_examples_match_protocol_and_runtime_validation(self):
         root = Path(__file__).resolve().parents[1]
         text = (root / "references/sdd-acceptance-protocol.md").read_text()
-        request, report = [json.loads(block) for block in re.findall(r"```json\n(.*?)\n```", text, re.S)]
+        request, report = [json.loads(block) for block in re.findall(r"```json\n(.*?)\n```", text, re.S)[:2]]
         machine = protocol()
         self.assertEqual(request, machine["request_example"])
         self.assertEqual(report, machine["report_example"])
@@ -111,3 +111,49 @@ class AcceptanceProtocolTests(unittest.TestCase):
             report_hashes(self.repo, [], ["openspec/cao-acceptance/demo/missing.json"])
         self.assertEqual(cm.exception.diagnostic["field"], "$.declaration.outputs[0]")
         self.assertIn("missing.json", cm.exception.diagnostic["expected"])
+
+    def test_strict_policy_rejects_broadcast_pass_without_criterion_receipt(self):
+        self.request['declaration']['evidence_policy'] = 'criterion-checks-v1'
+        report = {key: self.request[key] for key in ('run_id', 'input_sha256', 'provider')}
+        report['items'] = [{'id': 'AC-1', 'status': 'passed',
+                            'evidence': [{'path': 'check.py', 'reason': 'security.sh exit 0'}]}]
+        with self.assertRaisesRegex(ValueError, 'SDD_ACCEPTANCE_CRITERION_CHECK_REQUIRED'):
+            normalize_report(report, self.request['declaration'], self.request['run_id'],
+                             self.request['input_sha256'], self.request['provider'])
+        p, items = self.run_executor({'AC-1': {'command': [sys.executable, 'check.py'],
+                    'evidence': ['check.py'], 'selector': 'check.py: arithmetic assertion',
+                    'assertion': 'result equals four'}})
+        self.assertEqual(0, p.returncode, p.stderr)
+        self.assertEqual('AC-1', items[0]['check']['criterion_id'])
+
+    def test_strict_policy_blocks_missing_assertion_mapping(self):
+        self.request['declaration']['evidence_policy'] = 'criterion-checks-v1'
+        p, items = self.run_executor({'AC-1': {'command': [sys.executable, 'check.py'], 'evidence': ['check.py']}})
+        self.assertEqual(2, p.returncode)
+        self.assertEqual('blocked', items[0]['status'])
+
+    def test_one_actual_execution_retains_distinct_assertion_outcomes(self):
+        self.request['declaration']['evidence_policy'] = 'criterion-checks-v1'
+        self.request['declaration']['criteria'].append({**self.request['declaration']['criteria'][0], 'id': 'AC-2'})
+        (self.repo / 'shared.py').write_text("import json\nfrom pathlib import Path\np=Path('executions.txt');p.write_text(p.read_text()+'x' if p.exists() else 'x')\nprint(json.dumps({'checks':{'login':{'status':'passed','observed':'valid password accepted'},'reject':{'status':'failed','observed':'invalid password was accepted'}}}))\n")
+        common = {'command': [sys.executable, 'shared.py'], 'evidence': ['shared.py'], 'shared_run': 'auth-suite'}
+        p, items = self.run_executor({
+            'AC-1': {**common, 'selector': 'login', 'assertion': 'valid login succeeds', 'result_key': 'login'},
+            'AC-2': {**common, 'selector': 'reject', 'assertion': 'invalid login fails', 'result_key': 'reject'}})
+        self.assertEqual(1, p.returncode, p.stderr)
+        self.assertEqual(['passed', 'failed'], [item['status'] for item in items])
+        self.assertEqual('x', (self.repo / 'executions.txt').read_text())
+        self.assertEqual(items[0]['check']['execution_id'], items[1]['check']['execution_id'])
+
+    def test_all_skipped_test_output_cannot_certify_a_criterion(self):
+        (self.repo / 'check.py').write_text("print('Ran 2 tests in 0.001s')\nprint('OK (skipped=2)')\n")
+        p, items = self.run_executor({'AC-1': {'command': [sys.executable, 'check.py'], 'evidence': ['check.py']}})
+        self.assertEqual(2, p.returncode)
+        self.assertEqual('blocked', items[0]['status'])
+
+    def test_malformed_shared_result_container_blocks_instead_of_crashing(self):
+        (self.repo / 'check.py').write_text("print('{\"checks\": []}')\n")
+        p, items = self.run_executor({'AC-1': {'command': [sys.executable, 'check.py'],
+                    'evidence': ['check.py'], 'result_key': 'missing'}})
+        self.assertEqual(2, p.returncode, p.stderr)
+        self.assertEqual('blocked', items[0]['status'])

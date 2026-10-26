@@ -241,6 +241,10 @@ def legacy_completion_status(repo: Path, work: dict[str, Any] | None) -> dict[st
     if profile in {"standard", "comprehensive"} and not sdd_state["ready"]:
         return {"ready": False, "reason": sdd_state["reason"], "next": sdd_state.get("next"), "sdd_acceptance": sdd_state}
     if fresh:
+        from scripts.native_completion import state as native_completion_state
+        terminal = native_completion_state(repo, work)
+        if not terminal['ready']:
+            return terminal
         commit = native_commit_state(repo, work, SNAPSHOT_IGNORE_DIRS | {".agents", ".pi", "_bmad", "_bmad-output"})
         if not commit["ready"]:
             return commit
@@ -373,6 +377,8 @@ def lifecycle_status(repo, work):
             return {'ready': not differences, 'reason': 'PROJECT_MIGRATION_TARGET_MISMATCH', 'differences': differences}
         check('migration_target', target_matches)
     check('manual_gates', manual_gates)
+    from scripts.native_completion import state as native_completion_state
+    check('native_finalize', lambda: native_completion_state(repo, work))
     check('native_commit', lambda: native_commit_state(repo, work, SNAPSHOT_IGNORE_DIRS | {'.agents', '.pi', '_bmad', '_bmad-output'}))
     blocked = [state for state in states if not state['ready']]
     return {'ready': not blocked, 'reason': blocked[0].get('reason') if blocked else None,

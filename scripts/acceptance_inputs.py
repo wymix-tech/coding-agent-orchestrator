@@ -23,9 +23,14 @@ def technical_inputs(repo, work, cfg):
     excluded |= sdd_acceptance_outputs(repo, work)
     from scripts.review_scope import acceptance_review_scope
     declaration_files, _ = acceptance_review_scope(repo, work)
-    excluded |= declaration_files
+    declaration_file = ((work.get('sdd') or {}).get('acceptance') or {}).get('declaration_file')
+    if declaration_file in declaration_files:
+        excluded.add(declaration_file)
     # Only exact declarative native sources are excluded; executable directories remain inputs.
-    excluded = {path for path in excluded if not path.endswith(('.py', '.java', '.js', '.ts', '.sh', '.go', '.rs'))}
+    from pathlib import Path
+    from scripts.snapshot_scope import SOURCE_SUFFIXES
+    code_suffixes = SOURCE_SUFFIXES - {'.md', '.yaml', '.yml'}
+    excluded = {path for path in excluded if Path(path).suffix.lower() not in code_suffixes}
     gates = set((work.get('path_assessment') or {}).get('required_gates', []))
     technical_gates = sorted(gates & {'tests', 'security_verification', 'verification', 'targeted_verification',
                                      'integration_verification', 'compatibility_verification', 'data_verification'})
@@ -50,9 +55,15 @@ def task_inputs(repo, work, cfg):
     from scripts.cao_plans import provider_verification_plan_state
     from scripts.cao_runtime import sha256_file
     sdd = work.get('sdd') or {}
+    native_scope = provider_verification_plan_state(repo, work)
+    if (sdd.get('acceptance') or {}).get('declaration', {}).get('lifecycle_metadata') == 'bmad-dispatch-status-v1':
+        from copy import deepcopy
+        native_scope = deepcopy(native_scope)
+        for observation in native_scope.get('observations', {}).values():
+            observation.pop('sha256', None)  # Source semantics are bound separately.
     return {**verification_inputs(repo, work, cfg), 'task_input_version': 1,
             'requirement_sha256': sha256_file(repo / work['requirement']['path']),
             'assessment_revision': (work.get('path_assessment') or {}).get('revision'),
-            'native_scope': provider_verification_plan_state(repo, work),
+            'native_scope': native_scope,
             'spec_binding': sdd.get('spec_binding'), 'route': sdd.get('route_decision'),
             'spec_approval': sdd.get('spec_approval')}

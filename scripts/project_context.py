@@ -14,7 +14,7 @@ from pathlib import Path
 from scripts.state_store import atomic_json, repo_transaction
 
 ROOT = Path('.orchestrator/project')
-FIELDS = ('language', 'framework', 'build_tool', 'test_framework', 'storage', 'delivery')
+FIELDS = ('language', 'framework', 'build_tool', 'test_framework', 'storage', 'delivery', 'package_manager', 'runtime')
 REQUIRED = ('language', 'build_tool', 'test_framework')
 STATES = {'accepted', 'pending', 'conflict', 'not_applicable'}
 
@@ -58,7 +58,8 @@ def semantic(context, scopes=None):
         result[name] = {'paths': sorted(scope['paths']),
                         'technology': {key: {'value': compact(item.get('value')), 'status': item['status']}
                                        for key, item in sorted(scope['technology'].items())},
-                        'versions': scope.get('versions', {})}
+                        'versions': scope.get('versions', {}),
+                        **({'identity': {key: value for key, value in scope['identity'].items() if key != 'sources'}} if scope.get('identity') else {})}
     return result
 
 
@@ -151,8 +152,6 @@ def context_state(repo, scopes=None, work=None, check_sources=False):
     for name, scope in semantic(context, scopes).items():
         # A root containing only common constraints does not need its own stack.
         keys = REQUIRED if name in scopes else ()
-        if name in scopes and scope['technology'].get('language', {}).get('value') == 'java':
-            keys = (*keys, 'framework')
         for key in keys:
             if scope['technology'].get(key, {}).get('status') not in {'accepted', 'not_applicable'}:
                 missing.append(name + '.' + key)

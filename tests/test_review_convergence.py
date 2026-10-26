@@ -128,7 +128,7 @@ class ReviewIntegrationTests(unittest.TestCase):
 
     def child(self, package, name='readonly-child', model='fixture-model'):
         t = self.t
-        t.hook('subagent_start', subagent_id=name, model=model, host_tools=['read', 'grep'])
+        t.hook('subagent_start', subagent_id=name, model=model, host_tools=['read', 'grep'], prompt=package['task_marker'])
         return t.run_cli('sdd', 'review', 'attach', '--reviewer-session', name, '--layer', package['layer'],
                          '--run', package['run_id'], '--input-sha256', package['input_sha256'], '--model', 'fixture-model')
 
@@ -142,6 +142,7 @@ class ReviewIntegrationTests(unittest.TestCase):
         source = '_bmad-output/raw-findings.md'
         raw = '### Real gap\n- Surface: login\n- Missing verification: cookie\n'
         t.write(source, raw)
+        t.hook('turn_end', kind='subagent', subagent_id='readonly-child', last_assistant_message=raw)
         drafted = t.run_cli('sdd', 'review', 'draft', '--layer', package['layer'], '--source', source)
         report = json.loads((t.repo / drafted['report']).read_text())
         self.assertEqual(1, len(report['findings']))
@@ -184,6 +185,7 @@ class ReviewIntegrationTests(unittest.TestCase):
             self.child(package, name='child-' + package['layer'])
             source = '_bmad-output/' + package['layer'] + '.json'
             t.write(source, '[]')
+            t.hook('turn_end', kind='subagent', subagent_id='child-' + package['layer'], last_assistant_message='[]')
             drafted = t.run_cli('sdd', 'review', 'draft', '--layer', package['layer'], '--source', source)
             reports.append(drafted['report'])
         manifest = '_bmad-output/classify-batch.json'
@@ -284,6 +286,7 @@ class MavenScopeTests(unittest.TestCase):
         self.t.check('project', 'context', 'set', '--scope', 'root', '--framework', 'Spring Boot',
                      '--source', 'user-specified', '--evidence', evidence)
         self.t.check('verification', 'configure', '--plan-only', '--test-script', 'mvn test')
+        self.t.check('project', 'context', 'set', '--path', '.', '--language', 'Java', '--build-tool', 'Maven', '--test-framework', 'JUnit 5', '--framework', 'Spring Boot', '--source', 'user-specified', '--evidence', observe_prompt(self.t.repo, 'Java Maven JUnit 5 Spring Boot', 'pi', 'fixture'))
         self.t.start()
 
     def test_first_baseline_excludes_maven_outputs_but_not_tracked_inputs(self):

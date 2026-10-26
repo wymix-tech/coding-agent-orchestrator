@@ -111,6 +111,7 @@ def build_parser() -> argparse.ArgumentParser:
         sp = route_sub.add_parser(name)
         sp.add_argument("--repo", default="."); sp.add_argument("--work")
         if name in {"propose", "check"}: sp.add_argument("--declaration", required=name == "propose", metavar="JSON_FILE", help="Existing declaration JSON path; new inputs use .orchestrator/inputs/WORK_ID/route.json")
+        if name == "propose": sp.add_argument("--repair-evidence", action="store_true", help="Relocate byte-equivalent rule/contract evidence without resetting intent approval or execution")
         if name == "prepare": sp.add_argument("--from", dest="from_declaration", metavar="JSON_FILE", help="Copy an existing declaration into the new input location without overwriting a current draft")
         if name == "rule":
             sp.add_argument("--source", required=True, help="Actual installed native rule file")
@@ -139,7 +140,7 @@ def build_parser() -> argparse.ArgumentParser:
         if name not in {'findings', 'prepare', 'status', 'classify-batch'}:
             sp.add_argument("--layer", required=True)
         if name in {"begin", "prepare"}:
-            sp.add_argument("--model", required=True); sp.add_argument("--instructions", required=True)
+            sp.add_argument("--model", help="Explicit supported reviewer model; default is the current host-observed coordinator model"); sp.add_argument("--instructions", required=True)
             sp.add_argument('--restart', action='store_true', help='Explicitly replace a failed current dispatch ticket')
             if name == 'prepare':
                 capability = sp.add_mutually_exclusive_group()
@@ -268,6 +269,11 @@ def build_parser() -> argparse.ArgumentParser:
     sp = sessions_sub.add_parser("show"); sp.add_argument("--repo", default="."); sp.add_argument("--id", required=True); sp.add_argument("--host", choices=["claude-code", "codex", "pi"]); sp.add_argument("--stale-after-minutes", type=int, default=30); sp.set_defaults(fn=cmd_sessions_show)
     verification = sub.add_parser("verification", help="Configure project verification without resetting other state")
     verification_sub = verification.add_subparsers(dest="verification_command", required=True)
+    from scripts.verification_probe import command as cmd_verification_check
+    probe = verification_sub.add_parser('check', help='Run configured preparation checks without certifying final acceptance')
+    probe.add_argument('--repo', default='.')
+    probe.add_argument('--work')
+    probe.set_defaults(fn=cmd_verification_check)
     sp = verification_sub.add_parser("smoke", help="HTTP smoke with a fresh port and owned server process")
     sp.add_argument("--repo", default="."); sp.add_argument("--server-command", required=True)
     sp.add_argument("--path", default="/"); sp.add_argument("--method", choices=["GET", "POST"], default="GET")

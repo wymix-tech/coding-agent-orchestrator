@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import fnmatch
 import os
+import re
 import subprocess
 from pathlib import Path, PurePosixPath
 
@@ -16,7 +17,8 @@ CACHE_NAMES = SNAPSHOT_CACHE_DIRS
 SOURCE_ROOTS = {"src", "source", "lib", "app", "apps", "packages", "test", "tests", "acceptance-tests",
                 "scripts", "requirements", "specs", "openspec", ".specify", ".agents", ".pi"}
 SOURCE_SUFFIXES = {".py", ".pyi", ".java", ".js", ".jsx", ".ts", ".tsx", ".go", ".rs", ".c", ".h",
-                   ".cpp", ".cs", ".rb", ".sh", ".ps1", ".cmd", ".bat", ".md", ".yml", ".yaml"}
+                   ".cpp", ".cs", ".rb", ".sh", ".ps1", ".cmd", ".bat", ".md", ".yml", ".yaml",
+                   ".mjs", ".cjs", ".mts", ".cts", ".kt", ".kts", ".swift", ".dart", ".php"}
 MANIFEST_NAMES = {name.casefold() for name in SCAFFOLD_MANIFESTS}
 SOURCE_ROOTS.update(root.split("/", 1)[0] for meta in SDD_CATALOG.values()
                     for root in meta.get("output_dirs", []))
@@ -44,9 +46,18 @@ def scope_config(cfg: dict) -> dict:
     verification = cfg.get("verification") or {}
     if not isinstance(snapshot, dict) or not isinstance(verification, dict):
         raise ValueError("SNAPSHOT_SCOPE_INVALID: snapshot and verification must be objects")
+    generated = verification.get('generated_output_suffixes', {})
+    if not isinstance(generated, dict):
+        raise ValueError('SNAPSHOT_SCOPE_INVALID: generated_output_suffixes must be an object')
+    outputs = paths(verification.get('outputs', []), 'verification.outputs')
+    for output, suffixes in generated.items():
+        if (output not in outputs or not output.endswith('/') or not isinstance(suffixes, list)
+                or not suffixes or any(not isinstance(s, str) or not re.fullmatch(r'\.[a-z0-9]+', s) for s in suffixes)):
+            raise ValueError('SNAPSHOT_SCOPE_INVALID: generated suffixes require a declared output tree')
     return {"format": SNAPSHOT_FORMAT,
             "exclude_paths": paths(snapshot.get("exclude_paths", []), "snapshot.exclude_paths"),
-            "outputs": paths(verification.get("outputs", []), "verification.outputs")}
+            "outputs": outputs,
+            **({'generated_output_suffixes': generated} if generated else {})}
 
 
 def path_key(relative: str) -> str:
@@ -87,12 +98,12 @@ def git_inputs(repo: Path) -> set[str]:
     return {os.fsdecode(item) for item in result.stdout.split(b"\0") if item}
 
 
-def _protected(cfg: dict, relative: str) -> bool:
+def _protected(cfg: dict, relative: str, generated_suffixes=()) -> bool:
     path = PurePosixPath(relative)
     if (path.parts[0].casefold() in INTERNAL_ROOTS | SOURCE_ROOTS
             or path.name.casefold() in MANIFEST_NAMES
             or path.name.casefold() in {"agents.md", "claude.md", "cao", "makefile", "dockerfile"}
-            or path.suffix.lower() in SOURCE_SUFFIXES):
+            or path.suffix.lower() in SOURCE_SUFFIXES - set(generated_suffixes)):
         return True
     rules = (cfg.get("rules") or {}).get("files") or []
     requirements = (cfg.get("sdd") or {}).get("requirement_globs",
@@ -147,7 +158,7 @@ def validate_scope(repo: Path, cfg: dict, tracked: set[str] | None = None, prote
                             raise RuntimeError("SNAPSHOT_SCAN_LIMIT: " + value)
                         if candidate.is_symlink():
                             raise ValueError("SNAPSHOT_SCOPE_SYMLINK: " + str(candidate))
-                        if _protected(cfg, candidate.relative_to(repo).as_posix()):
+                        if _protected(cfg, candidate.relative_to(repo).as_posix(), declaration.get('generated_output_suffixes', {}).get(value, [])):
                             raise ValueError("SNAPSHOT_SCOPE_PROTECTED: " + str(candidate))
             if kind == "outputs" and any(covers(value, item) for item in tracked):
                 raise ValueError("SNAPSHOT_OUTPUT_TRACKED_INPUT: " + value)

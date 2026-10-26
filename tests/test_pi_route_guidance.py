@@ -32,7 +32,7 @@ class PiRouteGuidance(RepairCase):
 
     def configure(self):
         folder = self.repo / "acceptance-tests"
-        folder.mkdir()
+        folder.mkdir(exist_ok=True)
         (folder / "test_fixture.py").write_text("import unittest\nclass Fixture(unittest.TestCase):\n def test_fixture(self): self.assertEqual(2+2,4)\n")
         self.run_cli("verification", "configure", "--test-script",
                      shlex.join([sys.executable, "-m", "unittest", "discover", "-s", "acceptance-tests"]))

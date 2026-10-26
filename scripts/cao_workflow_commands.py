@@ -169,7 +169,7 @@ def cmd_sdd_workflow(args: argparse.Namespace) -> int:
         workflow["requirement_sha256"] = work["requirement"]["sha256"]
         workflow["provider"] = provider
         workflow["artifacts"] = []
-        for key in ("completed_at", "artifact_hashes", "failure_exception"):
+        for key in ("completed_at", "artifact_hashes", "artifact_semantic_hashes", "artifact_metadata_policy", "failure_exception"):
             workflow.pop(key, None)
         workflow["execution"] = {
             "command": command,
@@ -231,6 +231,12 @@ def cmd_sdd_workflow(args: argparse.Namespace) -> int:
             artifacts.append(ref)
         workflow["artifacts"] = [ref["path"] for ref in refs]
         workflow["artifact_hashes"] = {ref["path"]: ref["sha256"] for ref in refs}
+        decision = work['sdd'].get('route_decision') or {}
+        if provider == 'bmad' and decision.get('build_route') == 'dispatch' and decision.get('primary_artifact') in workflow['artifacts']:
+            from scripts.native_metadata import POLICY, semantic_hash
+            primary = decision['primary_artifact']
+            workflow['artifact_metadata_policy'] = POLICY
+            workflow['artifact_semantic_hashes'] = {primary: semantic_hash(repo / primary)}
         workflow["requirement_sha256"] = work["requirement"]["sha256"]
         workflow["provider"] = provider
         workflow.pop("failure_exception", None)
@@ -348,14 +354,13 @@ def _cmd_sdd_review_locked(args: argparse.Namespace) -> int:
             require_review_integrity(repo, work)
         records = work.setdefault("sdd", {}).setdefault("native_reviews", {})
         identity = host_session_identity(None)
-        runtime_model = os.environ.get('PI_MODEL') if identity and identity[0] == 'pi' else None
-        if args.review_action in {'begin', 'attach', 'prepare'}:
-            args.model = runtime_model_name(args.model, runtime_model, os.environ.get('PI_PROVIDER'))
-            if runtime_model and runtime_model != args.model:
-                print(json.dumps({'ok': False, 'error': 'NATIVE_REVIEW_MODEL_MISMATCH',
-                                  'expected_model': runtime_model, 'actual_model': args.model,
-                                  'next': 'Use the current model in a new independent reviewer session; a different model is not required.'}))
-                return 2
+        if args.review_action in {'begin', 'attach', 'prepare'} and getattr(args, 'model', None):
+            observed = load_session(repo, identity[1], host=identity[0]) if identity else None
+            if args.review_action == 'attach' and getattr(args, 'reviewer_session', None) and identity:
+                observed = load_session(repo, args.reviewer_session, host=identity[0])
+            canonical = runtime_model_name(args.model, (observed or {}).get('observed_model'), (observed or {}).get('observed_provider'))
+            if args.review_action != 'attach' or canonical == (records.get(args.layer) or {}).get('model'):
+                args.model = canonical
         if args.review_action == "prepare":
             from scripts.review_dispatch import prepare_batch
             output = prepare_batch(repo, work, args, identity)
@@ -394,9 +399,10 @@ def _cmd_sdd_review_locked(args: argparse.Namespace) -> int:
         elif args.review_action == 'status':
             from scripts.native_obligations import review_state
             from scripts.review_dispatch import acceptance_preflight
-            output = {'ok': True, 'acceptance_preflight': acceptance_preflight(repo, work), 'state': review_state(repo, work, code_snapshot),
+            from scripts.review_dispatch import review_counts
+            output = {'ok': True, 'review_counts': review_counts(work), 'acceptance_preflight': acceptance_preflight(repo, work), 'state': review_state(repo, work, code_snapshot),
                       'layers': {key: {field: value.get(field) for field in
-                          ('id', 'status', 'execution_binding', 'raw_count', 'classified_count')}
+                          ('id', 'round_id', 'status', 'execution_binding', 'raw_count', 'classified_count', 'input_manifest', 'model_source')}
                                  for key, value in records.items() if key != '_contract'}}
             print(json.dumps(output, ensure_ascii=False)); return 0
         elif args.review_action == 'findings':

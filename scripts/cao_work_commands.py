@@ -198,6 +198,8 @@ def _prepare_start(args: argparse.Namespace):
     if args.sdd_ref:
         work["sdd"]["native_ref"] = args.sdd_ref
     if is_new_work:
+        from scripts.review_changes import capture_baseline
+        capture_baseline(repo, work)
         queue_event(work, {"event": "task.created", "work_item_id": wid, "source": "cao",
                            "native_ref": work.get("sdd", {}).get("native_ref"),
                            "occurred_at": work.get("created_at") or now()})

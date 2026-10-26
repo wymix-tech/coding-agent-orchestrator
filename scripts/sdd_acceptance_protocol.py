@@ -15,12 +15,17 @@ def protocol():
                      "required": [*identity, "items"], "properties": {**identity, "items": {
                          "type": "array", "minItems": 1, "items": {"type": "object", "required": ["id", "status", "evidence"],
                          "properties": {"id": text, "status": {"enum": ["passed", "failed", "blocked"]},
+                                        "check": {"type": "object", "required": ["criterion_id", "run_id", "selector", "assertion", "observed"],
+                                                  "properties": {key: text for key in ("criterion_id", "run_id", "selector", "assertion", "observed")}},
                                         "evidence": {"type": "array", "minItems": 1, "items": evidence}}}}}}
     declaration = {"type": "object", "required": ["spec", "criteria", "executor"], "properties": {
+        "evidence_policy": {"enum": ["criterion-checks-v1"]},
+        "lifecycle_metadata": {"enum": ["bmad-dispatch-status-v1"]},
         "spec": relative, "sources": {"type": "array", "items": relative}, "outputs": {"type": "array", "items": relative},
         "criteria": {"type": "array", "minItems": 1, "items": criterion}, "executor": {
             "type": "object", "required": ["mode", "entrypoint"], "properties": {
                 "mode": {"enum": ["command", "skill"]}, "entrypoint": text,
+                "review_impact": {"enum": ["product", "acceptance_only"]},
                 "timeout_seconds": {"type": "number", "exclusiveMinimum": 0}}}}}
     request_schema = {"$schema": report_schema["$schema"], "type": "object", "required": [*identity, "inputs", "declaration"],
                       "properties": {**identity, "inputs": {"type": "object"}, "declaration": declaration}}

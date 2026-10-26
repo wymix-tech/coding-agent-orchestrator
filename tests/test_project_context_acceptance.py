@@ -58,6 +58,22 @@ class ProjectAcceptanceTests(unittest.TestCase):
         return self.check(*args)
 
     def start(self, name='feature', scope=None):
+        # These dual-acceptance fixtures model an existing product. Empty-project
+        # initialization is tested separately through the real setup lifecycle.
+        from scripts.project_context import load_context
+        ctx = load_context(self.repo)
+        selected = ctx['scopes'][scope or 'root'] if ctx else None
+        if selected:
+            base = self.repo / selected['paths'][0]
+            base.mkdir(parents=True, exist_ok=True)
+            if selected['technology']['language'].get('value') == 'Java':
+                entry = base / 'src/main/java/Fixture.java'
+                entry.parent.mkdir(parents=True, exist_ok=True)
+                entry.write_text('class Fixture {}\n')
+            elif selected['technology']['language'].get('status') != 'not_applicable':
+                manifest = base / 'pyproject.toml'
+                if not manifest.exists():
+                    manifest.write_text('[project]\nname = "fixture-product"\nversion = "0.1.0"\n')
         path = self.repo / 'openspec' / (name + '.md')
         path.write_text('# Feature\n- Correct behavior is observed.\n')
         args = ['start', '--requirement', path.relative_to(self.repo).as_posix()]
@@ -84,7 +100,7 @@ class ProjectAcceptanceTests(unittest.TestCase):
         script.write_text("""import json, os, subprocess, sys
 r = json.loads(os.environ['CAO_SDD_ACCEPTANCE_REQUEST'])
 p = subprocess.run([sys.executable, '-m', 'unittest', 'discover', '-s', 'tests', '-v'], stdout=sys.stderr, stderr=sys.stderr)
-print(json.dumps({'run_id':r['run_id'], 'input_sha256':r['input_sha256'], 'provider':r['provider'], 'items':[{'id':c['id'],'status':'passed' if p.returncode == 0 else 'failed','evidence':[{'path':'tests/test_behavior.py','reason':'Executed behavior assertion'}]} for c in r['declaration']['criteria']]}))
+print(json.dumps({'run_id':r['run_id'], 'input_sha256':r['input_sha256'], 'provider':r['provider'], 'items':[{'id':c['id'],'check':{'criterion_id':c['id'],'run_id':r['run_id'],'selector':'fixture behavior assertion','assertion':c['description'],'observed':'actual fixture command result'},'status':'passed' if p.returncode == 0 else 'failed','evidence':[{'path':'tests/test_behavior.py','reason':'Executed behavior assertion'}]} for c in r['declaration']['criteria']]}))
 sys.exit(p.returncode)
 """)
         declaration = {'spec': 'openspec/spec.md',
@@ -102,7 +118,7 @@ sys.exit(p.returncode)
         self.assertEqual(list((self.repo / '.orchestrator/work').glob('*.json')), [])
         self.assertFalse((self.repo / 'tests').exists())
         self.assertFalse((self.repo / 'pom.xml').exists())
-        self.assertEqual(self.check('bootstrap')['next']['stage'], 'intake')
+        self.assertEqual(self.check('bootstrap')['next']['stage'], 'project_setup')
 
     def test_missing_context_blocks_start_with_recovery(self):
         (self.repo / 'openspec/a.md').write_text('Make feature')
@@ -113,7 +129,7 @@ sys.exit(p.returncode)
 
     def test_background_without_plan_has_reachable_recovery(self):
         self.background()
-        self.assertEqual(self.check('bootstrap')['next']['reason'], 'PROJECT_VERIFICATION_PLAN_REQUIRED')
+        self.assertEqual(self.check('bootstrap')['next']['reason'], 'PROJECT_SETUP_REQUIRED')
         self.plan()
         self.start()
 
@@ -331,7 +347,7 @@ p=subprocess.run([sys.executable,'-m','unittest','discover','-s','tests','-v'], 
 count=pathlib.Path('.orchestrator/shared-count.txt')
 count.write_text(str(int(count.read_text())+1 if count.exists() else 1))
 d=json.loads(pathlib.Path('declaration.json').read_text())
-print(json.dumps({'items':[{'id':c['id'],'status':'passed' if p.returncode==0 else 'failed','evidence':[{'path':'tests/test_behavior.py','reason':'Actual assertion in this shared run'}]} for c in d['criteria']]}))
+print(json.dumps({'items':[{'id':c['id'],'check':{'criterion_id':c['id'],'run_id':'shared-technical-fixture','selector':'fixture behavior assertion','assertion':c['description'],'observed':'actual fixture command result'},'status':'passed' if p.returncode==0 else 'failed','evidence':[{'path':'tests/test_behavior.py','reason':'Actual assertion in this shared run'}]} for c in d['criteria']]}))
 sys.exit(p.returncode)
 """)
         path = self.repo / 'declaration.json'
@@ -508,7 +524,7 @@ sys.exit(p.returncode)
         (directory / 'accept.py').write_text("""import json,os,pathlib
 r=json.loads(os.environ['CAO_SDD_ACCEPTANCE_REQUEST'])
 ok='Expected usage' in pathlib.Path('guide.md').read_text()
-print(json.dumps({'run_id':r['run_id'],'input_sha256':r['input_sha256'],'provider':r['provider'],'items':[{'id':c['id'],'status':'passed' if ok else 'failed','evidence':[{'path':'guide.md','reason':'Checked the actual usage document'}]} for c in r['declaration']['criteria']]}))
+print(json.dumps({'run_id':r['run_id'],'input_sha256':r['input_sha256'],'provider':r['provider'],'items':[{'id':c['id'],'check':{'criterion_id':c['id'],'run_id':r['run_id'],'selector':'fixture behavior assertion','assertion':c['description'],'observed':'actual fixture command result'},'status':'passed' if ok else 'failed','evidence':[{'path':'guide.md','reason':'Checked the actual usage document'}]} for c in r['declaration']['criteria']]}))
 """)
         self.check('acceptance', 'configure', '--executor-command', f'{shlex.quote(sys.executable)} scripts/verification/accept.py')
         self.check('reopen', '--reanchor', '--reason', 'Review documentation applicability and assertions')

@@ -29,7 +29,7 @@ def main():
         base = Path(td)
         modules = ("import json, importlib, pkgutil; import scripts; "
                    "[importlib.import_module(item.name) for item in pkgutil.iter_modules(scripts.__path__, 'scripts.') if item.name.startswith('scripts.cao_')]; "
-                   "from scripts import cao, state_store, completion_policy, path_guard, verification_runner, verification_setup, windows_supervisor, dashboard, light_spec_policy, sdd_acceptance_runtime, sdd_acceptance_commands, native_route, native_progress, route_inputs, route_input_commands, conformance, project_knowledge, knowledge_commands, review_dispatch, review_diagnostics, spec_intent; "
+                   "from scripts import cao, state_store, completion_policy, path_guard, verification_runner, verification_setup, windows_supervisor, dashboard, light_spec_policy, sdd_acceptance_runtime, sdd_acceptance_commands, native_route, native_progress, route_inputs, route_input_commands, conformance, project_knowledge, knowledge_commands, review_dispatch, review_diagnostics, spec_intent, project_setup, setup_identity, setup_rules, native_contracts, native_metadata, preparation_result, review_changes, review_observation, route_repair, verification_probe; "
                    "root=cao.package_root_dir(); "
                    "from scripts.skill_guidance import STAGE_FILES, PROVIDER_FILES, CONTRACT_FILES; "
                    "assert all((root/p).is_file() for p in {*STAGE_FILES.values(), *PROVIDER_FILES.values(), *CONTRACT_FILES.values()}); "
@@ -41,6 +41,36 @@ def main():
                                   text=True, capture_output=True, timeout=10)
         assert imported.returncode == 0, imported.stderr
         installation = json.loads(imported.stdout)
+        for host in ('claude-code', 'codex', 'pi'):
+            repo = base / ('empty-' + host)
+            (repo / 'openspec').mkdir(parents=True)
+            (repo / 'openspec/config.yaml').write_text('context: installed fixture\n')
+            def setup_cli(*argv, payload=None):
+                result = subprocess.run([args.cao, *argv, '--repo', str(repo)], cwd=repo, env=env,
+                                        text=True, capture_output=True, timeout=60,
+                                        input=json.dumps(payload) if payload is not None else None)
+                assert result.returncode == 0, (argv, result.stdout, result.stderr)
+                return json.loads(result.stdout)
+            setup_cli('init')
+            setup_cli('host-event', '--host', host, payload={'event': 'prompt_submit', 'session_id': 'installed-setup',
+                'prompt': 'Initialize sample-dist with import sample_import. Use Python setuptools unittest.'})
+            inspection = setup_cli('project', 'inspect')
+            evidence = inspection['user_evidence'][-1]['id']
+            setup_cli('project', 'context', 'set', '--language', 'Python', '--build-tool', 'setuptools',
+                      '--test-framework', 'unittest', '--source', 'user-specified', '--evidence', evidence)
+            setup_cli('project', 'setup', 'draft', '--rule', 'python-unittest', '--identity',
+                      '{"name":"sample-dist","import_name":"sample_import"}', '--evidence', evidence)
+            setup_cli('project', 'setup', 'plan')
+            setup_cli('project', 'setup', 'apply')
+            assert setup_cli('project', 'setup', 'check')['status'] == 'passed'
+            assert setup_cli('project', 'setup', 'status')['ready']
+            assert not list((repo / '.orchestrator/work').glob('*.json'))
+            (repo / 'openspec/feature.md').write_text('# Feature\n## Acceptance\n- The new operation works.\n')
+            work = setup_cli('start', '--requirement', 'openspec/feature.md')['work_item']
+            assert work['status'] == 'active'
+            assert setup_cli('verification', 'check', '--work', work['id'])['status'] == 'passed'
+            records.append({'provider_fixture': 'openspec', 'simulated_host': host,
+                            'profile': 'empty-project-initialization', 'status': 'ready-and-first-work-active', 'work': work['id']})
         for provider, marker, artifact in (("bmad", "_bmad", "_bmad-output/review.md"),
                                            ("openspec", "openspec", "openspec/changes/review.md"),
                                            ("speckit", ".specify", "specs/review.md")):
@@ -63,6 +93,9 @@ def main():
                     return subprocess.list2cmdline(argv) if os.name == "nt" else shlex.join(argv)
                 tests = repo / "acceptance-tests"
                 tests.mkdir()
+                # This matrix exercises an existing product. Empty-project
+                # initialization has its own public-CLI load/test regression.
+                (repo / 'pyproject.toml').write_text('[project]\nname = "installed-fixture"\nversion = "0.1.0"\n')
                 (tests / "test_acceptance.py").write_text("import unittest\nclass Acceptance(unittest.TestCase):\n    def test_pass(self): self.assertEqual(2+2,4)\n", encoding="utf-8")
                 cli("init", "--host", "codex", "--sdd", provider)
                 assert cli('bootstrap')['mode'] == 'project_context_setup'
@@ -157,7 +190,7 @@ def main():
                 executor = repo / "fixture-final.py"
                 executor.write_text("import json,os,subprocess,sys\nr=json.loads(os.environ['CAO_SDD_ACCEPTANCE_REQUEST'])\n"
                     "rc=subprocess.run([sys.executable,'-m','unittest','discover','-s','acceptance-tests','-v'],stdout=sys.stderr,stderr=sys.stderr).returncode\n"
-                    "print(json.dumps({'run_id':r['run_id'],'input_sha256':r['input_sha256'],'provider':r['provider'],'items':[{'id':'AC-1','status':'passed' if rc==0 else 'failed','evidence':[{'path':'acceptance-tests/test_acceptance.py','reason':'Actual fixture unittest execution'}]}]}))\nsys.exit(rc)\n", encoding="utf-8")
+                    "print(json.dumps({'run_id':r['run_id'],'input_sha256':r['input_sha256'],'provider':r['provider'],'items':[{'id':'AC-1','check':{'criterion_id':'AC-1','run_id':r['run_id'],'selector':'test_acceptance.Acceptance.test_pass','assertion':'2+2 equals 4','observed':'unittest exit '+str(rc)},'status':'passed' if rc==0 else 'failed','evidence':[{'path':'acceptance-tests/test_acceptance.py','reason':'Actual fixture unittest execution'}]}]}))\nsys.exit(rc)\n", encoding="utf-8")
                 declaration = {"spec": artifact, "criteria": [{"id": "AC-1", "source": artifact, "kind": "requirement", "description": "Fixture unittest passes"}],
                     "executor": {"mode": "command", "entrypoint": shell([args.python, executor.name])}}
                 declaration["criteria"][0]["covers"] = [item["id"] for item in cli("acceptance", "criteria")["criteria"]]

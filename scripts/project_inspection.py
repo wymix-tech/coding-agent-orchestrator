@@ -64,12 +64,29 @@ def parse(path):
 def inspect(repo, scopes=None, work=None):
     scopes = scopes or {'root': {'paths': ['.']}}
     observations = []
+    product_paths = []
     for name, scope in scopes.items():
         for base in scope['paths']:
             base = relative(repo, base)
             # Explicit modules only; never discover technology from infrastructure trees.
             if any(part.startswith('.') and part != '.' or part in {'_bmad', '_bmad-output', 'node_modules', 'openspec', 'specs'} for part in Path(base).parts):
                 continue
+            # Existence evidence is distinct from technology evidence. A product
+            # source without a manifest is partial/existing, not an empty tool install.
+            root = repo / base
+            if root.is_dir():
+                candidates = list(root.glob('*'))
+                for folder in ('src', 'app', 'lib'):
+                    directory = root / folder
+                    if directory.is_dir() and not directory.is_symlink():
+                        import itertools
+                        candidates.extend(itertools.islice(directory.rglob('*'), 2000))
+                for candidate in candidates:
+                    if (candidate.is_file() and not candidate.is_symlink()
+                            and candidate.suffix in {'.py', '.java', '.kt', '.js', '.mjs', '.ts', '.go', '.rs', '.c', '.cpp', '.cs', '.rb', '.php', '.swift', '.dart', '.sh', '.ps1'}
+                            and not any(part in {'test', 'tests', '__pycache__', 'node_modules'} for part in candidate.relative_to(root).parts)
+                            and candidate.resolve().is_relative_to(repo.resolve())):
+                        product_paths.append(candidate.relative_to(repo).as_posix())
             for manifest in MANIFESTS:
                 path = repo / base / manifest
                 if not path.is_file() or not path.resolve().is_relative_to(repo.resolve()):
@@ -84,7 +101,11 @@ def inspect(repo, scopes=None, work=None):
                                        and int(result.stdout.strip()) < work.get('created_at', 0))
                 observations.append({'scope': name, 'path': relative_path, 'sha256': sha,
                                      'technology': facts, 'established': established})
-    return {'schema_version': 1, 'observations': observations, 'empty_product': not observations}
+    empty = not observations and not product_paths
+    return {'schema_version': 1, 'observations': observations, 'empty_product': empty,
+            'product_state': 'empty' if empty else ('existing' if observations else 'partial'),
+            'product_paths': sorted(set(product_paths)),
+            'note': 'Observed files and technology do not prove successful build or test execution.'}
 
 
 def save_observation(repo, context=None, work=None):

@@ -67,13 +67,13 @@ Agent 应按以下顺序推进：
 
 1. 恢复重启后 bootstrap 返回的待处理需求，再通过 `cao project inspect`、`cao project context show` 检查已有产品和保存的项目背景。
 2. 保留已确定的技术选型，只确认缺失部分。使用 `cao project context set` 保存，并引用检查结果中的真实用户证据 ID 或已有产品清单路径。保存项目背景 **不需要先创建 Work Item**。
-3. 复用已有验证入口。空项目先声明计划，例如上述 Maven 项目可执行 `cao verification configure --plan-only --test-script "mvn test"`。该命令不创建产品文件，也不代表检查已经通过。
+3. 复用已有验证入口。空项目先在无 Work 状态下完成 `cao project setup rules`、`draft`、`plan`、`apply`、`check`。只确认缺失的身份、版本与布局，按已选框架调整确切计划，见[项目初始化](references/project-initialization.md)。仅有 `verification configure --plan-only` 不能使空项目 ready。
 4. 使用已有需求文件，或通过 `cao requirement next-id --title "用户登录"` 分配路径并填写返回的文件，再执行 `cao start --requirement <requirement-path> --title "用户登录"`。
-5. 在活动 Work 内创建缺失的构建、测试脚手架，去掉 `--plan-only` 配置真实验证入口；按提示审查验证基线、评估执行路径，再进入所选 Provider 的原生流程。
+5. 已初始化项目继承真实验证入口；已有活动 Work 可修复基线并通过 `cao verification check --work <id>` 试跑；按提示审查验证基线、评估执行路径，再进入所选 Provider 的原生流程。
 
 命令中的 `<...>` 需要替换为实际返回的值。项目背景字段可通过 `cao project context set --help` 查看。仅填写来源标签、或由 Agent 自行编写一份规范，都不能作为用户技术选型的授权证据。
 
-`cao next` 返回当前动作和 `guidance.read_before_action` 路径。读取对应阶段及 Provider 指引后，从当前状态继续。初始测试失败不妨碍创建 Work；开始业务实现前，需要具备已接受的验证基线并满足原生流程前置条件。
+`cao next` 返回当前动作和 `guidance.read_before_action` 路径。读取对应阶段及 Provider 指引后，从当前状态继续。已有产品的试跑失败不妨碍创建 Work；空项目必须先通过初始化检查；开始业务实现前，需要具备已接受的验证基线并满足原生流程前置条件。
 
 ### 5. 验证、验收与关闭
 
@@ -289,3 +289,15 @@ Copyright (c) 2026 Coding Agent Orchestrator contributors.
 SDD provider 负责功能代码评审；CAO 核查声明的产物、过程及有效证据，并复用原生评审结果满足对应门禁。`cao conformance show/check` 展示当前义务和阻塞原因。BMAD 的 `cao sdd review prepare` 提前创建全部层的票据和报告路径，`import` 校验已有原生报告，避免为格式补齐重复评审。
 
 评审完成和任务关闭后可自动采集带来源、范围及失效检查的项目知识；采集失败不会阻塞完成。通过 `cao knowledge list/collect/refresh` 管理，配置 `knowledge.enabled: false` 可关闭。详见[过程符合性与知识协议](references/conformance-knowledge.md)。
+
+### 空项目准备与证据完整性
+
+空产品在业务 Work 之前执行项目级生命周期：
+`cao project setup rules` → `draft` → `plan` → `apply` → `check` → `status`。
+确认适用的项目标识和布局后，按确切清单生成最小骨架，并真实试跑验证基线。
+其他技术栈使用同一显式计划协议，内置示例不是语言白名单。
+详见[项目初始化](references/project-initialization.md)。
+已有 Work 可用 `cao verification check --work <id>` 做基线准备性检查；该结果不代替正式验证或业务验收。
+新评审票据校验实际子任务、层和原始输出，不再按会话列表顺序推断。
+新验收声明需要逐项检查回执，不能将一次脚本退出 0 广播为全部通过。
+原生 Finalize 完成后才允许 CAO 关闭；功能代码评审仍属于 SDD provider。

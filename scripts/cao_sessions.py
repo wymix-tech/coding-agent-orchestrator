@@ -363,7 +363,9 @@ def register_session(
         "end_reason": None,
         "last_handoff_id": (existing or {}).get("last_handoff_id"),
         "observed_model": (existing or {}).get("observed_model"),
+        "observed_provider": (existing or {}).get("observed_provider"),
         "observed_tools": (existing or {}).get("observed_tools"),
+        **{key: existing[key] for key in ('review_ticket', 'review_output_sha256') if existing and key in existing},
     }
     save_session(repo, session)
     if previous_internal_id and previous_internal_id != internal_id:

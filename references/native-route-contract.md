@@ -119,3 +119,12 @@ Missing sources fail closed; restore or associate the actual current artifact
 rather than silently selecting another SPEC. Preserve current Work and progress
 when adding missing bindings; require current review instead of inventing past
 approvals. Native status synchronization records progress; it cannot close Work.
+
+## Equivalent evidence relocation
+
+Use `cao sdd route propose --declaration <file> --repair-evidence` only for an
+explicit relocation of equivalent evidence. It verifies rule hashes/quotes and
+adjacent implementation/review/finalization bytes, and requires unchanged route
+semantics and artifacts. It retains route identity, approval and observed handoff
+and records the move. A content-changing renderer expansion is not automatically
+equivalent. Normal semantic changes follow the native loopback/approval contract.

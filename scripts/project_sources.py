@@ -62,7 +62,9 @@ def user_evidence(repo, reference, fields, delegated=False):
         for key in fields:
             terms = {'language': ('language', '语言'), 'framework': ('framework', '框架'),
                      'build_tool': ('build', '构建'), 'test_framework': ('test', '测试'),
-                     'storage': ('storage', '数据库', '存储'), 'delivery': ('delivery', '交付')}
+                     'storage': ('storage', '数据库', '存储'), 'delivery': ('delivery', '交付'),
+                     'package_manager': ('package manager', '包管理'), 'runtime': ('runtime', '运行时'),
+                     'name': ('project', '项目', 'identity', '标识', '命名')}
             if not any(term in quote.casefold() for term in (*terms.get(key, (key,)), '技术栈', 'technology stack')):
                 raise ValueError('PROJECT_DELEGATION_SCOPE_INVALID: ' + key)
     elif any(not mentions(quote, value) for value in fields.values()):

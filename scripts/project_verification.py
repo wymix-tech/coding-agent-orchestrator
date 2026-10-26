@@ -86,6 +86,10 @@ def project_prerequisite(repo, work=None, scopes=None):
     from scripts.project_context import binding_state
     state = binding_state(repo, work) if work else context_state(repo, scopes, check_sources=True)
     if state['ready']:
+        from scripts.project_setup import prerequisite
+        setup = prerequisite(repo, work, scopes)
+        if setup:
+            return setup
         state = declaration_state(repo, config(repo), scopes, work)
     if state['ready']:
         return None
