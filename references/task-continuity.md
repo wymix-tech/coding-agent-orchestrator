@@ -113,14 +113,14 @@ cao lifecycle bind --evidence <id> --evidence <id>
 
 Artifacts stay in their native format. CAO retains original report bytes in a
 content-addressed archive and immutable metadata whose digest is bound by Work.
-`show` returns archived bytes as base64, including after source overwrite.
+`show` returns small archived bodies as base64, including after source overwrite. Large bodies are omitted from console output; use `--output <new-provider-file>` to export the original format without overwriting an existing file.
 Old declarations without retained bytes report historical content unavailable.
 Executable source files are not excluded from product verification inputs.
 
 `--session/--host` can bind a real producer (including a no-shell reviewer whose
 coordinator attaches its output); `--run` requires an existing generation-matched
 runtime receipt. Without those sources the attachment remains an agent declaration.
-The attachment-time input fingerprint is never called an execution-time snapshot.
+Use `--tool-call` with the real producer session to correlate an observed native tool result, or `--attempt` for an explicitly declared native attempt ID. Late reports for suspended Work may be attached with `--historical`; these entries cannot grant current completion. The attachment-time input fingerprint is never called an execution-time snapshot.
 Final selection rechecks inputs and current original reports; later unresolved
 failures cannot be hidden by choosing an old success. Process registration grants
 no gates. Finish all native duties, bind actual completion evidence, check

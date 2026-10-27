@@ -118,6 +118,9 @@ def switch(repo, target_id, reason, session=None, host=None):
         state = preview(repo, target_id)
         source, target = state['source'], state['target']
         if source and source['id'] == target_id:
+            if session and host:
+                from scripts.cao_sessions import register_session
+                register_session(repo, target, session, host, event='resume')
             return {'ok': True, 'status': 'unchanged', 'work_id': target_id}
         if not state['ready']:
             return {'ok': False, 'error': state['blockers'][0], 'blockers': state['blockers']}

@@ -86,6 +86,9 @@ class OperationsTests(RepairCase):
         self.assertEqual(rc, 0, shown)
         import base64
         self.assertEqual(base64.b64decode(shown['original_base64']), b'status: failed\n')
+        self.assertEqual(self.run_cli('evidence', 'show', '--id', out['evidence']['id'], '--output', '_bmad-output/exported.md')[0], 0)
+        self.assertEqual((self.repo / '_bmad-output/exported.md').read_bytes(), b'status: failed\n')
+        self.assertNotEqual(self.run_cli('evidence', 'show', '--id', out['evidence']['id'], '--output', '_bmad-output/exported.md')[0], 0)
 
     def test_complete_receipt_finalizes_without_reexecuting(self):
         wid = self.start()
@@ -140,6 +143,10 @@ class OperationsTests(RepairCase):
         self.assertEqual(rc, 0, out)
         self.assertEqual(out['decision'], 'deny')
         self.assertIn('STALE_SESSION_WORK', out['reason'])
+        self.assertEqual(self.run_cli('switch', '--to', target, '--session', 'old', '--host', 'pi')[0], 0)
+        rc, attached = self.run_cli('host-event', '--host', 'pi', payload={'event': 'pre_tool', 'session_id': 'old', 'toolName': 'write', 'input': {'path': '_bmad-output/new.md'}})
+        self.assertEqual(rc, 0, attached)
+        self.assertEqual(attached['decision'], 'allow')
 
     def test_archive_integrity_is_checked(self):
         self.start()
@@ -321,3 +328,30 @@ class OperationsTests(RepairCase):
         rows = units(self.repo, work)
         self.assertEqual([row['native_id'] for row in rows], ['story-a', 'story-b'])
         self.assertEqual({row['state'] for row in rows}, {'backlog'})
+
+    def test_native_tool_observation_is_correlated_with_real_producer(self):
+        self.start()
+        path = self.repo / '_bmad-output/observed.md'
+        path.parent.mkdir(exist_ok=True)
+        path.write_text('status: passed\n')
+        for event in ('pre_tool', 'post_tool'):
+            self.assertEqual(self.run_cli('host-event', '--host', 'pi', payload={'event': event, 'session_id': 'native-producer', 'toolName': 'write', 'toolCallId': 'actual-call', 'input': {'path': '_bmad-output/observed.md'}})[0], 0)
+        rc, out = self.run_cli('evidence', 'attach', '--kind', 'test', '--path', str(path), '--host', 'pi', '--session', 'native-producer', '--tool-call', 'actual-call')
+        self.assertEqual(rc, 0, out)
+        self.assertEqual(out['evidence']['source'], 'correlated_host_observation')
+        self.assertEqual(out['evidence']['attempt_id'], 'tool:actual-call')
+        self.assertNotEqual(self.run_cli('evidence', 'attach', '--kind', 'test', '--path', str(path), '--host', 'pi', '--session', 'native-producer', '--tool-call', 'invented')[0], 0)
+
+    def test_suspended_late_evidence_is_history_without_completion_authority(self):
+        wid = self.start()
+        target = self.queue()
+        self.assertEqual(self.run_cli('switch', '--to', target)[0], 0)
+        path = self.repo / '_bmad-output/late.md'
+        path.parent.mkdir(exist_ok=True)
+        path.write_text('status: passed\n')
+        rc, out = self.run_cli('evidence', 'attach', '--work', wid, '--kind', 'test', '--path', str(path), '--historical', '--attempt', 'late-review')
+        self.assertEqual(rc, 0, out)
+        self.assertTrue(out['evidence']['historical_only'])
+        from scripts.evidence_archive import select
+        with self.assertRaisesRegex(ValueError, 'HISTORICAL_GENERATION'):
+            select(self.repo, self.read_work(wid), [out['evidence']['id']])

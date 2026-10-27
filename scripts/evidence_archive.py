@@ -49,7 +49,7 @@ def select(repo, work, ids):
         row = next((r for r in records if r['id'] == identity), None)
         if not row:
             raise ValueError('IMPLEMENTATION_EVIDENCE_NOT_FOUND')
-        if row.get('historical_generation'):
+        if row.get('historical_generation') or row.get('historical_only'):
             raise ValueError('IMPLEMENTATION_EVIDENCE_HISTORICAL_GENERATION')
         path = repo_file(repo, row['path'])
         if not path.is_file() or sha256_file(path) != row['sha256']:
@@ -90,7 +90,7 @@ def validate_manifest(repo, work, reports, selected_ids=()):
     superseded = {row.get('supersedes') for row in rows if row['id'] in chosen and row.get('observation', {}).get('outcome') == 'passed'}
     for row in rows:
         if (row['kind'] in {'test', 'acceptance'} and row.get('inputs') == current
-                and not row.get('historical_generation')
+                and not row.get('historical_generation') and not row.get('historical_only')
                 and row.get('observation', {}).get('outcome') != 'passed'
                 and row['id'] not in superseded):
             raise ValueError('IMPLEMENTATION_EVIDENCE_UNRESOLVED_RESULT')

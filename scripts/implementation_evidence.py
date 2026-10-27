@@ -1,6 +1,7 @@
 """Incremental native artifact declarations, independent of completion admission."""
 from copy import deepcopy
 import json
+import pathlib
 
 
 def records(repo, work):
@@ -51,7 +52,21 @@ def command(args):
             data = repo_file(repo, row['archive']).read_bytes() if row.get('archive') else None
             if data is not None and sha256(data).hexdigest() != row['sha256']:
                 raise ValueError('EVIDENCE_ARCHIVE_CORRUPT')
-            print(json.dumps({'ok': True, 'evidence': row, 'original_base64': base64.b64encode(data).decode() if data is not None else None, 'historical_content_unavailable': data is None}))
+            exported = None
+            if args.output:
+                if data is None:
+                    raise ValueError('HISTORICAL_CONTENT_UNAVAILABLE')
+                target = provider_artifact(repo, args.output, provider_output_dirs(work['sdd']['provider'], repo))
+                if target.suffix.lower() != pathlib.Path(row['path']).suffix.lower():
+                    raise ValueError('EVIDENCE_EXPORT_FORMAT_MISMATCH')
+                import os
+                with target.open('xb') as stream:
+                    stream.write(data)
+                    stream.flush()
+                    os.fsync(stream.fileno())
+                exported = target.relative_to(repo).as_posix()
+            omitted = data is not None and len(data) > 65536
+            print(json.dumps({'ok': True, 'evidence': row, 'original_base64': base64.b64encode(data).decode() if data is not None and not omitted and not exported else None, 'exported': exported, 'body_omitted': omitted, 'next': 'Use evidence show --id <id> --output <new-provider-file> for a large original.' if omitted else None, 'historical_content_unavailable': data is None}))
             return 0
         if args.evidence_command == 'list':
             rows = []
@@ -67,8 +82,9 @@ def command(args):
                               'next_cursor': args.cursor + len(rows) if args.cursor + len(rows) < len(refs) else None,
                               'omitted': max(0, len(refs) - len(rows))}, ensure_ascii=False))
             return 0
-        if work.get('status') != 'active':
-            raise ValueError('WORK_NOT_ACTIVE')
+        historical = args.historical
+        if work.get('status') != 'active' and not (work.get('status') == 'suspended' and historical):
+            raise ValueError('WORK_NOT_ACTIVE: suspended evidence requires --historical')
         path = provider_artifact(repo, args.path, provider_output_dirs(work['sdd']['provider'], repo))
         if not path.is_file() or not 0 < path.stat().st_size <= 8 * 1024 * 1024:
             raise ValueError('IMPLEMENTATION_EVIDENCE_INVALID')
@@ -92,6 +108,7 @@ def command(args):
                   'scope': deepcopy(work['sdd'].get('plan_scope')),
                   'generation': work.get('execution_generation', 0),
                   'source': 'agent_declaration', 'observation': observation,
+                  'attempt_id': args.attempt, 'historical_only': historical, 'native_step': (work.get('execution') or {}).get('step'),
                   'input_observation': 'attachment_time_only; execution inputs not certified'}
         if sha256_file(path) != before:
             raise ValueError('IMPLEMENTATION_EVIDENCE_CHANGED_DURING_CAPTURE')
@@ -110,6 +127,14 @@ def command(args):
                 raise ValueError('EVIDENCE_SESSION_NOT_BOUND')
             record['session_id'] = session['id']
             record['parent_session_id'] = session.get('parent_session_id')
+        if args.tool_call:
+            if not args.session:
+                raise ValueError('EVIDENCE_PRODUCER_SESSION_REQUIRED')
+            from scripts.runtime_queries import events
+            observed = next((event for event in events(repo, work['id']) if event.get('event') == 'tool.finished' and event.get('tool_call_id') == args.tool_call and event.get('host') == session['host'] and event.get('session_id') == session['host_session_id']), None)
+            if not observed:
+                raise ValueError('EVIDENCE_TOOL_RESULT_NOT_OBSERVED')
+            record.update(source='correlated_host_observation', tool_call_id=args.tool_call, attempt_id='tool:' + args.tool_call)
         if args.run:
             from scripts.runtime_queries import inspect_run
             run = inspect_run(repo, work, args.run)
@@ -117,6 +142,7 @@ def command(args):
                 raise ValueError('EVIDENCE_EXECUTION_RECEIPT_REQUIRED')
             record['historical_generation'] = run['start'].get('generation') != work.get('execution_generation', 0)
             record['execution_generation'] = run['start'].get('generation')
+            record['attempt_id'] = args.run
             record['run_id'] = args.run
             record['source'] = 'executor_receipt' if run['start']['source'] == 'cao_executor' else 'agent_declaration'
             record['execution_inputs'] = run['start']['inputs']
@@ -156,12 +182,17 @@ def register_parser(sub):
         p.add_argument('--work')
         if name == 'show':
             p.add_argument('--id', required=True)
+            p.add_argument('--output', help='Export archived bytes to a new provider-owned file; existing files are never overwritten')
         if name == 'attach':
             p.add_argument('--path', required=True)
             p.add_argument('--kind', choices=['plan', 'implementation', 'test', 'review', 'fix', 'acceptance', 'handoff'], required=True)
             p.add_argument('--unit')
             p.add_argument('--supersedes')
-            p.add_argument('--run')
+            execution = p.add_mutually_exclusive_group()
+            execution.add_argument('--run')
+            execution.add_argument('--tool-call')
+            p.add_argument('--attempt', help='Declared native attempt identity; does not certify execution')
+            p.add_argument('--historical', action='store_true', help='Preserve late evidence for suspended Work without granting completion')
             p.add_argument('--session')
             p.add_argument('--host')
         elif name == 'list':
