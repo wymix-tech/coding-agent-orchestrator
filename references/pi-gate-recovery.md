@@ -16,8 +16,10 @@ project without state is not enrolled: bridge failures are diagnosed but do
 not install a gate automatically. Restarting after deleting all state loses
 this in-memory enrollment; use normal filesystem permissions to protect state.
 
-When the bridge is unavailable, only Pi's built-in `read`, `ls`, `grep`, `find`
-tools and these exact bash command strings have an offline exception:
+When the bridge is unavailable, `read`, `ls`, `grep`, `find`, `search_code`,
+bounded `contact_supervisor` messages (`need_decision`/`progress_update`) and
+`subagent` status requests remain available. These exact bash commands also have
+an offline exception:
 
 ```text
 pwd
@@ -28,8 +30,13 @@ cao host status --host pi
 cao host install --host pi
 ```
 
-There is no prefix matching, general shell parser, alternate working-directory
-or environment override. Additional arguments, whitespace variants, aliases,
+The running adapter's own absolute bundled `cao` launcher (direct or through
+`sh`, with literal path quoting) accepts the same exact CAO suffixes. `status
+--work <id>` also accepts a literal alphanumeric/dot/underscore/hyphen Work ID.
+An arbitrary path with the basename `cao` is not trusted.
+
+There is no general shell parser, alternate working-directory or environment
+override. Other arguments, whitespace variants, aliases,
 redirects, pipelines, newlines, substitutions and chained commands are not
 exceptions. This fallback deliberately does not reproduce the healthy core's
 broader command classifier. A normal `deny` never uses the offline exception.
@@ -43,6 +50,20 @@ installations can be inspected/rewired without bypassing product gates.
 - Protocol/output errors: inspect bounded CLI diagnostics and repair the backend.
 - Invalid project configuration: inspect state, use supported configure commands
   once the core responds, and follow the existing explicit reanchor/approval flow.
+- `SNAPSHOT_*`: inspect the named path and declared outputs. A restart does not
+  repair an invalid snapshot scope. Healthy core pre-tool inspection/control
+  commands are classified before evidence refresh, so reads and parent messages
+  cannot be blocked by snapshot computation. Business writes still fail closed
+  on a genuine snapshot fault. JVM config resources under declared Maven/Gradle
+  resource output directories are generated output when their build manifest is
+  present; real source resources remain hashed, tracked outputs are rejected,
+  and links/explicit rule or verification inputs retain their protection.
+  `cao status` returns stored Work state with `inspection_only: true` and the
+  snapshot diagnostic when refresh is unavailable; it does not certify freshness.
+
+After recovery continue the existing SDD step's build/test repair loop. Native
+failure alone never advances CAO to verification. Complete native obligations,
+bind current completion reports and check conformance before `cao verify`.
 
 The bridge deadline is 8 seconds, leaving headroom over the core's default
 5-second state-lock wait. There are no automatic event retries. A timeout

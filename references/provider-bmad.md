@@ -35,6 +35,11 @@ children do not inherit ambient extensions. The installer merges the CAO child-o
 extension default; agents with explicit child extension overrides need CAO listed
 there too. Inspect actual agent names/tools first, preserve the native handoff,
 and do not substitute a fabricated `task` tool or `general-purpose` agent.
+Use the installed step-03 handoff verbatim: put design, acceptance and investigation
+details in the SPEC, not additional dispatch instructions. Implementation children
+continue their assigned step; the coordinator owns workflow registration. A failed
+build/test stays in this implementation loop and must be repaired/retested before
+the native review step. Do not rerender/restart Build merely because a child began.
 
 ### Native review and close obligations
 

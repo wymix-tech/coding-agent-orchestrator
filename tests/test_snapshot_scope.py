@@ -135,6 +135,70 @@ class ScopeTests(unittest.TestCase):
         self.assertEqual(state["reason"], "NATIVE_COMMIT_CHECK_FAILED")
 
 
+    def test_jvm_resource_copies_do_not_poison_existing_baselines(self):
+        layouts = [('pom.xml', 'target/classes', 'main'),
+                   ('pom.xml', 'target/test-classes', 'test'),
+                   ('build.gradle', 'build/resources/main', 'main'),
+                   ('build.gradle.kts', 'build/resources/test', 'test')]
+        for index, (manifest, output, source_set) in enumerate(layouts):
+            module = f'modules/module-{index}'
+            self.write(f'{module}/{manifest}', 'build manifest')
+            source = self.write(f'{module}/src/{source_set}/resources/config/application.yml', 'original')
+            self.configure(outputs=[f'{module}/{output.split("/")[0]}/'])
+            initial = code_snapshot(self.repo)
+            standard = verification_snapshot(config(self.repo), self.repo)
+            copy = self.write(f'{module}/{output}/config/application.yml', 'filtered output')
+            self.assertEqual(initial, code_snapshot(self.repo))
+            self.assertEqual(standard, verification_snapshot(config(self.repo), self.repo))
+            source.write_text('source changed before rebuild')
+            changed = code_snapshot(self.repo)
+            self.assertNotEqual(initial, changed)
+            copy.write_text('rebuilt filtered output')
+            self.assertEqual(changed, code_snapshot(self.repo))
+            # Declare each module independently; other outputs remain ordinary
+            # snapshot inputs in this deliberately small configuration fixture.
+
+    def test_output_resource_exemption_cannot_hide_arbitrary_source(self):
+        self.write('pom.xml', 'build manifest')
+        self.configure(outputs=['target/'])
+        self.write('src/main/resources/application.yml')
+        self.write('target/classes/application.yml')
+        code_snapshot(self.repo)
+        injected = self.write('target/classes/hidden.py', 'business logic')
+        with self.assertRaisesRegex(ValueError, 'SNAPSHOT_SCOPE_PROTECTED'):
+            code_snapshot(self.repo)
+        injected.unlink()
+        self.git('init', '-q')
+        self.git('add', '-f', 'target/classes/application.yml')
+        with self.assertRaisesRegex(ValueError, 'SNAPSHOT_OUTPUT_TRACKED_INPUT'):
+            code_snapshot(self.repo)
+
+    def test_resource_copy_requires_build_manifest_and_allows_clean_after_source_deletion(self):
+        source = self.write('src/main/resources/application.yaml')
+        self.write('target/classes/application.yaml')
+        self.configure(outputs=['target/'])
+        with self.assertRaisesRegex(ValueError, 'SNAPSHOT_SCOPE_PROTECTED'):
+            code_snapshot(self.repo)
+        self.write('pom.xml')
+        before = code_snapshot(self.repo)
+        source.unlink()
+        self.assertNotEqual(before, code_snapshot(self.repo))
+        # Stale resource copies cannot stop the command that cleans them.
+        (self.repo / 'target/classes/application.yaml').unlink()
+        code_snapshot(self.repo)
+
+    def test_copied_resources_do_not_hide_explicit_rule_or_wrapper_inputs(self):
+        self.write('pom.xml')
+        self.write('src/main/resources/application.yml')
+        self.write('target/classes/application.yml')
+        self.configure(outputs=['target/'])
+        cfg = config(self.repo)
+        cfg['rules'] = {'files': ['target/classes/application.yml']}
+        from scripts.snapshot_scope import validate_scope
+        with self.assertRaisesRegex(ValueError, 'SNAPSHOT_SCOPE_PROTECTED'):
+            validate_scope(self.repo, cfg)
+
+
 class OutputVerificationTests(RepairCase):
     def setup_wrapper(self, declared=True, mutate=False):
         wrapper = self.repo / "run_checks.py"

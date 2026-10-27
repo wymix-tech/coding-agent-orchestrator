@@ -111,10 +111,44 @@ def _protected(cfg: dict, relative: str, generated_suffixes=()) -> bool:
     return any(fnmatch.fnmatchcase(path_key(relative), path_key(pattern)) for pattern in [*rules, *requirements])
 
 
+def _copied_resource(repo: Path, candidate: Path, scope: dict, tracked: set[str]) -> bool:
+    """Recognize conventional JVM resource copies, including stale/filtered copies.
+
+    Only called inside a declared output tree of an existing JVM build. Real
+    resource sources remain snapshot inputs. Conventional config copies may
+    outlive a deleted source until the next clean, so they cannot require that
+    every original still exists. Other source-like files need a real counterpart.
+    Keep this compatible with existing project baselines (no reconfiguration).
+    """
+    layouts = ((('target', 'classes'), ('src', 'main', 'resources'), ('pom.xml',)),
+               (('target', 'test-classes'), ('src', 'test', 'resources'), ('pom.xml',)),
+               (('build', 'resources', 'main'), ('src', 'main', 'resources'), ('build.gradle', 'build.gradle.kts')),
+               (('build', 'resources', 'test'), ('src', 'test', 'resources'), ('build.gradle', 'build.gradle.kts')))
+    parts = candidate.relative_to(repo).parts
+    for output, source, manifests in layouts:
+        for offset in range(len(parts) - len(output)):
+            if parts[offset:offset + len(output)] != output:
+                continue
+            module = repo.joinpath(*parts[:offset])
+            if not any((module / name).is_file() for name in manifests):
+                continue
+            original = module.joinpath(*source, *parts[offset + len(output):])
+            # Links must go through the ordinary snapshot link guard, never this
+            # exemption. A source excluded as a cache/output cannot back a copy.
+            if any(p.is_symlink() for p in (original, *original.parents) if p != repo and p.is_relative_to(repo)):
+                continue
+            resource_format = candidate.suffix.lower() in {'.yml', '.yaml', '.properties', '.xml', '.json'}
+            if ((original.is_file() or resource_format) and candidate.is_file()
+                    and not excluded_input(original.relative_to(repo).as_posix(), scope, tracked)):
+                return True
+    return False
+
+
 def validate_scope(repo: Path, cfg: dict, tracked: set[str] | None = None, protected=()) -> dict:
     """Reject unsafe declarations before pruning; tracked inputs override exclusions."""
     declaration = scope_config(cfg)
     tracked = git_inputs(repo) if tracked is None else tracked
+    tracked_keys = {path_key(name) for name in tracked}
     from scripts.cao_provider_workflows import workflow_command_identities
     from scripts.cao_runtime import verification_scripts
 
@@ -158,7 +192,10 @@ def validate_scope(repo: Path, cfg: dict, tracked: set[str] | None = None, prote
                             raise RuntimeError("SNAPSHOT_SCAN_LIMIT: " + value)
                         if candidate.is_symlink():
                             raise ValueError("SNAPSHOT_SCOPE_SYMLINK: " + str(candidate))
-                        if _protected(cfg, candidate.relative_to(repo).as_posix(), declaration.get('generated_output_suffixes', {}).get(value, [])):
+                        relative_candidate = candidate.relative_to(repo).as_posix()
+                        if (_protected(cfg, relative_candidate, declaration.get('generated_output_suffixes', {}).get(value, []))
+                                and (_protected(cfg, relative_candidate, SOURCE_SUFFIXES)
+                                     or not _copied_resource(repo, candidate, declaration, tracked_keys))):
                             raise ValueError("SNAPSHOT_SCOPE_PROTECTED: " + str(candidate))
             if kind == "outputs" and any(covers(value, item) for item in tracked):
                 raise ValueError("SNAPSHOT_OUTPUT_TRACKED_INPUT: " + value)

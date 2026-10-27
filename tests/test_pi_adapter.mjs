@@ -839,6 +839,44 @@ test('offline gate allows literal recovery only and blocks disguised shell effec
   } finally { f.close(); }
 });
 
+test('offline recovery accepts the installed absolute launcher and bounded parent/status tools', posix, async () => {
+  const f = fixture();
+  try {
+    process.env.CAO_FAKE_MODE = 'bad-json';
+    const ctx = f.context('snapshot-recovery');
+    const launcher = path.resolve(import.meta.dirname, '../cao');
+    for (const prefix of [launcher, `'${launcher}'`, `"${launcher}"`, `sh '${launcher}'`]) {
+      for (const suffix of ['status', 'status --work work-001', 'host status --host pi', 'host install --host pi']) {
+        assert.equal(await f.handlers.get('tool_call')({toolName: 'bash', input: {command: `${prefix} ${suffix}`}}, ctx), undefined);
+      }
+    }
+    for (const [toolName, input] of [
+      ['contact_supervisor', {reason: 'need_decision', message: 'Cannot recover snapshot scope'}],
+      ['contact_supervisor', {reason: 'progress_update', message: 'Build failed, repair pending'}],
+      ['subagent', {action: 'status', id: 'actual-mission'}],
+      ['search_code', {pattern: 'application.yml', project: 'demo'}],
+    ]) {
+      assert.equal(await f.handlers.get('tool_call')({toolName, input}, ctx), undefined);
+    }
+    for (const command of [`${f.dir}/cao status`, `${launcher} done`,
+      `${launcher} status --work work-001; touch product.py`,
+      `${launcher} status --work $(touch product.py)`, `${launcher} status > product.py`]) {
+      assert.equal((await f.handlers.get('tool_call')({toolName: 'bash', input: {command}}, ctx)).block, true, command);
+    }
+    for (const [toolName, input] of [
+      ['subagent', {action: 'spawn', task: 'edit product'}],
+      ['subagent', {action: 'status', id: 'mission', task: 'edit product'}],
+      ['contact_supervisor', {reason: 'need_decision', message: 'help', command: 'touch product.py'}],
+    ]) {
+      assert.equal((await f.handlers.get('tool_call')({toolName, input}, ctx)).block, true);
+    }
+    // An authoritative deny still wins over recovery exceptions.
+    process.env.CAO_FAKE_MODE = 'deny';
+    assert.equal((await f.handlers.get('tool_call')({toolName: 'contact_supervisor',
+      input: {reason: 'need_decision', message: 'help'}}, ctx)).block, true);
+  } finally { f.close(); }
+});
+
 test('disabled projects are distinct from missing configuration and cannot downgrade after activation', posix, async () => {
   const f = fixture();
   try {

@@ -8,6 +8,14 @@ code review, findings resolution, native acceptance and required native close
 steps. These activities remain CAO implementation. CAO reviews process/artifact
 evidence, runs the project baseline and closes Work.
 
+Native compilation/test failures do not start CAO review or verification and do
+not revoke permission to repair the active Work. Keep the current native step,
+edit the implementation, rerun its checks, and finish native review/acceptance/
+close duties before binding completion evidence. Failed checks block completion,
+not the repair loop. Host observations record failures without certifying results.
+Project baseline changes still require their existing review/reanchor; ordinary
+product edits and generated build output do not change the verification standard.
+
 ## Execute
 
 1. Finish every associated native unit and required approval/review/finalize/

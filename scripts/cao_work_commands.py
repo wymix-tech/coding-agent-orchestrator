@@ -305,9 +305,24 @@ def cmd_status(args: argparse.Namespace) -> int:
     index = load_index(repo)
     wid = args.work or index.get("active_work")
     work = load_work(repo, wid) if wid else None
-    if work and reconcile_native_sdd_state(repo, work):
-        work = load_work(repo, wid) or work
-    out = {"ok": True, "work": resume_payload(repo, work) if work else None, "work_items": []}
+    try:
+        if work:
+            # Validate scope before reconciliation can persist observations.
+            verification_snapshot(config(repo), repo)
+        if work and reconcile_native_sdd_state(repo, work):
+            work = load_work(repo, wid) or work
+        out = {"ok": True, "work": resume_payload(repo, work) if work else None, "work_items": []}
+    except (ValueError, RuntimeError) as exc:
+        if not str(exc).startswith('SNAPSHOT_'):
+            raise
+        # Inspection must not depend on successful evidence refresh. Show only
+        # durable state and explicitly withhold any freshness/completion claim.
+        work = load_work(repo, wid) if wid else None
+        out = {'ok': True, 'inspection_only': True, 'diagnostic': str(exc),
+               'work': {'work_item': work_summary(work), 'execution': work.get('execution'),
+                        'completion': {'ready': False, 'reason': 'SNAPSHOT_UNAVAILABLE'}} if work else None,
+               'work_items': [],
+               'next': 'Inspect the named path and declared outputs; repair snapshot scope before advancing. Continue the existing SDD step after repair.'}
     for p in sorted((repo / WORK_DIR).glob("*.json")):
         w = load_json(p, None)
         if w:
