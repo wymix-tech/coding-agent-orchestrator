@@ -18,6 +18,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--cao", required=True)
     parser.add_argument("--python", required=True)
+    parser.add_argument("--native-only", action="store_true", help="Run installed contract-2 native lifecycle scenarios without the legacy executor matrix")
     args = parser.parse_args()
     env = dict(os.environ)
     for key in ("PYTHONPATH", "CAO_HOST", "CLAUDE_CODE", "CLAUDE_CODE_SESSION_ID", "CLAUDE_SESSION_ID",
@@ -69,8 +70,23 @@ def main():
             work = setup_cli('start', '--requirement', 'openspec/feature.md')['work_item']
             assert work['status'] == 'active'
             assert setup_cli('verification', 'check', '--work', work['id'])['status'] == 'passed'
+            setup_cli('path', 'assess', '--profile', 'light', '--reason', 'Installed native evidence fixture')
+            setup_cli('sdd', 'spec', 'bind', '--spec', 'openspec/feature.md', '--criteria-section', 'Acceptance')
+            report = repo / 'openspec/native-completion.md'
+            # Actual local fixture tests, not a real model/provider execution.
+            check = subprocess.run([args.python, '-m', 'unittest', 'discover', '-s', 'tests'],
+                                   cwd=repo, env=env, capture_output=True, text=True, timeout=30)
+            assert check.returncode == 0, check.stderr
+            report.write_text('# Native fixture result\n\n' + check.stdout + check.stderr)
+            setup_cli('lifecycle', 'bind', '--report', 'openspec/native-completion.md')
+            setup_cli('conformance', 'check')
+            setup_cli('verify')
+            assert setup_cli('done')['status'] == 'completed'
             records.append({'provider_fixture': 'openspec', 'simulated_host': host,
-                            'profile': 'empty-project-initialization', 'status': 'ready-and-first-work-active', 'work': work['id']})
+                            'profile': 'empty-project-native-lifecycle', 'status': 'completed-with-native-report', 'work': work['id']})
+        if args.native_only:
+            print(json.dumps({"ok": True, "scope": "native-lifecycle", "records": records}, ensure_ascii=False, indent=2))
+            return
         for provider, marker, artifact in (("bmad", "_bmad", "_bmad-output/review.md"),
                                            ("openspec", "openspec", "openspec/changes/review.md"),
                                            ("speckit", ".specify", "specs/review.md")):
@@ -100,6 +116,11 @@ def main():
                 (repo / 'pyproject.toml').write_text('[project]\nname = "installed-fixture"\nversion = "0.1.0"\n')
                 (tests / "test_acceptance.py").write_text("import unittest\nclass Acceptance(unittest.TestCase):\n    def test_pass(self): self.assertEqual(2+2,4)\n", encoding="utf-8")
                 cli("init", "--host", "codex", "--sdd", provider)
+                # The retained executor matrix explicitly exercises contract 1.
+                config_path = repo / '.orchestrator/config.json'
+                config = json.loads(config_path.read_text())
+                config['lifecycle_contract'] = 1
+                config_path.write_text(json.dumps(config))
                 assert cli('bootstrap')['mode'] == 'project_context_setup'
                 event('prompt_submit', prompt='Fixture uses Python, setuptools and unittest.')
                 evidence = cli('project', 'inspect')['user_evidence'][0]['id']

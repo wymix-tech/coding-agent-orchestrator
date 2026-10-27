@@ -187,9 +187,29 @@ def command(args):
             path = provider_artifact(repo, name, provider_output_dirs(work['sdd']['provider'], repo))
             if path.suffix.lower() not in {'.md', '.json', '.yaml', '.yml', '.txt', '.log'} or not path.read_bytes().strip():
                 raise ValueError('NATIVE_COMPLETION_REPORT_INVALID')
+            if path.suffix.lower() == '.json':
+                payload = json.loads(path.read_text(encoding='utf-8-sig'))
+                if not isinstance(payload, (dict, list)) or not payload:
+                    raise ValueError('NATIVE_COMPLETION_REPORT_INVALID')
+                if isinstance(payload, dict) and 'status' in payload and not isinstance(payload['status'], str):
+                    raise ValueError('NATIVE_COMPLETION_REPORT_INVALID')
+                if isinstance(payload, dict) and payload.get('status') in {'failed', 'error', 'blocked', 'pending', 'running'}:
+                    raise ValueError('NATIVE_COMPLETION_REPORT_NOT_PASSED')
             ref = {'path': path.relative_to(repo).as_posix(), 'sha256': sha256_file(path)}
             if ref not in reports:
                 reports.append(ref)
+        # An original result already claimed by a different Work is not fresh
+        # execution for this one. Inspect stored records without refreshing or
+        # mutating historical Work. The repository transaction serializes claims.
+        from scripts.cao_defaults import WORK_DIR
+        from scripts.cao_runtime import load_json
+        for path in (repo / WORK_DIR).glob('*.json'):
+            if path.stem == work['id']:
+                continue
+            other = load_json(path, {}) or {}
+            claimed = ((other.get('sdd') or {}).get('completion_evidence') or {}).get('reports') or []
+            if any(ref in claimed for ref in reports):
+                raise ValueError('NATIVE_COMPLETION_REPORT_OTHER_WORK: bind a fresh native result for this Work')
         sdd = work['sdd']
         workflow = sdd.get('workflow') or {}
         gates = sorted(set(args.gate or []))

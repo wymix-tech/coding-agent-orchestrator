@@ -207,3 +207,24 @@ class NativeLifecycle(unittest.TestCase):
             result = conformance(self.repo, work)
         self.assertFalse(result['ready'])
         self.assertEqual('speckit', result['requirements'][0]['owner'])
+
+    def test_another_work_cannot_reuse_the_original_completion_result(self):
+        self.bind()
+        self.check('verify')
+        self.check('done')
+        path = self.repo / 'openspec/another.md'
+        path.write_text('# Another operation\nImplement another observable operation.\n')
+        self.check('start', '--requirement', 'openspec/another.md')
+        self.check('path', 'assess', '--profile', 'light', '--reason', 'another bounded operation')
+        self.check('sdd', 'spec', 'bind', '--spec', 'openspec/spec.md', '--criteria-section', 'Acceptance')
+        rc, out = self.cli('lifecycle', 'bind', '--report', 'openspec/completion.md')
+        self.assertEqual(2, rc, out)
+        self.assertIn('NATIVE_COMPLETION_REPORT_OTHER_WORK', out['error'])
+
+    def test_invalid_or_failed_native_json_cannot_be_bound_as_completion(self):
+        path = self.repo / 'openspec/result.json'
+        for content in ('invalid JSON', '{}', 'true', '{"status":[]}', '{"status":"failed"}'):
+            path.write_text(content)
+            rc, out = self.cli('lifecycle', 'bind', '--report', 'openspec/result.json')
+            self.assertEqual(2, rc, (content, out))
+            self.assertNotIn('completion_evidence', self.work()['sdd'])

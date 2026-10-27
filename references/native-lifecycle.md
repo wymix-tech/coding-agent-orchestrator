@@ -52,3 +52,8 @@ a changed baseline, new requirement or provider choice.
 Contract 2 does not use acceptance configure/run/begin/submit/reuse or a second
 per-criterion functional executor. Those remain contract-1 tools. Historical
 completion results remain frozen; current changes cannot rewrite them.
+
+Do not reuse an original result belonging to another Work. Existing result claims
+are checked transactionally. JSON reports must be valid structured data; explicit
+failed/pending/running top-level outcomes cannot certify native completion. CAO
+still does not infer semantic correctness from arbitrary report prose.
