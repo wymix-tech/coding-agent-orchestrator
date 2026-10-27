@@ -95,7 +95,7 @@ def normalize_plan(repo, scope, raw):
         raise ValueError('PROJECT_SETUP_RULE_INVALID')
     if rule.get('id') != 'explicit':
         from scripts.setup_rules import validate_identity
-        spec = validate_identity(rule['id'], identity)
+        spec = validate_identity(rule['id'], identity, framework=context['scopes'][scope]['technology'].get('framework', {}).get('value'))
         if rule['version'] != spec['version']:
             raise ValueError('PROJECT_SETUP_RULE_INVALID')
         from scripts.project_sources import compact
@@ -114,6 +114,16 @@ def normalize_plan(repo, scope, raw):
     framework = context['scopes'][scope]['technology'].get('framework', {})
     if framework.get('status') == 'accepted' and raw.get('framework_support') != framework.get('value'):
         raise ValueError('PROJECT_SETUP_FRAMEWORK_PLAN_REQUIRED: extend the draft with the confirmed framework entry and real startup/load check; record framework_support, or use an explicit plan')
+    from scripts.setup_frameworks import spring_boot
+    if spring_boot(framework.get('value')):
+        version = identity.get('framework_version') or context['scopes'][scope].get('versions', {}).get('framework')
+        if not version:
+            raise ValueError('PROJECT_FRAMEWORK_VERSION_REQUIRED: framework_version; record the exact user-confirmed framework release before drafting')
+        if context['scopes'][scope].get('versions', {}).get('framework', version) != version:
+            raise ValueError('PROJECT_SETUP_FRAMEWORK_VERSION_MISMATCH: identity and confirmed context versions differ')
+        from scripts.setup_frameworks import manifest_release
+        if rule['id'] != 'explicit' and manifest_release(raw.get('files', [])) != version:
+            raise ValueError('PROJECT_SETUP_FRAMEWORK_VERSION_MISMATCH: use the exact confirmed framework release in the build manifest')
     delivery = context['scopes'][scope]['technology'].get('delivery', {})
     if delivery.get('status') == 'accepted' and raw.get('delivery_support') != delivery.get('value'):
         raise ValueError('PROJECT_SETUP_DELIVERY_PLAN_REQUIRED: adapt the scaffold/checks to the accepted delivery shape and record delivery_support')
@@ -171,6 +181,8 @@ def normalize_plan(repo, scope, raw):
     capabilities = set(raw['required_capabilities'])
     if not checks or not capabilities or not capabilities <= {c['capability'] for c in checks}:
         raise ValueError('PROJECT_SETUP_CAPABILITIES_INCOMPLETE')
+    if framework.get('status') == 'accepted' and not capabilities.intersection({'load', 'startup'}):
+        raise ValueError('PROJECT_SETUP_FRAMEWORK_CHECK_REQUIRED: declare and execute an actual framework load/startup check')
     if rule['id'] != 'explicit' and not set(spec['capabilities']) <= capabilities:
         raise ValueError('PROJECT_SETUP_CAPABILITIES_INCOMPLETE: the selected rule requires ' + ', '.join(spec['capabilities']))
     if 'test' not in capabilities:
@@ -429,7 +441,8 @@ def dispatch(args):
         context = load_context(repo) or {}
         scope = context.get('scopes', {}).get(args.scope, {})
         values = (scope.get('identity') or {}).get('values', {})
-        out = {'rules': {key: {**rule, 'missing_identity_fields': [field for field in rule['fields'] if not values.get(field)]} for key, rule in describe().items()},
+        framework = scope.get('technology', {}).get('framework', {}).get('value')
+        out = {'rules': {key: {**rule, 'missing_identity_fields': [field for field in rule['fields'] if not values.get(field)]} for key, rule in describe(framework=framework).items()},
                'confirmed_identity': values, 'explicit_plan': 'project setup draft --scope S, edit exact files/checks/basis, then plan/apply/check'}
     elif action == 'identity':
         from scripts.identity_interview import collect
@@ -440,13 +453,14 @@ def dispatch(args):
     elif action == 'draft':
         with repo_transaction(repo):
             path = input_path(repo, args.scope)
-            if not path.exists():
+            if not path.exists() or args.refresh:
                 if args.rule:
                     context = load_context(repo)
                     if not context or args.scope not in context['scopes']:
                         raise ValueError('PROJECT_CONTEXT_REQUIRED')
                     from scripts.setup_rules import scaffold, describe
-                    fields = describe(args.rule)['fields']
+                    framework = context['scopes'][args.scope]['technology'].get('framework', {}).get('value')
+                    fields = describe(args.rule, framework=framework)['fields']
                     inherited = context['scopes'][args.scope].get('identity', {}).get('values', {})
                     values = {key: value for key, value in inherited.items() if key in fields}
                     from scripts.identity_interview import path as identity_path
@@ -455,7 +469,7 @@ def dispatch(args):
                         raise ValueError('PROJECT_IDENTITY_RULE_CONFLICT')
                     values.update(interview.get('values', {}))
                     values.update(json.loads(args.identity or '{}'))
-                    raw = scaffold(args.rule, values)
+                    raw = scaffold(args.rule, values, framework=framework)
                     raw['identity_evidence'] = {k: v for k, v in interview.get('sources', {}).items() if values.get(k) == interview.get('values', {}).get(k)}
                     base = context['scopes'][args.scope]['paths'][0]
                     if base != '.':
@@ -529,6 +543,7 @@ def register(actions):
             parser.add_argument('--value')
             parser.add_argument('--evidence')
         if name == 'draft':
+            parser.add_argument('--refresh', action='store_true', help='Explicitly regenerate the prepared input from saved answers; does not overwrite product files')
             parser.add_argument('--rule')
             parser.add_argument('--identity', help='JSON object; inspect rules for applicable fields')
             parser.add_argument('--evidence')

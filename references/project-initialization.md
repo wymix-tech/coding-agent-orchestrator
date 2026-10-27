@@ -26,6 +26,13 @@ in provider outputs. Existing products are reused and active Work retains progre
    Obtain each host-observed evidence ID from project inspect. Draft automatically
    reuses the collected values and per-field evidence for built-in and explicit
    plans; complete the explicit plan using its exact prepared input.
+   Framework-aware rules return additional fields and `field_guidance`. For
+   Spring Boot, save its exact `framework_version`; no default/latest release is
+   authorized. Existing confirmed framework versions and their evidence are
+   reused. A JUnit generation answer refines a previously confirmed generic JUnit
+   choice during unbound initialization. `junit_version=5` means Spring Boot's
+   BOM-managed JUnit 5; without such management provide an exact dependency
+   release (major.minor.patch), never a major number as a Maven coordinate.
 3. Draft a built-in plan, for example:
 
    ```bash
@@ -38,6 +45,10 @@ in provider outputs. Existing products are reused and active Work retains progre
    inappropriate library template. When applicable, record `framework_support`
    and `delivery_support` with the exact accepted context values. These labels
    do not certify correctness: actual framework loading/startup must be checked.
+   Maven/Gradle Spring Boot drafts already include the confirmed framework,
+   application entry and a real context-load test. To regenerate an old prepared
+   draft from saved answers, inspect it first and use explicit `draft --refresh`;
+   this replaces only the prepared input and does not overwrite product files.
 4. For another stack/combination use `cao project setup draft --scope <scope>` and
    fill the same schema: version 1, rule `{id: explicit, version: 1}`, nonempty
    `basis`, identity/evidence/source, exact files with content and purposes

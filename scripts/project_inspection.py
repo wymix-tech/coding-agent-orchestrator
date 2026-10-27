@@ -116,6 +116,7 @@ def save_observation(repo, context=None, work=None):
 
 def drift(repo, context, scopes, work=None, allow_migration=True):
     from scripts.project_sources import compact
+    from scripts.project_refinement import technology_key
     differences = []
     # Refresh only bounded known manifests. Expected owner migration differences are not conflicts.
     for identity in context.get('active_changes', []):
@@ -127,7 +128,7 @@ def drift(repo, context, scopes, work=None, allow_migration=True):
         scope = context['scopes'][observed['scope']]
         for key, value in observed['technology'].items():
             accepted = scope['technology'].get(key, {})
-            if accepted.get('status') in {'accepted', 'not_applicable'} and compact(accepted['value']) != compact(value):
+            if accepted.get('status') in {'accepted', 'not_applicable'} and technology_key(key, accepted['value']) != technology_key(key, value):
                 differences.append({'scope': observed['scope'], 'field': key, 'accepted': accepted['value'],
                                     'observed': value, 'path': observed['path']})
             elif not accepted and key in {'framework', 'build_tool', 'test_framework'}:

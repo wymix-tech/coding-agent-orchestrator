@@ -10,6 +10,7 @@ from scripts.project_context import (FIELDS, ROOT, binding_state, commit_context
 from scripts.project_inspection import drift, save_observation
 from scripts.project_sources import compact, user_evidence
 from scripts.project_technology import category_conflicts, validate_categories
+from scripts.project_refinement import bootstrap_scope, technology_key
 from scripts.state_store import atomic_json
 
 
@@ -68,9 +69,10 @@ def candidate_for(repo, args, context, allow_change=False):
     for key, value in values.items():
         old = scope['technology'].get(key, {})
         wrong_category = bool(category_conflicts({key: old.get('value')}))
-        if old.get('status') in {'accepted', 'not_applicable'} and compact(old.get('value')) != compact(value) and not allow_change and not wrong_category:
+        different = technology_key(key, old.get('value')) != technology_key(key, value)
+        if old.get('status') in {'accepted', 'not_applicable'} and different and not allow_change and not wrong_category and not bootstrap_scope(repo, args.scope, context):
             raise ValueError('PROJECT_CHANGE_REQUIRED: ' + args.scope + '.' + key)
-        if old.get('status') == 'accepted' and compact(old.get('value')) == compact(value):
+        if old.get('status') == 'accepted' and not different:
             value = old['value']
         scope['technology'][key] = {'value': value, 'status': 'not_applicable' if value == 'not_applicable' else 'accepted'}
     for entry in getattr(args, 'version', None) or []:
@@ -81,7 +83,7 @@ def candidate_for(repo, args, context, allow_change=False):
             raise ValueError('PROJECT_VERSION_SOURCE_REQUIRED')
         user_evidence(repo, args.evidence, {key: value.strip()}, args.source == 'user-delegated')
         versions = scope.setdefault('versions', {})
-        if key in versions and versions[key] != value.strip() and not allow_change:
+        if key in versions and versions[key] != value.strip() and not allow_change and not bootstrap_scope(repo, args.scope, context):
             raise ValueError('PROJECT_CHANGE_REQUIRED: version ' + key)
         versions[key] = value.strip()
     if evidence not in candidate['evidence']:
@@ -111,13 +113,13 @@ def cmd_project(args):
             observe_prompt(repo, pending.get('prompt'), pending.get('host'), pending.get('session_id'))
         observed = save_observation(repo, context, work)
         evidence = [read(path) for path in sorted((repo / ROOT / 'evidence').glob('user-*.json'))]
-        return emit({'project_context': context_state(repo, work=work), 'inspection': observed, 'user_evidence': evidence,
+        return emit({'project_context': context_state(repo, work=work, check_sources=True), 'inspection': observed, 'user_evidence': evidence,
                      'next': 'Accept only observed product facts or actual user choices using `cao project context set`; do not create a temporary Work.'})
     if command == 'show':
-        return emit({'context': context, 'state': context_state(repo, work=work)})
+        return emit({'context': context, 'state': context_state(repo, work=work, check_sources=True)})
     if command == 'diff':
         return emit({'differences': drift(repo, context, list(context['scopes']), work) if context else [],
-                     'context': context_state(repo, work=work)})
+                     'context': context_state(repo, work=work, check_sources=True)})
     if command == 'decisions':
         # Only ancestors linked from the commit pointer are accepted history.
         revisions, cursor, seen = [], context, set()
@@ -137,7 +139,7 @@ def cmd_project(args):
         if context:
             candidate['previous_revision'] = context['revision']
         saved = commit_context(repo, candidate, args.expected_revision or (context or {}).get('revision'))
-        return emit({'status': 'saved', 'context': saved, 'state': context_state(repo, work=work)})
+        return emit({'status': 'saved', 'context': saved, 'state': context_state(repo, work=work, check_sources=True)})
     if command == 'bind':
         if not work or work.get('status') not in {'active', 'suspended', 'todo'}:
             raise ValueError('PROJECT_BIND_ACTIVE_OR_PAUSED_WORK_REQUIRED')
@@ -166,13 +168,33 @@ def cmd_project(args):
         identity = 'change-' + digest(change)
         change['id'] = identity
         atomic_json(repo / ROOT / 'changes' / (identity + '.json'), change)
-        return emit({'change': change, 'next': 'Create or select a migration Work using the stable background, then `cao project context change apply --change ' + identity + ' --work <id>`.'})
+        initialization = bootstrap_scope(repo, args.scope, context)
+        return emit({'change': change, 'owner': 'project_initialization' if initialization else 'migration_work',
+                     'next': ('No Work is needed for this unbound initialization correction. Run `cao project context change apply --change ' + identity + '`; replan/check affected project setup and baseline.' if initialization else
+                              'Create or select a migration Work using the stable background, then `cao project context change apply --change ' + identity + ' --work <id>`.')})
     if command == 'apply':
         identity = args.change
         if not identity.startswith('change-') or len(identity) != 71 or any(c not in '0123456789abcdef' for c in identity[7:]):
             raise ValueError('PROJECT_CHANGE_INVALID')
         change_path = repo / ROOT / 'changes' / (identity + '.json')
         change = read(change_path)
+        if change and change.get('owner') == 'project_initialization' and change.get('status') == 'completed':
+            if not context or context['revision'] != change.get('applied_revision'):
+                raise ValueError('PROJECT_CONTEXT_REVISION_CONFLICT')
+            return emit({'status': 'unchanged', 'context': context, 'change': change})
+        if change and not work and not getattr(args, 'work', None) and all(bootstrap_scope(repo, scope, context) for scope in change['scopes']):
+            if not context or context['revision'] != change['base_revision']:
+                raise ValueError('PROJECT_CONTEXT_REVISION_CONFLICT')
+            original = {key: value for key, value in change.items() if key != 'id'}
+            if identity != 'change-' + digest(original):
+                raise ValueError('PROJECT_CHANGE_INVALID')
+            candidate = deepcopy(change['target'])
+            candidate['previous_revision'] = context['revision']
+            saved = commit_context(repo, candidate, context['revision'])
+            change.update(status='completed', owner='project_initialization', applied_revision=saved['revision'])
+            atomic_json(change_path, change)
+            return emit({'context': saved, 'change': change,
+                         'next': 'Replan/check the affected project setup, materialize project scripts and run verification check --project before creating Work. Do not reuse the old baseline result.'})
         if not change or not work or work.get('status') != 'active':
             raise ValueError('PROJECT_CHANGE_OWNER_REQUIRED')
         if context and identity in context.get('active_changes', []):
@@ -247,7 +269,7 @@ def register_parser(sub):
     parser = changes.add_parser('apply')
     parser.add_argument('--repo', default='.')
     parser.add_argument('--change', required=True)
-    parser.add_argument('--work', required=True)
+    parser.add_argument('--work', help='Required for product migrations; unbound CAO initialization corrections need no Work')
     parser.set_defaults(fn=cmd_project, project_action='apply')
 
 
@@ -289,4 +311,14 @@ def error_context(args, code):
             result['current_revision'] = (current or {}).get('revision')
         except (ValueError, OSError):
             pass
+    if code.startswith(('PROJECT_SETUP', 'PROJECT_IDENTITY', 'PROJECT_FRAMEWORK', 'PROJECT_DEPENDENCY')):
+        from scripts.project_recovery import setup_recovery
+        result.update(setup_recovery(repo_root(args.repo), args, code))
+    elif code in {'PROJECT_CONTEXT_CONFLICT', 'PROJECT_CHANGE_REQUIRED'}:
+        from scripts.project_recovery import context_recovery
+        repo = repo_root(args.repo)
+        state = context_state(repo, check_sources=True)
+        recovery = context_recovery(repo, state)
+        result.update(diagnostics=recovery['diagnostics'], recovery=recovery)
+        result['next']['instruction'] = recovery['instruction']
     return result

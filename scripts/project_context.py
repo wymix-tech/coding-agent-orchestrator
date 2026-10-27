@@ -184,6 +184,9 @@ def context_state(repo, scopes=None, work=None, check_sources=False):
         if differences:
             state.update(ready=False, reason='PROJECT_CONTEXT_CONFLICT', differences=differences,
                          next='Run `cao project inspect` and `cao project context diff`; use an authorized project change for material replacements.')
+            from scripts.project_recovery import context_recovery
+            recovery = context_recovery(repo, state)
+            state.update(recovery=recovery, diagnostics=recovery['diagnostics'], next=recovery['instruction'])
     return state
 
 
