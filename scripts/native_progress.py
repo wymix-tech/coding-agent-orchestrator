@@ -31,7 +31,10 @@ def spec_task_state(repo: Path, work: dict[str, Any], dirs: list[str],
                    if item.get("role") == "spec")
     observations, pending = {}, []
     next_step = ("Finish every task in the current route's native SPEC Tasks & Acceptance sections; "
-                 "`--no-plan` does not remove SPEC tasks. Then run `cao sdd sync` and `cao verify`.")
+                 "`--no-plan` does not remove SPEC tasks. Native compile/test failures stay inside SDD implementation: "
+                 "repair and rerun its checks, then complete native review, acceptance and close duties. "
+                 "Synchronize with `cao sdd sync`; only after native completion bind its reports, "
+                 "run `cao conformance check`, then `cao verify`.")
     try:
         for source in sorted(sources):
             path = owned_file(repo, source, dirs)

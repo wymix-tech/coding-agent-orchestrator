@@ -205,14 +205,17 @@ export default function (pi: ExtensionAPI) {
     }
     if (result.decision !== "allow") {
       const enabled = managedSessions.has(nativeSessionId(ctx)) || managed.has(path.resolve(ctx.cwd)) || enrollment(ctx.cwd) !== "disabled";
-      if (!enabled || offlineAllowed(event)) {
+      if (!enabled || offlineAllowed(event, ROOT)) {
         return;
       }
       const reason = `[CAO] GATE_UNAVAILABLE: ${result.diagnostic || "missing decision"}. ` +
         "Operation blocked because CAO could not authorize it. Use the read tool to inspect state, " +
-        "or exact `cao status` / `cao host status --host pi` commands. " +
+        "or exact `cao status` / `cao host status --host pi` commands (the bundled absolute launcher is also supported). " +
+        "Parent communication and subagent status remain available. " +
         "For lock contention, wait for the owner to finish and retry; do not delete state.lock. " +
         "Restore the CLI/dependencies or run exact `cao host install --host pi` to repair host wiring, then retry. " +
+        "For SNAPSHOT_* errors inspect the named path and declared build outputs; restarting alone does not repair scope. " +
+        "Resume the current SDD repair/test loop after recovery; do not advance to CAO verification before native completion. " +
         "Protocol/output failures require inspecting the CLI diagnostic; do not bypass the gate.";
       presentation.show({ additional_context: reason, diagnostic: result.diagnostic, decision: "deny" }, ctx);
       remind({ additional_context: reason }, ctx);

@@ -569,6 +569,25 @@ def tool_is_mutating(raw: dict[str, Any]) -> bool:
     return tool_effect(raw)["effect"] != "read"
 
 
+def inspection_tool(repo: Path, raw: dict) -> bool:
+    """Allow diagnosis/owned control commands before computing evidence freshness.
+
+    Do not use the generic default-read classification for unknown tools here.
+    Shell control commands still enforce their own CLI transition gates.
+    """
+    tool = _event_key(raw, 'tool_name', 'toolName', 'tool', 'name').lower()
+    analysis = tool_effect(raw, repo)
+    if analysis['effect'] != 'read' or analysis['diagnostics']:
+        return False
+    if tool in SHELL_TOOLS:
+        return True
+    if tool in {'read', 'ls', 'grep', 'find', 'search_code', 'contact_supervisor'}:
+        return True
+    payload = raw.get('tool_input') or raw.get('input') or raw.get('arguments') or {}
+    return (tool == 'subagent' and isinstance(payload, dict)
+            and payload.get('action') == 'status' and set(payload) <= {'action', 'id'})
+
+
 def _shell_segments(command: str) -> list[list[str]]:
     # Heredoc bodies are input data, not additional mutating commands. Keep
     # subsequent commands after the terminator visible to the gate.
@@ -755,7 +774,7 @@ def _readonly_tokens(tokens: list[str], cwd: Path | None = None) -> bool:
                    or token.startswith('+') for token in tokens[1:])
     if name in {'diff', 'printenv'}:
         return True
-    if name in {"ls", "dir", "cat", "type", "pwd", "grep", "rg", "head", "tail", "echo", "printf", "cd", "exit", "which", "file", "stat", "wc"}:
+    if name in {"ls", "dir", "cat", "type", "pwd", "grep", "rg", "nl", "head", "tail", "echo", "printf", "cd", "exit", "which", "file", "stat", "wc"}:
         return True
     if name == "command" and len(tokens) > 1 and tokens[1] in {"-v", "-V"}:
         return True

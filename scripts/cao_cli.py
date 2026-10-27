@@ -394,6 +394,6 @@ def main(argv: list[str] | None = None) -> int:
             result.update(error_context(args, code))
         if str(exc).startswith("SNAPSHOT_"):
             result["reason_code"] = str(exc).split(":", 1)[0]
-            result["next"] = "Restore readable repository-owned inputs and executable permissions; replace external business links with repository-owned sources, repair broken/cyclic links or reduce the linked scan scope, then run `cao verify`. Old evidence is not reusable."
+            result["next"] = "Inspect the named snapshot path and declared verification outputs using read tools or `cao host status --host pi`. Repair invalid declarations through CAO commands, unreadable inputs or broken/external links without deleting state locks. Resume the current SDD step and its failed-check repair loop; run `cao verify` only after native completion and evidence conformance. Old evidence is not reusable."
         print(json.dumps(result, ensure_ascii=False, indent=2))
         return 2

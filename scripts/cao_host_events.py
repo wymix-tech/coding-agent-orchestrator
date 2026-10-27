@@ -45,6 +45,7 @@ from scripts.cao_tool_policy import (
     _event_key,
     _shell_segments,
     diagnostic_shell_write,
+    inspection_tool,
     native_intake_shell,
     protected_state_advice,
     dependency_setup_advice,
@@ -130,6 +131,16 @@ def host_event(args: argparse.Namespace) -> int:
         bound_work = (known_session or parent_session or {}).get('work_item_id')
         if bound_work:
             work = load_work(repo, bound_work)
+    if event == 'pre_tool' and inspection_tool(repo, raw):
+        # Evidence calculation can fail on a broken output declaration. Reads,
+        # parent communication and CAO's own guarded commands must still reach
+        # their tools; none of these can grant completion or source-write rights.
+        result = {'decision': 'allow'}
+        diagnostic = observe_runtime(repo, work, raw, args.host, candidate_id, event, result)
+        if diagnostic:
+            result['diagnostic'] = diagnostic
+        print(json.dumps(native_hook_output(args.host, event, result), ensure_ascii=False))
+        return 0
     from scripts.project_verification import project_prerequisite
     pending_project = project_prerequisite(repo, work) if work and work.get('status') != 'completed' else None
     if work and not pending_project and restart_state(repo, args.host)["ready"] and event in {"session_start", "subagent_start", "prompt_submit", "pre_tool", "stop", "turn_end", "before_settle"}:
@@ -229,6 +240,12 @@ def host_event(args: argparse.Namespace) -> int:
         if kind == "primary":
             expose_approval_context(repo, work, args.host, host_session_id)
         context = render_context(repo, work, session_id=host_session_id, host=args.host)
+        if kind == 'subagent' and work:
+            context += ('\nContinue only the assigned native step in the current Work. '
+                        'An implementation child works from the approved SPEC; do not restart '
+                        'intake or re-register the coordinator\'s workflow execution. '
+                        'Native compile/test failures stay inside SDD implementation: repair, '
+                        'rerun and report actual results; do not claim CAO verification or completion.')
         result = {"decision": "allow", "additional_context": context}
         if host_session_id:
             result["session_id"] = host_session_id
