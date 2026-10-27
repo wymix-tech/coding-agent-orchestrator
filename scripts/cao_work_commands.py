@@ -223,6 +223,22 @@ def _prepare_start(args: argparse.Namespace):
 
 
 def cmd_start(args: argparse.Namespace) -> int:
+    if getattr(args, 'defer', False):
+        from scripts.deferred_work import defer
+        work = defer(args)
+        print(json.dumps({'ok': True, 'status': 'queued', 'work_item': work_summary(work)}))
+        return 0
+    if args.replace:
+        from scripts.deferred_work import defer
+        from scripts.work_operations import switch
+        work = defer(args)
+        repo = repo_root(args.repo)
+        identity = host_session_identity(getattr(args, 'host', None))
+        result = switch(repo, work['id'], 'explicit start --replace', identity[1] if identity else None, identity[0] if identity else None)
+        if result['ok']:
+            result['work_item'] = work_summary(load_work(repo, work['id']))
+        print(json.dumps(result, ensure_ascii=False))
+        return 0 if result['ok'] else 2
     prepared = _prepare_start(args)
     if isinstance(prepared, int):
         return prepared
@@ -261,6 +277,8 @@ def cmd_list(args: argparse.Namespace) -> int:
             items.append(work_summary(work))
     index["work_items"] = items
     save_index(repo, index)
+    if getattr(args, "status", None):
+        items = [w for w in items if w["status"] == args.status]
     print(json.dumps({"ok": True, "active_work": index.get("active_work"), "work_items": items}, ensure_ascii=False, indent=2)); return 0
 
 
@@ -307,6 +325,8 @@ def cmd_checkpoint(args: argparse.Namespace) -> int:
     if not work or work.get("status") not in {"active", "suspended"}:
         print(json.dumps({"ok": False, "error": "NO_ACTIVE_WORK_ITEM"}, ensure_ascii=False, indent=2)); return 2
     previous = json.loads(json.dumps({"execution": work.get("execution"), "resume": work.get("resume")}))
+    from scripts.coordination_items import update as update_items
+    update_items(work, args)
     if args.step:
         execution = work.setdefault("execution", {})
         phase = execution_phase({"step": args.step}) or execution_phase(execution)
@@ -393,6 +413,8 @@ def cmd_block(args: argparse.Namespace) -> int:
         if not repair or not str(exc).startswith("MULTIPLE_ACTIVE_WORK_ITEMS:"):
             raise
         # Authority and its conflict projection committed; more explicit fixes remain.
+    if args.suspend:
+        create_handoff(repo, work, None, None, reason=args.reason)
     out = {"ok": True, "blocker": b, "status": work["status"]}
     remaining = other_active_work(repo, work["id"])
     if len(remaining) > 1:
@@ -413,14 +435,18 @@ def cmd_unblock(args: argparse.Namespace) -> int:
         work["blockers"] = [b for b in work.get("blockers", []) if b.get("id") != args.blocker]
     else:
         work["blockers"] = []
-    if work.get("status") == "suspended" and not work["blockers"]:
-        if not other_active_work(repo, work["id"]):
-            work["status"] = "active"
     from scripts.runtime_store import queue_record
     removed = [b["id"] for b in previous_blockers if b not in work["blockers"]]
     if removed:
         queue_record(repo, work, "blocker.resolved", {"blocker_ids": removed, "status": work["status"]})
     save_work(repo, work)
+    if work.get("status") == "suspended" and not work["blockers"] and not other_active_work(repo, work["id"]):
+        from scripts.work_operations import switch
+        result = switch(repo, work["id"], "blockers resolved")
+        if not result["ok"]:
+            print(json.dumps(result))
+            return 2
+        work = load_work(repo, work["id"])
     out = {"ok": True, "removed": before - len(work.get("blockers") or []), "work_item": work_summary(work)}
     if work.get("status") == "suspended" and not work["blockers"]:
         out["next"] = f"Explicitly switch with `cao start --requirement {work['requirement']['path']} --replace`."
@@ -462,6 +488,13 @@ def cmd_handoff_show(args: argparse.Namespace, repo: Path) -> int:
 @locked_command
 def cmd_handoff(args: argparse.Namespace) -> int:
     repo = repo_root(args.repo); ensure_initialized(repo)
+    if args.handoff_action == "accept":
+        from scripts.recovery_plan import accept, read_work
+        from scripts.state_store import repo_transaction
+        with repo_transaction(repo):
+            result = accept(repo, read_work(repo, args.work), args.handoff_id, args.host, args.session)
+        print(json.dumps({"ok": True, **result}, ensure_ascii=False))
+        return 0
     if args.handoff_action == "list":
         return cmd_handoff_list(args, repo)
     if args.handoff_action == "show":
@@ -511,16 +544,24 @@ def cmd_resume(args: argparse.Namespace) -> int:
         return 2
     if reconcile_native_sdd_state(repo, work):
         work = load_work(repo, work['id']) or work
-    if work.get("status") == "suspended" and args.reactivate:
-        if _activation_denied(repo, work["id"]):
+    if work.get("status") in {"todo", "suspended"} and args.reactivate:
+        from scripts.work_operations import switch
+        result = switch(repo, work["id"], "resume reactivation", args.session, args.host)
+        if not result["ok"]:
+            print(json.dumps(result))
             return 2
+        work = load_work(repo, work["id"])
         work["status"] = "active"
         save_work(repo, work)
     elif work.get("status") == "suspended" and work.get("blockers"):
         # Resume can inspect suspended work without silently changing its status.
         pass
-    session_id = args.session or new_id(args.host or "session")
-    session = register_session(repo, work, session_id, args.host or "unknown", event="resume")
+    if work.get("status") == "completed":
+        print(render_context(repo, work, host=args.host))
+        return 0
+    identity = host_session_identity(args.host)
+    session_id = args.session or (identity[1] if identity else None)
+    session = register_session(repo, work, session_id, args.host or "unknown", event="resume") if session_id else None
     print(render_context(repo, work, session_id=session_id, host=args.host))
     print("\n## Session\n" + json.dumps(session, ensure_ascii=False, indent=2))
     return 0

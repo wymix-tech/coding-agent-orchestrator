@@ -152,11 +152,14 @@ def cmd_requirement_list(args: argparse.Namespace) -> int:
     repo = repo_root(args.repo or os.getcwd())
     ensure_initialized(repo)
     files = [p for p in requirement_files(repo, config(repo)) if REQUIREMENT_DIR.as_posix() in p.as_posix()]
+    from scripts.cao_work_store import load_index
+    work_rows = load_index(repo).get("work_items", [])
     items = []
     for p in sorted(files)[: max(0, args.limit)]:
         items.append({
             "path": rel(p, repo),
             "name": p.name,
+            "work_items": [{"id": w["id"], "status": w["status"]} for w in work_rows if (w.get("requirement") or {}).get("path") == rel(p, repo)],
             "sha256": sha256_file(p),
             "updated_at": time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(p.stat().st_mtime)),
         })

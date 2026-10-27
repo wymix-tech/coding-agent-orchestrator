@@ -200,6 +200,11 @@ def binding_command(args):
         if not ready['ready']:
             print(json.dumps({'ok': False, 'error': 'NATIVE_COMPLETION_REQUIRED', **ready}, ensure_ascii=False))
             return 2
+        if getattr(args, 'evidence', None):
+            from scripts.evidence_archive import select
+            args.report = list(dict.fromkeys(args.report + select(repo, work, args.evidence)))
+        if not args.report:
+            raise ValueError('NATIVE_COMPLETION_REPORT_REQUIRED')
         reports = []
         candidate = deepcopy(work)
         candidate['sdd']['completion_evidence'] = {'reports': [{'path': name} for name in args.report]}
@@ -303,6 +308,7 @@ def register(sub):
             parser.add_argument('--path', action='append', required=True)
             parser.add_argument('--review', action='store_true', help='Declare shared inputs used by native reviewers')
         if name == 'bind':
-            parser.add_argument('--report', action='append', required=True)
+            parser.add_argument('--report', action='append', default=[])
+            parser.add_argument('--evidence', action='append', default=[])
             parser.add_argument('--gate', action='append', help='Work verification duty covered by the native report; repeat for every applicable duty')
         parser.set_defaults(fn=command)

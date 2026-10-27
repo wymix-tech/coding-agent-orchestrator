@@ -29,7 +29,21 @@ def snapshot(repo, work):
                 workspace[key] = result.stdout.strip() if result.returncode == 0 else None
             except (OSError, subprocess.TimeoutExpired):
                 workspace[key] = None
-    return {'requirement': requirement, 'observed_requirement_sha256': actual,
+    from scripts.cao_snapshot import code_snapshot
+    product_files = []
+    product = code_snapshot(repo, manifest=product_files)
+    if workspace['vcs'] == 'git':
+        result = subprocess.run(['git', 'status', '--porcelain=v1', '-z', '--untracked-files=all'], cwd=repo, capture_output=True, timeout=3)
+        workspace['dirty_paths'] = result.stdout.decode('utf-8', errors='replace').split('\0') if result.returncode == 0 else None
+    from scripts.native_units import units
+    try:
+        observed_units = units(repo, work)
+        unit_error = None
+    except (ValueError, OSError, RuntimeError, KeyError) as exc:
+        observed_units, unit_error = [], str(exc)
+    from scripts.runtime_queries import runs
+    unresolved = [r for r in runs(repo, work) if r['recovery_status'] not in {'complete', 'projection_missing', 'superseded'}]
+    return {'native_units': observed_units, 'native_unit_error': unit_error, 'unresolved_runs': unresolved, 'product_snapshot': product, 'product_files': product_files, 'requirement': requirement, 'observed_requirement_sha256': actual,
             'project_binding': deepcopy(work.get('project_binding')),
             'native': {key: deepcopy(sdd.get(key)) for key in
                        ('provider', 'native_ref', 'route_decision', 'plan_scope', 'native_state',
@@ -52,6 +66,7 @@ def view(work, handoff=None):
             differences.append('legacy_handoff_missing_source_snapshot')
     return {'work_id': work['id'], 'state_revision': work.get('state_revision'),
             'execution_generation': work.get('execution_generation', 0),
+            'coordination_items': page([r for r in resume.get('items', []) if r.get('status') == 'open']),
             'completed': page(resume.get('completed')), 'pending': page(resume.get('pending')),
             'handoff': {'id': (handoff or {}).get('id'), 'version': (handoff or {}).get('version'),
                         'summary': (handoff or {}).get('summary'),
@@ -60,6 +75,8 @@ def view(work, handoff=None):
                         'inspect': 'cao handoff show --id ' + handoff['id'] if handoff else None},
             'native': {key: deepcopy((work.get('sdd') or {}).get(key)) for key in ('provider', 'native_ref', 'native_state')},
             'process_evidence': page((work.get('sdd') or {}).get('implementation_evidence')),
+            'native_units': page(old.get('native_units')),
+            'unresolved_runs': old.get('unresolved_runs', []),
             'authority': 'Current Work and original native sources; handoff is historical context.'}
 
 

@@ -68,6 +68,10 @@ def build_parser() -> argparse.ArgumentParser:
     sub = p.add_subparsers(dest="command", required=True)
     from scripts.implementation_evidence import register_parser as register_evidence_parser
     register_evidence_parser(sub)
+    from scripts.work_operations import register_parser as register_switch_parser
+    register_switch_parser(sub)
+    from scripts.requirement_amend import register_parser as register_amend_parser
+    register_amend_parser(sub)
     register_runtime_parser(sub)
     from scripts.conformance import register_parser as register_conformance_parser
     register_conformance_parser(sub)
@@ -225,7 +229,7 @@ def build_parser() -> argparse.ArgumentParser:
     register_lifecycle_contract(lifecycle_sub)
     sp = lifecycle_sub.add_parser("events", help="List lifecycle events from native SDD reconciliation and CAO transitions")
     sp.add_argument("--repo", default="."); sp.add_argument("--work"); sp.add_argument("--limit", type=int, default=100); sp.set_defaults(fn=cmd_lifecycle_events)
-    sp = sub.add_parser("start"); sp.add_argument("--repo", default="."); sp.add_argument("--requirement"); sp.add_argument("--title", default=None, help="Human-readable Work Item title; overrides the requirement filename"); sp.add_argument("--sdd-ref"); sp.add_argument("--sdd-provider", choices=sorted(SDD_CATALOG)); sp.add_argument("--host", choices=["claude-code", "codex", "pi"], default=None, help="Current coding-agent host; used to attach the runtime Session"); sp.add_argument("--replace", action="store_true"); sp.add_argument("--reopen", action="store_true"); sp.add_argument("--scope", action="append"); sp.set_defaults(fn=cmd_start)
+    sp = sub.add_parser("start"); sp.add_argument("--defer", action="store_true"); sp.add_argument("--repo", default="."); sp.add_argument("--requirement"); sp.add_argument("--title", default=None, help="Human-readable Work Item title; overrides the requirement filename"); sp.add_argument("--sdd-ref"); sp.add_argument("--sdd-provider", choices=sorted(SDD_CATALOG)); sp.add_argument("--host", choices=["claude-code", "codex", "pi"], default=None, help="Current coding-agent host; used to attach the runtime Session"); sp.add_argument("--replace", action="store_true"); sp.add_argument("--reopen", action="store_true"); sp.add_argument("--scope", action="append"); sp.set_defaults(fn=cmd_start)
     path = sub.add_parser("path", help="Assess and inspect the minimum-safe execution path")
     path_sub = path.add_subparsers(dest="path_command", required=True)
     sp = path_sub.add_parser("assess", help="Record an Agent's lightweight scope/risk assessment")
@@ -257,7 +261,7 @@ def build_parser() -> argparse.ArgumentParser:
     sp = artifact_sub.add_parser("confirm", help="Mark an SDD artifact as reviewed and confirmed"); sp.add_argument("--repo", default="."); sp.add_argument("--work"); sp.add_argument("--path", required=True); sp.add_argument("--confirmed-by", default="user"); sp.set_defaults(fn=cmd_artifact_confirm)
     sp = artifact_sub.add_parser("remove"); sp.add_argument("--repo", default="."); sp.add_argument("--work"); sp.add_argument("--path", required=True); sp.set_defaults(fn=cmd_artifact_remove)
     sp = artifact_sub.add_parser("refresh"); sp.add_argument("--repo", default="."); sp.add_argument("--work"); sp.add_argument("--path"); sp.set_defaults(fn=cmd_artifact_refresh)
-    sp = sub.add_parser("list"); sp.add_argument("--repo", default="."); sp.set_defaults(fn=cmd_list)
+    sp = sub.add_parser("list"); sp.add_argument("--status", choices=["todo", "active", "suspended", "completed"]); sp.add_argument("--repo", default="."); sp.set_defaults(fn=cmd_list)
     sp = sub.add_parser("status"); sp.add_argument("--repo", default="."); sp.add_argument("--work"); sp.set_defaults(fn=cmd_status)
     instructions = sub.add_parser("instructions", help="Preview or apply a safe CAO project-instruction upgrade")
     instructions_sub = instructions.add_subparsers(dest="instructions_command", required=True)
@@ -265,12 +269,12 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--repo", default="."); sp.add_argument("--host", choices=["claude-code", "codex", "pi"])
     sp.add_argument("--apply", action="store_true"); sp.set_defaults(fn=cmd_instructions_update)
     sp = sub.add_parser("next"); sp.add_argument("--repo", default="."); sp.add_argument("--work"); sp.set_defaults(fn=cmd_next)
-    sp = sub.add_parser("resume"); sp.add_argument("--repo", default="."); sp.add_argument("--work"); sp.add_argument("--host", default="unknown"); sp.add_argument("--session"); sp.add_argument("--reactivate", action="store_true"); sp.set_defaults(fn=cmd_resume)
-    sp = sub.add_parser("checkpoint"); sp.add_argument("--repo", default="."); sp.add_argument("--work"); sp.add_argument("--session"); sp.add_argument("--host", choices=["claude-code", "codex", "pi"]); sp.add_argument("--step"); sp.add_argument("--next"); sp.add_argument("--next-type", choices=sorted(ACTION_TYPES), default="agent"); sp.add_argument("--command"); sp.add_argument("--summary"); sp.add_argument("--completed"); sp.add_argument("--pending"); sp.set_defaults(fn=cmd_checkpoint)
+    sp = sub.add_parser("resume"); sp.add_argument("--check", action="store_true"); sp.add_argument("--repo", default="."); sp.add_argument("--work"); sp.add_argument("--host", default="unknown"); sp.add_argument("--session"); sp.add_argument("--reactivate", action="store_true"); sp.set_defaults(fn=cmd_resume)
+    sp = sub.add_parser("checkpoint"); sp.add_argument("--item"); sp.add_argument("--resolve"); sp.add_argument("--cancel"); sp.add_argument("--repo", default="."); sp.add_argument("--work"); sp.add_argument("--session"); sp.add_argument("--host", choices=["claude-code", "codex", "pi"]); sp.add_argument("--step"); sp.add_argument("--next"); sp.add_argument("--next-type", choices=sorted(ACTION_TYPES), default="agent"); sp.add_argument("--command"); sp.add_argument("--summary"); sp.add_argument("--completed"); sp.add_argument("--pending"); sp.set_defaults(fn=cmd_checkpoint)
     sp = sub.add_parser("decision"); sp.add_argument("--repo", default="."); sp.add_argument("--work"); sp.add_argument("--decision", required=True); sp.add_argument("--reason"); sp.add_argument("--scope"); sp.add_argument("--supersedes"); sp.set_defaults(fn=cmd_decision)
     sp = sub.add_parser("block"); sp.add_argument("--repo", default="."); sp.add_argument("--work"); sp.add_argument("--reason", required=True); sp.add_argument("--resolution"); sp.add_argument("--suspend", action="store_true"); sp.set_defaults(fn=cmd_block)
     sp = sub.add_parser("unblock"); sp.add_argument("--repo", default="."); sp.add_argument("--work", required=True); sp.add_argument("--blocker"); sp.set_defaults(fn=cmd_unblock)
-    sp = sub.add_parser("handoff", help="Create or inspect Handoff records"); sp.add_argument("handoff_action", nargs="?", choices=["list", "show"]); sp.add_argument("--repo", default="."); sp.add_argument("--work"); sp.add_argument("--session"); sp.add_argument("--host"); sp.add_argument("--reason", default="manual checkpoint"); sp.add_argument("--summary"); sp.add_argument("--end-session", action="store_true", help="End the referenced Session after creating the handoff"); sp.add_argument("--id", dest="handoff_id"); sp.add_argument("--limit", type=int, default=20); sp.set_defaults(fn=cmd_handoff)
+    sp = sub.add_parser("handoff", help="Create or inspect Handoff records"); sp.add_argument("handoff_action", nargs="?", choices=["list", "show", "accept"]); sp.add_argument("--repo", default="."); sp.add_argument("--work"); sp.add_argument("--session"); sp.add_argument("--host"); sp.add_argument("--reason", default="manual checkpoint"); sp.add_argument("--summary"); sp.add_argument("--end-session", action="store_true", help="End the referenced Session after creating the handoff"); sp.add_argument("--id", dest="handoff_id"); sp.add_argument("--limit", type=int, default=20); sp.set_defaults(fn=cmd_handoff)
     sp = sub.add_parser("decisions", help="List recorded decisions for a Work Item"); sp.add_argument("--repo", default="."); sp.add_argument("--work"); sp.add_argument("--limit", type=int, default=50); sp.set_defaults(fn=cmd_decision_list)
     sessions = sub.add_parser("sessions", help="Inspect Agent Sessions")
     sessions_sub = sessions.add_subparsers(dest="sessions_command", required=True)
@@ -329,6 +333,11 @@ def main(argv: list[str] | None = None) -> int:
         compact = '--compact-json' in arguments
         arguments = [item for item in arguments if item != '--compact-json']
         args = build_parser().parse_args(arguments)
+        if getattr(args, "check", False) and args.command == "switch":
+            return args.fn(args)
+        if args.fn == cmd_resume and args.check:
+            from scripts.recovery_plan import command as recovery_preview
+            return recovery_preview(args)
         # Lifecycle observation and repair/inspection remain usable while the
         # installed host resources await reload. Work advancement must wait.
         # Dispatch by handler: several existing subcommands also use the

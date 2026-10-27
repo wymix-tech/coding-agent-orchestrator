@@ -21,6 +21,9 @@ def _query(repo, work, args):
         return page(events(repo, wid), args.limit, args.cursor)
     if action == "runs":
         return page(runs(repo, work), args.limit, args.cursor)
+    if action == "finalize":
+        from scripts.runtime_finalize import finalize
+        return finalize(repo, work, args.run)
     if action == "show":
         return inspect_run(repo, work, args.run)
     if action == "logs":
@@ -95,7 +98,7 @@ def cmd_runtime(args) -> int:
 def register_parser(sub) -> None:
     runtime = sub.add_parser("runtime", help="Inspect task execution facts without changing gates")
     commands = runtime.add_subparsers(dest="runtime_command", required=True)
-    for name in ("status", "events", "runs", "show", "logs", "recover", "rebuild", "prune", "configure"):
+    for name in ("status", "events", "runs", "show", "logs", "recover", "rebuild", "prune", "configure", "finalize"):
         parser = commands.add_parser(name)
         parser.add_argument("--repo", default=".")
         parser.add_argument("--work")
@@ -108,7 +111,7 @@ def register_parser(sub) -> None:
         if name in {"events", "runs"}:
             parser.add_argument("--limit", type=int, default=50)
             parser.add_argument("--cursor")
-        if name in {"show", "logs"}:
+        if name in {"show", "logs", "finalize"}:
             parser.add_argument("--run", required=True)
         if name == "logs":
             parser.add_argument("--command", dest="command_id", required=True)

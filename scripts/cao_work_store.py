@@ -119,6 +119,8 @@ def _activation_denied(repo: Path, wid: str) -> bool:
 
 def _persist_work(repo: Path, work: dict[str, Any]) -> None:
     """Write authority while holding the transaction, without recursively draining."""
+    from scripts.work_operations import barrier
+    barrier(repo)
     current = _read_work(repo, work["id"])
     revision = int((current or {}).get("state_revision", 0))
     if int(work.get("state_revision", 0)) != revision:
