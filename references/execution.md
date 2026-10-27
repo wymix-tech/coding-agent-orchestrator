@@ -128,4 +128,4 @@ record progress through checkpoint/decision rather than writing JSON. Read
 [runtime-records.md](runtime-records.md) for log limits, sources, and recovery
 semantics. Runtime facts never replace verification or approval contracts.
 
-For BMAD Build oneshot/dispatch only, before launching native reviewers, configure the task acceptance declaration, executor and complete source coverage. `cao sdd review prepare` checks these prerequisites before creating tickets. Final acceptance executes after formal verification.
+New Work follows the [native lifecycle](native-lifecycle.md): native reviews/tests/acceptance remain implementation activities. Complete native duties, bind actual reports, check conformance and run the project baseline. Only legacy contract-1 Work configures a separate task acceptance executor before review preparation.

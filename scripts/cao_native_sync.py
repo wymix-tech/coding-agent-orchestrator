@@ -749,7 +749,7 @@ def reconcile_native_sdd_state(repo: Path, work: dict[str, Any]) -> bool:
         idem = hashlib.sha256(json.dumps(identity, sort_keys=True).encode("utf-8")).hexdigest()
         base_event = {
             "event_id": "evt-" + idem[:20], "idempotency_key": idem, "work_item_id": work.get("id"),
-            "source": provider, "observation_source": "provider_observation", "native_ref": native_ref or None, "from_state": from_state,
+            "source": provider, "observation_source": "provider_observation", "owner": provider, "native_ref": native_ref or None, "from_state": from_state,
             "to_state": canonical, "raw_state": raw_state, "source_path": status_source,
             "evidence_sha256": evidence_hash, "task_counts": task_counts,
             "plan_scope": sdd.get("plan_scope"), "occurred_at": new_snapshot["observed_at"],
@@ -761,9 +761,9 @@ def reconcile_native_sdd_state(repo: Path, work: dict[str, Any]) -> bool:
             elif canonical == "in_progress":
                 queue_event(work, {**base_event, "event": "task.execution.started", "idempotency_key": idem + ":started", "event_id": "evt-" + idem[:16] + "started"})
             elif canonical == "completed":
-                queue_event(work, {**base_event, "event": "task.execution.completed", "idempotency_key": idem + ":execution-completed", "event_id": "evt-" + idem[:16] + "complete"})
+                queue_event(work, {**base_event, "event": "sdd.execution.completed" if work.get("lifecycle_contract") == 2 else "task.execution.completed", "idempotency_key": idem + ":execution-completed", "event_id": "evt-" + idem[:16] + "complete"})
             elif canonical == "in_review":
-                queue_event(work, {**base_event, "event": "task.review.started", "idempotency_key": idem + ":review", "event_id": "evt-" + idem[:16] + "review"})
+                queue_event(work, {**base_event, "event": "sdd.review.started" if work.get("lifecycle_contract") == 2 else "task.review.started", "idempotency_key": idem + ":review", "event_id": "evt-" + idem[:16] + "review"})
             elif canonical == "blocked":
                 queue_event(work, {**base_event, "event": "task.blocked", "idempotency_key": idem + ":blocked", "event_id": "evt-" + idem[:16] + "blocked"})
         elif old_native.get("evidence_sha256") != evidence_hash or old_native.get("source") != status_source:
@@ -774,17 +774,20 @@ def reconcile_native_sdd_state(repo: Path, work: dict[str, Any]) -> bool:
 
     from scripts.lifecycle_contract import enabled, prerequisites, next_action
     if enabled(work):
-        ready = prerequisites(repo, work)['ready']
+        native_preconditions = prerequisites(repo, work)
+        ready = native_preconditions['ready']
+        current_action = next_action(repo, work)
+        baseline_only = bool(native_preconditions.get('blockers')) and all(
+            row.get('obligation') == 'baseline' for row in native_preconditions['blockers'])
         execution = work.setdefault('execution', {})
         phase = execution_phase(execution)
-        desired = 'review' if ready else 'implementation'
+        desired = 'review' if (ready or baseline_only) and current_action['stage'] != 'execution' else 'implementation'
         # Preserve genuine planning/ready phases until native execution starts.
         active = canonical in {'in_progress', 'in_review', 'completed'} or phase in {'review', 'verification'}
         if active and not (ready and phase == 'verification'):
             if execution.get('step') != desired or execution.get('phase') != desired:
                 execution.update(step=desired, phase=desired)
                 changed = True
-        current_action = next_action(repo, work)
         if execution.get('next_action') != current_action:
             execution['next_action'] = current_action
             changed = True

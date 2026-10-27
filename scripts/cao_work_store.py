@@ -247,6 +247,8 @@ def work_summary(work: dict[str, Any]) -> dict[str, Any]:
         "status": work["status"],
         "step": work.get("execution", {}).get("step"),
         "next_action": work.get("execution", {}).get("next_action"),
+        "lifecycle_contract": work.get("lifecycle_contract", 1),
+        "sdd_substate": (work.get("sdd", {}).get("native_state") or {}).get("canonical"),
         "execution_profile": (work.get("path_assessment") or {}).get("profile"),
         "native_route": (work.get("sdd") or {}).get("route_decision"),
         "implementation_state": (work.get("sdd") or {}).get("implementation_state"),

@@ -14,7 +14,7 @@ Finish tasks across ALL associated features before formal verification, even on 
 
 ## Exit when
 
-Current requirement tasks and applicable pre-verification obligations are complete; follow completion guidance and the native order for any remaining Commit/close steps. Standard/comprehensive retain workflow registration and independent final acceptance; light still honors native prerequisites.
+All associated native tasks, testing, reviews, acceptance and required native Commit/close duties are complete; follow completion guidance for CAO evidence review and baseline verification. Standard/comprehensive retain workflow registration; light still honors native prerequisites. Complete native acceptance before CAO review, bind original results through the [native lifecycle](native-lifecycle.md), then run the project baseline.
 
 ## If blocked
 

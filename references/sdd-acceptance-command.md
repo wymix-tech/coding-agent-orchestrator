@@ -1,5 +1,8 @@
 # Command acceptance execution
 
+Applies to unmigrated lifecycle contract 1 only. New Work uses [native completion evidence](native-lifecycle.md); do not configure a second CAO functional executor.
+
+
 Read only for `executor.mode: command`. Use the shared acceptance contract for
 declaration/report fields; command-mode transport does not apply to Skill mode.
 

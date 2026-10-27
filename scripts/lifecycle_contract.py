@@ -123,11 +123,12 @@ def next_action(repo, work):
     native = prerequisites(repo, work)
     if not native['ready']:
         blocker = native['blockers'][0]
-        return {'type': 'agent', 'stage': 'execution', 'reason': blocker.get('reason'),
+        return {'type': 'agent', 'stage': 'verification_setup' if blocker.get('obligation') == 'baseline' else 'execution', 'reason': blocker.get('reason'),
                 'instruction': blocker.get('next') or 'Continue the selected native workflow; complete all associated tasks and native review/finalize obligations.'}
     evidence = evidence_state(repo, work)
     if not evidence['ready']:
-        return {'type': 'agent', 'stage': 'completion', 'reason': evidence['reason'], 'instruction': evidence['next']}
+        return {'type': 'agent', 'stage': 'execution' if evidence.get('changed_inputs') else 'completion',
+                'reason': evidence['reason'], 'instruction': evidence['next']}
     from scripts.cao_completion import verification_inputs
     from scripts.cao_runtime import config
     from scripts.completion_policy import verification_fresh
@@ -156,8 +157,12 @@ def command(args):
                 return 0
             if work.get('lifecycle_contract', 1) != 1:
                 raise ValueError('LIFECYCLE_CONTRACT_UNSUPPORTED')
+            if ((work.get('verification') or {}).get('status') == 'running'
+                    or (((work.get('sdd') or {}).get('acceptance') or {}).get('run') or {}).get('status') == 'running'):
+                raise ValueError('LIFECYCLE_RUN_ACTIVE: finish or recover the running verification/acceptance before migration')
             previous = deepcopy(work)
             work['lifecycle_contract'] = VERSION
+            work['execution_generation'] = int(work.get('execution_generation', 0)) + 1
             work.setdefault('lifecycle_migrations', []).append({'from': 1, 'to': VERSION,
                 'at': now(), 'previous_execution': previous.get('execution'),
                 'previous_acceptance': previous.get('sdd', {}).get('acceptance')})

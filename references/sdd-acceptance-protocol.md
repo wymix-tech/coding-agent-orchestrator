@@ -1,5 +1,8 @@
 # Independent SDD acceptance contract
 
+Applies to unmigrated lifecycle contract 1 only. New Work uses [native completion evidence](native-lifecycle.md); do not configure a second CAO functional executor.
+
+
 Contents: [Inspect protocol](#inspect-the-authoritative-protocol) · [Configure](#configure-a-declaration) · [Request/report](#request-and-report) · [Examples](#illustrative-request-and-blocked-report) · [Dual acceptance](#project-bound-dual-acceptance) · [Per-item checks](#criterion-specific-checks-for-new-declarations)
 
 Read when configuring or repairing independent final acceptance for

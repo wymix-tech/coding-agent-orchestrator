@@ -80,47 +80,28 @@ Agent 应按以下顺序推进：
 
 `cao next` 返回当前动作和 `guidance.read_before_action` 路径。读取对应阶段及 Provider 指引后，从当前状态继续。创建新 Work 前必须建立真实基线并通过项目准备检查；已有 Work 可原地补齐基线；开始业务实现前，需要具备已接受的验证基线并满足原生流程前置条件。
 
-### 5. 验证、验收与关闭
+### 5. 证据评审、项目验证与关闭
 
-关联的原生任务和必要评审完成后，绑定原生规范或 Intent，检查验收条目，并在最终验证前配置真实验收执行器。命令模式示例：
-
-```bash
-cao acceptance criteria
-cao acceptance configure --executor-command "<actual acceptance command>"
-```
-
-执行器必须遵循 [验收协议](references/sdd-acceptance-protocol.md)，为每个条目返回实际证据。配置动作不会自动生成断言，也不会执行检查。如果配置变化要求批准或 `--reanchor`，先按返回的动作处理。
+先完成当前 Work 全部关联范围的 SDD 测试、评审、问题处理、原生验收及必要收尾。
+SDD 评审期间，CAO 保持执行阶段。新 Work 使用生命周期契约 2：
 
 ```bash
+cao lifecycle bind --report <原生完成及测试验收报告路径>
+cao conformance check
 cao verify
-cao acceptance run
 cao acceptance status
-cao next
-```
-
-Skill 模式使用 `cao acceptance begin`、执行声明的原生 Skill、`cao acceptance submit`，代替 `run`。完成剩余原生义务，包括流程要求的本地提交，再关闭任务：
-
-```bash
 cao done
 ```
 
-只有 `cao done` 成功，Work 才算完成。完整规则见 [验证、验收与关闭指引](references/completion.md)。
+多个原生报告使用重复的 `--report` 绑定；报告覆盖安全等原生义务时，使用
+`--gate security_verification` 等参数记录实际覆盖。CAO 检查证据链并执行已批准的
+项目基线；无需额外配置功能执行器或将原生报告逐条转换为测试 JSON。
+项目基线可以运行包含当前功能测试在内的完整测试套件。只有成功 `cao done`
+才关闭 Work。
 
-日常常用命令：
-
-| 需求 | 命令 |
-| --- | --- |
-| 查看需求文档 / Work 列表 | `cao requirement list` / `cao list` |
-| 查看进度 / 下一步 | `cao status` / `cao next` |
-| 保存进度 | `cao checkpoint --step login-api --next "执行集成测试" --summary "接口已实现"` |
-| 记录任务决策 | `cao decision --decision "使用短期令牌" --reason "限制会话暴露时间"` |
-| 暂停 / 重新激活 | `cao block --reason "等待接口信息" --suspend` / `cao resume --work <id> --reactivate` |
-| 交接上下文 | `cao handoff --reason "转交其他 Agent"` |
-| 换宿主继续 | `cao resume --work <id> --host codex` |
-| 查看执行记录 / 恢复诊断 | `cao runtime runs --work <id>` / `cao runtime recover --work <id> --check` |
-| 打开可视化面板 | `cao dashboard --open` |
-
-重新激活不会自动清除未解决的阻塞；实际解决后，使用 `cao unblock --work <id> --blocker <blocker-id>`。切换宿主时，先用 `cao host install --host <host>` 安装对应适配器，再在同一项目启动该宿主。
+旧契约 1 保留原有执行器记录；使用 `cao lifecycle migrate --work <id>` 切换，
+保留 Work 标识与历史，不会把旧失败结果转成通过。详见[原生生命周期](references/native-lifecycle.md)
+和[完成指引](references/completion.md)。
 
 ## 本项目实现了什么
 
@@ -153,8 +134,8 @@ CAO 提供三种质量档位，与 Provider 自己选择的原生路线分别管
 | 档位 | 适用情况 | 完成要求 |
 | --- | --- | --- |
 | `light` | 范围小、目标清晰、风险有限的改动 | 有针对性的技术验证和真实需求证据；适用的原生前置条件及评审仍需完成。 |
-| `standard` | 需要明确范围、测试和评审的改动 | 范围与实现评审、必要测试、技术验证、独立 SDD 验收。 |
-| `comprehensive` | 较高风险或更广范围的改动 | 需求、设计与实现评审、技术验证、独立验收，以及按声明风险追加的门禁。 |
+| `standard` | 需要明确范围、测试和评审的改动 | 原生范围与实现评审、测试及验收证据，再由 CAO 检查证据链并执行项目基线。 |
+| `comprehensive` | 较高风险或更广范围的改动 | 原生需求、设计、实现评审和风险检查；CAO 校验证据并运行项目基线。 |
 
 Agent 负责评估范围，CAO 对声明的风险标记执行最低档位约束。安全、数据迁移、不可逆操作、跨系统改动、重大歧义要求 `comprehensive`。选择某个档位不意味着可以跳过已安装 Provider 的流程。
 
@@ -163,11 +144,11 @@ Agent 负责评估范围，CAO 对声明的风险标记执行最低档位约束�
 | 层次 | 回答的问题 | 所需证据 |
 | --- | --- | --- |
 | 项目级技术验收 | 当前实现是否符合适用的项目工程标准？ | 配置的编译、测试、安全、集成或其他必要脚本的有效执行结果，并绑定相关项目背景与输入。 |
-| 当前任务需求验收 | 当前需求是否满足原生规范、Intent 和验收条目？ | 逐条命令或 Skill 的真实结果、来源覆盖、原生执行范围及适用的评审和批准证据。 |
+| 当前任务需求验收 | 当前需求是否满足原生规范、Intent 和验收条目？ | SDD 原生测试与验收结果、完整执行范围，以及适用的评审和批准证据。 |
 
 新 Work 继承适用的 **标准**，不继承其他 Work 的通过结果。两层都必须通过且证据仍然有效；原生范围、批准、评审、剩余提交义务和未解决阻塞，也共同参与 `done` 的判断。
 
-`cao acceptance criteria` 从需求和原生产物派生来源引用，不会自动判断自然语言的语义正确性，也不会凭空生成断言。仅当技术运行的精确命令与已接受的需求验收入口一致，且原始输出包含同一 Work 完整、有效、未过期的条目结果时，才可通过 `cao acceptance reuse --script <result-name>` 复用这次真实运行。
+仅适用于未迁移的旧契约 1：`cao acceptance criteria` 从需求和原生产物派生来源引用，不会自动判断自然语言的语义正确性，也不会凭空生成断言。仅当技术运行的精确命令与已接受的需求验收入口一致，且原始输出包含同一 Work 完整、有效、未过期的条目结果时，才可通过 `cao acceptance reuse --script <result-name>` 复用这次真实运行。
 
 ## 怎么实现的
 

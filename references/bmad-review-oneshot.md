@@ -1,5 +1,8 @@
 # BMAD oneshot review evidence
 
+For lifecycle contract 2, native tests/review/acceptance remain CAO implementation. Follow [native lifecycle](native-lifecycle.md) for completion evidence, migration and precise recovery; separate functional executor guidance applies only to legacy contract 1.
+
+
 After `review begin`, pass its `reviewer_start` command to a new independent same-model host session with a CAO adapter. Bind the real reviewer before inspecting code: the shell child runs it, or its coordinator adds `--reviewer-session <host-observed-child-id>` for a read-only child. The host must observe that child, its lineage, read capability and matching model. Existing sessions and pre-ticket results cannot be reused. Use the host-native session ID returned by attach in the report; keep any separate subagent run ID as supplementary information.
 
 Read for a BMAD oneshot review action, for any CAO quality profile.

@@ -34,6 +34,7 @@ Empty runtime product: follow [project initialization](references/project-initia
 | Current Provider is BMAD and native workflow action is needed | [BMAD](references/provider-bmad.md) |
 | Current Provider is OpenSpec and native workflow action is needed | [OpenSpec](references/provider-openspec.md) |
 | Current Provider is Spec Kit and native workflow action is needed | [Spec Kit](references/provider-speckit.md) |
+| Native completion, evidence binding or old Work migration | [Native lifecycle](references/native-lifecycle.md) |
 | Process/artifact conformance and project knowledge | [Conformance and knowledge](references/conformance-knowledge.md) |
 | Review/verification/final acceptance/close | [Completion](references/completion.md) |
 | Blockers, requirement changes, stale evidence, missing sources or abandoned runs | [Recovery](references/recovery.md) |
@@ -41,9 +42,9 @@ Empty runtime product: follow [project initialization](references/project-initia
 | BMAD dispatch Open Questions, approval or paused implementation | [BMAD approval](references/bmad-approval.md) |
 | BMAD dispatch review/Classify/Resolve action | [BMAD dispatch review](references/bmad-review-dispatch.md) |
 | BMAD oneshot review/submit action | [BMAD oneshot review](references/bmad-review-oneshot.md) |
-| Configure/repair independent acceptance fields, any Provider | [Acceptance protocol](references/sdd-acceptance-protocol.md) |
-| Acceptance executor mode is `command` | [Command acceptance](references/sdd-acceptance-command.md) |
-| Acceptance executor mode is `skill` | [Skill acceptance](references/sdd-acceptance-skill.md) |
+| Legacy contract-1 independent acceptance fields | [Acceptance protocol](references/sdd-acceptance-protocol.md) |
+| Legacy acceptance executor mode is `command` | [Command acceptance](references/sdd-acceptance-command.md) |
+| Legacy acceptance executor mode is `skill` | [Skill acceptance](references/sdd-acceptance-skill.md) |
 
 Read current stage files fully; defer unrelated providers, source scripts and historical notes. If a native Skill requires a renderer, run its exact installed renderer and read the result;
 rendering loads instructions and does not execute/complete the workflow.
@@ -67,19 +68,22 @@ flowchart TD
     G --> A
     F -->|Yes| H["Confirm assessment and current next action"]
     H --> I["Execute selected Provider workflow and all associated scope"]
-    I --> J{"Native tasks and pre-verification obligations complete?"}
+    I --> J{"Entire native scope and close duties complete?"}
     J -->|No| I
-    J -->|Yes| K["cao verify"]
+    J -->|Yes| EVIDENCE["Bind native reports and check conformance"]
+    EVIDENCE --> K["cao verify: project baseline"]
     K --> L{"Fresh valid verification?"}
     L -->|No| M["Resolve blocker and refresh affected evidence"]
     M --> H
-    L -->|Yes| N["Final acceptance and remaining native close steps"]
+    L -->|Yes| N["Check current completion evidence"]
     N --> O["cao done enforces all gates"]
 ```
 
-Configure task acceptance sources, executor and coverage before BMAD Build review preparation; other providers follow their installed native review workflow. Execute final acceptance after formal verification. Review/reanchor as directed by
-completion guidance. Perform required native commits at their native step; commit alone does not
-require reanchoring. Any input change can require fresh reviews/bindings/verification.
+Contract 2 keeps native tests/reviews/acceptance/finalize in implementation.
+Then `cao lifecycle bind --report <native-report>`, `cao conformance check`,
+`cao verify` (project baseline), `cao done`. See [native lifecycle](references/native-lifecycle.md)
+for risk evidence and legacy migration. Only contract 1 uses a separate acceptance
+executor. Preserve native Commit/approval order; commit alone needs no reanchor.
 
 ## Always preserve these boundaries
 
@@ -115,4 +119,4 @@ require reanchoring. Any input change can require fresh reviews/bindings/verific
   generated documents and successful tests cannot close Work. Only successful `cao done` is final.
   Follow native local Commit obligations; never push without authorization.
 
-Inspect `cao acceptance status` before closing: project technical quality and current requirement/SDD evidence must both pass and remain fresh. Standards are inherited; prior Work results are not. Existing native reviews, approvals and full scope completion remain required.
+Inspect `cao acceptance status` before closing. Project baseline and complete native evidence must be current. Standards are inherited; prior Work results are not.
