@@ -129,3 +129,5 @@ record progress through checkpoint/decision rather than writing JSON. Read
 semantics. Runtime facts never replace verification or approval contracts.
 
 New Work follows the [native lifecycle](native-lifecycle.md): native reviews/tests/acceptance remain implementation activities. Complete native duties, bind actual reports, check conformance and run the project baseline. Only legacy contract-1 Work configures a separate task acceptance executor before review preparation.
+
+Implementation artifacts may be registered incrementally with `cao evidence attach --kind <kind> --path <native-artifact>`. These are process declarations, including failed/unknown outcomes; they do not grant completion. See the continuity section in [Work intake](work-intake.md) before transfer.
