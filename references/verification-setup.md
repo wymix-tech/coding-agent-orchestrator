@@ -222,3 +222,13 @@ Change verification timeout using `cao verification configure --timeout-seconds 
 Preparation policy v2 requires one project-level review/check of historical readiness records that lack this boundary. Inspect existing scripts against accepted technology, manifests and build/test/CI entrypoints; retain valid project-wide checks and repair task-specific wrappers only when needed. A missing policy marker never silently certifies old scripts. This does not clear Work progress or automatically overwrite scripts.
 
 Upgrading the package does not overwrite existing project instruction files. Refresh the managed CAO block with `cao instructions update --host <host> --apply`, then reload the host as directed. Custom project text is preserved.
+
+### Persist and execute the independent script baseline
+
+After scaffold checks pass, inspect the actual project commands, then use
+`cao verification materialize --scope <scope>` to create scope-owned Python
+wrappers in `.orchestrator/scripts/verification/<scope>/` and update declarations.
+It preserves existing file contents, capabilities and original commands; it does
+not execute or certify them. Run `cao verification check --project --scope <scope>`
+and repair failures before creating Work. Scaffold receipts alone do not satisfy
+this gate. Custom wrappers use the existing prepare/write/configure path.

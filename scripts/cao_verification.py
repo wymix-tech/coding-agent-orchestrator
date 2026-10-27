@@ -107,6 +107,25 @@ def cmd_verification_configure(args: argparse.Namespace) -> int:
             raise ValueError("VERIFICATION_SCRIPT_REQUIRED")
         from scripts.project_verification import validate_entries
         validate_entries(repo, scripts, getattr(args, "scope", None))
+        # Re-declaring an unchanged native command preserves its materialized
+        # project wrapper rather than looking like a new verification standard.
+        from scripts.project_baseline import script_paths
+        previous_verification = raw.get('verification') if isinstance(raw, dict) else None
+        original_commands = previous_verification.get('materialized_commands') if isinstance(previous_verification, dict) else None
+        existing_scripts = []
+        if isinstance(original_commands, dict) and original_commands:
+            try:
+                existing_scripts = verification_scripts(raw)
+            except ValueError:
+                pass  # prepare_config retains the established invalid-config policy.
+        for script in scripts:
+            for existing in existing_scripts:
+                if any(script.get(key) != existing.get(key) for key in ('name', 'required', 'gates')):
+                    continue
+                wrapper_paths = script_paths(existing['command'], repo)
+                if len(wrapper_paths) == 1 and original_commands.get(wrapper_paths[0]) == script['command']:
+                    script['command'] = existing['command']
+                    break
         candidate, changed = prepare_config(raw, scripts, args.replace, now())
         for section, key, requested, clear in declarations:
             if requested is None and not clear:
@@ -188,6 +207,9 @@ def cmd_verification_configure(args: argparse.Namespace) -> int:
     if changed:
         save_json(path, candidate)
     if initial_baseline and setup_state(effective)["ready"]:
+        from scripts.project_baseline import materialize
+        materialize(repo, update_review=False)
+        effective = config(repo)
         anchor_verification(repo, work, effective)
         queue_event(work, {"event": "verification.baseline.established", "work_item_id": work["id"],
                            "source": "cao", "acceptance": work["acceptance"], "occurred_at": now()})

@@ -116,7 +116,7 @@ class HostLifecycleTests(RepairCase):
         out = self.event("pre_tool", toolName="write", input={"path": "src.py", "content": "x"})
         self.assertEqual(out["decision"], "deny")
         self.assertIn("requirement changed", out["reason"])
-        self.assertIn("--replace", out["reason"])
+        self.assertIn("--expected-token", out["reason"])
         self.assertIn("cao path assess", out["reason"])
 
     def test_allow_keeps_additional_context(self):

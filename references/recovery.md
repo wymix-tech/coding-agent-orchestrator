@@ -24,9 +24,9 @@ For oneshot Commit, explicitly stage and commit the intended SPEC; do not force-
 automatically. Git commit alone does not require reanchoring.
 
 If `cao done` reports that the requirement changed, do not blindly rerun `cao verify`. Review the
-requirement change; when the change is intentional, re-anchor the Work Item with
-`cao start --requirement <path> --replace`. The `--replace` action changes the active
-execution anchor; it does not mean that the original requirement was superseded. Old requirement-scoped
+requirement change; when intentional, use a separate candidate and `cao amend
+--check`, then `--apply --expected-token <expected_token>`. Do not use
+`start --replace` to revise the requirement. Old requirement-scoped
 assessment, gate, verification and workflow evidence must be refreshed. Changed acceptance scripts/capabilities
 or `timeout_seconds` require `cao reopen --work <id> --reanchor --reason "Reviewed acceptance changes"`.
 Legacy completed history remains readable, not automatically recertified; legacy active work needs explicit
@@ -69,3 +69,15 @@ The original Work is active with corrected scope and fresh applicable evidence; 
 If genuine user input/authorization or a native independent reviewer is required and unavailable, record the exact blocker and wait. Do not replace the Work or create false approval/review evidence.
 
 For request switching, strictly read-only previews, process evidence archives and run recovery, follow [Task continuity](task-continuity.md).
+
+### Changed requirement recovery
+
+Use a separate candidate and `cao amend --check`, then `--apply --expected-token
+<expected_token>`. `start --replace` switches Work and cannot amend its requirement.
+New Work retains the anchored original bytes, allowing explicit amend after an
+accidental in-place edit; previews never rewrite the file. Legacy Work without
+retained originals requires the exact original from Git or an audited artifact;
+pass it as `amend --original <recovered-file>` for hash-checked recovery without
+rewriting the bound source before apply.
+Never invent that original, rewrite managed state, or retry stale revisions in a
+loop. Inspect changed state before creating a new preview.

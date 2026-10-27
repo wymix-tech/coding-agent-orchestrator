@@ -45,6 +45,8 @@ class RealToolchains(unittest.TestCase):
         self.assertTrue(call('project', 'setup', 'status')['ready'])
         self.assertFalse(list((self.repo / '.orchestrator/work').glob('*.json')))
         (self.repo / 'openspec/feature.md').write_text('# Feature\n## Acceptance\n- The new operation works.\n')
+        call('verification', 'materialize')
+        self.assertEqual('passed', call('verification', 'check', '--project')['status'])
         work = call('start', '--requirement', 'openspec/feature.md')['work_item']
         self.assertEqual('active', work['status'])
         before = (self.repo / '.orchestrator/work' / (work['id'] + '.json')).read_text()

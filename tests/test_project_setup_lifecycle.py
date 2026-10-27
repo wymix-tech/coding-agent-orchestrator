@@ -174,8 +174,11 @@ class ProjectSetupLifecycle(unittest.TestCase):
         call('host-event', '--host', 'pi', payload={'event': 'prompt_submit', 'session_id': 'actual-cli-fixture',
              'prompt': 'Initialize sample-dist with import sample_import. Use Python setuptools unittest.'})
         evidence = call('project', 'inspect')['user_evidence'][-1]['id']
-        call('project', 'setup', 'draft', '--rule', 'python-unittest',
-             '--identity', '{"name":"sample-dist","import_name":"sample_import"}', '--evidence', evidence)
+        call('project', 'setup', 'identity', '--rule', 'python-unittest',
+             '--field', 'name', '--value', 'sample-dist', '--evidence', evidence)
+        call('project', 'setup', 'identity', '--rule', 'python-unittest',
+             '--field', 'import_name', '--value', 'sample_import', '--evidence', evidence)
+        call('project', 'setup', 'draft', '--rule', 'python-unittest')
         call('project', 'setup', 'plan')
         background = call('project', 'context', 'show')['context']
         self.assertEqual('sample_import', background['scopes']['root']['identity']['values']['import_name'])
@@ -190,6 +193,8 @@ class ProjectSetupLifecycle(unittest.TestCase):
         self.assertEqual('deny', call('host-event', '--host', 'pi', payload=event)['decision'])
         self.assertTrue(call('project', 'setup', 'status')['ready'])
         (self.repo / 'openspec/feature.md').write_text('# Feature\n## Acceptance\n- The new operation works.\n')
+        call('verification', 'materialize')
+        call('verification', 'check', '--project')
         work = call('start', '--requirement', 'openspec/feature.md')['work_item']
         self.assertEqual('active', work['status'])
         self.assertNotEqual('passed', work.get('verification'))

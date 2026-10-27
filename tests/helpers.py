@@ -247,5 +247,7 @@ def seed_project_preparation(repo):
     from scripts.verification_probe import project_result_path, project_standard
     from scripts.state_store import atomic_json
     if load_context(repo):
+        from scripts.project_baseline import materialize
+        materialize(repo)
         atomic_json(project_result_path(repo, 'root'), {'status': 'passed',
             'purpose': 'unit-test-fixture', 'standard': project_standard(repo, 'root')})

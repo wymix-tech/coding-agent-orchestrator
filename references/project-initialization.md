@@ -1,5 +1,7 @@
 # Scope-owned initialization before business Work
 
+Contents: Identity interview and scaffold; Exact plans and checks; Independent project baseline; Recovery.
+
 Honor provider installation and host restart first. Restore the original request,
 then use project inspect/context to record actual technology choices. Confirm only
 missing applicable identity and layout choices; never infer user authorization
@@ -12,12 +14,22 @@ in provider outputs. Existing products are reused and active Work retains progre
 
 1. `cao project setup rules` lists built-in identity/layout conveniences. These are
    not a language whitelist. Inspect the required fields and capabilities.
-2. Confirm applicable identity, versions and layout with the user, or reuse actual
-   scoped delegation. Obtain the host-observed evidence ID from project inspect.
+2. Collect applicable identity, versions and layout with a sequential interview.
+   Run `cao project setup identity --rule <rule> --scope <scope>`; ask only the
+   returned `next_field`, wait for the user to enter it, then save with the same
+   command plus `--field <field> --value <answer> --evidence <observed-user-id>`.
+   Repeat until ready. Reuse saved answers after restart. Do not invent a bundle
+   of names, group IDs or namespaces and ask for blanket acceptance; do not ask
+   users to type JSON or internal field strings. Explain derived package/path
+   suggestions and confirm them individually. For another stack, use
+   `--rule explicit --fields <field>` repeatedly to declare its ordered fields.
+   Obtain each host-observed evidence ID from project inspect. Draft automatically
+   reuses the collected values and per-field evidence for built-in and explicit
+   plans; complete the explicit plan using its exact prepared input.
 3. Draft a built-in plan, for example:
 
    ```bash
-   cao project setup draft --rule python-unittest --identity '{"name":"demo-dist","import_name":"demo_import"}' --evidence <observed-user-id>
+   cao project setup draft --rule python-unittest
    ```
 
    `draft` returns an exact `.orchestrator/inputs/project-<scope>/setup.json` path.
@@ -84,8 +96,15 @@ Non-runtime artifacts need explicit applicability and evidence; never force a
 server entry into a library or demand compilation from an interpreted package.
 Built-in examples are drafts, not an exhaustive framework generator.
 
-After ready, rerun bootstrap and create the original business Work. It inherits
-project context and verification declarations. Initialization results never fill
+After scaffold ready, establish the independent project script baseline BEFORE
+creating the original business Work. Inspect the checks against the accepted
+technology and project quality standards, run `cao verification materialize
+--scope <scope>` to persist them under `.orchestrator/scripts/verification/`,
+then run `cao verification check --project --scope <scope>`. Alternatively reserve,
+write and configure actual project wrappers before that check. Missing wrappers,
+failed checks and changed standards block Work. Initialization success cannot
+substitute for this separate preparation receipt. Rerun bootstrap only after it
+passes; the Work inherits project context and verification declarations. Initialization results never fill
 Work verification, native review, or requirement acceptance gates. Ordinary later
 business edits do not reset initialization; context or baseline changes require
 rechecking the affected project preparation.

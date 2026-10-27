@@ -48,6 +48,7 @@ class ProjectAcceptanceTests(unittest.TestCase):
             args = (*args, '--replace')
         rc, out = self.cli(*args, payload=payload)
         if rc == 0 and args[:2] == ('verification', 'configure') and out.get('acceptance_review_required'):
+            self.check('verification', 'materialize')
             self.check('reopen', '--reanchor', '--reason', 'Review delivery fixture verification changes')
         self.assertEqual(rc, 0, out)
         return out
@@ -96,6 +97,7 @@ class ProjectAcceptanceTests(unittest.TestCase):
             if scope:
                 command_args += ['--scope', scope]
             self.check(*command_args)
+        self.check('verification', 'materialize', '--scope', scope or 'root')
         check_args = ['verification', 'check', '--project']
         if scope:
             check_args += ['--scope', scope]
@@ -386,6 +388,9 @@ sys.exit(p.returncode)
         path.write_text(json.dumps(declaration))
         self.check('acceptance', 'configure', '--declaration', 'declaration.json', '--replace')
         self.check('verification', 'configure', '--replace', '--test-script', command)
+        declaration['executor']['entrypoint'] = json.loads((self.repo / '.orchestrator/config.json').read_text())['verification']['scripts'][0]['command']
+        path.write_text(json.dumps(declaration))
+        self.check('acceptance', 'configure', '--declaration', 'declaration.json', '--replace')
         self.check('verification', 'check', '--project')
         (self.repo / '.orchestrator/shared-count.txt').unlink()
         self.check('reopen', '--reanchor', '--reason', 'Review shared command and assertion mapping')

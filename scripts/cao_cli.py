@@ -382,6 +382,8 @@ def main(argv: list[str] | None = None) -> int:
         return int(args.fn(args))
     except (OSError, RuntimeError, ValueError, json.JSONDecodeError) as exc:
         result = {"ok": False, "error": str(exc)}
+        if getattr(exc, "next_instruction", None):
+            result["next"] = exc.next_instruction
         if getattr(exc, "diagnostics", None):
             result.update(diagnostic=exc.diagnostics[0], diagnostics=exc.diagnostics)
         code = str(exc).split(':', 1)[0]

@@ -15,6 +15,6 @@ def technology_instruction(command: str) -> str:
         "An Agent-written requirement, SPEC, manifest or decision saying 'confirmed' is not user authorization; generated files for this request cannot retroactively authorize the stack. "
         "Project background must be saved before starting a product Work; do not fill unknown choices with invented defaults. "
         f'Before Work creation, inspect `{command} project inspect`, then save authorized fields using `{command} project context set --source <source> --evidence <observed-evidence-id-or-product-path>`. '
-        "Project technology is not a Work decision. Existing tasks inherit the accepted background; do not repeat selection. "
+        "Project identity is a separate sequential interview: use `project setup identity --rule <rule>`; ask the user to enter one missing field at a time, persist each answer and evidence, and resume only unanswered fields. Do not propose a bundle of invented identity defaults or require JSON/field strings from the user. Project technology is not a Work decision. Existing tasks inherit the accepted background; do not repeat selection. "
         "Keep proposals pending and preserve their status in the handoff; never relabel them as user-confirmed. "
     )

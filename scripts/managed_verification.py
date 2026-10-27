@@ -52,7 +52,10 @@ def prepare(repo, names, scope):
         raise ValueError('PROJECT_CONTEXT_REQUIRED')
     selected_scopes(context, [scope])
     from scripts.project_context import context_state
-    background = context_state(repo, [scope], check_sources=True)
+    from scripts.cao_work_store import load_index, load_work
+    wid = load_index(repo).get('active_work')
+    owner = load_work(repo, wid) if wid else None
+    background = context_state(repo, [scope], work=owner, check_sources=True)
     if not background['ready']:
         raise ValueError(background['reason'])
     record = registry(repo)
@@ -252,17 +255,22 @@ def command(args):
     if not restart['ready']:
         raise ValueError(restart['reason'])
     with repo_transaction(repo):
-        out = prepare(repo, args.path, args.scope) if args.verification_command == 'prepare' else migrate(repo)
+        if args.verification_command == 'materialize':
+            from scripts.project_baseline import materialize
+            out = materialize(repo, args.scope)
+        else:
+            out = prepare(repo, args.path, args.scope) if args.verification_command == 'prepare' else migrate(repo)
     print(json.dumps({'ok': True, **out}, ensure_ascii=False))
     return 0
 
 
 def register(sub):
-    for name in ('prepare', 'migrate'):
-        parser = sub.add_parser(name, help='Reserve exact verification inputs' if name == 'prepare' else 'Migrate proven setup-owned wrappers; retain originals')
+    for name in ('prepare', 'migrate', 'materialize'):
+        parser = sub.add_parser(name, help={'prepare': 'Reserve exact verification inputs', 'migrate': 'Migrate proven setup-owned wrappers; retain originals', 'materialize': 'Persist project verification commands as managed scripts before Work'}[name])
         parser.add_argument('--repo', default='.')
-        if name == 'prepare':
+        if name in {'prepare', 'materialize'}:
             parser.add_argument('--scope', default='root')
+        if name == 'prepare':
             parser.add_argument('--path', action='append', required=True)
         parser.set_defaults(fn=command)
 

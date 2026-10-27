@@ -86,7 +86,8 @@ class RepairTests(unittest.TestCase):
             "ready": False,
             "reason": "requirement changed since work started",
         })
-        self.assertIn("cao start --requirement SPEC.md --replace", instruction)
+        self.assertIn("cao amend --work work-1", instruction)
+        self.assertIn("--expected-token", instruction)
         self.assertNotEqual(instruction, "Run `python scripts/cao.py verify`.")
 
     def test_replace_uses_reanchor_language(self):

@@ -1,7 +1,7 @@
 # Coding Agent Orchestrator
 
 
-Project setup order: confirm technology → generate/reuse scaffold → establish actual project checks and pass initialization → create business Work. CAO wrappers live in `.orchestrator/scripts/verification/`; reserve exact inputs with `cao verification prepare --path <exact-path>`, then configure/check. Native tests/build files stay in place. Existing products use `cao verification check`; existing Work can use `--project` without losing progress. Standards are inherited; Work verification and SDD requirement acceptance need current evidence. See [verification baseline](references/verification-setup.md).
+Project setup order: confirm technology → collect project identity one field at a time → generate/reuse and check scaffold → persist and run an independent project script baseline → create business Work. CAO wrappers live in `.orchestrator/scripts/verification/`; reserve exact inputs with `cao verification prepare --path <exact-path>`, then configure/check. Native tests/build files stay in place. Existing products use `cao verification check`; existing Work can use `--project` without losing progress. Standards are inherited; Work verification and SDD requirement acceptance need current evidence. See [verification baseline](references/verification-setup.md).
 Project preparation also precedes Work resume. During baseline preparation, bootstrap/next expose only project inputs and `pending_work` identity; `resume --reactivate` cannot bypass this boundary. Historical preparation records require a one-time policy-v2 review/check.
 
 
@@ -88,7 +88,7 @@ The agent follows this order:
 
 1. Restore any pending request returned by bootstrap after restart. Inspect the existing product and saved background with `cao project inspect` and `cao project context show`.
 2. Preserve established choices and confirm missing ones. Save them with `cao project context set`, using the observed user evidence ID or established manifest path returned by inspection. Project background does **not** require a Work Item.
-3. Reuse existing verification entries. Empty products first complete `cao project setup rules`, `draft`, `plan`, `apply`, and `check` without a Work. Confirm only missing identity fields and versions; adapt the exact plan to the selected framework. See [project initialization](references/project-initialization.md). `verification configure --plan-only` alone does not establish initialization readiness.
+3. Reuse existing verification entries. Empty products first complete `cao project setup rules`, `draft`, `plan`, `apply`, and `check` without a Work. Confirm only missing identity fields and versions; adapt the exact plan to the selected framework. See [project initialization](references/project-initialization.md). Collect answers with `project setup identity --rule <rule>`. After scaffold checks, run `verification materialize` and `verification check --project`; scaffold success or `verification configure --plan-only` alone cannot unlock Work.
 4. Use an existing requirement file, or reserve a path with `cao requirement next-id --title "User login"` and fill that returned file. Then run `cao start --requirement <requirement-path> --title "User login"`.
 5. Existing Work may repair its build/test scaffolding and trial configured checks with `cao verification check --work <id>` before formal review; initialized projects inherit their actual checks. Review the baseline as requested, assess the execution path, and follow the selected provider's native workflow.
 
@@ -318,7 +318,7 @@ or disable it with `knowledge.enabled: false`. See the
 ### Empty-project preparation and evidence integrity
 
 Empty runtime products now have a project-owned lifecycle before business Work:
-`cao project setup rules` → `draft` → `plan` → `apply` → `check` → `status`.
+`cao project setup rules` → `identity` (save one answer at a time) → `draft` → `plan` → `apply` → `check` → `verification materialize` → `verification check --project`.
 The draft exposes applicable identity/layout fields and exact files/checks. Other
 stacks use the same explicit-plan schema; built-in examples are conveniences,
 not a language whitelist. See [initialization](references/project-initialization.md).
