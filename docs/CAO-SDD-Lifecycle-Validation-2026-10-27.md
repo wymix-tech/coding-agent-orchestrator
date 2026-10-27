@@ -17,42 +17,70 @@
 - 已完成 Work 冻结完成时的结果；迁移不能静默修改历史。知识收集保持非阻塞。
 - 技能、完成/恢复指南、双语 README、CLI 输出及 dashboard 已对齐新旧契约。
 
+## 本轮补齐
+
+- 三个 provider 共用原始 Markdown/平面 YAML/JSON/运行日志适配器，记录解析观察与适配器版本；明确失败、零检查、身份冲突、错误范围和未知文本均不能视为通过。不会改写原报告。
+- 分离产品、原生来源/范围、原始报告、原生执行/评审依赖、策略、项目基线依赖域；失效诊断列出具体路径、受影响及仍有效证据。仅报告变化不会使未变的项目基线失效。
+- 管理目录内共享原生依赖可显式声明；跟踪静态 shell source，动态依赖需声明。仅基线传输变化与真实原生输入变化分别处理。
+- 两次相同输入绑定失败后暂停，不再修改状态；原始报告或输入修正后可继续，不重新 intake 或启动全部原生评审。
+- 迁移新增只读 preflight/check、完整原始 Work 快照、迁移/回滚中断恢复；回滚拒绝覆盖迁移后的进展或来源变化，保留审计并推进 generation。
+- 契约 2 持久化保存最后授权状态；拒绝不支持的旧 writer、契约降级及损坏状态。恢复隔离原始异常字节，保留授权成果。该机制是当前引擎的授权状态校验，并非操作系统写隔离，不能阻止旧二进制物理改写文件。迁移前应停止旧 writer。
+- 修复 Pi 测试夹具与安装矩阵中未跟随 PR #28 更新的初始化顺序，保留项目基线前置要求。
+
 ## 验证结果
+
+全量发现 90 个模块、1095 项测试。首次全量仅指南目录检查失败，补齐长指南 Contents 后该模块 14 项全部通过；其余 89 个模块通过。重复定向执行不计入总数。
 
 | 检查 | 结果 | 范围说明 |
 | --- | --- | --- |
-| `make check` / `git diff --check` | 通过 | Python 编译及变更格式 |
-| 全量 Python 回归，按文件隔离运行 | 89 个模块、1077 项通过，0 失败 | 使用与 unittest discover 相同的 `test_*.py` 文件，6 个并行测试进程；约 152 秒 |
-| 新契约定向回归 | 16 项通过 | 包含全量执行之后补充的 JSON 报告校验；与上行存在重叠，不能相加为总测试数 |
-| Dashboard 回归 | 27 项通过 | 修正后续 UI 投影及原生评审提示 |
-| 技能资源约束 | 通过 | 主技能小于 10000 bytes、引用可发现、阶段指南具备必需章节 |
+| `make check` / `git diff --check` | 通过 | 编译与格式检查 |
+| 全量 Python 回归及失败修正复跑 | 90 模块、1095 项通过 | 全量约 162 秒；指南模块修正后定向复跑 14/14 通过 |
+| `npm run test:pi` | 37/37 通过 | Pi adapter 的真实 CLI/模拟 Host 事件与 UI 合约 |
 | `npm run check:pi` | 通过 | TypeScript 类型检查 |
-| wheel 构建、隔离环境安装 | 通过 | 离开源码 checkout 使用安装入口与资源 |
-| 安装后的新契约闭环 `installed_package_smoke.py --native-only` | 3 个场景通过 | 模拟 Claude Code/Codex/Pi Host 事件；实际项目初始化、本地测试、原生报告绑定、conformance、verify、done |
+| wheel 构建、隔离环境安装 | 通过 | 安装入口与资源离开源码执行 |
+| 完整安装矩阵 | 24/24 通过 | 旧协议场景及新增三个 Host 的契约 2 本地闭环 |
 
-16 项定向回归涵盖：默认契约、无第二执行器闭环、报告缺失/空白/越界/篡改、产品变化、幂等绑定、旧失败迁移、历史不可变、多单元未完成、原生 reviewer preflight、运行与迁移竞争、风险检查归属、基线变更、BMAD in-review、Spec Kit 共享策略、跨 Work 结果复用和无效/失败 JSON。部分项目在同一测试方法中以多种输入验证。
+此前记录的 Pi 9 项失败和旧安装矩阵初始化断言已修复；本记录以本轮最终结果为准。
 
-## 已识别但未计为通过的检查
+## A01—A26 自动化覆盖索引
 
-### Node Pi 适配器旧夹具
+以下是覆盖位置，不把 provider fixture、模拟 Host 或本地 CLI 等同真实模型/官方 provider 对话验收。目录均相对 `tests/`，测试文件名省略 `test_` 前缀。
 
-`npm run test:pi`：37 项中 28 项通过，9 项失败。在独立的原 main
-`c9b98e2` worktree 上使用相同锁文件依赖复跑，也是 28 通过、9 失败；
-失败测试名称集合完全相同，主要为不完整 BMAD marker 夹具和旧初始化顺序断言。
-本次未通过降低生产安装/初始化门禁来消除这些既有失败。
+| 项目 | 覆盖位置与检查 |
+| --- | --- |
+| A01 | `native_lifecycle_contract.py`：BMAD in_review 不能取得 CAO review/verify 资格 |
+| A02 | `review_round_integrity.py`、`review_convergence.py`：修复、复核与实际输入刷新 |
+| A03 | `native_lifecycle_contract.py`、`task_provider_verify.py`：全部关联单元聚合 |
+| A04 | `native_lifecycle_contract.py`、`lifecycle_integrity.py`：原生完成后 conformance/verify/done |
+| A05 | `native_route_sync.py`、`native_sync_binding.py`、`lifecycle_integrity.py`：绑定不证明执行；未授权手改被拒绝 |
+| A06 | `lifecycle_integrity.py`：三个 provider 原格式适配；不转换报告 |
+| A07 | `native_lifecycle_contract.py`、`lifecycle_integrity.py`：缺失/空白/篡改/跨 Work/版本身份失败 |
+| A08 | `review_convergence.py`、`lifecycle_integrity.py`：绑定变化与未变原生/基线证据分离 |
+| A09 | `native_lifecycle_contract.py`、安装契约 2 场景：无独立 executor 闭环 |
+| A10 | `native_lifecycle_contract.py`、`lifecycle_repair_boundaries.py`：拒绝提前 verify；原生 build/test 非只读 |
+| A11 | `native_lifecycle_contract.py`：首次正式验证前可完成 conformance |
+| A12 | `verification_runner.py`、`review_convergence.py`、`lifecycle_integrity.py`：日志与 JSON 协议分开 |
+| A13 | `verification_runner.py`、`verification_preflight.py`、`lifecycle_completion_matrix.py`：失败/缺工具/超时与零测试边界 |
+| A14 | `native_lifecycle_contract.py`、`lifecycle_integrity.py`、`snapshot_integrity.py`：产品改动及精确路径失效 |
+| A15 | `native_lifecycle_contract.py`、`lifecycle_integrity.py`：基线传输与共享原生依赖分别失效 |
+| A16 | `lifecycle_completion_matrix.py`、`native_route_sync.py`：语义稳定的状态变化保留有效证据 |
+| A17 | `task_provider_verify.py`、`plan_scope.py`：新增/删除/重开任务不缩减范围 |
+| A18 | `lifecycle_completion_matrix.py`、`path_boundaries.py`：精确准备、越界与软链接保护 |
+| A19 | `native_lifecycle_contract.py`、`lifecycle_integrity.py`：迁移保留旧失败；不产生新通过证据 |
+| A20 | `lifecycle_integrity.py`：完整回滚、迁移前后中断、历史不变、重复操作幂等 |
+| A21 | `native_lifecycle_contract.py`、`verification_bindings.py`、`lifecycle_completion_matrix.py`：运行 owner 与 generation |
+| A22 | `bmad_stable_compatibility.py`、`native_route_sync.py`、安装矩阵：dispatch/oneshot/full planning 原生义务 |
+| A23 | `task_provider_verify.py`、`openspec_lifecycle_repairs.py`、`lifecycle_integrity.py`：split 范围、归档、checklist 与两 provider CLI 完成 |
+| A24 | `path_selection.py`、`native_route_sync.py`、安装矩阵：深度不同、现有职责约束保留 |
+| A25 | `project_verification_bootstrap.py`、`project_setup_lifecycle.py`、Pi/安装矩阵：项目准备先于 Work |
+| A26 | `lifecycle_integrity.py`、`review_convergence.py`：重复失败暂停、输出稳定、修正后恢复 |
 
-### 旧完整安装验收矩阵
+## 真实模型会话：仍未完成
 
-默认 `installed_package_smoke.py` 的旧矩阵仍在 `bootstrap.mode == select`
-断言处停止，其期望未跟随项目准备前置流程更新。本次增加了独立的
-`--native-only` 范围，验证新契约在实际安装环境中的完整本地闭环；
-不能将该结果表述为旧矩阵全部通过。
-
-### 真实模型会话
-
-未执行真实 Pi + 实际模型 + 官方安装 provider 的端到端对话。模拟 Host、
-测试 provider fixture、本地 CLI 与真实模型工作流属于不同验证层级。
-本次没有虚构独立 reviewer、原生语义验收或人工批准。
+Pi 1.1.0 实际模型连通探测返回 `No API key found for the selected model`。
+当前运行环境未配置选定模型的登录/密钥，因此未完成真实 Pi + 实际模型 + 官方安装 provider
+的端到端对话，也不能据此声称 P7 全部完成。没有虚构 reviewer、语义验收或人工批准。
+本地 CLI 调用、真实本地测试执行、安装包验证与模型对话属于不同验收层级。
 
 ## 使用与恢复
 
@@ -68,10 +96,12 @@ cao done
 多个报告重复 `--report`；风险义务按真实原生结果追加 `--gate`。旧 active/suspended Work：
 
 ```bash
+cao lifecycle preflight --work <existing-id>
+cao lifecycle migrate --work <existing-id> --check
 cao lifecycle migrate --work <existing-id>
 ```
 
 迁移不产生通过证据；跟随返回动作完成原生范围、绑定或恢复基线。Completed Work
 需显式 reopen 才可验证当前输入。不要让不理解契约 2 的旧版程序继续写入迁移后的 Work。
 
-本记录覆盖实现和本地验证；真实模型会话及上述既有夹具债务仍需单独验收。
+回滚、保护、隔离恢复及依赖声明的操作见 `references/native-lifecycle.md`。本记录覆盖实现与本地验证；真实模型会话仍待具备模型登录的环境验收。

@@ -1,5 +1,8 @@
 # Native completion and CAO evidence lifecycle
 
+Contents: Execute; Recovery and migration; Recognized reports and repair
+boundaries; Guarded migration and recovery.
+
 New Work uses `lifecycle_contract: 2`. SDD owns planning, implementation, tests,
 code review, findings resolution, native acceptance and required native close
 steps. These activities remain CAO implementation. CAO reviews process/artifact
