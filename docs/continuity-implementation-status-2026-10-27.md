@@ -13,7 +13,9 @@ Branch: `fix/task-continuity-evidence`. Base: `223e353`.
 
 - 54 targeted tests passed, including new continuity/evidence regressions and existing handoff, Session and native lifecycle suites.
 - `make check` and `git diff --check` passed.
-- Full Python and Pi validation status will be appended after execution; no full-suite success claimed here.
+- Guide/resource and release archive checks: 17 tests passed after adding the required guide Contents.
+- Pi adapter: 37 tests passed; TypeScript check passed after installing locked dependencies.
+- Full Python discovery is still running; no full-suite success is claimed. Its output is retained at `/tmp/cao-continuity-full.log` in this execution environment.
 
 ## Remaining authorized work
 

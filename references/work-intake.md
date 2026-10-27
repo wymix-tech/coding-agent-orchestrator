@@ -1,5 +1,7 @@
 # Create or resume Work
 
+Contents: Enter when; Execute; Technology clarification; Progress and durable choices; Sessions and transfer; Exit when; If blocked; Continuity snapshots and process evidence.
+
 ## Enter when
 
 Bootstrap reports `select`, or an existing Work must be resumed. Never repeat intake merely because a session or agent changed.
