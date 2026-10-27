@@ -47,6 +47,9 @@ class EvidenceTests(RepairCase):
         req = self.repo / self.read_work(wid)["requirement"]["path"]
         req.write_text("# New scope\n", encoding="utf-8")
         rc, out = self.run_cli("start", "--requirement", req.relative_to(self.repo), "--replace")
+        self.assertEqual(rc, 2, out)
+        self.assertEqual(out["error"], "REQUIREMENT_CHANGED_REANCHOR_REQUIRED")
+        rc, out = self.run_cli("reopen", "--work", wid, "--reanchor", "--reason", "explicit changed requirement")
         self.assertEqual(rc, 0, out)
         work = self.read_work(wid)
         self.assertEqual(work.get("gate_status"), {})

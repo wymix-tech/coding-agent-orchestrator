@@ -39,6 +39,9 @@ class AuditTests(RepairCase):
         requirement = self.read_work(wid)["requirement"]["path"]
         (self.repo / requirement).write_text("Changed requirement scope\n", encoding="utf-8")
         rc, out = self.run_cli("start", "--requirement", requirement, "--replace")
+        self.assertEqual(rc, 2, out)
+        self.assertEqual(out["error"], "REQUIREMENT_CHANGED_REANCHOR_REQUIRED")
+        rc, out = self.run_cli("reopen", "--work", wid, "--reanchor", "--reason", "explicit changed requirement")
         self.assertEqual(rc, 0, out)
         for _ in range(2):
             rc, out = self.run_cli(*args)

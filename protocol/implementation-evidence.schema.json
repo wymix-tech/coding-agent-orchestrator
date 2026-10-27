@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Native process evidence",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "id",
+    "work_id",
+    "path",
+    "sha256",
+    "source",
+    "input_observation"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "source": {
+      "enum": [
+        "agent_declaration",
+        "executor_receipt",
+        "correlated_host_observation",
+        "provider_artifact"
+      ]
+    }
+  },
+  "additionalProperties": true
+}

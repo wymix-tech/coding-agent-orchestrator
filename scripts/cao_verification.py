@@ -246,6 +246,12 @@ def _prepare_verification(args: argparse.Namespace):
                     else f'cao resume --work {wid} --reactivate')
         print(json.dumps(record_denial(repo, work, "verify", {"ok": False, "error": "VERIFICATION_WORK_NOT_ACTIVE", "status": work.get("status"), "next": recovery}))); return 2
 
+    current_run = work.get('verification') or {}
+    if work.get('lifecycle_contract') == 2 and current_run.get('status') == 'running':
+        print(json.dumps({'ok': False, 'error': 'VERIFICATION_RUN_UNRESOLVED', 'run_id': current_run.get('run_id'),
+                          'next': 'Inspect runtime show; wait/cancel a live executor, finalize complete receipts, or explicitly abandon after inspecting unknown effects. No command is replayed.'}))
+        return 2
+
     from scripts.project_verification import project_prerequisite
     project = project_prerequisite(repo, work)
     if project:
@@ -424,7 +430,9 @@ def cmd_verify(args: argparse.Namespace) -> int:
                 "started_at": command_started, "process_status": result.get("process_status", "exited"), "stdout_tail": stdout[-4000:],
                 "stderr_tail": stderr[-4000:], "runtime": result.get("runtime"),
             })
-        finish_execution(repo, wid, run["run_id"], results)
+        from scripts.runtime_finalize import prepare as prepare_admission
+        admission = prepare_admission(repo, wid, run, inputs, scripts, results, source, started)
+        finish_execution(repo, wid, run["run_id"], results, admission)
         verification = commit_verification(repo, wid, inputs, scripts, results, source, started, run)
         projection = project_result(repo, wid, run["run_id"], verification)
         if not projection["ok"]:

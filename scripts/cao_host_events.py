@@ -90,11 +90,36 @@ def host_event(args: argparse.Namespace) -> int:
     if event == "posttoolusefailure":
         raw["is_error"] = True
     event = mapping.get(event, event)
+    from scripts.work_operations import pending
+    if (repo / CONFIG_REL).exists() and pending(repo):
+        # Avoid session/reconciliation writes during an incomplete transaction.
+        from scripts.cao_tool_policy import readonly_shell
+        controls = False
+        for command in _collect_values_for_keys(raw, {'cmd', 'command'}):
+            try:
+                controls = readonly_shell(command, repo)
+            except (ValueError, IndexError):
+                controls = False
+        result = {'decision': 'allow' if controls or event != 'pre_tool' or not tool_is_mutating(raw) else 'deny',
+                  'reason': 'WORK_TRANSITION_PENDING: inspect/recover the recorded operation before business writes.'}
+        if event == 'post_tool':
+            session_ref = _event_key(raw, 'subagent_id', 'agent_id', 'session_id', 'sessionId', 'thread_id')
+            route = runtime_binding(repo, raw, args.host, session_ref)
+            bound = {'id': route['bound_work_id']} if route else None
+            observe_runtime(repo, bound, raw, args.host, session_ref, event, result)
+        print(json.dumps(native_hook_output(args.host, event, result)))
+        return 0
     index = load_index(repo) if (repo / CONFIG_REL).exists() else empty_index()
     wid = index.get("active_work")
     work = load_work(repo, wid) if wid else None
     candidate_id = _event_key(raw, "subagent_id", "agent_id", "session_id", "sessionId", "thread_id")
     known_session = load_session(repo, candidate_id, host=args.host) if candidate_id else None
+    if event == 'pre_tool' and known_session and work and known_session.get('work_item_id') not in {None, work['id']} and tool_is_mutating(raw):
+        from scripts.host_continuity import permits_reattach
+        if not permits_reattach(raw, repo):
+            result = {'decision': 'deny', 'reason': 'STALE_SESSION_WORK: resume or explicitly switch before writing another Work.'}
+            print(json.dumps(native_hook_output(args.host, event, result)))
+            return 0
     kind = "subagent" if (event in {"subagent_start", "subagent_stop"} or raw.get("kind") == "subagent"
                            or (known_session or {}).get("kind") == "subagent") else "primary"
     if kind == 'subagent':
@@ -385,7 +410,7 @@ def host_event(args: argparse.Namespace) -> int:
             end_session(repo, host_session_id, args.host, reason=_event_key(raw, "reason") or event, event=event)
         return respond({"decision": "allow"})
 
-    if event in {"stop", "turn_end", "before_settle"}:
+    if event in {"stop", "turn_end", "before_settle", "before_compact", "before_transfer"}:
         if event != "before_settle" and work and session and session.get("kind") != "subagent":
             create_handoff(repo, work, host_session_id, args.host, reason=event)
         result = {"decision": "allow"}

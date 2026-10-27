@@ -79,7 +79,7 @@ class ActiveTests(RepairCase):
             cao.save_work(self.repo, work)
         self.assertEqual(self.read_work(a), before)
 
-    def test_replace_interruption_leaves_zero_not_two_active_items(self):
+    def test_failed_target_creation_preserves_original_active_item(self):
         a = self.start("a")
         requirement = self.repo / ".orchestrator/requirements/b.md"
         requirement.write_text("# b\n", encoding="utf-8")
@@ -92,16 +92,16 @@ class ActiveTests(RepairCase):
         args = cao.build_parser().parse_args([
             "start", "--repo", str(self.repo), "--requirement", str(requirement), "--replace",
         ])
-        with mock.patch("scripts.cao_work_commands.save_work", side_effect=fail_new_work):
+        with mock.patch("scripts.cao_work_store.save_work", side_effect=fail_new_work):
             with self.assertRaises(OSError):
                 with contextlib.redirect_stdout(io.StringIO()):
                     cao.cmd_start(args)
-        self.assertEqual(self.read_work(a)["status"], "suspended")
+        self.assertEqual(self.read_work(a)["status"], "active")
         self.assertIsNone(cao.load_work(self.repo, b))
-        self.assertIsNone(cao.load_index(self.repo)["active_work"])
+        self.assertEqual(cao.load_index(self.repo)["active_work"], a)
         rc, out = self.run_cli("status")
         self.assertEqual(rc, 0, out)
-        self.assertIsNone(cao.load_index(self.repo)["active_work"])
+        self.assertEqual(cao.load_index(self.repo)["active_work"], a)
 
     def test_explicit_suspend_repairs_three_legacy_active_items(self):
         a = self.start()

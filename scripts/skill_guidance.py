@@ -14,6 +14,7 @@ STAGE_FILES = {
 }
 PROVIDER_FILES = {name: f"references/provider-{name}.md" for name in ("bmad", "openspec", "speckit")}
 CONTRACT_FILES = {
+    "continuity": "references/task-continuity.md",
     "native_lifecycle": "references/native-lifecycle.md",
     "conformance": "references/conformance-knowledge.md",
     "native_route": "references/native-route-contract.md",
@@ -30,6 +31,8 @@ def action_files(reason: str, work: dict | None) -> list[str]:
     """Select contracts by the current operation, not a whole native namespace."""
     sdd = (work or {}).get("sdd") or {}
     keys = []
+    if reason.startswith(("WORK_TRANSITION_", "RUNTIME_", "RECOVERY_", "STALE_SESSION_")):
+        keys.append("continuity")
     from scripts.lifecycle_contract import enabled
     if enabled(work):
         keys.append("native_lifecycle")

@@ -1,5 +1,7 @@
 # Create or resume Work
 
+Contents: Enter when; Execute; Technology clarification; Progress and durable choices; Sessions and transfer; Exit when; If blocked; Continuity snapshots and process evidence.
+
 ## Enter when
 
 Bootstrap reports `select`, or an existing Work must be resumed. Never repeat intake merely because a session or agent changed.
@@ -92,3 +94,28 @@ The current Work and handoff are loaded. Continue from its state, decisions, blo
 ## If blocked
 
 For a missing explicit requirement path, restore/create that intended file; do not guess another path. Use the recovery guide for actual scope changes.
+
+### Continuity snapshots and process evidence
+
+New handoffs use version 2 and retain the recorded native route, scope, workflow,
+review/completion references, current requirement observation and Git location.
+A handoff is historical context, never permission to overwrite current Work or
+claim native completion. Resume/context shows bounded completed/pending lists,
+handoff identity, omitted counts and the exact command to inspect its full record.
+A suspended Work may be inspected without reactivating it.
+
+During native implementation, preserve original artifacts incrementally:
+
+```bash
+cao evidence attach --work <id> --kind test --path <native-report>
+cao evidence attach --work <id> --kind handoff --path <native-handoff>
+cao evidence list --work <id>
+```
+
+Attachments are declarations at attachment time. They can retain failed or
+unrecognized outputs and never grant gates. `--unit` is a descriptive native
+reference, not verified scope coverage. Changed or missing original bytes appear
+in evidence listing; the original hash is retained. Complete the native workflow
+and use the existing `cao lifecycle bind --report ...` for final admission.
+
+For request switching, strictly read-only previews, process evidence archives and run recovery, follow [Task continuity](task-continuity.md).

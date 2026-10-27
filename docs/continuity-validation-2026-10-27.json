@@ -1,0 +1,758 @@
+{
+  "baseline": "223e353",
+  "implementation_commit": "9a84ceb783b3e3e3dfa72e43b0826ba782a890ca",
+  "full_suite": {
+    "module_count": 92,
+    "test_count": 1124,
+    "skipped": 4,
+    "module_results": [
+      {
+        "module": "test_acceptance_integrity",
+        "exit": 0,
+        "tests": 13,
+        "seconds": 25.18
+      },
+      {
+        "module": "test_acceptance_protocol_template",
+        "exit": 0,
+        "tests": 12,
+        "seconds": 0.78
+      },
+      {
+        "module": "test_active_work_integrity",
+        "exit": 0,
+        "tests": 9,
+        "seconds": 9.16
+      },
+      {
+        "module": "test_audit_recovery",
+        "exit": 0,
+        "tests": 18,
+        "seconds": 13.89
+      },
+      {
+        "module": "test_bmad_stable_compatibility",
+        "exit": 0,
+        "tests": 27,
+        "seconds": 4.09
+      },
+      {
+        "module": "test_bmad_verify_plan",
+        "exit": 0,
+        "tests": 15,
+        "seconds": 13.88
+      },
+      {
+        "module": "test_bootstrap",
+        "exit": 0,
+        "tests": 4,
+        "seconds": 1.27
+      },
+      {
+        "module": "test_cao_module_boundaries",
+        "exit": 0,
+        "tests": 4,
+        "seconds": 1.65
+      },
+      {
+        "module": "test_cli_entry",
+        "exit": 0,
+        "tests": 10,
+        "seconds": 0.79
+      },
+      {
+        "module": "test_conformance_knowledge",
+        "exit": 0,
+        "tests": 19,
+        "seconds": 27.0
+      },
+      {
+        "module": "test_continuity_operations",
+        "exit": 0,
+        "tests": 23,
+        "seconds": 22.95
+      },
+      {
+        "module": "test_continuity_view",
+        "exit": 0,
+        "tests": 4,
+        "seconds": 2.49
+      },
+      {
+        "module": "test_core",
+        "exit": 0,
+        "tests": 25,
+        "seconds": 24.14
+      },
+      {
+        "module": "test_dashboard",
+        "exit": 0,
+        "tests": 19,
+        "seconds": 2.31
+      },
+      {
+        "module": "test_dashboard_completion_state",
+        "exit": 0,
+        "tests": 8,
+        "seconds": 8.02
+      },
+      {
+        "module": "test_demo2_usage_flow",
+        "exit": 0,
+        "tests": 11,
+        "seconds": 8.41
+      },
+      {
+        "module": "test_evidence_binding",
+        "exit": 0,
+        "tests": 14,
+        "seconds": 10.86
+      },
+      {
+        "module": "test_handoffs",
+        "exit": 0,
+        "tests": 7,
+        "seconds": 5.52
+      },
+      {
+        "module": "test_host_adapters",
+        "exit": 0,
+        "tests": 14,
+        "seconds": 1.6
+      },
+      {
+        "module": "test_host_event_gate",
+        "exit": 0,
+        "tests": 3,
+        "seconds": 4.74
+      },
+      {
+        "module": "test_host_lifecycle_contract",
+        "exit": 0,
+        "tests": 17,
+        "seconds": 11.47
+      },
+      {
+        "module": "test_host_output",
+        "exit": 0,
+        "tests": 2,
+        "seconds": 0.57
+      },
+      {
+        "module": "test_intake_deadlock",
+        "exit": 0,
+        "tests": 8,
+        "seconds": 2.09
+      },
+      {
+        "module": "test_intake_route_recovery",
+        "exit": 0,
+        "tests": 5,
+        "seconds": 2.57
+      },
+      {
+        "module": "test_language",
+        "exit": 0,
+        "tests": 11,
+        "seconds": 3.08
+      },
+      {
+        "module": "test_lifecycle_completion_matrix",
+        "exit": 0,
+        "tests": 21,
+        "seconds": 0.81
+      },
+      {
+        "module": "test_lifecycle_integrity",
+        "exit": 0,
+        "tests": 17,
+        "seconds": 25.57
+      },
+      {
+        "module": "test_lifecycle_repair_boundaries",
+        "exit": 0,
+        "tests": 7,
+        "seconds": 0.84
+      },
+      {
+        "module": "test_light_spec_completion",
+        "exit": 0,
+        "tests": 11,
+        "seconds": 15.08
+      },
+      {
+        "module": "test_local_experiment_repairs",
+        "exit": 0,
+        "tests": 13,
+        "seconds": 7.83
+      },
+      {
+        "module": "test_login_acceptance_example",
+        "exit": 0,
+        "tests": 2,
+        "seconds": 0.07
+      },
+      {
+        "module": "test_native_lifecycle_contract",
+        "exit": 0,
+        "tests": 18,
+        "seconds": 30.22
+      },
+      {
+        "module": "test_native_omissions",
+        "exit": 0,
+        "tests": 15,
+        "seconds": 22.64
+      },
+      {
+        "module": "test_native_route_sync",
+        "exit": 0,
+        "tests": 22,
+        "seconds": 34.83
+      },
+      {
+        "module": "test_native_skill_guidance",
+        "exit": 0,
+        "tests": 11,
+        "seconds": 5.26
+      },
+      {
+        "module": "test_native_sync_binding",
+        "exit": 0,
+        "tests": 16,
+        "seconds": 14.0
+      },
+      {
+        "module": "test_no_work_guard",
+        "exit": 0,
+        "tests": 16,
+        "seconds": 15.0
+      },
+      {
+        "module": "test_openspec_lifecycle_repairs",
+        "exit": 0,
+        "tests": 11,
+        "seconds": 27.02
+      },
+      {
+        "module": "test_orch_state_guard",
+        "exit": 0,
+        "tests": 9,
+        "seconds": 8.22
+      },
+      {
+        "module": "test_path_boundaries",
+        "exit": 0,
+        "tests": 19,
+        "seconds": 17.42
+      },
+      {
+        "module": "test_path_selection",
+        "exit": 0,
+        "tests": 11,
+        "seconds": 7.51
+      },
+      {
+        "module": "test_pi_bootstrap_repairs",
+        "exit": 0,
+        "tests": 5,
+        "seconds": 5.9
+      },
+      {
+        "module": "test_pi_log_contract",
+        "exit": 0,
+        "tests": 9,
+        "seconds": 4.48
+      },
+      {
+        "module": "test_pi_route_guidance",
+        "exit": 0,
+        "tests": 7,
+        "seconds": 16.07
+      },
+      {
+        "module": "test_pi_session_repairs",
+        "exit": 0,
+        "tests": 19,
+        "seconds": 9.45
+      },
+      {
+        "module": "test_plan_completion_gate",
+        "exit": 0,
+        "tests": 8,
+        "seconds": 18.97
+      },
+      {
+        "module": "test_plan_scope",
+        "exit": 0,
+        "tests": 15,
+        "seconds": 10.01
+      },
+      {
+        "module": "test_project_context_acceptance",
+        "exit": 0,
+        "tests": 40,
+        "seconds": 44.59
+      },
+      {
+        "module": "test_project_instructions",
+        "exit": 0,
+        "tests": 19,
+        "seconds": 3.07
+      },
+      {
+        "module": "test_project_setup_lifecycle",
+        "exit": 0,
+        "tests": 12,
+        "seconds": 2.62
+      },
+      {
+        "module": "test_project_verification_bootstrap",
+        "exit": 0,
+        "tests": 17,
+        "seconds": 11.04
+      },
+      {
+        "module": "test_protocol_consistency",
+        "exit": 0,
+        "tests": 8,
+        "seconds": 9.83
+      },
+      {
+        "module": "test_provider_light_adaptation",
+        "exit": 0,
+        "tests": 11,
+        "seconds": 15.95
+      },
+      {
+        "module": "test_provider_restart",
+        "exit": 0,
+        "tests": 5,
+        "seconds": 1.72
+      },
+      {
+        "module": "test_registered_launchers",
+        "exit": 0,
+        "tests": 2,
+        "seconds": 0.09
+      },
+      {
+        "module": "test_release_packaging",
+        "exit": 0,
+        "tests": 3,
+        "seconds": 2.09
+      },
+      {
+        "module": "test_repair_helpers",
+        "exit": 0,
+        "tests": 1,
+        "seconds": 0.76
+      },
+      {
+        "module": "test_repair_r1_r9",
+        "exit": 0,
+        "tests": 16,
+        "seconds": 30.26
+      },
+      {
+        "module": "test_repairs",
+        "exit": 0,
+        "tests": 12,
+        "seconds": 0.65
+      },
+      {
+        "module": "test_requirements",
+        "exit": 0,
+        "tests": 15,
+        "seconds": 2.08
+      },
+      {
+        "module": "test_review_convergence",
+        "exit": 0,
+        "tests": 19,
+        "seconds": 21.67
+      },
+      {
+        "module": "test_review_followup",
+        "exit": 0,
+        "tests": 18,
+        "seconds": 38.67
+      },
+      {
+        "module": "test_review_round_integrity",
+        "exit": 0,
+        "tests": 18,
+        "seconds": 32.1
+      },
+      {
+        "module": "test_review_task_provenance",
+        "exit": 0,
+        "tests": 5,
+        "seconds": 0.09
+      },
+      {
+        "module": "test_route_inputs",
+        "exit": 0,
+        "tests": 24,
+        "seconds": 33.92
+      },
+      {
+        "module": "test_runtime_host",
+        "exit": 0,
+        "tests": 6,
+        "seconds": 4.47
+      },
+      {
+        "module": "test_runtime_logs",
+        "exit": 0,
+        "tests": 6,
+        "seconds": 0.21
+      },
+      {
+        "module": "test_runtime_recovery",
+        "exit": 0,
+        "tests": 7,
+        "seconds": 8.18
+      },
+      {
+        "module": "test_runtime_store",
+        "exit": 0,
+        "tests": 7,
+        "seconds": 2.03
+      },
+      {
+        "module": "test_sdd_acceptance_cli",
+        "exit": 0,
+        "tests": 15,
+        "seconds": 40.1
+      },
+      {
+        "module": "test_sdd_acceptance_files",
+        "exit": 0,
+        "tests": 15,
+        "seconds": 0.06
+      },
+      {
+        "module": "test_sdd_acceptance_policy",
+        "exit": 0,
+        "tests": 16,
+        "seconds": 0.05
+      },
+      {
+        "module": "test_sdd_acceptance_runtime",
+        "exit": 0,
+        "tests": 4,
+        "seconds": 0.05
+      },
+      {
+        "module": "test_sdd_bootstrap",
+        "exit": 0,
+        "tests": 12,
+        "seconds": 3.4
+      },
+      {
+        "module": "test_session_integration_repairs",
+        "exit": 0,
+        "tests": 13,
+        "seconds": 10.61
+      },
+      {
+        "module": "test_sessions",
+        "exit": 0,
+        "tests": 10,
+        "seconds": 5.44
+      },
+      {
+        "module": "test_setup_toolchains",
+        "exit": 0,
+        "tests": 5,
+        "seconds": 5.15
+      },
+      {
+        "module": "test_skill_guidance",
+        "exit": 0,
+        "tests": 14,
+        "seconds": 5.44
+      },
+      {
+        "module": "test_snapshot_integrity",
+        "exit": 0,
+        "tests": 8,
+        "seconds": 1.44
+      },
+      {
+        "module": "test_snapshot_scope",
+        "exit": 0,
+        "tests": 15,
+        "seconds": 6.16
+      },
+      {
+        "module": "test_state_store",
+        "exit": 0,
+        "tests": 12,
+        "seconds": 0.46
+      },
+      {
+        "module": "test_state_transactions",
+        "exit": 0,
+        "tests": 19,
+        "seconds": 14.49
+      },
+      {
+        "module": "test_task_provider_verify",
+        "exit": 0,
+        "tests": 17,
+        "seconds": 16.95
+      },
+      {
+        "module": "test_technology_guidance",
+        "exit": 0,
+        "tests": 4,
+        "seconds": 3.87
+      },
+      {
+        "module": "test_test_discovery",
+        "exit": 0,
+        "tests": 6,
+        "seconds": 0.07
+      },
+      {
+        "module": "test_verification_bindings",
+        "exit": 0,
+        "tests": 17,
+        "seconds": 13.16
+      },
+      {
+        "module": "test_verification_guidance",
+        "exit": 0,
+        "tests": 5,
+        "seconds": 1.33
+      },
+      {
+        "module": "test_verification_preflight",
+        "exit": 0,
+        "tests": 12,
+        "seconds": 6.7
+      },
+      {
+        "module": "test_verification_runner",
+        "exit": 0,
+        "tests": 14,
+        "seconds": 4.78
+      },
+      {
+        "module": "test_verification_setup",
+        "exit": 0,
+        "tests": 14,
+        "seconds": 4.5
+      },
+      {
+        "module": "test_workflow_contract",
+        "exit": 0,
+        "tests": 12,
+        "seconds": 12.69
+      },
+      {
+        "module": "test_workflow_execution_integrity",
+        "exit": 0,
+        "tests": 10,
+        "seconds": 14.59
+      }
+    ]
+  },
+  "current_discovery": 1126,
+  "focused_after_full": [
+    {
+      "modules": [
+        "test_continuity_operations",
+        "test_continuity_view",
+        "test_native_lifecycle_contract"
+      ],
+      "tests": 47,
+      "result": "OK"
+    },
+    {
+      "modules": [
+        "test_continuity_operations"
+      ],
+      "tests": 25,
+      "result": "OK (includes export/no-overwrite checks)"
+    }
+  ],
+  "pi": {
+    "tests": 38,
+    "passed": 38,
+    "failed": 0,
+    "typecheck": "passed"
+  },
+  "installed_matrix": {
+    "cases": 24,
+    "kind": "local CLI/provider fixtures, not model dialogue",
+    "results": [
+      {
+        "provider_fixture": "openspec",
+        "simulated_host": "claude-code",
+        "profile": "empty-project-native-lifecycle",
+        "status": "completed-with-native-report",
+        "work": "feature-f75616bb"
+      },
+      {
+        "provider_fixture": "openspec",
+        "simulated_host": "codex",
+        "profile": "empty-project-native-lifecycle",
+        "status": "completed-with-native-report",
+        "work": "feature-f75616bb"
+      },
+      {
+        "provider_fixture": "openspec",
+        "simulated_host": "pi",
+        "profile": "empty-project-native-lifecycle",
+        "status": "completed-with-native-report",
+        "work": "feature-f75616bb"
+      },
+      {
+        "provider_fixture": "bmad",
+        "simulated_host": "claude-code",
+        "status": "completed",
+        "profile": "light"
+      },
+      {
+        "provider_fixture": "bmad",
+        "simulated_host": "claude-code",
+        "profile": "standard",
+        "status": "completed",
+        "work": "002-requirement-full-profile-installed-fixture-2026-10-27-2722c274"
+      },
+      {
+        "provider_fixture": "bmad",
+        "simulated_host": "claude-code",
+        "profile": "light-oneshot",
+        "status": "completed",
+        "work": "003-requirement-installed-oneshot-fixture-2026-10-27-fdd47c62"
+      },
+      {
+        "provider_fixture": "bmad",
+        "simulated_host": "codex",
+        "status": "completed",
+        "profile": "light"
+      },
+      {
+        "provider_fixture": "bmad",
+        "simulated_host": "codex",
+        "profile": "standard",
+        "status": "completed",
+        "work": "002-requirement-full-profile-installed-fixture-2026-10-27-2722c274"
+      },
+      {
+        "provider_fixture": "bmad",
+        "simulated_host": "codex",
+        "profile": "light-oneshot",
+        "status": "completed",
+        "work": "003-requirement-installed-oneshot-fixture-2026-10-27-fdd47c62"
+      },
+      {
+        "provider_fixture": "bmad",
+        "simulated_host": "pi",
+        "status": "completed",
+        "profile": "light"
+      },
+      {
+        "provider_fixture": "bmad",
+        "simulated_host": "pi",
+        "profile": "standard",
+        "status": "completed",
+        "work": "002-requirement-full-profile-installed-fixture-2026-10-27-2722c274"
+      },
+      {
+        "provider_fixture": "bmad",
+        "simulated_host": "pi",
+        "profile": "light-oneshot",
+        "status": "completed",
+        "work": "003-requirement-installed-oneshot-fixture-2026-10-27-fdd47c62"
+      },
+      {
+        "provider_fixture": "openspec",
+        "simulated_host": "claude-code",
+        "status": "completed",
+        "profile": "light"
+      },
+      {
+        "provider_fixture": "openspec",
+        "simulated_host": "claude-code",
+        "profile": "standard",
+        "status": "completed",
+        "work": "002-requirement-full-profile-installed-fixture-2026-10-27-2722c274"
+      },
+      {
+        "provider_fixture": "openspec",
+        "simulated_host": "codex",
+        "status": "completed",
+        "profile": "light"
+      },
+      {
+        "provider_fixture": "openspec",
+        "simulated_host": "codex",
+        "profile": "standard",
+        "status": "completed",
+        "work": "002-requirement-full-profile-installed-fixture-2026-10-27-2722c274"
+      },
+      {
+        "provider_fixture": "openspec",
+        "simulated_host": "pi",
+        "status": "completed",
+        "profile": "light"
+      },
+      {
+        "provider_fixture": "openspec",
+        "simulated_host": "pi",
+        "profile": "standard",
+        "status": "completed",
+        "work": "002-requirement-full-profile-installed-fixture-2026-10-27-2722c274"
+      },
+      {
+        "provider_fixture": "speckit",
+        "simulated_host": "claude-code",
+        "status": "completed",
+        "profile": "light"
+      },
+      {
+        "provider_fixture": "speckit",
+        "simulated_host": "claude-code",
+        "profile": "standard",
+        "status": "completed",
+        "work": "002-requirement-full-profile-installed-fixture-2026-10-27-2722c274"
+      },
+      {
+        "provider_fixture": "speckit",
+        "simulated_host": "codex",
+        "status": "completed",
+        "profile": "light"
+      },
+      {
+        "provider_fixture": "speckit",
+        "simulated_host": "codex",
+        "profile": "standard",
+        "status": "completed",
+        "work": "002-requirement-full-profile-installed-fixture-2026-10-27-2722c274"
+      },
+      {
+        "provider_fixture": "speckit",
+        "simulated_host": "pi",
+        "status": "completed",
+        "profile": "light"
+      },
+      {
+        "provider_fixture": "speckit",
+        "simulated_host": "pi",
+        "profile": "standard",
+        "status": "completed",
+        "work": "002-requirement-full-profile-installed-fixture-2026-10-27-2722c274"
+      }
+    ]
+  },
+  "real_model_probe": {
+    "result": "blocked",
+    "reason": "No API key found for the selected model."
+  },
+  "scope": "P0-P5 implementation; C45 external acceptance blocked; optional P6 deferred by design"
+}

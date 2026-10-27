@@ -20,24 +20,127 @@
     "verification"
   ],
   "properties": {
-    "version": {"type": "integer", "minimum": 1},
-    "sequence": {"type": "integer", "minimum": 1},
-    "id": {"type": "string", "minLength": 1},
-    "work_item": {"type": "string", "minLength": 1},
-    "session_id": {"type": ["string", "null"]},
-    "host_session_id": {"type": ["string", "null"]},
-    "host": {"type": ["string", "null"]},
-    "reason": {"type": "string", "minLength": 1},
-    "created_at": {"type": "integer", "minimum": 0},
-    "step": {"type": ["string", "null"]},
-    "next_action": {"type": ["object", "null"]},
-    "path_assessment": {"type": ["object", "null"]},
-    "summary": {"type": ["string", "null"]},
-    "completed": {"type": "array"},
-    "pending": {"type": "array"},
-    "decisions": {"type": "array", "items": {"type": "object"}},
-    "blockers": {"type": "array", "items": {"type": "object"}},
-    "verification": {"type": ["object", "null"]}
+    "version": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "sequence": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "work_item": {
+      "type": "string",
+      "minLength": 1
+    },
+    "session_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "host_session_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "host": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "reason": {
+      "type": "string",
+      "minLength": 1
+    },
+    "created_at": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "step": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "next_action": {
+      "type": [
+        "object",
+        "null"
+      ]
+    },
+    "path_assessment": {
+      "type": [
+        "object",
+        "null"
+      ]
+    },
+    "summary": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "completed": {
+      "type": "array"
+    },
+    "pending": {
+      "type": "array"
+    },
+    "decisions": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "blockers": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "verification": {
+      "type": [
+        "object",
+        "null"
+      ]
+    },
+    "continuity": {
+      "type": "object"
+    },
+    "state_revision": {
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "execution_generation": {
+      "type": "integer",
+      "minimum": 0
+    }
   },
-  "additionalProperties": true
+  "additionalProperties": true,
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "version": {
+            "const": 2
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "continuity",
+          "state_revision",
+          "execution_generation"
+        ]
+      }
+    }
+  ]
 }

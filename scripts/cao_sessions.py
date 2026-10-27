@@ -231,6 +231,9 @@ def update_session_event(
     session = load_session(repo, session_ref, host=host)
     if session is None:
         return register_session(repo, event_work, session_ref, host, event=event, kind=kind, parent_session_id=parent_session_id)
+    if event_work and session.get('work_item_id') and session['work_item_id'] != event_work['id']:
+        # A new prompt/tool event is not an explicit cross-Work attachment.
+        event_work = None
     if session.get("host") == "unknown" and host and host != "unknown":
         # Re-register to re-key the stored file using the now-known Host identity.
         return register_session(
@@ -387,7 +390,7 @@ def register_session(
 HANDOFF_IDENTITY_FIELDS = (
     "work_item", "session_id", "host", "reason", "step", "next_action",
     "path_assessment", "summary", "completed", "pending", "decisions",
-    "blockers", "verification",
+    "blockers", "verification", "continuity",
 )
 
 
@@ -402,11 +405,16 @@ def create_handoff(repo: Path, work: dict[str, Any], session_id: str | None, hos
     existing_records = list_handoff_records(repo, work["id"])
     sequence = max((int(item.get("sequence", 0) or 0) for item in existing_records), default=0) + 1
     current = current_work_action(repo, work)
-    pending = list(work.get('resume', {}).get('pending', []))
+    from scripts.coordination_items import active_pending
+    pending = active_pending(work)
     if current.get('type') != 'none' and current.get('instruction') and current['instruction'] not in pending:
         pending.append(current['instruction'])
+    from scripts.continuity_view import snapshot
     handoff = {
-        "version": 1,
+        "version": 2,
+        "state_revision": work.get("state_revision"),
+        "execution_generation": work.get("execution_generation", 0),
+        "continuity": snapshot(repo, work),
         "sequence": sequence,
         "id": new_id("handoff"),
         "work_item": work["id"],

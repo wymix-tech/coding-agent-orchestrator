@@ -915,6 +915,8 @@ test('real Pi runtime correlates late tool results without changing result conte
     const tool = {toolName: 'write', toolCallId: 'runtime-call-1', input: {
       path: '.orchestrator/requirements/runtime-note.md', content: 'Sensitive original tool content stays outside diagnostics'}};
     assert.equal(await f.handlers.get('tool_call')(tool, ctx), undefined);
+    // Settle the physical effect before switching; a late duplicate remains bound to the original Work.
+    await f.handlers.get('tool_result')({...tool, isError: true}, ctx);
     const secondPath = f.cli('requirement', 'next-id', '--title', 'Runtime second').path;
     writeFileSync(path.join(f.dir, secondPath), '# Second runtime fixture');
     const second = f.cli('start', '--replace', '--requirement', secondPath).work_item.id;
@@ -933,4 +935,16 @@ test('real Pi runtime correlates late tool results without changing result conte
     assert.ok(!f.cli('runtime', 'events', '--work', second).items.some(item => item.event === 'tool.finished'));
     assert.ok(f.sent.every(([message]) => message.display === false));
   } finally { f.close(); }
+});
+
+test('compaction and transfer hooks preserve continuity through advertised Pi events', posix, async () => {
+  const f = fixture();
+  try {
+    const ctx = f.context('continuity-hooks');
+    await f.handlers.get('session_before_compact')({type: 'session_before_compact'}, ctx);
+    await f.handlers.get('session_before_switch')({type: 'session_before_switch', reason: 'new'}, ctx);
+    await f.handlers.get('session_before_fork')({type: 'session_before_fork', entryId: 'entry', position: 'at'}, ctx);
+    assert.deepEqual(f.rows().map(row => row.event), ['before_compact', 'before_transfer', 'before_transfer']);
+    assert.ok(f.sent.every(([message]) => message.display === false));
+  } finally {f.close();}
 });

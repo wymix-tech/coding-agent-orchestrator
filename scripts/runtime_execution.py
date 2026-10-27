@@ -104,6 +104,7 @@ def execute(repo: Path, wid: str, run_id: str, command_id: str,
         except OSError as exc:
             budget, capture_error = 0, type(exc).__name__
     sink = LogSink(folder, cfg["logs"], budget, secrets)
+    sink.cancel_requested = lambda: read_record(run_path(repo, wid, run_id, "cancel.json")) is not None
     clock = time.monotonic()
     try:
         try:
@@ -140,9 +141,9 @@ def execute(repo: Path, wid: str, run_id: str, command_id: str,
             pass  # Stale reservations conservatively reduce future log budgets.
 
 
-def finish_execution(repo: Path, wid: str, run_id: str, results: list[dict]) -> None:
+def finish_execution(repo: Path, wid: str, run_id: str, results: list[dict], admission_sha256=None) -> None:
     record_receipt(repo, wid, run_id, {
-        "source": "cao_executor", "finished_at": time.time(),
+        "source": "cao_executor", "finished_at": time.time(), "admission_sha256": admission_sha256,
         "commands": [{"command_id": result.get("runtime", {}).get("command_id"),
                       "exit_code": result.get("exit_code"),
                       "timed_out": result.get("timed_out", False),

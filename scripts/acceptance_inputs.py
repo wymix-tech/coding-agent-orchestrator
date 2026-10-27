@@ -27,7 +27,10 @@ def technical_inputs(repo, work, cfg, *, manifest=None):
         from scripts.cao_provider_workflows import provider_output_dirs
         from scripts.path_guard import provider_artifact
         from pathlib import Path
-        for ref in ((work.get('sdd') or {}).get('completion_evidence') or {}).get('reports', []):
+        from scripts.implementation_evidence import records as process_records
+        report_refs = list(((work.get('sdd') or {}).get('completion_evidence') or {}).get('reports', []))
+        report_refs.extend({'path': row['path']} for row in process_records(repo, work) if row.get('path') and Path(row['path']).suffix.lower() in {'.md', '.json', '.yaml', '.yml', '.txt', '.log'})
+        for ref in report_refs:
             name = ref['path']
             provider_artifact(repo, name, provider_output_dirs(work['sdd']['provider'], repo))
             if Path(name).suffix.lower() not in {'.md', '.json', '.yaml', '.yml', '.txt', '.log'}:

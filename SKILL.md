@@ -29,6 +29,7 @@ Empty runtime product: follow [project initialization](references/project-initia
 | `sdd_select`, `sdd_install_required`, language/host installation trouble | [Startup](references/startup.md) |
 | `project_setup`, missing background, module scope, project technology migration | [Project context](references/project-context.md) |
 | No current Work, select/resume requirement, session transfer | [Work intake and continuity](references/work-intake.md) |
+| Handoff | [Continuity](references/task-continuity.md) |
 | `verification_setup`, changed scripts/capabilities/`timeout_seconds` or wrappers | [Verification baseline](references/verification-setup.md) |
 | Missing assessment, native workflow/plan/scope work | [Execution path and scope](references/execution.md) |
 | Current Provider is BMAD and native workflow action is needed | [BMAD](references/provider-bmad.md) |
