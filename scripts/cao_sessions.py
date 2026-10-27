@@ -387,7 +387,7 @@ def register_session(
 HANDOFF_IDENTITY_FIELDS = (
     "work_item", "session_id", "host", "reason", "step", "next_action",
     "path_assessment", "summary", "completed", "pending", "decisions",
-    "blockers", "verification",
+    "blockers", "verification", "continuity",
 )
 
 
@@ -405,8 +405,12 @@ def create_handoff(repo: Path, work: dict[str, Any], session_id: str | None, hos
     pending = list(work.get('resume', {}).get('pending', []))
     if current.get('type') != 'none' and current.get('instruction') and current['instruction'] not in pending:
         pending.append(current['instruction'])
+    from scripts.continuity_view import snapshot
     handoff = {
-        "version": 1,
+        "version": 2,
+        "state_revision": work.get("state_revision"),
+        "execution_generation": work.get("execution_generation", 0),
+        "continuity": snapshot(repo, work),
         "sequence": sequence,
         "id": new_id("handoff"),
         "work_item": work["id"],

@@ -66,6 +66,8 @@ def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="cao", description="Coding Agent Orchestrator")
     p.add_argument("--compact-json", action="store_true", help="Compact JSON; preserves errors and exit status (accepted anywhere)")
     sub = p.add_subparsers(dest="command", required=True)
+    from scripts.implementation_evidence import register_parser as register_evidence_parser
+    register_evidence_parser(sub)
     register_runtime_parser(sub)
     from scripts.conformance import register_parser as register_conformance_parser
     register_conformance_parser(sub)

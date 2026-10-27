@@ -24,6 +24,7 @@ from scripts.verification_setup import setup_state, verification_setup_context
 def resume_payload(repo: Path, work: dict[str, Any], session_id: str | None = None, host: str | None = None, *, next_action: dict | None = None) -> dict[str, Any]:
     from scripts.cao_sessions import latest_handoff
     from scripts.project_context import context_state
+    from scripts.continuity_view import view
 
     c = completion_status(repo, work)
     current = next_action or current_work_action(repo, work, completion=c)
@@ -45,6 +46,7 @@ def resume_payload(repo: Path, work: dict[str, Any], session_id: str | None = No
         "verification": work.get("verification"),
         "completion": c,
         "handoff": handoff or None,
+        "continuity": view(work, handoff),
         "session": {"id": session_id, "host": host} if session_id else None,
     }
 
@@ -239,7 +241,10 @@ def render_context(repo: Path, work: dict[str, Any] | None, *, session_id: str |
         return '# CAO Project Preparation\n' + navigation + '\n' + current['instruction'] + '\n' + json.dumps(preparation_context(repo, work), ensure_ascii=False)
     if not work or work.get("status") in {"todo", "suspended", "completed"}:
         instruction = STARTUP_ORDER if current.get('stage') == 'startup' else current['instruction']
-        return "# Coding Agent Orchestrator Work Intake\n" + navigation + "\n" + instruction + "\nProject background: " + json.dumps(project, ensure_ascii=False) + request_context(repo)
+        from scripts.continuity_view import render
+        from scripts.cao_sessions import latest_handoff
+        continuity = render(work, latest_handoff(repo, work["id"])) if work and current.get("stage") != "startup" else ""
+        return "# Coding Agent Orchestrator Work Intake\n" + navigation + "\n" + instruction + "\nProject background: " + json.dumps(project, ensure_ascii=False) + request_context(repo) + continuity
     if current.get("stage") == "project_setup":
         return "# CAO Project Setup\n" + navigation + "\n" + current["instruction"] + "\n" + json.dumps(current.get("project_state", {}), ensure_ascii=False) + request_context(repo)
     baseline = verification_baseline_state(repo, work)
@@ -288,4 +293,6 @@ def render_context(repo: Path, work: dict[str, Any] | None, *, session_id: str |
     ])
     from scripts.project_knowledge import context_excerpt
     lines.extend(["", "## Relevant project knowledge (context only; follow original evidence)", context_excerpt(repo, work)])
+    from scripts.continuity_view import render
+    lines.append(render(work, p.get("handoff")))
     return "\n".join(lines)
