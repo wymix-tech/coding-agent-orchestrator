@@ -18,21 +18,23 @@ def prerequisites(repo, work):
     return result
 
 
-def inputs(repo, work):
+def inputs(repo, work, technical=None):
     from scripts.cao_runtime import config, sha256_file
     from scripts.cao_completion import verification_inputs
     from scripts.cao_plans import provider_verification_plan_state
     from scripts.native_obligations import digest
     # Baseline execution transport has its own freshness domain. Product code,
     # tests and configuration remain in code_snapshot.
-    technical = verification_inputs(repo, work, config(repo))
+    technical = technical if technical is not None else verification_inputs(repo, work, config(repo))
     sdd = work.get('sdd') or {}
+    from scripts.evidence_domains import dependencies, scope
     return {
         'work_id': work['id'], 'provider': sdd.get('provider'),
         'requirement_sha256': sha256_file(repo / work['requirement']['path']),
         'code_snapshot': technical['code_snapshot'],
         'assessment_revision': (work.get('path_assessment') or {}).get('revision'),
-        'scope_sha256': digest(provider_verification_plan_state(repo, work)),
+        'scope_sha256': digest(scope(repo, work)),
+        'native_dependencies_sha256': digest(dependencies(repo, work, [command for row in ((sdd.get('completion_evidence') or {}).get('observations') or []) for command in row.get('commands', [])])),
         'route_id': (sdd.get('route_decision') or {}).get('id'),
     }
 
@@ -48,12 +50,21 @@ def evidence_state(repo, work):
     if not record:
         return pending
     try:
+        from scripts.evidence_domains import capture, changed as domain_changes
+        commands = [command for row in record.get('observations', []) for command in row.get('commands', [])]
+        domains = capture(repo, work, commands)
+        diagnostics = domain_changes(record.get('domains') or {}, domains) if record.get('domains') else {}
         current = inputs(repo, work)
         changed = [key for key, value in current.items() if record.get('inputs', {}).get(key) != value]
         if changed:
             return {**pending, 'state': 'stale', 'reason': 'NATIVE_COMPLETION_EVIDENCE_STALE',
-                    'changed_inputs': changed,
+                    'changed_inputs': changed, **diagnostics,
                     'next': 'Complete the affected native work and refresh its actual completion report; then bind it again. Preserve unaffected native review history.'}
+        if not record.get('domains') or not record.get('observations'):
+            return {**pending, 'state': 'stale', 'reason': 'NATIVE_COMPLETION_BINDING_UPGRADE_REQUIRED',
+                    'next': 'Review and rebind the original native reports with cao lifecycle bind; retain the original record as history.'}
+        if set(diagnostics.get('changed_domains', [])) & {'native_sources', 'native_scope', 'reports', 'native_dependencies', 'policy'}:
+            return {**pending, 'state': 'stale', 'reason': 'NATIVE_COMPLETION_EVIDENCE_STALE', **diagnostics}
         required = set((work.get('path_assessment') or {}).get('required_gates', [])) & NATIVE_VERIFICATION_GATES
         missing = sorted(required - set(record.get('gates', [])))
         if missing:
@@ -63,13 +74,19 @@ def evidence_state(repo, work):
         if not reports:
             return pending
         provider = work['sdd']['provider']
+        parsed = []
         for ref in reports:
             path = provider_artifact(repo, ref['path'], provider_output_dirs(provider, repo))
             if not path.read_bytes().strip() or sha256_file(path) != ref['sha256']:
                 return {**pending, 'state': 'stale', 'reason': 'NATIVE_COMPLETION_REPORT_CHANGED',
                         'changed_paths': [ref['path']]}
+            from scripts.native_reports import read as read_native_report
+            parsed.append(read_native_report(repo, work, path))
+        if parsed != record.get('observations'):
+            return {**pending, 'state': 'stale', 'reason': 'NATIVE_COMPLETION_ADAPTER_CHANGED',
+                    'next': 'Review the changed native report interpretation and explicitly rebind the original reports.'}
         return {'ready': True, 'state': 'passed', 'owner': provider, 'reports': reports,
-                'inputs': current, 'provenance': record.get('provenance'),
+                'inputs': current, 'provenance': record.get('provenance'), 'observations': record.get('observations'), **diagnostics,
                 'note': 'Bound native execution evidence, not a second CAO functional acceptance run.'}
     except (ValueError, OSError, RuntimeError, KeyError) as exc:
         return {**pending, 'state': 'blocked', 'reason': 'NATIVE_COMPLETION_SOURCE_INVALID', 'error': str(exc)}
@@ -145,56 +162,49 @@ def command(args):
     from scripts.state_store import repo_transaction
     from scripts.cao_provider_workflows import provider_output_dirs
     from scripts.path_guard import provider_artifact
+    if args.lifecycle_command in {'preflight', 'migrate', 'rollback', 'protect', 'recover'}:
+        from scripts.lifecycle_migration import command as migration_command
+        return migration_command(args)
     repo = repo_root(args.repo)
     ensure_initialized(repo)
     with repo_transaction(repo):
         work = resolve_work(repo, args.work)
         if not work or work.get('status') not in {'active', 'suspended'}:
             raise ValueError('ACTIVE_OR_SUSPENDED_WORK_REQUIRED')
-        if args.lifecycle_command == 'migrate':
-            if enabled(work):
-                print(json.dumps({'ok': True, 'status': 'unchanged', 'work_id': work['id']}))
-                return 0
-            if work.get('lifecycle_contract', 1) != 1:
-                raise ValueError('LIFECYCLE_CONTRACT_UNSUPPORTED')
-            if ((work.get('verification') or {}).get('status') == 'running'
-                    or (((work.get('sdd') or {}).get('acceptance') or {}).get('run') or {}).get('status') == 'running'):
-                raise ValueError('LIFECYCLE_RUN_ACTIVE: finish or recover the running verification/acceptance before migration')
-            previous = deepcopy(work)
-            work['lifecycle_contract'] = VERSION
-            work['execution_generation'] = int(work.get('execution_generation', 0)) + 1
-            work.setdefault('lifecycle_migrations', []).append({'from': 1, 'to': VERSION,
-                'at': now(), 'previous_execution': previous.get('execution'),
-                'previous_acceptance': previous.get('sdd', {}).get('acceptance')})
-            queue_event(work, {'event': 'cao.lifecycle.migrated', 'work_item_id': work['id'],
-                               'from_contract': 1, 'to_contract': VERSION, 'occurred_at': now()})
-            save_work(repo, work)
-            from scripts.cao_native_sync import reconcile_native_sdd_state
-            reconcile_native_sdd_state(repo, work)
-            print(json.dumps({'ok': True, 'status': 'migrated', 'work_id': work['id'],
-                              'next': next_action(repo, work)}, ensure_ascii=False))
-            return 0
         if not enabled(work):
             raise ValueError('LIFECYCLE_MIGRATION_REQUIRED: run cao lifecycle migrate')
         if work.get('status') != 'active':
             raise ValueError('WORK_NOT_ACTIVE')
+        if args.lifecycle_command == 'dependencies':
+            from scripts.evidence_domains import files
+            from scripts.path_guard import repo_file
+            names = [repo_file(repo, name).relative_to(repo).as_posix() for name in args.path]
+            for name in names:
+                if name.startswith('.orchestrator/') and not name.startswith('.orchestrator/scripts/verification/'):
+                    raise ValueError('NATIVE_DEPENDENCY_MANAGED_STATE_FORBIDDEN')
+            observed = files(repo, names)
+            if any(row.get('missing') for row in observed.values()):
+                raise ValueError('NATIVE_DEPENDENCY_MISSING')
+            key = 'native_review_dependencies' if args.review else 'native_execution_dependencies'
+            work['sdd'][key] = sorted(set(work['sdd'].get(key, [])) | set(names))
+            queue_event(work, {'event': 'sdd.dependencies.declared', 'work_item_id': work['id'], 'paths': names, 'use': key})
+            save_work(repo, work)
+            print(json.dumps({'ok': True, 'dependencies': work['sdd'][key]}, ensure_ascii=False))
+            return 0
         ready = prerequisites(repo, work)
         if not ready['ready']:
             print(json.dumps({'ok': False, 'error': 'NATIVE_COMPLETION_REQUIRED', **ready}, ensure_ascii=False))
             return 2
         reports = []
+        candidate = deepcopy(work)
+        candidate['sdd']['completion_evidence'] = {'reports': [{'path': name} for name in args.report]}
+        observations = []
         for name in args.report:
             path = provider_artifact(repo, name, provider_output_dirs(work['sdd']['provider'], repo))
             if path.suffix.lower() not in {'.md', '.json', '.yaml', '.yml', '.txt', '.log'} or not path.read_bytes().strip():
                 raise ValueError('NATIVE_COMPLETION_REPORT_INVALID')
-            if path.suffix.lower() == '.json':
-                payload = json.loads(path.read_text(encoding='utf-8-sig'))
-                if not isinstance(payload, (dict, list)) or not payload:
-                    raise ValueError('NATIVE_COMPLETION_REPORT_INVALID')
-                if isinstance(payload, dict) and 'status' in payload and not isinstance(payload['status'], str):
-                    raise ValueError('NATIVE_COMPLETION_REPORT_INVALID')
-                if isinstance(payload, dict) and payload.get('status') in {'failed', 'error', 'blocked', 'pending', 'running'}:
-                    raise ValueError('NATIVE_COMPLETION_REPORT_NOT_PASSED')
+            from scripts.native_reports import read as read_native_report
+            observations.append(read_native_report(repo, candidate, path))
             ref = {'path': path.relative_to(repo).as_posix(), 'sha256': sha256_file(path)}
             if ref not in reports:
                 reports.append(ref)
@@ -216,12 +226,16 @@ def command(args):
         required = set((work.get('path_assessment') or {}).get('required_gates', []))
         if set(gates) - required:
             raise ValueError('NATIVE_COMPLETION_GATE_UNKNOWN')
-        record = {'version': VERSION, 'at': now(), 'gates': gates, 'reports': reports, 'inputs': inputs(repo, work),
+        from scripts.evidence_domains import capture
+        candidate['sdd']['completion_evidence'] = {'reports': reports, 'observations': observations}
+        record = {'version': VERSION, 'at': now(), 'gates': gates, 'reports': reports,
+                  'observations': observations, 'domains': capture(repo, candidate, [command for row in observations for command in row.get('commands', [])]),
+                  'inputs': inputs(repo, candidate),
                   'provenance': {'kind': 'native_workflow_binding', 'workflow': workflow.get('name'),
                                  'execution': deepcopy(workflow.get('execution')),
                                  'review_ids': [v.get('id') for v in (sdd.get('native_reviews') or {}).values() if isinstance(v, dict) and v.get('id')]}}
         old = sdd.get('completion_evidence')
-        if old and old.get('inputs') == record['inputs'] and old.get('reports') == reports and old.get('gates', []) == gates:
+        if old and old.get('inputs') == record['inputs'] and old.get('reports') == reports and old.get('gates', []) == gates and old.get('domains') == record['domains'] and old.get('observations') == observations:
             print(json.dumps({'ok': True, 'status': 'unchanged', 'work_id': work['id']}))
             return 0
         if old:
@@ -235,10 +249,15 @@ def command(args):
 
 
 def register(sub):
-    for name in ('migrate', 'bind'):
+    for name in ('preflight', 'migrate', 'rollback', 'protect', 'recover', 'dependencies', 'bind'):
         parser = sub.add_parser(name, help='Migrate active Work to native evidence lifecycle' if name == 'migrate' else 'Bind original native test/acceptance completion reports')
         parser.add_argument('--repo', default='.')
         parser.add_argument('--work')
+        if name in {'migrate', 'rollback', 'recover'}:
+            parser.add_argument('--check', action='store_true', help='Read-only preflight; do not change Work or guard state')
+        if name == 'dependencies':
+            parser.add_argument('--path', action='append', required=True)
+            parser.add_argument('--review', action='store_true', help='Declare shared inputs used by native reviewers')
         if name == 'bind':
             parser.add_argument('--report', action='append', required=True)
             parser.add_argument('--gate', action='append', help='Work verification duty covered by the native report; repeat for every applicable duty')

@@ -1,6 +1,6 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, symlinkSync} from 'node:fs';
+import {mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, symlinkSync, existsSync} from 'node:fs';
 import {spawn, spawnSync} from 'node:child_process';
 import {once} from 'node:events';
 import os from 'node:os';
@@ -86,7 +86,16 @@ function realCoreFixture(projectReady = true) {
   const env = {...process.env};
   for (const key of ['CAO_HOST', 'CLAUDE_CODE', 'CLAUDE_CODE_SESSION_ID', 'CLAUDE_SESSION_ID',
     'CODEX_THREAD_ID', 'CODEX_SANDBOX', 'CODEX_HOME', 'PI_SESSION_ID', 'PI_CODING_AGENT']) delete env[key];
+  function provisionNative() {
+    if (!existsSync(path.join(f.dir, '_bmad'))) return;
+    const provision = spawnSync(python, ['-c', 'from pathlib import Path; import sys; from tests.helpers import provision_bmad; provision_bmad(Path(sys.argv[1]))', f.dir],
+      {cwd: path.resolve(import.meta.dirname, '..'), env, encoding: 'utf8', timeout: 20000});
+    assert.equal(provision.status, 0, provision.stderr);
+  }
+  const getHandler = f.handlers.get.bind(f.handlers);
+  f.handlers.get = key => (...args) => {provisionNative(); return getHandler(key)(...args);};
   function cli(...args) {
+    provisionNative();
     const result = spawnSync(python, [core, ...args, '--repo', f.dir],
       {cwd: f.dir, env, encoding: 'utf8', timeout: 20000});
     assert.equal(result.status, 0, result.stderr || result.stdout);
@@ -152,8 +161,9 @@ test('real Pi hooks stop after provider installation and acknowledge host resour
     const resumed = await f.handlers.get('before_agent_start')({prompt: '继续'}, restarted);
     const bootstrap = f.cli('bootstrap', '--host', 'pi');
     assert.equal(bootstrap.mode, 'project_context_setup');
-    assert.equal(bootstrap.pending_request.prompt, '开发一个登录系统');
-    assert.match(resumed.message.content, /开发一个登录系统/);
+    assert.equal(bootstrap.pending_request, null, 'Project preparation must not consume the business request');
+    assert.equal(JSON.parse(readFileSync(path.join(f.dir, '.orchestrator/startup-request.json'), 'utf8')).prompt, '开发一个登录系统');
+    assert.doesNotMatch(resumed.message.content, /Original user request/);
     assert.match(resumed.message.content, /TECH_STACK_CLARIFICATION_REQUIRED/);
   } finally { f.close(); }
 });
@@ -239,7 +249,7 @@ test('real Python core handles Pi tool_result with null verification', posix, as
     assert.equal(await f.handlers.get('tool_result')(event, f.context('native-pi', true)), undefined);
     assert.deepEqual(event, original, 'real-core guidance must not change tool result data');
     assert.ok(f.notices.every(([, level]) => level === 'info'), JSON.stringify(f.notices));
-    assert.match(f.sent.at(-1)[0].content, /VERIFICATION_BASELINE_REQUIRED/);
+    assert.match(f.sent.at(-1)[0].content, /path assess/);
     assert.equal(JSON.parse(readFileSync(workFile, 'utf8')).verification, null);
   } finally {f.close();}
 });
@@ -255,7 +265,7 @@ test('real Pi route preparation follows baseline, assessment, native workflow an
     const req = f.cli('requirement', 'next-id', '--title', 'Login replay').path;
     writeFileSync(path.join(f.dir, req), '# Fixture login\nPrepare real native evidence.');
     const started = f.cli('start', '--requirement', req);
-    assert.equal(started.next_action.reason, 'VERIFICATION_BASELINE_REQUIRED');
+    assert.equal(started.next_action.stage, 'path_assessment');
     const ctx = f.context('route-replay-pi');
     async function result(command) {
       const event = {toolName: 'bash', input: {command}, content: [{type: 'text', text: 'CLI result unchanged'}]};
@@ -264,11 +274,11 @@ test('real Pi route preparation follows baseline, assessment, native workflow an
       assert.deepEqual(event, before);
       return f.sent.at(-1)[0].content;
     }
-    assert.match(await result('cao start'), /VERIFICATION_BASELINE_REQUIRED/);
+    assert.match(await result('cao start'), /path assess/);
     mkdirSync(path.join(f.dir, 'acceptance-tests'), { recursive: true });
     writeFileSync(path.join(f.dir, 'acceptance-tests/test_fixture.py'),
       'import unittest\nclass Fixture(unittest.TestCase):\n def test_fixture(self): self.assertEqual(2+2,4)\n');
-    f.cli('verification', 'configure', '--test-script', JSON.stringify(f.python) + ' -m unittest discover -s acceptance-tests');
+    f.cli('verification', 'check', '--project');
     assert.match(await result('cao verification configure'), /path assess/);
     f.cli('path', 'assess', '--profile', 'standard', '--reason', 'Native fixture preparation');
     const native = await result('cao path assess');
@@ -325,11 +335,11 @@ test('real core setup reaches Pi model with blocked product writes and preserved
     const originalAnchor = JSON.parse(readFileSync(workFile, 'utf8')).acceptance;
     const ctx = f.context('setup-pi');
     const guidance = await f.handlers.get('before_agent_start')({type: 'before_agent_start', prompt: 'continue'}, ctx);
-    assert.match(guidance.message.content, /CAO verification setup/);
-    assert.match(guidance.message.content, /tech stack/);
+    assert.match(guidance.message.content, /path assess/);
+    assert.match(guidance.message.content, /path_assessment/);
     assert.equal((await f.handlers.get('tool_call')({type: 'tool_call', toolName: 'write',
       input: {path: 'product.py', content: 'pass'}}, ctx)).block, true);
-    assert.match(guidance.message.content, /verification configure/);
+    assert.match(guidance.message.content, /path assess/);
     for (const [, options] of f.sent) {
       assert.equal(options.triggerTurn, false);
       assert.equal(options.deliverAs, 'steer');
@@ -343,19 +353,14 @@ test('real core setup reaches Pi model with blocked product writes and preserved
     // Host events may update session metadata. First valid setup establishes the initial anchor.
     const before = readFileSync(workFile, 'utf8');
     assert.deepEqual(JSON.parse(before).acceptance, originalAnchor);
-    const configured = cli('verification', 'configure', '--test-script',
-      JSON.stringify(f.python) + ' -m unittest discover -s acceptance-tests');
-    assert.equal(configured.verification_setup.ready, true);
-    assert.equal(configured.acceptance_review_required, false);
-    assert.equal(configured.initial_baseline_established, true);
-    assert.notEqual(JSON.parse(readFileSync(workFile, 'utf8')).acceptance.config_sha256,
-      originalAnchor.config_sha256);
+    const checked = cli('verification', 'check', '--project');
+    assert.equal(checked.status, 'passed');
+    assert.equal(JSON.parse(readFileSync(workFile, 'utf8')).acceptance.config_sha256,
+      originalAnchor.config_sha256, 'Adding tests inherits the project standard without per-Work reconfiguration');
     assert.equal(cli('bootstrap').mode, 'resume');
     const after = await f.handlers.get('before_agent_start')({type: 'before_agent_start', prompt: 'continue'}, ctx);
     assert.match(after.message.content, /path assess/);
     assert.equal(f.notices.length, 0, JSON.stringify(f.notices));
-    assert.notEqual(JSON.parse(readFileSync(workFile, 'utf8')).acceptance.config_sha256,
-      originalAnchor.config_sha256);
   } finally {f.close();}
 });
 

@@ -35,7 +35,7 @@ def load_index(repo: Path) -> dict[str, Any]:
 @locked_repo
 def recover_index(repo: Path) -> dict[str, Any]:
     """Rebuild a missing, corrupt or stale projection from authoritative Work Items."""
-    works = [load_json(p, None) for p in sorted((repo / WORK_DIR).glob("*.json"))]
+    works = [_read_work(repo, p.stem) for p in sorted((repo / WORK_DIR).glob("*.json"))]
     works = [work for work in works if isinstance(work, dict)]
     for work in works:
         if work.get("pending_events"):
@@ -61,8 +61,11 @@ def save_index(repo: Path, index: dict[str, Any]) -> None:
 
 
 def _read_work(repo: Path, work_id: str) -> dict[str, Any] | None:
+    if not work_id:
+        return None
     p = work_path(repo, work_id)
-    return load_json(p, None) if p.exists() else None
+    from scripts.lifecycle_guard import verify
+    return verify(repo, work_id, load_json(p, None) if p.exists() else None)
 
 
 @locked_repo
@@ -86,7 +89,7 @@ def sync_index_for_work(repo: Path, work: dict[str, Any]) -> None:
 
 def other_active_work(repo: Path, wid: str) -> list[str]:
     return [work["id"] for path in sorted((repo / WORK_DIR).glob("*.json"))
-            if isinstance(work := load_json(path, None), dict)
+            if isinstance(work := _read_work(repo, path.stem), dict)
             and work.get("status") == "active" and work["id"] != wid]
 
 
@@ -120,7 +123,8 @@ def _persist_work(repo: Path, work: dict[str, Any]) -> None:
         # Replayed outbox entries retain their original business revision.
         event.setdefault("state_revision", revision + 1)
         event.setdefault("occurred_at", now())
-    save_json(work_path(repo, work["id"]), saved)
+    from scripts.lifecycle_guard import persist
+    persist(repo, work["id"], current, saved, lambda: save_json(work_path(repo, work["id"]), saved))
     # Advance the caller only after authority commits.
     work.update(saved)
 
