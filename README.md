@@ -168,6 +168,20 @@ Each new Work inherits applicable **standards**, not a previous Work's passing r
 
 For unmigrated contract-1 Work only: `cao acceptance criteria` derives source references from the requirement and native artifacts. It does not determine semantic correctness or invent assertions. `cao acceptance reuse --script <result-name>` can reuse a real technical execution only when its exact command matches the accepted task executor and its original output supplies valid, complete, current item results for the same Work.
 
+### Long tasks, recovery and switching
+
+Use `cao resume --work <id> --check` for read-only recovery inspection. Handoff v2 retains native unit references, evidence, unresolved runs and workspace fingerprints. Coordination items can be closed by ID; SDD retains ownership of native tasks and functional acceptance.
+
+```bash
+cao start --defer --requirement <request-file>
+cao switch --to <work-id> --check
+cao switch --to <work-id> --reason "explicit user priority"
+cao evidence attach --kind test --path <native-report>
+cao lifecycle bind --evidence <evidence-id>
+```
+
+Process artifacts retain original bytes and provenance levels without granting completion. Durable switch journals recover partial writes; unknown executions are inspected, waited for, cooperatively cancelled or explicitly disposed rather than replayed automatically. See [Task continuity](references/task-continuity.md) and the [implementation/validation record](docs/continuity-implementation-status-2026-10-27.md), which separates real-model acceptance limits from fixture tests.
+
 ## How it works
 
 ### Guidance, state, and host adapters

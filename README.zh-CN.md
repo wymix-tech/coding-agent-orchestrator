@@ -150,6 +150,20 @@ Agent 负责评估范围，CAO 对声明的风险标记执行最低档位约束�
 
 仅适用于未迁移的旧契约 1：`cao acceptance criteria` 从需求和原生产物派生来源引用，不会自动判断自然语言的语义正确性，也不会凭空生成断言。仅当技术运行的精确命令与已接受的需求验收入口一致，且原始输出包含同一 Work 完整、有效、未过期的条目结果时，才可通过 `cao acceptance reuse --script <result-name>` 复用这次真实运行。
 
+### 长任务、中断恢复与任务切换
+
+通过 `cao resume --work <id> --check` 只读检查恢复现场。HANDOFF v2 保存原生续接点、证据、未决运行和工作区指纹；协调待办可以通过 ID 关闭。SDD 仍拥有原生任务状态与功能验收。
+
+```bash
+cao start --defer --requirement <需求文件>
+cao switch --to <work-id> --check
+cao switch --to <work-id> --reason "用户指定优先处理"
+cao evidence attach --kind test --path <原生报告>
+cao lifecycle bind --evidence <evidence-id>
+```
+
+过程证据保留原始字节与来源等级，不自动获得完成资格。切换使用可恢复日志；未决执行需检查、等待、受控取消或显式处置，不能默认重放。详见 [连续性操作指南](references/task-continuity.md) 和 [本轮验收记录](docs/continuity-implementation-status-2026-10-27.md)。真实模型会话验收的环境限制在记录中单独说明。
+
 ## 怎么实现的
 
 ### 指引、状态与宿主适配
