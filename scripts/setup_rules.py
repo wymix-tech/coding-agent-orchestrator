@@ -45,11 +45,13 @@ def describe(rule=None):
     return {'id': rule, 'version': 1, **RULES[rule]}
 
 
-def validate_identity(rule, identity):
+def validate_identity(rule, identity, *, partial=False):
     spec = describe(rule)
     if not isinstance(identity, dict):
         raise ValueError('PROJECT_IDENTITY_INVALID')
-    for field in spec['fields']:
+    if partial and any(field not in spec['fields'] for field in identity):
+        raise ValueError('PROJECT_IDENTITY_FIELD_INVALID')
+    for field in identity if partial else spec['fields']:
         value = identity.get(field)
         if not isinstance(value, str) or not value or any(c in value for c in '\x00\n\r\\'):
             raise ValueError('PROJECT_IDENTITY_REQUIRED: ' + field)

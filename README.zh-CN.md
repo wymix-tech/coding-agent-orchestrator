@@ -1,7 +1,7 @@
 # Coding Agent Orchestrator
 
 
-项目初始化顺序：确认技术栈 → 生成或复用骨架 → 建立真实项目验证基线并运行初始化检查 → 创建业务 Work。CAO 管理的包装脚本存于 `.orchestrator/scripts/verification/`，用 `cao verification prepare --path <exact-path>` 授权精确输入，再 configure/check；原生测试与构建文件保留原位。已有项目用 `cao verification check` 完成准备；已有 Work 用 `--project` 补齐项目准备，不回退进度。标准可继承，每个 Work 的正式验证及 SDD 需求验收证据需独立满足。详见[验证基线](references/verification-setup.md)。
+项目初始化顺序：确认技术栈 → 逐项问答收集项目身份 → 生成或复用骨架并检查 → 单独建立验证脚本基线并实际运行 → 创建业务 Work。CAO 管理的包装脚本存于 `.orchestrator/scripts/verification/`，用 `cao verification prepare --path <exact-path>` 授权精确输入，再 configure/check；原生测试与构建文件保留原位。已有项目用 `cao verification check` 完成准备；已有 Work 用 `--project` 补齐项目准备，不回退进度。标准可继承，每个 Work 的正式验证及 SDD 需求验收证据需独立满足。详见[验证基线](references/verification-setup.md)。
 项目准备同样先于恢复 Work：基线准备阶段仅展示项目输入和待恢复 Work 标识，`resume --reactivate` 不能绕过。历史准备记录需按 v2 策略复核并执行一次项目级检查；基线不再以当前 Work 的需求、决策或验收条目作为编写依据。
 
 
@@ -72,7 +72,7 @@ Agent 应按以下顺序推进：
 
 1. 恢复重启后 bootstrap 返回的待处理需求，再通过 `cao project inspect`、`cao project context show` 检查已有产品和保存的项目背景。
 2. 保留已确定的技术选型，只确认缺失部分。使用 `cao project context set` 保存，并引用检查结果中的真实用户证据 ID 或已有产品清单路径。保存项目背景 **不需要先创建 Work Item**。
-3. 复用已有验证入口。空项目先在无 Work 状态下完成 `cao project setup rules`、`draft`、`plan`、`apply`、`check`。只确认缺失的身份、版本与布局，按已选框架调整确切计划，见[项目初始化](references/project-initialization.md)。仅有 `verification configure --plan-only` 不能使项目 ready。
+3. 复用已有验证入口。空项目先在无 Work 状态下完成 `cao project setup rules`、`draft`、`plan`、`apply`、`check`。只确认缺失的身份、版本与布局，按已选框架调整确切计划，见[项目初始化](references/project-initialization.md)。身份通过 `project setup identity --rule <rule>` 连续提问并逐项保存。骨架检查完成后，必须单独执行 `verification materialize` 和 `verification check --project`；仅有骨架成功或 `verification configure --plan-only` 不能使项目 ready。
 4. 使用已有需求文件，或通过 `cao requirement next-id --title "用户登录"` 分配路径并填写返回的文件，再执行 `cao start --requirement <requirement-path> --title "用户登录"`。
 5. 已初始化项目继承真实验证入口；已有活动 Work 可修复基线并通过 `cao verification check --work <id>` 试跑；按提示审查验证基线、评估执行路径，再进入所选 Provider 的原生流程。
 
@@ -294,7 +294,7 @@ SDD provider 负责功能代码评审；CAO 核查声明的产物、过程及有
 ### 空项目准备与证据完整性
 
 空产品在业务 Work 之前执行项目级生命周期：
-`cao project setup rules` → `draft` → `plan` → `apply` → `check` → `status`。
+`cao project setup rules` → `identity`（逐项保存回答）→ `draft` → `plan` → `apply` → `check` → `verification materialize` → `verification check --project`。
 确认适用的项目标识和布局后，按确切清单生成最小骨架，并真实试跑验证基线。
 其他技术栈使用同一显式计划协议，内置示例不是语言白名单。
 详见[项目初始化](references/project-initialization.md)。

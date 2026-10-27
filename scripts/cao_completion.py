@@ -289,12 +289,8 @@ def completion_next_instruction(repo: Path, work: dict[str, Any] | None, complet
     if reason == "requirement file missing":
         return f"Restore the requirement file `{work['requirement']['path']}`, then run `cao verify`."
     if reason == "requirement changed since work started":
-        path = work["requirement"]["path"]
-        return (
-            f"The requirement changed after work started. Review and confirm the new requirement; "
-            f"if the change is intentional, re-anchor the work item with `cao start --requirement {path} --replace`; "
-            f"otherwise restore the previous requirement and run `cao verify`."
-        )
+        from scripts.requirement_amend import recovery_instruction
+        return recovery_instruction(work)
     if reason in {"execution path has not been assessed", "execution path assessment is stale"}:
         return f"Review the requirement and current scope, then record or refresh the minimum-safe-path assessment: `cao path assess --profile <light|standard|comprehensive> --reason \"<short reason>\" --work {wid}`."
     if reason == "major requirement ambiguity requires clarification":

@@ -23,13 +23,15 @@ blockers. For actual requirement changes prepare a candidate document, then:
 
 ```bash
 cao amend --work <id> --requirement <candidate> --request "<original request>" --check
-cao amend --work <id> --requirement <candidate> --request "<original request>" --apply --expected-revision <preview-revision>
+cao amend --work <id> --requirement <candidate> --request "<original request>" --apply --expected-token <expected_token>
 ```
 
 The original document bytes and Work history remain in the operation journal.
 Changed requirements are never silently adopted by `start --replace`.
-For already externally edited sources use the existing explicit reopen/reanchor
-protocol after reviewing the change. Provider selection remains explicit.
+The preview token binds the candidate bytes and business state; host observation
+revisions alone do not invalidate it. If the source was edited in place, explicit
+amend can recover the retained anchored original; legacy Work without retained
+bytes needs its exact original restored from an audited source. Provider selection remains explicit.
 
 ## Checkpoints
 

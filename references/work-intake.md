@@ -119,3 +119,20 @@ in evidence listing; the original hash is retained. Complete the native workflow
 and use the existing `cao lifecycle bind --report ...` for final admission.
 
 For request switching, strictly read-only previews, process evidence archives and run recovery, follow [Task continuity](task-continuity.md).
+
+### Clarification without intake loops
+
+CAO assesses initial scope/risk and binds the original request; SDD owns detailed
+business clarification and planning. A short request alone is not a reason to
+finish all provider discovery in CAO. Use major-ambiguity only when an unresolved
+choice prevents a safe route/scope decision. Once that choice is resolved,
+reassess without major-ambiguity and continue at the provider's native step.
+Never silently shrink the user request to avoid a gate.
+
+Do not edit an already bound requirement in place when incorporating answers.
+Write a separate candidate, run `cao amend --work <id> --requirement <candidate>
+--request <original-request> --check`, inspect the result, and apply with
+`--apply --expected-token <expected_token>`. Storage revisions can advance during
+host tool observations; do not predict revision increments or bypass hooks.
+An actual changed business-state token requires inspection and a new preview.
+The new requirement invalidates affected evidence and requires fresh assessment.

@@ -202,7 +202,7 @@ class RunnerBindingsTests(RepairCase):
         rc, out = self.run_cli("reopen", "--work", wid, "--reanchor", "--reason", "reviewed timeout")
         self.assertEqual(rc, 0, out)
         work = self.read_work(wid)
-        self.assertEqual(work["acceptance"]["config_sha256"], cao.verification_snapshot(cao.config(self.repo)))
+        self.assertEqual(work["acceptance"]["config_sha256"], cao.verification_snapshot(cao.config(self.repo), self.repo))
         rc, out = self.run_cli("verify")
         self.assertEqual(rc, 0, out)
         self.assertEqual(out["verification"]["verification_config_sha256"], work["acceptance"]["config_sha256"])
@@ -211,7 +211,7 @@ class RunnerBindingsTests(RepairCase):
     def test_start_binds_configured_timeout_not_default(self):
         self.set_timeout(2)
         wid = self.start()
-        self.assertEqual(self.read_work(wid)["acceptance"]["config_sha256"], cao.verification_snapshot(cao.config(self.repo)))
+        self.assertEqual(self.read_work(wid)["acceptance"]["config_sha256"], cao.verification_snapshot(cao.config(self.repo), self.repo))
         rc, out = self.run_cli("verify")
         self.assertEqual(rc, 0, out)
 

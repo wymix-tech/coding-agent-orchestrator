@@ -37,7 +37,7 @@ class EvidenceTests(RepairCase):
         work = self.read_work(self.start())
         anchor = work.get("acceptance") or {}
         self.assertEqual(anchor.get("version"), 2)
-        self.assertEqual(anchor.get("config_sha256"), cao.verification_snapshot(cao.config(self.repo)))
+        self.assertEqual(anchor.get("config_sha256"), cao.verification_snapshot(cao.config(self.repo), self.repo))
 
     def test_changed_requirement_drops_review_and_workflow_execution(self):
         wid = self.start(profile="standard")
@@ -146,7 +146,7 @@ class EvidenceTests(RepairCase):
         self.assertEqual(rc, 0, out)
         self.assertEqual(self.read_work(wid)["sdd"]["workflow"], before)
         self.assertEqual(self.read_work(wid).get("acceptance", {}).get("config_sha256"),
-                         cao.verification_snapshot(cao.config(self.repo)))
+                         cao.verification_snapshot(cao.config(self.repo), self.repo))
         rc, out = self.run_cli("verify")
         self.assertEqual(rc, 0, out)
         self.assertEqual(out["verification"].get("version"), 2)

@@ -1,6 +1,8 @@
 """Work lifecycle commands: start, resume, checkpoint, block, reopen, and done."""
 from __future__ import annotations
 
+import base64
+
 import argparse
 import json
 from pathlib import Path
@@ -158,6 +160,7 @@ def _prepare_start(args: argparse.Namespace):
         "title": args.title or p.stem,
         "status": "todo",
         "requirement": requirement_evidence(repo, p),
+        "requirement_original_base64": base64.b64encode(p.read_bytes()).decode(),
         "sdd": {"provider": provider, "native_ref": args.sdd_ref, "artifacts": []},
         "execution": {"step": "path-assessment", "next_action": action("agent", path_assessment_instruction())},
         "path_assessment": None,
@@ -644,6 +647,7 @@ def cmd_reopen(args: argparse.Namespace) -> int:
         if not p.is_file():
             print(json.dumps({"ok": False, "error": "REQUIREMENT_FILE_MISSING"}, ensure_ascii=False)); return 2
         reset_requirement(work, requirement_evidence(repo, p))
+        work["requirement_original_base64"] = base64.b64encode(p.read_bytes()).decode()
         cfg = config(repo)
         anchor_verification(repo, work, cfg)
         work["reanchored_at"] = now()

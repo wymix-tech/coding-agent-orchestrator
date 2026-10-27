@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+from scripts.requirement_amend import recovery_instruction
 import json
 from pathlib import Path
 from typing import Any
@@ -161,7 +162,7 @@ def path_assessment_state(repo: Path, work: dict[str, Any]) -> dict[str, Any]:
         diagnostics = template_diagnostics(requirement_path)
         if diagnostics:
             return {"ready": False, "reason": "REQUIREMENT_CONTENT_REQUIRED", "diagnostics": diagnostics,
-                    "next": f"Fill the actual request in `{requirement_path}`, then review and reanchor the same Work with `cao start --requirement <same-path> --replace`. Do not restart intake or create another file."}
+                    "next": recovery_instruction(work)}
     assessment = work.get("path_assessment")
     if not isinstance(assessment, dict):
         return {"ready": False, "reason": "execution path has not been assessed", "assessment": None}
@@ -205,7 +206,10 @@ def path_assessment_instruction(work: dict[str, Any] | None = None) -> str:
         technology_instruction(cao_invocation()["command"]) +
         "Perform a lightweight scope/risk assessment, choose light, standard, or comprehensive, "
         "then record it with `cao path assess --profile <profile> --reason \"<short reason>\"" +
-        " [--risk-flag <flag>]" + work_arg + "`. Do not build a separate evidence model or scorecard."
+        " [--risk-flag <flag>]" + work_arg + "`. Do not build a separate evidence model or scorecard. "
+        "A short request alone is not major-ambiguity: SDD owns detailed business clarification. "
+        "Use that blocker only when an unresolved choice prevents a safe route or scope decision; "
+        "after clarification amend with a candidate if needed, reassess without major-ambiguity and continue the native workflow."
     )
 
 
@@ -236,7 +240,7 @@ def cmd_path_assess(args: argparse.Namespace) -> int:
             "ok": False,
             "error": "REQUIREMENT_CHANGED",
             "reason": "Review the requirement change and re-anchor the Work Item before reassessing its execution path.",
-            "next": f"Review `{requirement.get('path')}`; if intentional, run `cao start --requirement {requirement.get('path')} --replace`.",
+            "next": recovery_instruction(work),
         }, ensure_ascii=False, indent=2))
         return 2
 

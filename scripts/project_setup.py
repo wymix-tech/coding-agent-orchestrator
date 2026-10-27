@@ -225,6 +225,13 @@ def current_inputs(repo, plan):
             'files': {f['path']: file_hash(safe_product(repo, f['path'], plan['bases'])) for f in plan['files']}}
 
 
+def initialization_snapshot(repo, plan):
+    # Business source may evolve after initialization; verification inputs may not.
+    return digest({'plan': plan, 'verification_files': {
+        f['path']: file_hash(safe_product(repo, f['path'], plan['bases']))
+        for f in plan['files'] if f['purpose'] == 'verification'}})
+
+
 def state(repo, scope='root'):
     background = context_state(repo, [scope])
     if not background['ready']:
@@ -232,7 +239,7 @@ def state(repo, scope='root'):
     record = read(scope_path(repo, scope))
     if not record:
         return {'ready': False, 'stage': 'identity_required', 'reason': 'PROJECT_SETUP_REQUIRED',
-                'next': 'Run `cao project setup rules`; confirm applicable identity/layout, then draft/plan/apply/check.'}
+                'next': 'Run `cao project setup rules`, then `cao project setup identity --rule <applicable-rule>`. Ask and save one missing identity field at a time; then draft/plan/apply/check.'}
     plan = record['plan']
     if plan['rule']['id'] != 'explicit':
         from scripts.setup_rules import describe
@@ -249,14 +256,13 @@ def state(repo, scope='root'):
                 'next': 'Review changed project context and create an updated setup plan; keep current files.'}
     applied = all(file_hash(safe_product(repo, f['path'], plan['bases'])) == f['sha256'] for f in plan['files'])
     # After successful setup, later business implementation may extend entry files.
-    # Toolchain/context/baseline changes, not ordinary product changes, invalidate setup readiness.
+    # Initialization and the independent baseline have separate readiness records.
     result = record.get('result') or {}
     if result.get('status') == 'passed':
-        from scripts.cao_snapshot import verification_snapshot
-        if result.get('verification_sha256') == baseline_snapshot(repo, plan):
+        if result.get('initialization_sha256') == initialization_snapshot(repo, plan):
             return {'ready': True, 'stage': 'ready', 'plan_id': plan['id'], 'result': result}
         return {'ready': False, 'stage': 'check_pending', 'reason': 'PROJECT_SETUP_BASELINE_STALE',
-                'next': 'Review changed baseline and run `cao project setup check --scope ' + scope + '`.'}
+                'next': 'Review the initialization plan and run `cao project setup check --scope ' + scope + '`.'}
     stage = 'check_pending' if record.get('applied') or applied else 'scaffold_pending'
     return {'ready': False, 'stage': stage, 'reason': 'PROJECT_SETUP_REQUIRED', 'plan_id': plan['id'],
             'result': result, 'next': 'Run `cao project setup ' + ('check' if applied else 'apply') + ' --scope ' + scope + '`.'}
@@ -396,12 +402,15 @@ def check(repo, scope, recover_run=None):
         result = {'id': run_id, 'owner': {'kind': 'project', 'scope': scope}, 'purpose': 'initialization',
                   'preparation_policy': PROJECT_PREPARATION_POLICY,
                   'status': status, 'inputs': before, 'results': results,
-                  'verification_sha256': before['verification_sha256']}
+                  'verification_sha256': before['verification_sha256'], 'initialization_sha256': initialization_snapshot(repo, plan)}
         latest.setdefault('history', []).append(result)
         latest['history'] = latest['history'][-20:]
         latest['result'] = result
         latest.pop('running', None)
         atomic_json(path, latest)
+        result['next'] = (
+            'Run `cao verification materialize --scope ' + scope + '` after inspecting project-wide checks, then `cao verification check --project --scope ' + scope + '`. Scaffold success does not unlock Work by itself.'
+            if status == 'passed' else 'Inspect the check results, repair the declared scaffold and rerun `cao project setup check --scope ' + scope + '`; do not start Work.')
         return result
 
 
@@ -422,6 +431,10 @@ def dispatch(args):
         values = (scope.get('identity') or {}).get('values', {})
         out = {'rules': {key: {**rule, 'missing_identity_fields': [field for field in rule['fields'] if not values.get(field)]} for key, rule in describe().items()},
                'confirmed_identity': values, 'explicit_plan': 'project setup draft --scope S, edit exact files/checks/basis, then plan/apply/check'}
+    elif action == 'identity':
+        from scripts.identity_interview import collect
+        with repo_transaction(repo):
+            out = collect(repo, args)
     elif action == 'status':
         out = state(repo, args.scope)
     elif action == 'draft':
@@ -436,8 +449,14 @@ def dispatch(args):
                     fields = describe(args.rule)['fields']
                     inherited = context['scopes'][args.scope].get('identity', {}).get('values', {})
                     values = {key: value for key, value in inherited.items() if key in fields}
+                    from scripts.identity_interview import path as identity_path
+                    interview = read(identity_path(repo, args.scope)) or {}
+                    if interview and interview.get('rule') != args.rule:
+                        raise ValueError('PROJECT_IDENTITY_RULE_CONFLICT')
+                    values.update(interview.get('values', {}))
                     values.update(json.loads(args.identity or '{}'))
                     raw = scaffold(args.rule, values)
+                    raw['identity_evidence'] = {k: v for k, v in interview.get('sources', {}).items() if values.get(k) == interview.get('values', {}).get(k)}
                     base = context['scopes'][args.scope]['paths'][0]
                     if base != '.':
                         for entry in raw['files']:
@@ -448,8 +467,11 @@ def dispatch(args):
                         for entry in raw['checks']:
                             entry['cwd'] = base
                 else:
+                    from scripts.identity_interview import path as identity_path
+                    interview = read(identity_path(repo, args.scope)) or {}
                     raw = {'schema_version': 1, 'rule': {'id': 'explicit', 'version': 1},
-                           'basis': '', 'identity': {}, 'files': [], 'checks': [],
+                           'basis': '', 'identity': interview.get('values', {}),
+                           'identity_evidence': interview.get('sources', {}), 'files': [], 'checks': [],
                            'required_capabilities': [], 'outputs': []}
                 raw.update(source=args.source, evidence=args.evidence)
                 atomic_json(path, raw)
@@ -496,10 +518,16 @@ def dispatch(args):
 
 def register(actions):
     setup = actions.add_parser('setup', help='Project-owned identity, scaffold and real baseline checks; no business Work').add_subparsers(dest='setup_action', required=True)
-    for name in ('rules', 'status', 'draft', 'plan', 'apply', 'check'):
+    for name in ('rules', 'status', 'identity', 'draft', 'plan', 'apply', 'check'):
         parser = setup.add_parser(name)
         parser.add_argument('--repo', default='.')
         parser.add_argument('--scope', default='root')
+        if name == 'identity':
+            parser.add_argument('--rule', required=True)
+            parser.add_argument('--fields', action='append', help='Ordered applicable fields for an explicit stack')
+            parser.add_argument('--field')
+            parser.add_argument('--value')
+            parser.add_argument('--evidence')
         if name == 'draft':
             parser.add_argument('--rule')
             parser.add_argument('--identity', help='JSON object; inspect rules for applicable fields')

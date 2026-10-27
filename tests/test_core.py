@@ -288,7 +288,8 @@ class CoreTests(unittest.TestCase):
             p.write_text("A changed", encoding="utf-8")
             rc, out, _ = run(repo, "done")
             self.assertEqual(rc, 2)
-            self.assertIn("cao start --requirement requirements/a.md --replace", out["next"])
+            self.assertIn("cao amend --work", out["next"])
+            self.assertIn("--expected-token", out["next"])
             self.assertNotEqual(out["next"], "cao verify")
 
     def test_requirement_change_blocks_done(self):
@@ -403,7 +404,7 @@ class CoreTests(unittest.TestCase):
             self.assertEqual(rc, 0)
             cfg = json.loads((repo / ".orchestrator/config.json").read_text(encoding="utf-8"))
             self.assertEqual(
-                cfg["verification"]["scripts"],
+                [{**entry, "command": cfg["verification"]["materialized_commands"][entry["command"].split()[-1]]} for entry in cfg["verification"]["scripts"]],
                 [
                     {"name": "script-1", "command": "./verify-unit.sh", "required": True, "gates": []},
                     {"name": "script-2", "command": "./verify-coverage.sh", "required": True, "gates": []},

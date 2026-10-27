@@ -147,11 +147,7 @@ def probe_inputs(repo, cfg, scopes):
 
 def project_state(repo, scopes=None, work=None):
     from scripts.project_context import load_context, selected_scopes
-    from scripts.project_setup import state as setup_state
     for scope in selected_scopes(load_context(repo), scopes, work):
-        initialization = setup_state(repo, scope)
-        if initialization.get('ready') and (initialization.get('result') or {}).get('preparation_policy') == PROJECT_PREPARATION_POLICY:
-            continue
         record = read_project_result(repo, scope)
         if record.get('status') != 'passed' or record.get('standard') != project_standard(repo, scope):
             return {'ready': False, 'reason': 'PROJECT_VERIFICATION_CHECK_REQUIRED',

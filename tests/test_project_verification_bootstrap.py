@@ -51,6 +51,7 @@ class ProjectVerificationBootstrap(unittest.TestCase):
         out = self.call('start', '--requirement', 'openspec/feature.md', expected=2)
         self.assertEqual('VERIFICATION_BASELINE_REQUIRED', out['error'])
         self.call('verification', 'configure', '--test-script', 'python3 -m unittest discover -s tests -v')
+        self.call('verification', 'materialize')
         out = self.call('start', '--requirement', 'openspec/feature.md', expected=2)
         self.assertEqual('PROJECT_VERIFICATION_CHECK_REQUIRED', out['error'])
         self.assertEqual(out['error'], self.call('bootstrap')['next']['reason'])
@@ -200,6 +201,7 @@ class ProjectVerificationBootstrap(unittest.TestCase):
     def test_second_work_inherits_standards_without_work_results(self):
         self.existing()
         self.call('verification', 'configure', '--test-script', 'python3 -m unittest discover -s tests -v')
+        self.call('verification', 'materialize')
         self.call('verification', 'check')
         first = self.call('start', '--requirement', 'openspec/feature.md')['work_item']['id']
         declarations = config(self.repo)['verification']['scripts']
@@ -228,6 +230,7 @@ class ProjectVerificationBootstrap(unittest.TestCase):
     def test_existing_work_missing_baseline_repairs_without_restart_or_progress_loss(self):
         self.existing()
         self.call('verification', 'configure', '--test-script', 'python3 -m unittest discover -s tests -v')
+        self.call('verification', 'materialize')
         self.call('verification', 'check')
         wid = self.call('start', '--requirement', 'openspec/feature.md')['work_item']['id']
         path = self.repo / '.orchestrator/work' / (wid + '.json')
@@ -240,6 +243,7 @@ class ProjectVerificationBootstrap(unittest.TestCase):
         repair.parent.mkdir(parents=True, exist_ok=True)
         repair.write_text('print("repair helper")\n')
         self.call('verification', 'configure', '--test-script', 'python3 -m unittest discover -s tests -v')
+        self.call('verification', 'materialize')
         self.call('verification', 'check', '--project')
         self.assertEqual(work_before, path.read_bytes())
 
@@ -273,6 +277,7 @@ class ProjectVerificationBootstrap(unittest.TestCase):
         secret = 'BUSINESS_ACCEPTANCE_ONLY_8d32f1'
         (self.repo / 'openspec/feature.md').write_text('# Feature\n## Acceptance\n- ' + secret + '\n')
         self.call('verification', 'configure', '--test-script', 'python3 -m unittest discover -s tests -v')
+        self.call('verification', 'materialize')
         self.call('verification', 'check')
         wid = self.call('start', '--requirement', 'openspec/feature.md')['work_item']['id']
         return wid, secret, self.repo / '.orchestrator/work' / (wid + '.json')
@@ -321,6 +326,7 @@ class ProjectVerificationBootstrap(unittest.TestCase):
         from scripts.cao_sessions import load_session
         self.assertIsNone(load_session(self.repo, 'deferred-project-session', host='unknown'))
         self.call('verification', 'configure', '--test-script', 'python3 -m unittest discover -s tests -v')
+        self.call('verification', 'materialize')
         self.call('verification', 'check', '--project')
         result = subprocess.run([sys.executable, str(Path(__file__).resolve().parents[1] / 'scripts/cao.py'),
             'resume', '--work', wid, '--reactivate', '--session', 'deferred-project-session', '--repo', str(self.repo)],

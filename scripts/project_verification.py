@@ -78,6 +78,11 @@ def declaration_state(repo, cfg, scopes=None, work=None):
     from scripts.verification_setup import setup_state
     if not setup_state(cfg)['ready']:
         return {'ready': False, 'reason': 'VERIFICATION_BASELINE_REQUIRED', 'next': setup_instruction('cao')}
+    from scripts.project_baseline import readiness
+    from scripts.verification_probe import scoped_config
+    baseline = readiness(repo, scoped_config(repo, cfg, state['scopes'])['verification']['scripts'], state['scopes'])
+    if not baseline['ready']:
+        return baseline
     return {'ready': True, 'state': 'configured' if scripts else 'planned', 'context_binding': binding}
 
 
@@ -96,7 +101,7 @@ def project_prerequisite(repo, work=None, scopes=None):
         state = project_state(repo, selected_scopes(load_context(repo), scopes, work), work=work)
     if state['ready']:
         return None
-    return {'type': 'agent', 'owner': 'project', 'stage': 'verification_setup' if state['reason'] in {'VERIFICATION_BASELINE_REQUIRED', 'PROJECT_VERIFICATION_CHECK_REQUIRED'} else 'project_setup', 'instruction': state['next'] + ' ' + technology_instruction('cao'),
+    return {'type': 'agent', 'owner': 'project', 'stage': 'verification_setup' if state['reason'] in {'VERIFICATION_BASELINE_REQUIRED', 'PROJECT_VERIFICATION_CHECK_REQUIRED', 'PROJECT_VERIFICATION_SCRIPTS_REQUIRED'} else 'project_setup', 'instruction': state['next'] + ' ' + technology_instruction('cao'),
             'reason': state['reason'], 'project_state': state}
 
 

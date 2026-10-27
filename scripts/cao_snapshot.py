@@ -135,8 +135,16 @@ def verification_snapshot(cfg: dict[str, Any], repo: Path | None = None, *, mana
         config_hash = native_digest({"standard": config_hash, "environment_policy": metadata})
     files = {}
     if repo is not None:
-        for script in verification_scripts(cfg):
-            for identity in workflow_command_identities(script["command"]):
+        from scripts.project_baseline import script_paths
+        sources = (cfg.get('verification') or {}).get('materialized_commands') or {}
+        commands = [script['command'] for script in verification_scripts(cfg)]
+        bound_sources = {name: sources[name] for command in commands
+                         for name in script_paths(command, repo) if name in sources}
+        if bound_sources:
+            config_hash = native_digest({'standard': config_hash, 'materialized_commands': bound_sources})
+            commands.extend(bound_sources.values())
+        for command in commands:
+            for identity in workflow_command_identities(command):
                 path = Path(identity)
                 path = path if path.is_absolute() else repo / path
                 # Executable wrappers are standards; their test data and business
