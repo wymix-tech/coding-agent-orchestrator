@@ -13,6 +13,11 @@ def read_work(repo, wid=None):
     paths = [repo / WORK_DIR / (wid + '.json')] if wid else sorted((repo / WORK_DIR).glob('*.json'))
     for path in paths:
         guard_path(repo, path.stem)
+        for entry in (path, *path.parents):
+            if entry == repo:
+                break
+            if entry.is_symlink():
+                raise ValueError("WORK_SYMLINK")
         value = json.loads(path.read_text())
         guard = read_guard(repo, path.stem)
         if guard:
@@ -104,6 +109,10 @@ def summary(report):
     if result.get('current'):
         current = result['current']
         result['current'] = {k: current.get(k) for k in ('product_snapshot', 'workspace', 'native_unit_error')}
+        workspace = deepcopy(result['current'].get('workspace') or {})
+        if workspace.get('dirty_paths') is not None:
+            workspace['dirty_paths'] = page(workspace.get('dirty_paths'))
+        result['current']['workspace'] = workspace
         result['current']['product_files'] = page(current.get('product_files'))
         result['current']['native_units'] = page(current.get('native_units'))
     if result.get('native_progress'):

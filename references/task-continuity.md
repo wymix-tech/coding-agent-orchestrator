@@ -56,7 +56,7 @@ Old handoffs remain readable; their missing fields are never fabricated.
 `cao resume --work <id> --check` and `cao handoff --work <id> --check` are strictly
 read-only. They do not repair indexes, guards, outboxes or native files. A prepared
 state guard must first be resolved by the existing explicit lifecycle recovery.
-Normal resume diagnoses unresolved runs before session attachment. It never
+Normal resume diagnoses unresolved runs before session attachment. Contract 2 also blocks a new verification while its previous run remains unresolved; contract 1 keeps its historical executor semantics until explicit lifecycle migration. It never
 invents a host session ID, replays an unknown side effect or turns a projection
 into a passed result. Completed Work stays historical until explicit reopen.
 
@@ -72,7 +72,7 @@ sequence and inputs. It never executes commands. Legacy acceptance/host-only
 runs lacking this evidence remain diagnostic and require actual inspection/new
 execution through their native protocol. Cancellation is cooperative: the live
 executor cleans its own process group; a request is not proof of termination.
-Unknown/remote owners are not killed by PID.
+Unknown/remote owners are not killed by PID. After inspecting an abandoned contract-2 run, use `runtime abandon --run <id> --evidence <inspection-file> --reason <basis>` to preserve outcome_unknown, fence late results and permit a new attempt; this is an inspection declaration, not proof of termination.
 
 If an observed host tool has no matching completion, inspect actual artifacts
 and processes. After establishing the result, record the inspection with
@@ -91,7 +91,7 @@ An unfinished journal blocks business writes and normal Work mutations. Recover
 with `cao switch recover --operation <id>`. The engine validates journal intent,
 all involved Work before/after states and captured product/config inputs before
 finishing missing writes. Unknown concurrent changes cause a conflict, never an
-overwrite. Do not delete the journal or state lock. Late results stay attached to
+overwrite. Prepared operations whose inputs remain unchanged can be inspected/aborted with `cao switch abort --operation <id> --check` and then without `--check`; applying operations must be recovered. Do not delete the journal or state lock. Late results stay attached to
 the original task; old sessions must explicitly reattach before new task writes.
 
 The default is one active Work in a shared workspace. Handoffs record dirty files

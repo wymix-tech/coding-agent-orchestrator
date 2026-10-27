@@ -7,21 +7,27 @@
       "handoffs": 100,
       "observations": 1000,
       "bounded_view": {
-        "p50_seconds": 5.269800021778792e-05,
-        "p95_seconds": 0.00014896999982738635,
-        "peak_bytes": 5016,
-        "result_bytes": 949
+        "p50_seconds": 6.677900000795489e-05,
+        "p95_seconds": 0.0005809459998999955,
+        "peak_bytes": 15608,
+        "result_bytes": 955
+      },
+      "native_unit_parse": {
+        "p50_seconds": 0.0018351320004512672,
+        "p95_seconds": 0.003111521999926481,
+        "peak_bytes": 128865,
+        "result_bytes": 28882
       },
       "latest_handoff": {
-        "p50_seconds": 0.005295405999731884,
-        "p95_seconds": 0.0066583839998202166,
-        "peak_bytes": 124474,
+        "p50_seconds": 0.004331156999796804,
+        "p95_seconds": 0.004979262000233575,
+        "peak_bytes": 120866,
         "result_bytes": 84
       },
       "event_page": {
-        "p50_seconds": 0.09436934399991515,
-        "p95_seconds": 0.13457557400033693,
-        "peak_bytes": 56341,
+        "p50_seconds": 0.08619263000036881,
+        "p95_seconds": 0.10545069500039972,
+        "peak_bytes": 56444,
         "result_bytes": 5704
       }
     },
@@ -30,21 +36,27 @@
       "handoffs": 1000,
       "observations": 10000,
       "bounded_view": {
-        "p50_seconds": 8.028799993553548e-05,
-        "p95_seconds": 0.00015317599991249153,
-        "peak_bytes": 10876,
-        "result_bytes": 951
+        "p50_seconds": 0.0005133759996169829,
+        "p95_seconds": 0.0007255390000864281,
+        "peak_bytes": 18684,
+        "result_bytes": 957
+      },
+      "native_unit_parse": {
+        "p50_seconds": 0.02206286100044963,
+        "p95_seconds": 0.024349502000404755,
+        "peak_bytes": 1217254,
+        "result_bytes": 290783
       },
       "latest_handoff": {
-        "p50_seconds": 0.05903641900022194,
-        "p95_seconds": 0.07137779999993654,
-        "peak_bytes": 1173302,
+        "p50_seconds": 0.07661087599990424,
+        "p95_seconds": 0.08899149099943315,
+        "peak_bytes": 1173385,
         "result_bytes": 87
       },
       "event_page": {
-        "p50_seconds": 1.0560531060000358,
-        "p95_seconds": 1.2239889980000953,
-        "peak_bytes": 883474,
+        "p50_seconds": 1.066776179000044,
+        "p95_seconds": 1.1339948300001197,
+        "peak_bytes": 883385,
         "result_bytes": 5804
       }
     }

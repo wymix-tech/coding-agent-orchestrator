@@ -223,6 +223,7 @@ class OperationsTests(RepairCase):
 
     def test_unknown_run_is_not_replayed_without_explicit_disposition(self):
         wid = self.start()
+        self.assertEqual(self.run_cli('lifecycle', 'migrate', '--work', wid)[0], 0)
         from scripts import cao
         from scripts.runtime_store import start_run
         work = cao.load_work(self.repo, wid)
@@ -238,3 +239,85 @@ class OperationsTests(RepairCase):
         self.assertEqual(rc, 0, out)
         self.assertTrue(out['outcome_unknown'])
         self.assertEqual(self.read_work(wid)['verification']['status'], 'blocked')
+
+    def test_legacy_pending_can_be_resolved_without_returning_in_new_handoff(self):
+        wid = self.start()
+        self.assertEqual(self.run_cli('checkpoint', '--pending', 'legacy unfinished note')[0], 0)
+        note = next(row for row in self.read_work(wid)['resume']['items'] if row['summary'] == 'legacy unfinished note')
+        self.assertEqual(self.run_cli('checkpoint', '--resolve', note['id'])[0], 0)
+        _, out = self.run_cli('handoff')
+        self.assertNotIn('legacy unfinished note', out['handoff']['pending'])
+        _, preview = self.run_cli('resume', '--check', '--work', wid)
+        self.assertNotIn('legacy unfinished note', preview['recovery']['continuity']['pending']['items'])
+
+    def test_prepared_switch_can_be_aborted_without_changing_active_work(self):
+        wid = self.start()
+        target = self.queue()
+        from scripts.work_operations import switch, pending, abort
+        with patch('scripts.work_operations.recover', side_effect=OSError('before apply')):
+            with self.assertRaises(OSError):
+                switch(self.repo, target, 'prepare then abort')
+        key = pending(self.repo)[0]['id']
+        self.assertEqual(abort(self.repo, key, check=True)['status'], 'eligible')
+        self.assertEqual(abort(self.repo, key)['status'], 'aborted')
+        self.assertEqual(self.read_work(wid)['status'], 'active')
+        self.assertEqual(self.read_work(target)['status'], 'todo')
+
+    def test_repeated_identical_recovery_conflict_pauses(self):
+        wid = self.start()
+        target = self.queue()
+        from scripts.work_operations import switch, pending, recover
+        from scripts import cao
+        with patch('scripts.work_operations.recover', side_effect=OSError('before apply')):
+            with self.assertRaises(OSError):
+                switch(self.repo, target, 'conflict retry')
+        key = pending(self.repo)[0]['id']
+        # Simulate a separately authorized change; recovery must not overwrite it.
+        from scripts.work_operations import authorized
+        with authorized():
+            work = cao.load_work(self.repo, wid)
+            work['decisions'].append({'decision': 'new actual decision'})
+            cao.save_work(self.repo, work)
+        with self.assertRaisesRegex(ValueError, 'SWITCH_RECOVERY_CONFLICT'):
+            recover(self.repo, key)
+        with self.assertRaisesRegex(ValueError, 'OPERATION_RECOVERY_PAUSED'):
+            recover(self.repo, key)
+        with self.assertRaisesRegex(ValueError, 'OPERATION_RECOVERY_PAUSED'):
+            recover(self.repo, key)
+
+    def test_pending_transition_still_records_late_result_for_original_work(self):
+        wid = self.start()
+        self.run_cli('host-event', '--host', 'pi', payload={'event': 'pre_tool', 'session_id': 'producer', 'toolName': 'write', 'toolCallId': 'late', 'input': {'path': '_bmad-output/result.md'}})
+        from scripts.work_operations import root
+        from scripts.state_store import atomic_json
+        atomic_json(root(self.repo) / 'pending.json', {'id': 'pending', 'status': 'prepared'})
+        rc, out = self.run_cli('host-event', '--host', 'pi', payload={'event': 'post_tool', 'session_id': 'producer', 'toolName': 'write', 'toolCallId': 'late', 'isError': True})
+        self.assertEqual(rc, 0, out)
+        from scripts.runtime_queries import events
+        self.assertTrue(any(e.get('event') == 'tool.finished' and e.get('tool_call_id') == 'late' for e in events(self.repo, wid)))
+
+    def test_evidence_pagination_reports_total_and_next_cursor(self):
+        self.start()
+        root = self.repo / '_bmad-output'
+        root.mkdir(exist_ok=True)
+        for index in range(3):
+            path = root / f'plan-{index}.md'
+            path.write_text(f'# Plan {index}\n')
+            self.assertEqual(self.run_cli('evidence', 'attach', '--kind', 'plan', '--path', str(path))[0], 0)
+        _, first = self.run_cli('evidence', 'list', '--limit', '1')
+        _, second = self.run_cli('evidence', 'list', '--limit', '1', '--cursor', str(first['next_cursor']))
+        self.assertEqual(first['total'], 3)
+        self.assertEqual(second['next_cursor'], 2)
+        self.assertNotEqual(first['items'][0]['id'], second['items'][0]['id'])
+
+    def test_bmad_ordered_story_inventory_has_stable_native_units(self):
+        wid = self.start()
+        path = self.repo / '_bmad-output/stories.yaml'
+        path.parent.mkdir(exist_ok=True)
+        path.write_text('- id: "story-a"\n  title: First\n  description: Implement first\n- id: "story-b"\n  title: Second\n  description: Implement second\n')
+        work = self.read_work(wid)
+        work['sdd']['plan_scope'] = {'plans': [{'path': '_bmad-output/stories.yaml', 'item_ids': ['story-a', 'story-b']}]}
+        from scripts.native_units import units
+        rows = units(self.repo, work)
+        self.assertEqual([row['native_id'] for row in rows], ['story-a', 'story-b'])
+        self.assertEqual({row['state'] for row in rows}, {'backlog'})

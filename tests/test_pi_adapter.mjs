@@ -936,3 +936,15 @@ test('real Pi runtime correlates late tool results without changing result conte
     assert.ok(f.sent.every(([message]) => message.display === false));
   } finally { f.close(); }
 });
+
+test('compaction and transfer hooks preserve continuity through advertised Pi events', posix, async () => {
+  const f = fixture();
+  try {
+    const ctx = f.context('continuity-hooks');
+    await f.handlers.get('session_before_compact')({type: 'session_before_compact'}, ctx);
+    await f.handlers.get('session_before_switch')({type: 'session_before_switch', reason: 'new'}, ctx);
+    await f.handlers.get('session_before_fork')({type: 'session_before_fork', entryId: 'entry', position: 'at'}, ctx);
+    assert.deepEqual(f.rows().map(row => row.event), ['before_compact', 'before_transfer', 'before_transfer']);
+    assert.ok(f.sent.every(([message]) => message.display === false));
+  } finally {f.close();}
+});

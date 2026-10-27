@@ -51,6 +51,8 @@ def snapshot(repo, work):
         domains, domain_error = {}, str(exc)
     from scripts.cao_provider_workflows import provider_native_skills
     skills = {r['name']: sha256_file(repo_file(repo, r['rel_path'])) for r in provider_native_skills(repo, sdd.get('provider'))}
+    if code_snapshot(repo) != product:
+        raise ValueError('HANDOFF_INPUT_CHANGED_DURING_CAPTURE')
     return {'capture_complete': not domain_error and not unit_error, 'current_unit': (work.get('resume') or {}).get('current_unit'), 'read_before_resume': (work.get('resume') or {}).get('read_before_resume', []), 'evidence_domains': domains, 'domain_error': domain_error, 'provider_skills': skills, 'native_units': observed_units, 'native_unit_error': unit_error, 'unresolved_runs': unresolved, 'product_snapshot': product, 'product_files': product_files, 'requirement': requirement, 'observed_requirement_sha256': actual,
             'project_binding': deepcopy(work.get('project_binding')),
             'native': {key: deepcopy(sdd.get(key)) for key in
@@ -63,6 +65,7 @@ def snapshot(repo, work):
 
 def view(work, handoff=None):
     resume = work.get('resume') or {}
+    from scripts.coordination_items import active_pending
     old = (handoff or {}).get('continuity') or {}
     differences = []
     if handoff:
@@ -76,7 +79,7 @@ def view(work, handoff=None):
             'execution_generation': work.get('execution_generation', 0),
             'current_unit': resume.get('current_unit'), 'read_before_resume': resume.get('read_before_resume', []),
             'coordination_items': page([r for r in resume.get('items', []) if r.get('status') == 'open']),
-            'completed': page(resume.get('completed')), 'pending': page(resume.get('pending')),
+            'completed': page(resume.get('completed')), 'pending': page(active_pending(work)),
             'handoff': {'id': (handoff or {}).get('id'), 'version': (handoff or {}).get('version'),
                         'summary': (handoff or {}).get('summary'),
                         'pending': page((handoff or {}).get('pending')),

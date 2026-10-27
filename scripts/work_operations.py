@@ -18,6 +18,14 @@ def root(repo):
     return path
 
 
+
+def operation_path(repo, identity):
+    from scripts.runtime_store import identifier
+    path = root(repo) / (identifier(identity) + '.json')
+    if path.is_symlink():
+        raise ValueError('OPERATION_SYMLINK')
+    return path
+
 def pending(repo):
     rows = []
     for path in root(repo).glob('*.json'):
@@ -151,12 +159,12 @@ def switch(repo, target_id, reason, session=None, host=None):
         return recover(repo, identity)
 
 
-def recover(repo, identity):
+def _recover(repo, identity):
     from scripts.runtime_store import identifier
     from scripts.state_store import repo_transaction, atomic_json
     from scripts.cao_work_store import load_work, save_work, queue_event
     from scripts.cao_sessions import register_session
-    path = root(repo) / (identifier(identity) + '.json')
+    path = operation_path(repo, identity)
     with repo_transaction(repo), authorized():
         operation = json.loads(path.read_text())
         from scripts.lifecycle_guard import digest
@@ -222,15 +230,82 @@ def recover(repo, identity):
                 'target': operation['target'], 'handoff_id': operation.get('handoff_id')}
 
 
+
+
+def recover(repo, identity):
+    """Bound identical conflict retries; a changed inspected input permits recovery."""
+    from scripts.runtime_store import identifier
+    from scripts.state_store import atomic_json
+    from scripts.lifecycle_guard import digest, guard_path
+    from scripts.cao_snapshot import code_snapshot
+    from scripts.cao_runtime import CONFIG_REL
+    identity = identifier(identity)
+    operation = json.loads(operation_path(repo, identity).read_text())
+    if operation.get('status') == 'committed':
+        return _recover(repo, identity)
+    observed = {}
+    for change in operation.get('changes', []):
+        wid = change['before']['id']
+        guard_path(repo, wid)
+        observed[wid] = (repo / '.orchestrator/work' / (wid + '.json')).read_text()
+    signature = digest({'work': observed, 'config': (repo / CONFIG_REL).read_text(), 'product': code_snapshot(repo)})
+    repair_path = root(repo) / 'repairs' / (identity + '.json')
+    if repair_path.is_symlink() or repair_path.parent.is_symlink():
+        raise ValueError('OPERATION_SYMLINK')
+    previous = json.loads(repair_path.read_text()) if repair_path.exists() else {}
+    if previous.get('signature') == signature and previous.get('attempts', 0) >= 2:
+        raise ValueError('OPERATION_RECOVERY_PAUSED: inspect and correct the recorded conflict before retrying')
+    try:
+        return _recover(repo, identity)
+    except ValueError as exc:
+        attempts = min(2, previous.get('attempts', 0) + 1) if previous.get('signature') == signature else 1
+        atomic_json(repair_path, {'signature': signature, 'attempts': attempts, 'reason': str(exc)[:1200]})
+        if attempts >= 2:
+            raise ValueError('OPERATION_RECOVERY_PAUSED: ' + str(exc)) from exc
+        raise
+
+def abort(repo, identity, check=False):
+    from scripts.runtime_store import identifier
+    from scripts.lifecycle_guard import digest
+    from scripts.recovery_plan import read_work
+    from scripts.state_store import repo_transaction, atomic_json
+    path = operation_path(repo, identity)
+    with repo_transaction(repo):
+        operation = json.loads(path.read_text())
+        if operation.get('intent_sha256') != digest({k: v for k, v in operation.items() if k not in {'status', 'intent_sha256'}}):
+            raise ValueError('OPERATION_INTENT_INVALID')
+        if operation['status'] == 'aborted':
+            return {'ok': True, 'status': 'unchanged', 'operation': identity}
+        if operation['status'] != 'prepared':
+            raise ValueError('OPERATION_ALREADY_APPLYING: recover rather than overwrite progress')
+        for change in operation['changes']:
+            if semantic(read_work(repo, change['before']['id'])) != semantic(change['before']):
+                raise ValueError('OPERATION_ABORT_CONFLICT')
+        if operation.get('kind') == 'amend':
+            import base64
+            from scripts.path_guard import repo_file
+            if repo_file(repo, operation['requirement_path']).read_bytes() != base64.b64decode(operation['before_bytes']):
+                raise ValueError('AMEND_SOURCE_ALREADY_APPLIED')
+        if not check:
+            operation['status'] = 'aborted'
+            atomic_json(path, operation)
+        return {'ok': True, 'status': 'eligible' if check else 'aborted', 'check_only': check, 'operation': identity}
+
 def command(args):
     from scripts.cao_runtime import repo_root
     repo = repo_root(args.repo)
-    if args.switch_action == 'recover' and not args.operation:
+    if args.switch_action in {'recover', 'abort'} and not args.operation:
         raise ValueError('OPERATION_ID_REQUIRED')
-    if args.switch_action != 'recover' and not args.to:
+    if args.switch_action not in {'recover', 'abort'} and not args.to:
         raise ValueError('TARGET_WORK_REQUIRED')
-    if args.switch_action == 'recover':
-        result = recover(repo, args.operation)
+    if args.switch_action == 'abort':
+        result = abort(repo, args.operation, args.check)
+    elif args.switch_action == 'recover':
+        if args.check:
+            from scripts.runtime_store import identifier
+            result = {'ok': True, 'check_only': True, 'operation': json.loads(operation_path(repo, args.operation).read_text())}
+        else:
+            result = recover(repo, args.operation)
     elif args.check:
         state = preview(repo, args.to)
         result = {'ok': True, 'check_only': True, **state}
@@ -242,7 +317,7 @@ def command(args):
 
 def register_parser(sub):
     p = sub.add_parser('switch', help='Switch Work through a durable recoverable journal')
-    p.add_argument('switch_action', nargs='?', choices=['recover'])
+    p.add_argument('switch_action', nargs='?', choices=['recover', 'abort'])
     p.add_argument('--repo', default='.')
     p.add_argument('--to')
     p.add_argument('--operation')

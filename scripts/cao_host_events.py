@@ -102,6 +102,11 @@ def host_event(args: argparse.Namespace) -> int:
                 controls = False
         result = {'decision': 'allow' if controls or event != 'pre_tool' or not tool_is_mutating(raw) else 'deny',
                   'reason': 'WORK_TRANSITION_PENDING: inspect/recover the recorded operation before business writes.'}
+        if event == 'post_tool':
+            session_ref = _event_key(raw, 'subagent_id', 'agent_id', 'session_id', 'sessionId', 'thread_id')
+            route = runtime_binding(repo, raw, args.host, session_ref)
+            bound = {'id': route['bound_work_id']} if route else None
+            observe_runtime(repo, bound, raw, args.host, session_ref, event, result)
         print(json.dumps(native_hook_output(args.host, event, result)))
         return 0
     index = load_index(repo) if (repo / CONFIG_REL).exists() else empty_index()

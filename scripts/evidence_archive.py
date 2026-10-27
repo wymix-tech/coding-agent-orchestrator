@@ -49,6 +49,8 @@ def select(repo, work, ids):
         row = next((r for r in records if r['id'] == identity), None)
         if not row:
             raise ValueError('IMPLEMENTATION_EVIDENCE_NOT_FOUND')
+        if row.get('historical_generation'):
+            raise ValueError('IMPLEMENTATION_EVIDENCE_HISTORICAL_GENERATION')
         path = repo_file(repo, row['path'])
         if not path.is_file() or sha256_file(path) != row['sha256']:
             raise ValueError('IMPLEMENTATION_EVIDENCE_STALE')
@@ -67,3 +69,29 @@ def select(repo, work, ids):
                     raise ValueError('IMPLEMENTATION_EVIDENCE_LATER_UNRESOLVED_RESULT')
         selected.append(row['path'])
     return list(dict.fromkeys(selected))
+
+
+def validate_manifest(repo, work, reports, selected_ids=()):
+    """A raw-report binding cannot bypass an unresolved current process failure."""
+    from scripts.implementation_evidence import records as read_records
+    from scripts.lifecycle_contract import inputs
+    rows = read_records(repo, work)
+    if not rows and not selected_ids:
+        return []
+    current = inputs(repo, work)
+    chosen = list(selected_ids)
+    if not chosen:
+        for report in reports:
+            matches = [row for row in rows if row['path'] == report['path'] and row['sha256'] == report['sha256'] and row.get('inputs') == current]
+            if matches:
+                chosen.append(matches[-1]['id'])
+    if chosen:
+        select(repo, work, chosen)
+    superseded = {row.get('supersedes') for row in rows if row['id'] in chosen and row.get('observation', {}).get('outcome') == 'passed'}
+    for row in rows:
+        if (row['kind'] in {'test', 'acceptance'} and row.get('inputs') == current
+                and not row.get('historical_generation')
+                and row.get('observation', {}).get('outcome') != 'passed'
+                and row['id'] not in superseded):
+            raise ValueError('IMPLEMENTATION_EVIDENCE_UNRESOLVED_RESULT')
+    return chosen

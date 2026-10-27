@@ -405,7 +405,8 @@ def create_handoff(repo: Path, work: dict[str, Any], session_id: str | None, hos
     existing_records = list_handoff_records(repo, work["id"])
     sequence = max((int(item.get("sequence", 0) or 0) for item in existing_records), default=0) + 1
     current = current_work_action(repo, work)
-    pending = list(work.get('resume', {}).get('pending', []))
+    from scripts.coordination_items import active_pending
+    pending = active_pending(work)
     if current.get('type') != 'none' and current.get('instruction') and current['instruction'] not in pending:
         pending.append(current['instruction'])
     from scripts.continuity_view import snapshot

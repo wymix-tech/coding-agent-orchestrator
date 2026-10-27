@@ -23,6 +23,12 @@ def units(repo, work):
             for key, state in _sprint_selected_states(path, plan.get('item_ids') or []).items():
                 rows.append({'id': source + '#' + key, 'source': source, 'native_id': key,
                              'state': state, 'scope_revision': revision})
+        elif sdd['provider'] == 'bmad' and path.name == 'stories.yaml':
+            from scripts.bmad_stories import story_states
+            _ids, states, sources = story_states(repo, source, plan.get('item_ids') or [])
+            for key, state in states.items():
+                rows.append({'id': source + '#' + key, 'source': source, 'native_id': key,
+                             'state': state, 'scope_revision': revision, 'story_source': sources.get(key)})
         else:
             tasks = _checkbox_tasks(path.read_text(encoding='utf-8-sig'))
             seen = set()

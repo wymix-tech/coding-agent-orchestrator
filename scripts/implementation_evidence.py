@@ -63,8 +63,9 @@ def command(args):
                 except (OSError, ValueError):
                     item['content_state'] = 'missing'
                 rows.append(item)
-            print(json.dumps({'ok': True, 'items': rows[-args.limit:], 'total': len(rows),
-                              'omitted': max(0, len(rows) - args.limit)}, ensure_ascii=False))
+            print(json.dumps({'ok': True, 'items': rows, 'total': len(refs),
+                              'next_cursor': args.cursor + len(rows) if args.cursor + len(rows) < len(refs) else None,
+                              'omitted': max(0, len(refs) - len(rows))}, ensure_ascii=False))
             return 0
         if work.get('status') != 'active':
             raise ValueError('WORK_NOT_ACTIVE')
@@ -112,8 +113,10 @@ def command(args):
         if args.run:
             from scripts.runtime_queries import inspect_run
             run = inspect_run(repo, work, args.run)
-            if not run['receipt'] or run['start'].get('generation') != work.get('execution_generation', 0):
+            if not run['receipt']:
                 raise ValueError('EVIDENCE_EXECUTION_RECEIPT_REQUIRED')
+            record['historical_generation'] = run['start'].get('generation') != work.get('execution_generation', 0)
+            record['execution_generation'] = run['start'].get('generation')
             record['run_id'] = args.run
             record['source'] = 'executor_receipt' if run['start']['source'] == 'cao_executor' else 'agent_declaration'
             record['execution_inputs'] = run['start']['inputs']

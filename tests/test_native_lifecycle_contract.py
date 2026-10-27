@@ -238,3 +238,13 @@ class NativeLifecycle(unittest.TestCase):
         self.check('verify')
         self.check('done')
         self.assertEqual('completed', self.work()['status'])
+
+    def test_later_registered_failure_blocks_existing_completion_binding(self):
+        result = self.check('evidence', 'attach', '--kind', 'test', '--path', 'openspec/completion.md')
+        self.check('lifecycle', 'bind', '--evidence', result['evidence']['id'])
+        failed = self.repo / 'openspec/failed.md'
+        failed.write_text('status: failed\n')
+        self.check('evidence', 'attach', '--kind', 'test', '--path', 'openspec/failed.md')
+        rc, out = self.cli('conformance', 'check')
+        self.assertEqual(rc, 2, out)
+        self.assertFalse(out['ready'])

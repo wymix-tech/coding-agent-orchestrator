@@ -87,6 +87,8 @@ def evidence_state(repo, work):
                         'changed_paths': [ref['path']]}
             from scripts.native_reports import read as read_native_report
             parsed.append(read_native_report(repo, work, path))
+        from scripts.evidence_archive import validate_manifest
+        validate_manifest(repo, work, reports, record.get('selected_evidence_ids') or [])
         if parsed != record.get('observations'):
             return {**pending, 'state': 'stale', 'reason': 'NATIVE_COMPLETION_ADAPTER_CHANGED',
                     'next': 'Review the changed native report interpretation and explicitly rebind the original reports.'}
@@ -244,8 +246,10 @@ def binding_command(args):
                   'provenance': {'kind': 'native_workflow_binding', 'workflow': workflow.get('name'),
                                  'execution': deepcopy(workflow.get('execution')),
                                  'review_ids': [v.get('id') for v in (sdd.get('native_reviews') or {}).values() if isinstance(v, dict) and v.get('id')]}}
+        from scripts.evidence_archive import validate_manifest
+        record['selected_evidence_ids'] = validate_manifest(repo, candidate, reports, getattr(args, 'evidence', None) or [])
         old = sdd.get('completion_evidence')
-        if old and old.get('inputs') == record['inputs'] and old.get('reports') == reports and old.get('gates', []) == gates and old.get('domains') == record['domains'] and old.get('observations') == observations:
+        if old and old.get('inputs') == record['inputs'] and old.get('reports') == reports and old.get('gates', []) == gates and old.get('domains') == record['domains'] and old.get('observations') == observations and old.get('selected_evidence_ids', []) == record['selected_evidence_ids']:
             if sdd.pop('completion_binding_failure', None):
                 save_work(repo, work)
             print(json.dumps({'ok': True, 'status': 'unchanged', 'work_id': work['id']}))
