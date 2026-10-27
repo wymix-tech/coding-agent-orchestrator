@@ -62,6 +62,8 @@ def read(repo, work, path):
                     count = tests.get('count', tests.get('total'))
                     if type(count) is int:
                         checks += count
+                        if count <= 0:
+                            declarations.append('failed')
                     if any(type(tests.get(n)) is int and tests[n] > 0 for n in ('failed', 'errors', 'failures')):
                         declarations.append('failed')
         if isinstance(payload, dict) and isinstance(payload.get('command'), str):

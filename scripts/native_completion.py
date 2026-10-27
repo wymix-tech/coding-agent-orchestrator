@@ -38,6 +38,9 @@ def state(repo, work):
     if not plan['ready']:
         return {**plan, 'ready': False, 'owner': provider}
     observation = native_sync_state(repo, work)
+    if observation.get('state') == 'source_unavailable':
+        return {'ready': False, 'state': 'blocked', 'reason': 'NATIVE_COMPLETION_SOURCE_UNAVAILABLE',
+                'next': observation.get('next') or 'Restore the bound native artifact; do not adopt another source.'}
     if observation.get('canonical') in {'ready', 'in_progress', 'in_review', 'blocked', 'failed', 'cancelled'}:
         return {'ready': False, 'state': 'pending', 'owner': provider,
                 'reason': 'NATIVE_FINALIZE_REQUIRED', 'observed': observation,

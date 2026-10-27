@@ -90,4 +90,13 @@ None decides gate acceptance. See [runtime-records.md](../references/runtime-rec
 
 ## Native completion lifecycle
 
-`scripts/lifecycle_contract.py` owns contract-2 native evidence binding, pre-verification process checks, migration and completion precedence. Legacy executor logic stays in `sdd_acceptance_*`; new Work never requires that executor. CLI, host and dashboard consume the shared lifecycle policy.
+`lifecycle_contract.py` owns contract-2 native evidence binding, pre-verification
+process checks and completion precedence. `native_completion.py` aggregates
+provider completion; `native_reports.py` reads original result declarations and
+runner logs. `evidence_domains.py` owns exact invalidation manifests and declared
+native dependencies; `completion_repairs.py` bounds retries of unchanged failed
+bindings. `lifecycle_migration.py` owns read-only preflight, checkpoint migration
+and rollback. `lifecycle_guard.py` protects persisted authority, interrupted writes
+and recovery with quarantine. Legacy executor logic stays in `sdd_acceptance_*`;
+new Work never requires that executor. CLI, host and dashboard consume the shared
+lifecycle policy.

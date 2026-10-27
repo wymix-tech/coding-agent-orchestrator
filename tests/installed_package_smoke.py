@@ -128,6 +128,9 @@ def main():
                     '--test-framework', 'unittest', '--source', 'user-specified', '--evidence', evidence)
                 cli('verification', 'configure', '--plan-only', '--test-script',
                     shell([args.python, '-m', 'unittest', 'discover', '-s', 'acceptance-tests']))
+                cli('verification', 'configure', '--test-script',
+                    shell([args.python, '-m', 'unittest', 'discover', '-s', 'acceptance-tests']))
+                assert cli('verification', 'check', '--project')['status'] == 'passed'
                 bootstrap = cli("bootstrap")
                 assert bootstrap["mode"] == "select"
                 assert bootstrap["guidance"]["ready"]
@@ -152,11 +155,11 @@ def main():
                 allocated = cli("requirement", "next-id", "--title", "Installed fixture")
                 (repo / allocated["path"]).write_text("# Local fixture acceptance\nExpected fixture output exists.\n", encoding="utf-8")
                 wid = cli("start", "--requirement", allocated["path"])["work_item"]["id"]
-                assert cli("bootstrap")["mode"] == "verification_setup"
+                assert cli("bootstrap")["mode"] == "resume"
                 configured = cli("verification", "configure", "--test-script",
                                  shell([args.python, "-m", "unittest", "discover", "-s", "acceptance-tests"]))
                 assert configured["verification_setup"]["ready"], configured
-                assert configured["initial_baseline_established"], configured
+                assert not configured["initial_baseline_established"], configured
                 assert not configured["acceptance_review_required"], configured
                 event("session_start")
                 reminder = event("pre_tool", tool_name="write", tool_input={"path": "product.py", "content": "pass"})

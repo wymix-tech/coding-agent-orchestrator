@@ -63,9 +63,23 @@ def save_index(repo: Path, index: dict[str, Any]) -> None:
 def _read_work(repo: Path, work_id: str) -> dict[str, Any] | None:
     if not work_id:
         return None
+    from scripts.lifecycle_guard import verify, guard_path, read_guard
+    guard_path(repo, work_id)
     p = work_path(repo, work_id)
-    from scripts.lifecycle_guard import verify
-    return verify(repo, work_id, load_json(p, None) if p.exists() else None)
+    try:
+        value = load_json(p, None) if p.exists() else None
+    except (json.JSONDecodeError, UnicodeError):
+        if (read_guard(repo, work_id) or {}).get('protected'):
+            raise ValueError('LIFECYCLE_UNSUPPORTED_WRITER: run cao lifecycle recover --work ' + work_id)
+        raise
+    value = verify(repo, work_id, value)
+    if value is not None:
+        if not isinstance(value, dict) or value.get('id') != work_id:
+            raise ValueError('LIFECYCLE_WORK_SHAPE_INVALID')
+        contract = value.get('lifecycle_contract', 1)
+        if type(contract) is not int or contract not in {1, 2}:
+            raise ValueError('LIFECYCLE_CONTRACT_UNSUPPORTED')
+    return value
 
 
 @locked_repo

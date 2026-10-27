@@ -38,17 +38,35 @@ def latest(repo, wid):
 def preflight(repo, work):
     errors = []
     version = work.get('lifecycle_contract', 1)
-    if version not in {1, 2} or type(version) is not int:
+    if type(version) is not int or version not in {1, 2}:
         errors.append('LIFECYCLE_CONTRACT_UNSUPPORTED')
-    if work.get('status') not in {'active', 'suspended'}:
+    if not isinstance(work.get('status'), str) or work.get('status') not in {'active', 'suspended'}:
         errors.append('ACTIVE_OR_SUSPENDED_WORK_REQUIRED')
     if not isinstance(work.get('sdd'), dict) or not isinstance(work.get('requirement'), dict):
-        errors.append('LIFECYCLE_WORK_SHAPE_INVALID')
+        return {'ok': False, 'eligible': False, 'work_id': work.get('id'),
+                'errors': [*errors, 'LIFECYCLE_WORK_SHAPE_INVALID']}
+    for value in (work.get('verification'), work['sdd'].get('acceptance')):
+        if value is not None and not isinstance(value, dict):
+            return {'ok': False, 'eligible': False, 'work_id': work.get('id'),
+                    'errors': [*errors, 'LIFECYCLE_WORK_SHAPE_INVALID']}
+
+    from scripts.cao_defaults import SDD_CATALOG
+    if (work.get('sdd') or {}).get('provider') not in SDD_CATALOG:
+        errors.append('LIFECYCLE_PROVIDER_UNSUPPORTED')
+    requirement = work.get('requirement') or {}
+    if not isinstance(requirement.get('path'), str) or not isinstance(requirement.get('sha256'), str):
+        errors.append('LIFECYCLE_REQUIREMENT_SHAPE_INVALID')
+    old_run = ((work['sdd'].get('acceptance') or {}).get('run'))
+    if old_run is not None and not isinstance(old_run, dict):
+        return {'ok': False, 'eligible': False, 'work_id': work.get('id'), 'errors': [*errors, 'LIFECYCLE_WORK_SHAPE_INVALID']}
     running = ((work.get('verification') or {}).get('status') == 'running'
                or (((work.get('sdd') or {}).get('acceptance') or {}).get('run') or {}).get('status') == 'running')
     if running:
         errors.append('LIFECYCLE_RUN_ACTIVE')
     try:
+        from scripts.path_guard import repo_file
+        if isinstance(requirement.get('path'), str):
+            repo_file(repo, requirement['path'])
         sources = source_inputs(repo, work)
     except (ValueError, OSError, RuntimeError) as exc:
         sources = None
@@ -178,6 +196,8 @@ def command(args):
                 raise ValueError('LIFECYCLE_WORK_SHAPE_INVALID')
             check = getattr(args, 'check', False) or args.lifecycle_command == 'preflight'
             if check:
+                if guard and guard.get('status') != 'committed':
+                    raise ValueError('LIFECYCLE_GUARD_RECOVERY_REQUIRED: complete the interrupted guarded write before read-only migration preflight')
                 if guard and guard.get('protected') and (guard.get('status') != 'committed' or guard.get('sha256') != digest(work)):
                     raise ValueError('LIFECYCLE_UNSUPPORTED_WRITER: run cao lifecycle recover')
             else:

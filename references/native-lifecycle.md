@@ -57,3 +57,60 @@ Do not reuse an original result belonging to another Work. Existing result claim
 are checked transactionally. JSON reports must be valid structured data; explicit
 failed/pending/running top-level outcomes cannot certify native completion. CAO
 still does not infer semantic correctness from arbitrary report prose.
+
+## Recognized reports and repair boundaries
+
+BMAD, OpenSpec and Spec Kit share adapters for explicit Markdown/flat YAML
+result fields, structured JSON results, and unittest/Maven/pytest/Node runner
+summaries. Explicit failure, zero executed checks in a declared count, conflicting
+identities and wrong Work/provider/requirement/product snapshot block binding.
+Fenced examples and unknown prose cannot certify success. CAO records the adapter
+and parsed observation beside the original hash; it never rewrites the report.
+Changing adapter interpretation requires rebind rather than silently upgrading
+old evidence. Reports are declarations linked to existing native provenance,
+not independent proof that their contents are truthful.
+
+Two failed bindings of unchanged reports and inputs pause further identical
+attempts with `NATIVE_COMPLETION_REPAIR_PAUSED`. Correct the original result or
+source issue, then bind again. Repeated attempts leave state unchanged; they do
+not trigger a new intake or functional review.
+
+Evidence diagnostics include `changed_domains`, `changed_paths`,
+`affected_evidence` and `still_valid_evidence`. Product, native source/scope,
+original reports, shared native dependencies, policy and baseline inputs are
+tracked separately. A report-only edit preserves an unchanged project baseline.
+Declare managed shared inputs before running the native step:
+
+```bash
+cao lifecycle dependencies --work <id> --path .orchestrator/scripts/verification/test/helper.sh
+cao lifecycle dependencies --work <id> --review --path .orchestrator/scripts/verification/test/review-policy.md
+```
+
+Literal sourced shell helpers are followed; dynamic imports need explicit input
+declarations. Use `--review` only for inputs actually consumed by native reviewers.
+Baseline transport changes affect native evidence when it consumed that input.
+
+## Guarded migration and recovery
+
+```bash
+cao lifecycle preflight --work <id>
+cao lifecycle migrate --work <id> --check
+cao lifecycle migrate --work <id>
+cao lifecycle rollback --work <id> --check
+cao lifecycle rollback --work <id>
+```
+
+Checks do not reconcile or mutate state. Migration journals a full prior Work
+before writing; interrupted migration/rollback resumes the same checkpoint.
+Rollback requires unchanged Work progress and source fingerprints, advances
+generation and retains audit history. It refuses to overwrite later work.
+
+New contract-2 Work and migrations use a durable last-authorized-state guard.
+Enroll older contract-2 Work with `cao lifecycle protect --work <id>`. Unsupported
+writes, contract downgrades and corrupt protected Work are rejected on read.
+`cao lifecycle recover --work <id> --check` inspects recovery; `cao lifecycle
+recover --work <id>` quarantines the exact unexpected bytes and restores the last
+authorized state with a new generation and audit event. Do not hand-edit guards.
+This is an authority check in the current engine, not an operating-system write
+sandbox: an old binary can alter files physically, but its projection is not
+silently accepted by the guarded engine. Stop old writers before migration.

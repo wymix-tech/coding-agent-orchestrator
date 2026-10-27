@@ -4,6 +4,7 @@ This is not an OS access-control sandbox. Older binaries can alter a file, but
 those writes cannot be consumed as authorized state by the current engine.
 """
 from copy import deepcopy
+import os
 import json
 from pathlib import Path
 
@@ -29,7 +30,21 @@ def guard_path(repo, wid):
 
 def read_guard(repo, wid):
     path = guard_path(repo, wid)
-    return json.loads(path.read_text()) if path.exists() else None
+    if not path.exists():
+        return None
+    value = json.loads(path.read_text())
+    if not isinstance(value, dict) or value.get('status') not in {'prepared', 'committed'}:
+        raise ValueError('LIFECYCLE_GUARD_INVALID')
+    if value['status'] == 'committed':
+        authority = value.get('authority')
+        if (not isinstance(authority, dict) or value.get('sha256') != digest(authority)
+                or type(value.get('protected')) is not bool
+                or value['protected'] != (authority.get('lifecycle_contract') == 2)):
+            raise ValueError('LIFECYCLE_GUARD_INVALID')
+    elif ('previous' not in value or not isinstance(value.get('authority'), dict)
+          or (value['previous'] is not None and not isinstance(value['previous'], dict))):
+        raise ValueError('LIFECYCLE_GUARD_INVALID')
+    return value
 
 
 def verify(repo, wid, work):
@@ -42,9 +57,14 @@ def verify(repo, wid, work):
         if actual not in {digest(old), digest(new)}:
             raise ValueError('LIFECYCLE_UNSUPPORTED_WRITER: run cao lifecycle recover --work ' + wid)
         selected = new if actual == digest(new) else old
+        if selected is None:
+            guard_path(repo, wid).unlink()
+            return None
         guard = {'status': 'committed', 'authority': selected,
                  'sha256': digest(selected), 'protected': bool(selected and selected.get('lifecycle_contract') == 2)}
         atomic_json(guard_path(repo, wid), guard)
+    if not guard.get('protected') and work and work.get('lifecycle_contract') == 2:
+        raise ValueError('LIFECYCLE_UNSUPPORTED_WRITER: unregistered contract upgrade')
     if guard.get('protected'):
         if guard.get('sha256') != digest(guard.get('authority')) or guard.get('sha256') != digest(work):
             raise ValueError('LIFECYCLE_UNSUPPORTED_WRITER: run cao lifecycle recover --work ' + wid)
@@ -93,8 +113,22 @@ def recover(repo, wid, *, check=False):
     if check or not changed:
         return result
     backup = repo / '.orchestrator/lifecycle/quarantine' / wid / (uuid.uuid4().hex + '.raw')
+    for path in (backup, *backup.parents):
+        if path == repo:
+            break
+        if path.is_symlink():
+            raise ValueError('LIFECYCLE_QUARANTINE_SYMLINK')
     backup.parent.mkdir(parents=True, exist_ok=True)
-    backup.write_bytes(raw)
+    with backup.open('xb') as stream:
+        stream.write(raw)
+        stream.flush()
+        os.fsync(stream.fileno())
+    if os.name != 'nt':
+        descriptor = os.open(backup.parent, os.O_RDONLY)
+        try:
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
     atomic_json(target, authority)
     restored = deepcopy(authority)
     restored['execution_generation'] = int(restored.get('execution_generation', 0)) + 1

@@ -27,6 +27,22 @@ class Integrity(unittest.TestCase):
         return {p.relative_to(self.repo).as_posix(): p.read_bytes()
                 for p in (self.repo / '.orchestrator').rglob('*') if p.is_file()}
 
+    def test_unchanged_failed_binding_pauses_and_corrected_original_can_resume(self):
+        original = self.n.report.read_text()
+        self.n.report.write_text('Result: failed\n')
+        args = ('lifecycle', 'bind', '--report', 'openspec/completion.md')
+        self.assertEqual(2, self.n.cli(*args)[0])
+        rc, result = self.n.cli(*args)
+        self.assertEqual(2, rc)
+        self.assertEqual('NATIVE_COMPLETION_REPAIR_PAUSED', result['error'])
+        before = self.n.work()
+        self.assertEqual(result, self.n.cli(*args)[1])
+        self.assertEqual(before, self.n.work())
+        self.n.report.write_text(original)
+        self.n.bind()
+        self.assertNotIn('completion_binding_failure', self.n.work()['sdd'])
+        self.n.check('conformance', 'check')
+
     def test_preflight_and_check_are_readonly_and_inventory_unfinished_native_work(self):
         self.legacy()
         before = self.tree()
@@ -78,6 +94,45 @@ class Integrity(unittest.TestCase):
         journals = list((self.repo / '.orchestrator/lifecycle/migrations' / self.n.wid).glob('*.json'))
         self.assertEqual(1, len(journals))
         self.assertEqual('committed', json.loads(journals[0].read_text())['status'])
+
+    def test_migration_retries_the_same_checkpoint_after_precommit_interruption(self):
+        from scripts.lifecycle_migration import command
+        self.legacy()
+        args = argparse.Namespace(repo=str(self.repo), work=self.n.wid, lifecycle_command='migrate', check=False)
+        with patch('scripts.cao_work_store.save_work', side_effect=OSError('injected Work write failure')):
+            with self.assertRaises(OSError):
+                command(args)
+        self.assertEqual(1, self.n.work()['lifecycle_contract'])
+        result = self.n.check('lifecycle', 'migrate')
+        self.assertEqual('migrated', result['status'])
+        journals = list((self.repo / '.orchestrator/lifecycle/migrations' / self.n.wid).glob('*.json'))
+        self.assertEqual(1, len(journals))
+
+    def test_rollback_retries_after_restoration_before_journal_seal(self):
+        import scripts.lifecycle_migration as migration
+        self.legacy()
+        self.n.check('lifecycle', 'migrate')
+        write = migration.atomic_json
+        def interrupted(path, value):
+            if value.get('status') == 'rolled_back':
+                raise OSError('injected rollback journal failure')
+            return write(path, value)
+        args = argparse.Namespace(repo=str(self.repo), work=self.n.wid, lifecycle_command='rollback', check=False)
+        with patch.object(migration, 'atomic_json', side_effect=interrupted):
+            with self.assertRaises(OSError):
+                migration.command(args)
+        self.assertEqual(1, self.n.work()['lifecycle_contract'])
+        self.assertEqual('unchanged', self.n.check('lifecycle', 'rollback')['status'])
+
+    def test_corrupt_unsupported_writer_bytes_are_preserved_by_recovery(self):
+        target = self.repo / '.orchestrator/work' / (self.n.wid + '.json')
+        target.write_bytes(b'broken old writer output')
+        rc, result = self.n.cli('status')
+        self.assertEqual(2, rc, result)
+        self.assertIn('LIFECYCLE_UNSUPPORTED_WRITER', result['error'])
+        restored = self.n.check('lifecycle', 'recover', '--work', self.n.wid)
+        self.assertEqual(b'broken old writer output', (self.repo / restored['quarantine']).read_bytes())
+        self.assertEqual(2, self.n.work()['lifecycle_contract'])
 
     def test_unsupported_old_writer_is_rejected_and_quarantined_without_losing_authority(self):
         before = self.n.work()
@@ -140,6 +195,53 @@ class Integrity(unittest.TestCase):
         self.assertIn('product.py', evidence['changed_paths'])
         self.assertEqual({'native_completion', 'cao_conformance', 'project_baseline'}, set(evidence['affected_evidence']))
 
+    def test_real_cli_openspec_and_speckit_complete_all_native_tasks_before_cao(self):
+        import subprocess
+        import sys
+        from tests.test_task_provider_verify import TaskProviderVerifyTests
+        for provider in ('openspec', 'speckit'):
+            fixture = TaskProviderVerifyTests('runTest')
+            fixture.setUp()
+            self.addCleanup(fixture.doCleanups)
+            fixture.prepare(provider)
+            (fixture.repo / ('.specify' if provider == 'speckit' else 'openspec')).mkdir(exist_ok=True)
+            rc, assessed = fixture.run_cli('path', 'assess', '--profile', 'light', '--reason', 'Provider-specific native lifecycle fixture')
+            self.assertEqual(0, rc, assessed)
+            report = fixture.root / 'native-result.log'
+            result = subprocess.run([sys.executable, '-m', 'unittest', 'discover', '-s', 'acceptance-tests'],
+                                    cwd=fixture.repo, capture_output=True, text=True, check=True)
+            report.write_text(result.stdout + result.stderr)
+            rc, out = fixture.run_cli('lifecycle', 'migrate')
+            self.assertEqual(0, rc, out)
+            rc, out = fixture.run_cli('lifecycle', 'bind', '--report', report.relative_to(fixture.repo))
+            self.assertEqual(2, rc, out)
+            fixture.tasks.write_text(fixture.tasks.read_text().replace('[ ]', '[x]'))
+            for args in [('lifecycle', 'bind', '--report', report.relative_to(fixture.repo)),
+                         ('conformance', 'check'), ('verify',), ('done',)]:
+                rc, out = fixture.run_cli(*args)
+                self.assertEqual(0, rc, (provider, args, out))
+            self.assertEqual('completed', fixture.read_work(fixture.wid)['status'])
+
+    def test_native_review_dependencies_are_distinct_from_baseline_transport(self):
+        from tests.test_native_route_sync import RouteSync
+        from scripts.native_obligations import review_inputs
+        from scripts.cao_snapshot import code_snapshot
+        fixture = RouteSync('runTest')
+        fixture.setUp()
+        self.addCleanup(fixture.doCleanups)
+        fixture.propose()
+        fixture.approve()
+        fixture.run_cli('lifecycle', 'migrate')
+        root = '.orchestrator/scripts/verification/root/'
+        fixture.run_cli('verification', 'prepare', '--path', root + 'review.sh')
+        fixture.write(root + 'review.sh', 'exit 0\n')
+        fixture.run_cli('lifecycle', 'dependencies', '--review', '--path', root + 'review.sh')
+        before = review_inputs(fixture.repo, fixture.work(), code_snapshot)
+        fixture.write(root + 'review.sh', 'exit 1\n')
+        after = review_inputs(fixture.repo, fixture.work(), code_snapshot)
+        self.assertEqual(before['code_snapshot'], after['code_snapshot'])
+        self.assertNotEqual(before['native_review_dependencies_sha256'], after['native_review_dependencies_sha256'])
+
 
 class ReportAdapters(unittest.TestCase):
     def test_all_providers_accept_known_native_results_without_json_conversion(self):
@@ -166,7 +268,8 @@ class ReportAdapters(unittest.TestCase):
             for suffix, raw in [('.md', 'All good, probably done.'), ('.yaml', 'status: failed\n'),
                                 ('.md', '```text\nRan 1 test in 0.1s\nOK\n```'),
                                 ('.json', '{"status":"passed","items":[{"status":"failed"}]}'),
-                                ('.json', '{"work_id":"another","status":"passed"}')]:
+                                ('.json', '{"work_id":"another","status":"passed"}'),
+                                ('.json', '{"status":"passed","tests":{"count":0}}')]:
                 path = repo / ('result' + suffix)
                 path.write_text(raw)
                 with self.assertRaises(ValueError):

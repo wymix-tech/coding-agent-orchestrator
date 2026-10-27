@@ -50,6 +50,11 @@ def evidence_state(repo, work):
     if not record:
         return pending
     try:
+        from scripts.completion_repairs import current as current_repair
+        repair = current_repair(repo, work)
+        if repair:
+            return {**pending, 'state': 'blocked', 'reason': 'NATIVE_COMPLETION_REPAIR_PAUSED' if repair['paused'] else repair['reason'],
+                    'repair': repair, 'next': 'Correct the original native report/source error, then bind the corrected evidence; do not repeat code reviews for report repair.'}
         from scripts.evidence_domains import capture, changed as domain_changes
         commands = [command for row in record.get('observations', []) for command in row.get('commands', [])]
         domains = capture(repo, work, commands)
@@ -155,7 +160,7 @@ def next_action(repo, work):
     return {'type': 'agent', 'stage': 'completion', 'instruction': 'Run `cao done`.'}
 
 
-def command(args):
+def binding_command(args):
     import json
     from scripts.cao_runtime import repo_root, ensure_initialized, now, sha256_file
     from scripts.cao_work_store import resolve_work, save_work, queue_event
@@ -236,10 +241,13 @@ def command(args):
                                  'review_ids': [v.get('id') for v in (sdd.get('native_reviews') or {}).values() if isinstance(v, dict) and v.get('id')]}}
         old = sdd.get('completion_evidence')
         if old and old.get('inputs') == record['inputs'] and old.get('reports') == reports and old.get('gates', []) == gates and old.get('domains') == record['domains'] and old.get('observations') == observations:
+            if sdd.pop('completion_binding_failure', None):
+                save_work(repo, work)
             print(json.dumps({'ok': True, 'status': 'unchanged', 'work_id': work['id']}))
             return 0
         if old:
             sdd.setdefault('completion_evidence_history', []).append(old)
+        sdd.pop('completion_binding_failure', None)
         sdd['completion_evidence'] = record
         queue_event(work, {'event': 'sdd.completion.bound', 'work_item_id': work['id'],
                            'reports': reports, 'occurred_at': now()})
@@ -248,9 +256,45 @@ def command(args):
         return 0
 
 
+def command(args):
+    if args.lifecycle_command != 'bind':
+        return binding_command(args)
+    import json
+    from scripts.cao_runtime import repo_root
+    from scripts.cao_work_store import resolve_work
+    from scripts.state_store import repo_transaction
+    from scripts.completion_repairs import current, record, response
+    repo = repo_root(args.repo)
+    with repo_transaction(repo):
+        work = resolve_work(repo, args.work)
+        if work and enabled(work):
+            row = current(repo, work)
+            if row and row['paused'] and sorted(args.report) == sorted(row['reports']):
+                print(json.dumps(response(row), ensure_ascii=False))
+                return 2
+        try:
+            return binding_command(args)
+        except (ValueError, OSError) as error:
+            work = resolve_work(repo, args.work)
+            if not work or not enabled(work) or work.get('status') != 'active':
+                raise
+            row = record(repo, work, args.report, error)
+            print(json.dumps(response(row), ensure_ascii=False))
+            return 2
+
+
 def register(sub):
+    descriptions = {
+        'preflight': 'Inspect legacy migration eligibility without changing state',
+        'migrate': 'Migrate active Work to native evidence lifecycle',
+        'rollback': 'Restore an unchanged migration checkpoint without losing later progress',
+        'protect': 'Enroll existing contract-2 Work in guarded persistence',
+        'recover': 'Restore last authorized Work and quarantine unsupported writer output',
+        'dependencies': 'Declare shared inputs used by native execution or reviewers',
+        'bind': 'Bind original native test/acceptance completion reports',
+    }
     for name in ('preflight', 'migrate', 'rollback', 'protect', 'recover', 'dependencies', 'bind'):
-        parser = sub.add_parser(name, help='Migrate active Work to native evidence lifecycle' if name == 'migrate' else 'Bind original native test/acceptance completion reports')
+        parser = sub.add_parser(name, help=descriptions[name])
         parser.add_argument('--repo', default='.')
         parser.add_argument('--work')
         if name in {'migrate', 'rollback', 'recover'}:

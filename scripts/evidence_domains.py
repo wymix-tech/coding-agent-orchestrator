@@ -108,12 +108,15 @@ def capture(repo, work, commands=()):
         if path.is_file():
             native_sources[source] = {'semantic_sha256': semantic_hash(path)}
     from scripts.managed_verification import input_hashes
+    from scripts.native_obligations import digest
+    verification = config(repo).get('verification') or {}
+    declaration = {key: verification[key] for key in ('scripts', 'timeout_seconds', 'environment_variables', 'maximum_evidence_age_seconds', 'context_binding') if key in verification}
     return {'product': {row['path']: {k: v for k, v in row.items() if k != 'path'} for row in manifest},
             'native_sources': native_sources, 'native_scope': {**scope(repo, work).get('observations', {}),
                 'scope:bindings': {key: value for key, value in scope(repo, work).items() if key != 'observations'}},
             'reports': files(repo, reports),
             'native_dependencies': dependencies(repo, work, commands),
-            'baseline': {'config': technical['verification_config_sha256'],
+            'baseline': {'config': technical['verification_config_sha256'], 'declaration_sha256': digest(declaration),
                          'files': input_hashes(repo, (work.get('project_binding') or {}).get('scopes'))},
             'policy': {k: technical.get(k) for k in ('project_context_sha256', 'rules_snapshot', 'environment_sha256')}}
 
@@ -126,6 +129,8 @@ def changed(previous, current):
             continue
         domains.append(name)
         if name == 'baseline':
+            if old.get('declaration_sha256') != new.get('declaration_sha256'):
+                paths.add('.orchestrator/config.json')
             old, new = old.get('files', {}), new.get('files', {})
         for path in set(old) | set(new):
             if old.get(path) != new.get(path):
