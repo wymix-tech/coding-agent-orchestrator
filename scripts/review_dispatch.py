@@ -386,6 +386,9 @@ def draft_report(repo, work, layer, source):
 
 def acceptance_preflight(repo, work):
     """Check coverage before spending reviewer sessions; legacy unbound work is unchanged."""
+    from scripts.lifecycle_contract import enabled
+    if enabled(work):
+        return {'ready': True, 'state': 'native_evidence', 'next': 'Complete native review and bind its completion report after native finalization.'}
     if not work.get('project_binding'):
         return {'ready': True, 'state': 'legacy_unbound'}
     from scripts.acceptance_trace import coverage

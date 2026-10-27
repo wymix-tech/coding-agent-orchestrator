@@ -211,6 +211,7 @@ def provision_fixture_background(repo):
     commit_context(repo, context, None)
     path = repo / '.orchestrator/config.json'
     cfg = json.loads(path.read_text())
+    cfg.setdefault('lifecycle_contract', 1)
     cfg.setdefault('verification', {})['context_binding'] = verification_binding(repo)
     if not cfg['verification'].get('scripts'):
         baseline = repo / 'acceptance-tests/test_acceptance.py'

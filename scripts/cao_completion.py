@@ -68,6 +68,9 @@ def sdd_acceptance_current_hashes(repo: Path, work: dict) -> dict:
 
 
 def sdd_acceptance_state(repo: Path, work: dict) -> dict:
+    from scripts.lifecycle_contract import enabled, evidence_state
+    if enabled(work):
+        return evidence_state(repo, work)
     profile = (work.get("path_assessment") or {}).get("profile")
     if profile == "light" and not work.get("project_binding"):
         return {"ready": True, "state": "not_applicable", "reason": None}
@@ -328,7 +331,7 @@ def completion_next_instruction(repo: Path, work: dict[str, Any] | None, complet
     return "Resolve the blocking condition shown above, then run `cao verify` and retry `cao done`."
 
 
-def lifecycle_status(repo, work):
+def lifecycle_status(repo, work, *, pre_verification=False):
     """Collect independent closing obligations without short-circuiting acceptance."""
     states = []
     def check(name, fn):
@@ -368,7 +371,10 @@ def lifecycle_status(repo, work):
         check('native_plan_complete', pending_plan)
     def manual_gates():
         gates = gate_state(work, True, True, repo=repo)
-        return {'ready': not gates['pending'], 'reason': 'required execution gates are not satisfied', 'pending_gates': gates['pending']}
+        pending = gates['pending']
+        if pre_verification:
+            pending = [name for name in pending if not gate_is_auto_derived(name)]
+        return {'ready': not pending, 'reason': 'required execution gates are not satisfied', 'pending_gates': pending}
     if work.get('project_change'):
         from scripts.project_context import load_context
         from scripts.project_inspection import drift
@@ -386,6 +392,11 @@ def lifecycle_status(repo, work):
 
 
 def completion_status(repo, work):
+    from scripts.lifecycle_contract import enabled, completion
+    if work and work.get("lifecycle_contract", 1) not in {1, 2}:
+        return {"ready": False, "reason": "LIFECYCLE_CONTRACT_UNSUPPORTED", "next": "Restore a supported Work lifecycle contract using its compatible CAO version."}
+    if enabled(work):
+        return completion(repo, work)
     if not work or (work.get('status') == 'completed' and not work.get('project_binding')):
         return legacy_completion_status(repo, work)
     from scripts.acceptance_summary import summarize

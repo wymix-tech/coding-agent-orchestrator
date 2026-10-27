@@ -149,8 +149,11 @@ def _prepare_start(args: argparse.Namespace):
                 active_to_suspend = active
     configured_provider = str((config(repo).get("sdd") or {}).get("provider") or "auto")
     provider = configured_provider if configured_provider != "auto" else infer_sdd_provider(repo, p, config(repo))
+    if is_new_work and config(repo).get("lifecycle_contract", 2) not in {1, 2}:
+        raise ValueError("LIFECYCLE_CONTRACT_UNSUPPORTED")
     work = existing or {
         "version": 1,
+        "lifecycle_contract": config(repo).get("lifecycle_contract", 2),
         "id": wid,
         "title": args.title or p.stem,
         "status": "todo",
@@ -662,6 +665,7 @@ def cmd_done(args: argparse.Namespace) -> int:
             return _completion_blocked(repo, work, c)
         from scripts.project_commands import finish_change
         finish_change(repo, work)
+        work["completion_result"] = c
         work["status"] = "completed"; work["completed_at"] = now(); work["execution"]["step"] = "done"; work["execution"]["next_action"] = action("none", "Work item is completed.")
         work["resume"]["summary"] = "Work item completed and verification was fresh."
         queue_event(work, {"event": "task.closed", "work_item_id": work.get("id"),

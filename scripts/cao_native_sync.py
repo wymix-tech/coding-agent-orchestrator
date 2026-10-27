@@ -772,49 +772,66 @@ def reconcile_native_sdd_state(repo: Path, work: dict[str, Any]) -> bool:
         changed = True
         work.setdefault("resume", {})["last_native_sync_at"] = new_snapshot["observed_at"]
 
-    # Reconcile the CAO phase on every read, not only on a newly observed native
-    # transition. This repairs stale CAO state even if an earlier sync was missed.
-    if canonical is not None:
-        execution = work.setdefault("execution", {})
-        current_step = str(execution.get("step") or "").lower()
+    from scripts.lifecycle_contract import enabled, prerequisites, next_action
+    if enabled(work):
+        ready = prerequisites(repo, work)['ready']
+        execution = work.setdefault('execution', {})
         phase = execution_phase(execution)
-        later_checkpoint = phase in {"verification", "review", "audit", "release", "done"}
-        aggregate_pending_review = (plan["state"] == "pending" or canonical in {"in_progress", "in_review"}) and current_step == "review"
-        if aggregate_pending_review:
-            later_checkpoint = False  # A single completed SPEC cannot finish the whole requirement.
-        if canonical == "ready" and (current_step in {"reopened", "path-selected", "planning", "plan-selected", "sdd-planning", "native-sdd-workflow-selected"} or aggregate_pending_review):
-            execution["step"] = "ready-for-dev"
-            execution["phase"] = "ready"
-            execution["next_action"] = action("agent", f"Native {provider} work is ready; begin implementation using the bound native work item.")
-            work.setdefault("resume", {})["summary"] = f"Native SDD reports ready for implementation ({provider})."
-            changed = True
-        elif canonical in {"in_progress", "in_review"} and current_step != "implementation" and not later_checkpoint:
-            execution["step"] = "implementation"
-            execution["phase"] = "implementation"
-            execution["next_action"] = action("agent", f"Continue implementation using the native {provider} work item; phase synchronized from explicit native status/task progress.")
-            work.setdefault("resume", {})["summary"] = f"Native SDD reports implementation in progress ({provider}); CAO phase reconciled."
-            changed = True
-        elif canonical == "completed" and not later_checkpoint:
-            execution["step"] = "review"
-            execution["phase"] = "review"
-            execution["next_action"] = action("agent", "Native scope reports completion; check bound process and artifact evidence with `cao conformance check`, then run the project baseline with `cao verify`.")
-            work.setdefault("resume", {})["summary"] = f"Native SDD reports scope completion ({provider}); CAO moved to review, not closed."
-            changed = True
-        elif canonical == "blocked":
-            blockers = work.setdefault("blockers", [])
-            if not any(isinstance(item, dict) and item.get("id") == "native-sdd-state" for item in blockers):
-                blockers.append({"id": "native-sdd-state", "reason": f"Native {provider} state is blocked", "source": status_source, "observed_at": now()})
+        desired = 'review' if ready else 'implementation'
+        # Preserve genuine planning/ready phases until native execution starts.
+        active = canonical in {'in_progress', 'in_review', 'completed'} or phase in {'review', 'verification'}
+        if active and not (ready and phase == 'verification'):
+            if execution.get('step') != desired or execution.get('phase') != desired:
+                execution.update(step=desired, phase=desired)
                 changed = True
-        if canonical in {"ready", "in_progress", "in_review", "completed"}:
-            blockers = work.get("blockers") or []
-            automatic = [item for item in blockers if isinstance(item, dict)
-                         and item.get("id") == "native-sdd-state"]
-            if automatic:
-                work["blockers"] = [item for item in blockers if item not in automatic]
-                queue_event(work, {"event": "sdd.native_blocker.cleared", "work_item_id": work["id"],
-                                   "source": provider, "blockers": automatic, "to_state": canonical,
-                                   "occurred_at": now()})
+        current_action = next_action(repo, work)
+        if execution.get('next_action') != current_action:
+            execution['next_action'] = current_action
+            changed = True
+    else:
+        # Reconcile the CAO phase on every read, not only on a newly observed native
+        # transition. This repairs stale CAO state even if an earlier sync was missed.
+        if canonical is not None:
+            execution = work.setdefault("execution", {})
+            current_step = str(execution.get("step") or "").lower()
+            phase = execution_phase(execution)
+            later_checkpoint = phase in {"verification", "review", "audit", "release", "done"}
+            aggregate_pending_review = (plan["state"] == "pending" or canonical in {"in_progress", "in_review"}) and current_step == "review"
+            if aggregate_pending_review:
+                later_checkpoint = False  # A single completed SPEC cannot finish the whole requirement.
+            if canonical == "ready" and (current_step in {"reopened", "path-selected", "planning", "plan-selected", "sdd-planning", "native-sdd-workflow-selected"} or aggregate_pending_review):
+                execution["step"] = "ready-for-dev"
+                execution["phase"] = "ready"
+                execution["next_action"] = action("agent", f"Native {provider} work is ready; begin implementation using the bound native work item.")
+                work.setdefault("resume", {})["summary"] = f"Native SDD reports ready for implementation ({provider})."
                 changed = True
+            elif canonical in {"in_progress", "in_review"} and current_step != "implementation" and not later_checkpoint:
+                execution["step"] = "implementation"
+                execution["phase"] = "implementation"
+                execution["next_action"] = action("agent", f"Continue implementation using the native {provider} work item; phase synchronized from explicit native status/task progress.")
+                work.setdefault("resume", {})["summary"] = f"Native SDD reports implementation in progress ({provider}); CAO phase reconciled."
+                changed = True
+            elif canonical == "completed" and not later_checkpoint:
+                execution["step"] = "review"
+                execution["phase"] = "review"
+                execution["next_action"] = action("agent", "Native scope reports completion; check bound process and artifact evidence with `cao conformance check`, then run the project baseline with `cao verify`.")
+                work.setdefault("resume", {})["summary"] = f"Native SDD reports scope completion ({provider}); CAO moved to review, not closed."
+                changed = True
+            elif canonical == "blocked":
+                blockers = work.setdefault("blockers", [])
+                if not any(isinstance(item, dict) and item.get("id") == "native-sdd-state" for item in blockers):
+                    blockers.append({"id": "native-sdd-state", "reason": f"Native {provider} state is blocked", "source": status_source, "observed_at": now()})
+                    changed = True
+            if canonical in {"ready", "in_progress", "in_review", "completed"}:
+                blockers = work.get("blockers") or []
+                automatic = [item for item in blockers if isinstance(item, dict)
+                             and item.get("id") == "native-sdd-state"]
+                if automatic:
+                    work["blockers"] = [item for item in blockers if item not in automatic]
+                    queue_event(work, {"event": "sdd.native_blocker.cleared", "work_item_id": work["id"],
+                                       "source": provider, "blockers": automatic, "to_state": canonical,
+                                       "occurred_at": now()})
+                    changed = True
     # Observation is retained even when it reveals an unauthorized transition.
     # It must not itself satisfy routing or approval prerequisites.
     previous_route_state = sdd.get("implementation_state") or {}

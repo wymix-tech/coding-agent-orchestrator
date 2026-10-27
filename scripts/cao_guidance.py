@@ -129,6 +129,9 @@ def current_work_action(repo: Path, work: dict | None, *, check_completion: bool
     route = native_route_state(repo, work)
     if not route["ready"]:
         return route_preparation_action(repo, work, route)
+    from scripts.lifecycle_contract import enabled, next_action
+    if enabled(work):
+        return next_action(repo, work)
     loopback = (work.get('sdd') or {}).get('native_loopback') or {}
     if loopback.get('status') == 'reimplementing':
         return action('agent', 'Follow the recorded native loopback: preserve KEEP, revert only recorded product files, resolve human intent gaps, refresh route/approval, then reimplement from step-03. When complete, run `cao sdd review prepare` for a new round.', stage='recovery', reason='NATIVE_REVIEW_REIMPLEMENTATION_REQUIRED')
