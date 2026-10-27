@@ -48,6 +48,7 @@ def gate_state(work: dict[str, Any], verification_fresh: bool, sdd_ready: bool =
     evidence satisfies corresponding review gates once. Remaining manual gates
     record actual process evidence, never a duplicate CAO code review.
     """
+    from scripts.lifecycle_contract import enabled, NATIVE_VERIFICATION_GATES
     derived = {}
     if repo is not None:
         from scripts.conformance import native_gate_evidence
@@ -59,6 +60,8 @@ def gate_state(work: dict[str, Any], verification_fresh: bool, sdd_ready: bool =
     pending: list[str] = []
     for gate in gates:
         if gate == "sdd_acceptance":
+            ok = bool(sdd_ready)
+        elif enabled(work) and gate in NATIVE_VERIFICATION_GATES:
             ok = bool(sdd_ready)
         elif gate == "tests":
             ok = bool(verification_fresh and tests_satisfied(work.get("verification") or {}))

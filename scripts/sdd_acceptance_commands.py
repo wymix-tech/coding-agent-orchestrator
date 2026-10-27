@@ -150,6 +150,11 @@ def _finish(repo, wid, request, report, execution, error):
 def dispatch(args) -> int:
     try:
         action = args.acceptance_action
+        if action not in {'protocol'}:
+            from scripts.lifecycle_contract import enabled
+            repo, work = _work(args)
+            if enabled(work):
+                raise ValueError('NATIVE_EVIDENCE_LIFECYCLE: use cao lifecycle bind --report <original-native-report>; legacy functional executors belong to contract 1')
         if action == "protocol":
             from scripts.sdd_acceptance_protocol import protocol
             return _emit({"ok": True, **protocol()})

@@ -1,5 +1,8 @@
 # BMAD dispatch review evidence
 
+For lifecycle contract 2, native tests/review/acceptance remain CAO implementation. Follow [native lifecycle](native-lifecycle.md) for completion evidence, migration and precise recovery; separate functional executor guidance applies only to legacy contract 1.
+
+
 Contents: [Collect and classify](#collect-classify-patch-resolve) · [Classify fields](#classify-report-fields) · [Resolve fields](#resolve-report-fields) · [Recovery](#round-consistency-and-recovery)
 
 Read for a BMAD dispatch review action. Follow the actual rendered

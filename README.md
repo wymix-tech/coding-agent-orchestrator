@@ -96,47 +96,30 @@ Commands containing `<...>` require actual returned values. Use `cao project con
 
 `cao next` returns the current action and `guidance.read_before_action` paths. Read those stage/provider instructions and continue from the current state. New Work requires actual project checks and successful project preparation; existing active Work can repair its baseline in place; an accepted verification baseline and native prerequisites must be in place before business implementation.
 
-### 5. Verify, accept, and close
+### 5. Review evidence, verify the project, and close
 
-Once the associated native tasks and required reviews are complete, bind the native specification/Intent, inspect the criteria, and configure a real acceptance executor before final verification. For command mode:
-
-```bash
-cao acceptance criteria
-cao acceptance configure --executor-command "<actual acceptance command>"
-```
-
-The executor must follow the [acceptance protocol](references/sdd-acceptance-protocol.md) and return evidence for each criterion. Configuration does not generate assertions or execute checks. If configuration changes require approval or `--reanchor`, follow the returned action before continuing.
+Finish the entire native SDD scope, including tests, reviews, findings, acceptance
+and required native close steps. SDD review remains CAO implementation. New Work
+uses lifecycle contract 2:
 
 ```bash
+cao lifecycle bind --report <original-native-completion-report>
+cao conformance check
 cao verify
-cao acceptance run
 cao acceptance status
-cao next
-```
-
-Skill mode uses `cao acceptance begin`, execution of the declared native Skill, and `cao acceptance submit` instead of `run`. Complete remaining native obligations, including a local commit when required, then close:
-
-```bash
 cao done
 ```
 
-Only a successful `cao done` closes the Work. See [completion guidance](references/completion.md) for the complete contract.
+Repeat `--report` for native outputs; use `--gate security_verification` (and other
+required native duties) only when those checks are covered by the original report.
+CAO validates evidence and runs the approved project baseline. It does not require
+a second functional executor or a per-criterion JSON conversion. Baseline tests
+may include this Work's new tests. Native `done` alone cannot close Work.
 
-Useful daily commands:
-
-| Need | Command |
-| --- | --- |
-| List requirements / Work Items | `cao requirement list` / `cao list` |
-| Inspect progress / next action | `cao status` / `cao next` |
-| Save progress | `cao checkpoint --step login-api --next "Run integration tests" --summary "Endpoint implemented"` |
-| Record a task decision | `cao decision --decision "Use a short-lived token" --reason "Limit session exposure"` |
-| Suspend / reactivate | `cao block --reason "Awaiting API details" --suspend` / `cao resume --work <id> --reactivate` |
-| Transfer context | `cao handoff --reason "Transfer to another agent"` |
-| Resume from another host | `cao resume --work <id> --host codex` |
-| Inspect executions / recovery | `cao runtime runs --work <id>` / `cao runtime recover --work <id> --check` |
-| Open the dashboard | `cao dashboard --open` |
-
-Reactivation preserves unresolved blockers; use `cao unblock --work <id> --blocker <blocker-id>` after resolving them. When changing hosts, install its adapter with `cao host install --host <host>` and start it in the same project.
+Existing contract-1 Work preserves its old executor records. Use
+`cao lifecycle migrate --work <id>` to continue under the new protocol, retaining
+identity and histories. See [native lifecycle](references/native-lifecycle.md) and
+[completion](references/completion.md) for recovery and legacy behavior.
 
 ## What CAO implements
 
@@ -169,8 +152,8 @@ CAO offers three quality profiles, separate from the provider's native route:
 | Profile | Intended use | Completion expectations |
 | --- | --- | --- |
 | `light` | Small, clear changes with limited risk | Targeted technical verification and actual requirement evidence; applicable native prerequisites and reviews still apply. |
-| `standard` | Changes needing explicit scope, tests, and review | Scope/implementation review, required tests, technical verification, and independent SDD acceptance. |
-| `comprehensive` | Higher-risk or broader changes | Requirements/design/implementation review, technical verification, independent acceptance, and additional gates derived from declared risks. |
+| `standard` | Changes needing explicit scope, tests, and review | Native scope/implementation review, tests and acceptance evidence, followed by CAO conformance and project baseline checks. |
+| `comprehensive` | Higher-risk or broader changes | Native requirements/design/implementation review and risk checks; CAO validates their evidence and the project baseline. |
 
 The agent assesses scope; CAO enforces minimum profiles for declared risk flags. Security, data migration, irreversible changes, cross-system work, and major ambiguity require `comprehensive`. A profile does not permit skipping the installed provider's workflow.
 
@@ -183,7 +166,7 @@ The agent assesses scope; CAO enforces minimum profiles for declared risk flags.
 
 Each new Work inherits applicable **standards**, not a previous Work's passing results. Both parts must pass and remain fresh; native scope, approvals, reviews, remaining commit obligations, and unresolved blockers also participate in `done`.
 
-`cao acceptance criteria` derives source references from the requirement and native artifacts. It does not determine semantic correctness or invent assertions. `cao acceptance reuse --script <result-name>` can reuse a real technical execution only when its exact command matches the accepted task executor and its original output supplies valid, complete, current item results for the same Work.
+For unmigrated contract-1 Work only: `cao acceptance criteria` derives source references from the requirement and native artifacts. It does not determine semantic correctness or invent assertions. `cao acceptance reuse --script <result-name>` can reuse a real technical execution only when its exact command matches the accepted task executor and its original output supplies valid, complete, current item results for the same Work.
 
 ## How it works
 

@@ -44,7 +44,7 @@ Before business implementation, configure verification and explicitly reanchor a
 
 At a review action read only the route-specific reference returned by guidance: oneshot uses raw Markdown plus `review submit`; dispatch preserves raw Markdown/JSON, classifies ALL layers before patches, then resolves them. Preserve native independent execution, every active layer and current evidence. A manual implementation_review gate cannot replace these obligations. Follow native Finalize/rebind and verification ordering, and the native Commit step when Git is available; uncommitted Work product/SPEC changes block done. Never push unless authorized.
 
-Bind ALL current requirement stories/epics using repeated `cao sdd plan bind --plan-item <sprint-status.yaml-or-yml>#<story-id-or-epic-N>`. A project sprint may include unrelated historical work; do not bind or complete it merely because the file exists. Without a separate plan, Direct Build still must finish its SPEC Tasks & Acceptance; `--no-plan` cannot waive these tasks. oneshot may legitimately have no task plan. Use actual native status/task progress as lifecycle source, regardless of title/filename spelling; native done means review, not CAO completion.
+Bind ALL current requirement stories/epics using repeated `cao sdd plan bind --plan-item <sprint-status.yaml-or-yml>#<story-id-or-epic-N>`. A project sprint may include unrelated historical work; do not bind or complete it merely because the file exists. Without a separate plan, Direct Build still must finish its SPEC Tasks & Acceptance; `--no-plan` cannot waive these tasks. oneshot may legitimately have no task plan. Use actual native status/task progress as lifecycle source, regardless of title/filename spelling; native in-review remains CAO implementation; complete all associated native units before CAO evidence review.
 
 For native stories mode, bind `cao sdd plan bind --plan <spec-folder>/stories.yaml`.
 The inventory is also discovered beside a bound SPEC or its `stories/<id>-*.md`
@@ -65,7 +65,7 @@ is a native blocking condition in stable BMAD; enable a layer and render again.
 
 ## Exit when
 
-Current requirement tasks and applicable pre-verification obligations are complete; follow completion guidance and the native order for any remaining Commit/close steps. Standard/comprehensive retain workflow registration and independent final acceptance; light still honors native prerequisites.
+All associated native tasks, testing, reviews, acceptance and required native Commit/close duties are complete; follow completion guidance for CAO evidence review and baseline verification. Standard/comprehensive retain workflow registration; light still honors native prerequisites. Complete native acceptance before CAO review, bind original results through the [native lifecycle](native-lifecycle.md), then run the project baseline.
 
 ## If blocked
 

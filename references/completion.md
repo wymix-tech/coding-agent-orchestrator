@@ -1,49 +1,58 @@
-# Verify, accept and close
+# Review evidence, verify the project and close
 
 ## Enter when
 
-All associated native execution tasks and applicable pre-verification review obligations are complete, or the current action is formal verification, final acceptance or done.
+The selected SDD has finished the Work's entire associated scope, including
+native testing, code review, findings resolution, acceptance and required native
+Finalize/Commit/archive duties. SDD in-review remains CAO implementation.
 
 ## Execute
 
-1. Confirm actual native outputs/scope, review evidence and required Finalize steps. Schedule Commit at its actual native step; it may follow verification. Product changes may invalidate reviews; native SPEC/criteria changes require review/rebind. A Git commit alone does not require reanchoring.
-2. For BMAD Build oneshot/dispatch, before native reviewer preparation, configure task acceptance and complete source coverage (including project-bound light Work). Standard/comprehensive preserve independent final acceptance requirements. Reuse the configured declaration at this stage: `cao sdd acceptance configure --declaration <repo-json>`. Review/reanchor changed sources with `cao reopen --work <id> --reanchor --reason "<reviewed changes>"`, honoring baseline approval when required. Light verifies actual native Intent/criteria through the same evidence protocol without manufacturing a formal native checklist; route-specific independent review remains applicable.
-3. Run `cao verify` using configured required scripts. Overrides (`--script`) are engineering diagnostics and cannot qualify completion. All current requirement native tasks must already be complete.
-4. Run `cao sdd acceptance run` (command mode), or `cao sdd acceptance begin`, execute the installed independent Skill, then `cao sdd acceptance submit --run <id> --report <registered-output.json>` (Skill mode). Use exact declared Work-scoped report outputs; unregistered outputs change the snapshot. Read the shared acceptance protocol for declaration/report shapes, then only the declared command or Skill mode reference linked directly from SKILL.md. Submitting evidence does not prove an independent reviewer ran; preserve native independence or its human-return fallback.
-5. Inspect `cao acceptance status` for technical quality, task coverage/freshness and all lifecycle blockers, and `cao gate show`; only satisfy genuinely observed manual gates. Verification/tests/security and `sdd_acceptance` are automatic. Complete any remaining native Commit step, then run `cao done`; only successful authoritative Work `completed` means completion. Commit alone does not require reanchoring; changed input bytes still require fresh evidence. Never push without authorization.
+New Work follows the [native lifecycle](native-lifecycle.md). Bind original native
+completion/test/acceptance reports with `cao lifecycle bind --report <native-report>`
+(repeat for necessary outputs). Preserve native formats and independent review
+provenance. Declare native risk-check coverage with `--gate <required-duty>`.
 
-### Real service and acceptance evidence
+Run `cao conformance check` for process/artifact evidence, then `cao verify` for
+the approved project baseline. No second CAO functional review or functional
+acceptance executor is required. The baseline may run all project tests, including
+this Work's new tests. Missing tools, zero tests, failures and timeouts keep their
+actual failed/blocked/error result.
 
-Use `cao verification smoke --server-command '<project server command with {port}>' --path <endpoint>` for HTTP smoke. Register it as a required script when startup/API behavior is an acceptance criterion. It owns a fresh dynamic-port service, checks liveness/status, and cleans up; never reuse an old server, mask startup failures with `|| true`, or substitute ad hoc curl for configured evidence.
+Inspect `cao acceptance status` and `cao gate show`; only satisfy manual gates
+for observed events. `cao done` reevaluates scope, current evidence and baseline
+freshness, and is the only final Work closure operation.
 
-Preserve each entire criterion, establish its preconditions, isolate mutable fixtures, and retain redacted actual run evidence. For deletion, check current valid credentials rather than an already-wrong old password, and test existing-token invalidation when required.
+Use `cao verification smoke --server-command '<command with {port}>' --path <endpoint>`
+when the project baseline requires HTTP smoke. Native behavior tests use actual
+fresh services, isolated fixtures and redacted results. Never mask a failed run.
 
-Verification is snapshot-bound. Code, requirements, direct wrappers, acceptance inputs, known task scope and reports may invalidate previous evidence. A newer run supersedes the older run immediately; late results cannot overwrite the current run. Do not fabricate evidence to close.
+## Recovery
+
+Follow the reported blocker and changed inputs. Binding repair preserves valid
+native code review. Product/requirement changes require affected native steps.
+Baseline standard changes retain explicit review/reanchor rules. Git commit
+alone does not invalidate content-based evidence. Never restart intake or replace
+Work to repair evidence.
+
+Runs remain snapshot/run/generation bound; late results cannot replace a current
+run. Knowledge collection is optional and cannot reopen or block completed Work.
+See [conformance and knowledge](conformance-knowledge.md).
+
+## Legacy contract 1
+
+Unmigrated older Work retains its recorded acceptance protocol: configure sources
+and coverage before reviewer preparation, run `cao verify`, then the declared
+command/Skill acceptance and `cao done`. Read [acceptance protocol](sdd-acceptance-protocol.md)
+and its mode guide. This legacy order does not apply to contract 2. Active old
+Work blocked by the extra executor can use `cao lifecycle migrate --work <id>`,
+then bind actual native completion evidence and follow the current lifecycle.
 
 ## Exit when
 
-`cao done` succeeds with current verification, all applicable gates/acceptance satisfied, and no blockers.
+`cao done` succeeds with current native completion/conformance, project baseline
+and all required duties. Native done alone cannot close Work.
 
 ## If blocked
 
-Follow the specific blocker and recovery guidance; rerunning verification alone cannot approve a changed requirement or repair missing reviews/tasks.
-
-Project-bound evidence has separate technical and task inputs. Requirement-only changes can preserve applicable original technical runs; source coverage and task evidence still need refresh. Use `cao acceptance criteria` to derive source IDs; optional criterion `covers` maps those IDs without copying the original documents. `cao acceptance reuse --script <name>` consumes actual JSON item results from the same fresh configured technical command when its exact command matches the accepted task executor; it does not invent assertions or rerun the entrypoint.
-
-## Evidence reuse and optional knowledge
-
-Use `cao conformance show` to inspect declared process/artifact obligations and their
-current evidence. Native SDD review/approval evidence satisfies matching CAO gates;
-remaining verification and acceptance still apply. Knowledge collection after close
-is optional and cannot reopen or block a completed Work. See
-[conformance and knowledge](conformance-knowledge.md) for recovery and source validity.
-
-For BMAD dispatch, a native SPEC still `in-review` is not terminal completion.
-Follow the current installed Finalize step and reach native `done` before CAO
-closure. CAO does not silently edit the SPEC to manufacture completion. Refresh
-only evidence affected by substantive changes. The versioned
-`lifecycle_metadata: bmad-dispatch-status-v1` policy applies only to the bound
-BMAD dispatch primary SPEC. Its frontmatter status-only transition preserves
-semantic evidence; body/criteria changes still invalidate it. This is not a
-generic Markdown or other-provider exclusion. NO_VCS does not require an invented
-commit.
+Follow the specific blocker and the [native lifecycle](native-lifecycle.md) recovery guidance. Preserve the current Work and only refresh affected evidence.

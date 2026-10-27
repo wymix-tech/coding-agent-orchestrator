@@ -87,3 +87,16 @@ utilities). `runtime_store.py` owns safe fact persistence and quotas;
 `runtime_queries.py`, `runtime_retention.py`, and `runtime_commands.py` implement
 queries, disposable projection rebuilding, explicit pruning, and CLI registration.
 None decides gate acceptance. See [runtime-records.md](../references/runtime-records.md).
+
+## Native completion lifecycle
+
+`lifecycle_contract.py` owns contract-2 native evidence binding, pre-verification
+process checks and completion precedence. `native_completion.py` aggregates
+provider completion; `native_reports.py` reads original result declarations and
+runner logs. `evidence_domains.py` owns exact invalidation manifests and declared
+native dependencies; `completion_repairs.py` bounds retries of unchanged failed
+bindings. `lifecycle_migration.py` owns read-only preflight, checkpoint migration
+and rollback. `lifecycle_guard.py` protects persisted authority, interrupted writes
+and recovery with quarantine. Legacy executor logic stays in `sdd_acceptance_*`;
+new Work never requires that executor. CLI, host and dashboard consume the shared
+lifecycle policy.

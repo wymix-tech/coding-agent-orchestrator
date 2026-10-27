@@ -255,6 +255,14 @@ def review_inputs(repo, work, code_snapshot):
               'code_snapshot': code_snapshot(repo, {work['requirement']['path'], *excluded}, {'_bmad-output', '_bmad', '.agents', '.pi', 'openspec', '.specify', 'specs', *bmad_output_dirs(repo)}), **source}
     if acceptance_standard is not None:
         result['acceptance_standard_sha256'] = digest(acceptance_standard)
+    if work.get('lifecycle_contract') == 2 and (work.get('sdd') or {}).get('native_review_dependencies'):
+        from copy import deepcopy
+        from scripts.evidence_domains import dependencies
+        native = deepcopy(work)
+        native['sdd']['native_execution_dependencies'] = []
+        native['sdd']['workflow'] = {}
+        result['native_review_dependencies_sha256'] = digest(dependencies(repo, native))
+
     return result
 
 

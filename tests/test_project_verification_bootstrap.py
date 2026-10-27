@@ -282,9 +282,10 @@ class ProjectVerificationBootstrap(unittest.TestCase):
         cfg = config(self.repo)
         cfg['verification']['scripts'] = []
         atomic_json(self.repo / '.orchestrator/config.json', cfg)
-        work = json.loads(path.read_text())
+        from scripts.cao_work_store import load_work, save_work
+        work = load_work(self.repo, wid)
         work['sdd']['native_note'] = secret
-        atomic_json(path, work)
+        save_work(self.repo, work)
         before = path.read_bytes()
         out = self.call('bootstrap')
         self.assertEqual('project', out['next']['owner'])

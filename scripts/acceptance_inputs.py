@@ -7,7 +7,7 @@ TECHNICAL_KEYS = ('snapshot_format', 'technical_input_version', 'code_snapshot',
                   'environment_sha256', 'maximum_evidence_age_seconds')
 
 
-def technical_inputs(repo, work, cfg):
+def technical_inputs(repo, work, cfg, *, manifest=None):
     from scripts.cao_completion import sdd_acceptance_outputs
     from scripts.cao_snapshot import SNAPSHOT_FORMAT, code_snapshot, rules_snapshot, verification_snapshot
     state = binding_state(repo, work)
@@ -21,6 +21,18 @@ def technical_inputs(repo, work, cfg):
             excluded.add(binding[key]['path'])
     excluded |= {path for path in ((work.get('sdd') or {}).get('workflow') or {}).get('artifacts', []) if path.endswith(('.md', '.yaml', '.yml'))}
     excluded |= sdd_acceptance_outputs(repo, work)
+    # Original completion reports are a separate evidence domain, never product code.
+    # Only provider-owned, non-executable report types may be excluded.
+    if work.get('lifecycle_contract') == 2:
+        from scripts.cao_provider_workflows import provider_output_dirs
+        from scripts.path_guard import provider_artifact
+        from pathlib import Path
+        for ref in ((work.get('sdd') or {}).get('completion_evidence') or {}).get('reports', []):
+            name = ref['path']
+            provider_artifact(repo, name, provider_output_dirs(work['sdd']['provider'], repo))
+            if Path(name).suffix.lower() not in {'.md', '.json', '.yaml', '.yml', '.txt', '.log'}:
+                raise ValueError('NATIVE_COMPLETION_REPORT_INVALID')
+            excluded.add(name)
     from scripts.review_scope import acceptance_review_scope
     declaration_files, _ = acceptance_review_scope(repo, work)
     declaration_file = ((work.get('sdd') or {}).get('acceptance') or {}).get('declaration_file')
@@ -43,7 +55,7 @@ def technical_inputs(repo, work, cfg):
         raise ValueError('VERIFICATION_EVIDENCE_AGE_INVALID')
     return {'environment_sha256': digest({key: os.environ.get(key) for key in environment}),
             'maximum_evidence_age_seconds': maximum, 'snapshot_format': SNAPSHOT_FORMAT, 'technical_input_version': 1,
-            'code_snapshot': code_snapshot(repo, excluded), 'rules_snapshot': rules_snapshot(repo, cfg),
+            'code_snapshot': code_snapshot(repo, excluded, manifest=manifest), 'rules_snapshot': rules_snapshot(repo, cfg),
             'verification_config_sha256': verification_snapshot(cfg, repo),
             'project_context_sha256': state['fingerprint'],
             'technical_policy_sha256': digest({'gates': technical_gates,

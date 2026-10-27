@@ -25,6 +25,11 @@ class ProjectAcceptanceTests(unittest.TestCase):
         (self.repo / 'openspec').mkdir()
         (self.repo / 'openspec/config.yaml').write_text('context: test\n')
         self.check('init')
+        # This suite preserves the original dual-executor contract as legacy coverage.
+        path = self.repo / '.orchestrator/config.json'
+        cfg = json.loads(path.read_text())
+        cfg['lifecycle_contract'] = 1
+        path.write_text(json.dumps(cfg))
 
     def cli(self, *args, payload=None):
         run = subprocess.run([sys.executable, str(CLI), *args, '--repo', str(self.repo)],

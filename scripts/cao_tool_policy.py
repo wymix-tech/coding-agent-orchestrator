@@ -352,6 +352,9 @@ def verification_baseline_state(repo: Path, work: dict) -> dict:
 
 
 def verification_capability_state(repo: Path, work: dict) -> dict:
+    from scripts.lifecycle_contract import enabled
+    if enabled(work):
+        return {'ready': True, 'owner': 'sdd', 'note': 'Work-specific verification is native evidence; project baseline capabilities remain independent.'}
     required = (work.get('path_assessment') or {}).get('required_gates', [])
     scripts = setup_state(config(repo))['scripts']
     if 'security_verification' in required and not any(
@@ -821,6 +824,6 @@ def _readonly_tokens(tokens: list[str], cwd: Path | None = None) -> bool:
     safe_control_commands = {
         "init", "bootstrap", "sdd", "start", "path", "list", "status", "next", "resume",
         "checkpoint", "decision", "block", "unblock", "handoff", "sessions", "verify", "done",
-        "conformance", "knowledge", "project", "acceptance", "runtime", "context", "artifact", "host", "host-event", "requirement", "language", "gate", "reopen", "verification", "instructions",
+        "lifecycle", "conformance", "knowledge", "project", "acceptance", "runtime", "context", "artifact", "host", "host-event", "requirement", "language", "gate", "reopen", "verification", "instructions",
     }
     return bool(command_tokens and (command_tokens[0] in safe_control_commands or command_tokens in (["--help"], ["-h"])))

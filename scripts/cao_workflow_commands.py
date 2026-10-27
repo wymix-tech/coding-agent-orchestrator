@@ -278,6 +278,9 @@ def cmd_sdd_workflow(args: argparse.Namespace) -> int:
                  {"provider": provider, "workflow": sdd.get("workflow")},
                  source="agent_declaration" if args.workflow_action == "execute" else "cao_command")
     save_work(repo, work)
+    from scripts.lifecycle_contract import enabled
+    if enabled(work):
+        reconcile_native_sdd_state(repo, work)
     print(json.dumps({"ok": True, "work_item": work_summary(work), "workflow": sdd.get("workflow")}, ensure_ascii=False, indent=2)); return 0
 
 

@@ -1,5 +1,8 @@
 # Recover without restarting intake
 
+For lifecycle contract 2, native tests/review/acceptance remain CAO implementation. Follow [native lifecycle](native-lifecycle.md) for completion evidence, migration and precise recovery; separate functional executor guidance applies only to legacy contract 1.
+
+
 ## Enter when
 
 The current Work is blocked, suspended/completed, has changed scope/requirements/standards, stale evidence, missing native sources, or an abandoned verification.

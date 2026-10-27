@@ -1,5 +1,8 @@
 # Verification baseline
 
+For lifecycle contract 2, native tests/review/acceptance remain CAO implementation. Follow [native lifecycle](native-lifecycle.md) for completion evidence, migration and precise recovery; separate functional executor guidance applies only to legacy contract 1.
+
+
 Contents: [Enter when](#enter-when) · [Execute](#execute) · [Script contract](#script-contract) · [Generated outputs and scope](#generated-outputs-and-snapshot-scope-format-v4) · [Exit when](#exit-when) · [If blocked](#if-blocked)
 
 ## Enter when

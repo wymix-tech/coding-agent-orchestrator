@@ -304,7 +304,7 @@ def host_event(args: argparse.Namespace) -> int:
                 if not loopback_scope['ready']:
                     return respond({'decision': 'deny', 'reason': loopback_scope['reason'] + ': ' + loopback_scope['next']})
                 review_patches = dispatch_patch_state(repo, work, code_snapshot)
-                if not review_patches["ready"]:
+                if not review_patches["ready"] and not verification_scaffold_write(repo, raw):
                     return respond({"decision": "deny", "reason": review_patches["reason"] + ": classify every active native layer before patching; follow native loopback for intent/spec gaps."})
                 path_state = path_assessment_state(repo, work)
                 if not path_state["ready"]:

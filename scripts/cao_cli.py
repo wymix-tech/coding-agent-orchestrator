@@ -219,6 +219,8 @@ def build_parser() -> argparse.ArgumentParser:
     sp.set_defaults(fn=cmd_sdd_workflow)
     lifecycle = sub.add_parser("lifecycle", help="Inspect persisted CAO lifecycle events")
     lifecycle_sub = lifecycle.add_subparsers(dest="lifecycle_command", required=True)
+    from scripts.lifecycle_contract import register as register_lifecycle_contract
+    register_lifecycle_contract(lifecycle_sub)
     sp = lifecycle_sub.add_parser("events", help="List lifecycle events from native SDD reconciliation and CAO transitions")
     sp.add_argument("--repo", default="."); sp.add_argument("--work"); sp.add_argument("--limit", type=int, default=100); sp.set_defaults(fn=cmd_lifecycle_events)
     sp = sub.add_parser("start"); sp.add_argument("--repo", default="."); sp.add_argument("--requirement"); sp.add_argument("--title", default=None, help="Human-readable Work Item title; overrides the requirement filename"); sp.add_argument("--sdd-ref"); sp.add_argument("--sdd-provider", choices=sorted(SDD_CATALOG)); sp.add_argument("--host", choices=["claude-code", "codex", "pi"], default=None, help="Current coding-agent host; used to attach the runtime Session"); sp.add_argument("--replace", action="store_true"); sp.add_argument("--reopen", action="store_true"); sp.add_argument("--scope", action="append"); sp.set_defaults(fn=cmd_start)

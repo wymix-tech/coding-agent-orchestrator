@@ -22,7 +22,7 @@ changed artifacts, ambiguous archives and remaining tasks cannot certify closure
 
 For active Work, path relocation changes frozen inputs: review the migrated
 sources, explicitly `cao reopen --reanchor --reason "Reviewed archived sources"`,
-rerun verification and acceptance, then close. Reconcile never invents passed runs.
+refresh the affected native completion bindings and project verification, then close. Contract-1 acceptance follows its legacy protocol. Reconcile never invents passed runs.
 Completed Work retains its immutable acceptance result with `historical: true`;
 that result describes completion time, not current repository freshness. Native
 artifact references can still follow the recorded archive location. Reopening is
@@ -30,7 +30,7 @@ an explicit new validation action and must check current inputs again.
 
 ## Exit when
 
-Current requirement tasks and applicable pre-verification obligations are complete; follow completion guidance and the native order for any remaining Commit/close steps. Standard/comprehensive retain workflow registration and independent final acceptance; light still honors native prerequisites.
+All associated native tasks, testing, reviews, acceptance and required native Commit/close duties are complete; follow completion guidance for CAO evidence review and baseline verification. Standard/comprehensive retain workflow registration; light still honors native prerequisites. Complete native acceptance before CAO review, bind original results through the [native lifecycle](native-lifecycle.md), then run the project baseline.
 
 ## If blocked
 

@@ -1,5 +1,8 @@
 # Native Skill acceptance execution
 
+Applies to unmigrated lifecycle contract 1 only. New Work uses [native completion evidence](native-lifecycle.md); do not configure a second CAO functional executor.
+
+
 Read only for `executor.mode: skill`. Use the shared acceptance contract for
 declaration/report fields; do not treat command-mode environment/stdout as the
 Skill-mode interface.

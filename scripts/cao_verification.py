@@ -255,6 +255,12 @@ def _prepare_verification(args: argparse.Namespace):
     if not route["ready"]:
         print(json.dumps(record_denial(repo, work, "verify", {"ok": False, "error": route["reason"], "next": route["next"]}))); return 2
 
+    from scripts.lifecycle_contract import enabled, conformance
+    if enabled(work):
+        report = conformance(repo, work)
+        if not report['ready']:
+            print(json.dumps({'ok': False, 'error': 'CONFORMANCE_NOT_READY', 'conformance': report}, ensure_ascii=False))
+            return 2
     plan_state = observe_plan_scope(repo, work)
     if not plan_state["ready"]:
         print(json.dumps(record_denial(repo, work, "verify", {"ok": False, "error": str(plan_state["reason"]).split(":", 1)[0],
@@ -287,7 +293,7 @@ def _prepare_verification(args: argparse.Namespace):
         if not baseline["ready"]:
             print(json.dumps(record_denial(repo, work, "verify", {"ok": False, "error": baseline["reason"], "next": baseline["next"]}))); return 2
         required_gates = ((work.get("path_assessment") or {}).get("required_gates")) or []
-        if "security_verification" in required_gates and not any(item['required'] and 'security_verification' in item['gates'] for item in scripts):
+        if not enabled(work) and "security_verification" in required_gates and not any(item['required'] and 'security_verification' in item['gates'] for item in scripts):
             print(json.dumps(record_denial(repo, work, "verify", {'ok': False, 'error': 'VERIFICATION_GATE_UNBOUND',
                               'reason': 'security_verification needs a required script declaring that capability.',
                               'next': 'Use verification configure --security-script <actual security checks>; the same test wrapper may also declare --test-script. Review and reanchor changed standards.'}))); return 2

@@ -15,6 +15,9 @@ when blocked. Required artifacts must exist and contain content. The contract is
 computed from current lifecycle/provider declarations; stored summaries are not
 completion authority. Completion uses the same evidence checks.
 
+For new Work, follow the [native lifecycle](native-lifecycle.md). Conformance checks
+precede formal baseline verification and have no dependency on a future run.
+
 ## Native review preparation and recovery
 
 This section applies only to BMAD Build oneshot/dispatch. OpenSpec and Spec Kit use their installed native review instructions; the conformance and knowledge commands remain shared.
@@ -23,7 +26,7 @@ For BMAD Build oneshot/dispatch only, prefer `cao sdd review prepare --instructi
 --agent-definition <installed-definition>` (one command). Preparation inspects an
 actual repository agent definition for read access, any declared backend executable,
 and the installed host adapter. A read-only reviewer uses coordinator attachment.
-For project-bound Work, configure task acceptance and complete source coverage
+For legacy contract-1 project-bound Work only, configure task acceptance and complete source coverage
 before preparation; failures create no tickets. Alternatively specify `--external-session` and satisfy the same execution
 requirements in a new independent host session; this flag does not certify execution.
 
@@ -113,4 +116,4 @@ new provider contracts or promote candidate summaries automatically.
 
 Running and classified tickets survive preparation. Classified layers proceed to patches and route-specific finalization; never classify twice. Changed inputs/model/evidence require explicit `--restart`; replaced tickets remain in `sdd.native_review_history`. A recorded intent conflict blocks finalization until native clarification and a fresh reviewed round.
 
-The low-level `review begin` remains available for historical/manual integration and does not perform acceptance-coverage preflight. Recommended `prepare` and runtime navigation require project-bound coverage before dispatch.
+The low-level `review begin` remains available for historical/manual integration and does not perform acceptance-coverage preflight. Legacy contract-1 `prepare` and navigation require project-bound coverage before dispatch. Contract 2 binds original native completion reports after native execution; see [native lifecycle](native-lifecycle.md).

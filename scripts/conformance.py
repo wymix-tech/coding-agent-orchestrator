@@ -90,7 +90,8 @@ def cmd_conformance(args):
     work = resolve_work(repo, args.work)
     if not work:
         raise ValueError('NO_WORK_ITEM')
-    out = summarize(repo, work, lifecycle_status(repo, work))
+    from scripts.lifecycle_contract import enabled, conformance
+    out = conformance(repo, work) if enabled(work) else summarize(repo, work, lifecycle_status(repo, work))
     print(json.dumps({'ok': True, **out}, ensure_ascii=False, indent=2))
     return 2 if args.conformance_action == 'check' and not out['ready'] else 0
 

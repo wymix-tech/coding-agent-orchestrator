@@ -453,7 +453,7 @@ def infer_execution_phase(work: dict[str, Any], artifact_catalog: list[dict[str,
     native = (work.get("sdd") or {}).get("native_state") or {}
     canonical = native.get("canonical")
     if canonical in {"ready", "in_progress", "in_review", "completed"}:
-        return {"id": {"ready": "planning", "in_progress": "implementation", "in_review": "review", "completed": "review"}[canonical],
+        return {"id": {"ready": "planning", "in_progress": "implementation", "in_review": "implementation", "completed": "review"}[canonical],
                 "source": "native-sdd-state"}
     if step in native_phases:
         return {"id": native_phases[step], "source": "cao-state"}
@@ -547,6 +547,7 @@ def build_dashboard_overview(repo: Path, stale_after_minutes: int = 30) -> dict[
             "id": work["id"],
             "title": work.get("title") or work["id"],
             "status": work.get("status") or "unknown",
+            "lifecycle_contract": work.get("lifecycle_contract", 1),
             "created_at": timestamp_label(work.get("created_at")),
             "updated_at": timestamp_label(work.get("updated_at")),
             "started_at": timestamp_label(work.get("started_at")),
@@ -554,7 +555,7 @@ def build_dashboard_overview(repo: Path, stale_after_minutes: int = 30) -> dict[
             "sdd": {"provider": sdd.get("provider") or "none", "native_ref": sdd.get("native_ref"), "artifacts": sdd.get("artifacts") or [], "workflow": workflow,
                     "spec_binding": sdd.get("spec_binding"), "acceptance": sdd.get("acceptance"),
                     "route_decision": sdd.get("route_decision"), "route_history": sdd.get("route_history", []),
-                    "spec_approval": sdd.get("spec_approval")},
+                    "spec_approval": sdd.get("spec_approval"), "completion_evidence": sdd.get("completion_evidence")},
             "implementation_state": native_route_state(repo, work),
             "light_spec": spec_state,
             "sdd_acceptance": independent,
