@@ -5,6 +5,7 @@ import ipaddress
 import json
 import re
 import webbrowser
+from scripts.continuity_view import view as continuity_view
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -583,6 +584,7 @@ def build_dashboard_overview(repo: Path, stale_after_minutes: int = 30) -> dict[
                 "last_checkpoint_at": timestamp_label(resume.get("last_checkpoint_at")),
                 "last_native_sync_at": timestamp_label(resume.get("last_native_sync_at")),
             },
+            "continuity": continuity_view(work, latest_by_work.get(work["id"])),
             "handoff_count": handoff_counts.get(work["id"], 0),
             "latest_handoff_id": (latest_by_work.get(work["id"]) or {}).get("id"),
             "artifact_count": len(sdd.get("artifacts") or []),

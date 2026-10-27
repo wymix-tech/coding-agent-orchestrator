@@ -124,5 +124,23 @@
       "minimum": 0
     }
   },
-  "additionalProperties": true
+  "additionalProperties": true,
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "version": {
+            "const": 2
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "continuity",
+          "state_revision",
+          "execution_generation"
+        ]
+      }
+    }
+  ]
 }

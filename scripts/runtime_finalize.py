@@ -32,7 +32,9 @@ def finalize(repo, work, rid):
         if (candidate['work_id'] != work['id'] or candidate['run']['run_id'] != rid
                 or run.get('run_id') != rid or run.get('status') != 'running'
                 or work.get('execution_generation', 0) != candidate['run']['generation']
-                or state['start']['inputs'] != candidate['inputs']):
+                or state['start']['inputs'] != candidate['inputs']
+                or state['start'].get('generation') != candidate['run']['generation']
+                or state['start'].get('sequence') != candidate['run']['sequence']):
             raise ValueError('RUNTIME_FINALIZE_STALE_IDENTITY')
         results, scripts = candidate['results'], candidate['scripts']
         if len(results) != len(scripts) or len(receipt.get('commands', [])) != len(scripts):

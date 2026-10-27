@@ -228,13 +228,27 @@ def cmd_start(args: argparse.Namespace) -> int:
         work = defer(args)
         print(json.dumps({'ok': True, 'status': 'queued', 'work_item': work_summary(work)}))
         return 0
-    if args.replace:
+    same_provider_change = False
+    if args.replace and args.requirement:
+        from scripts.cao_work_store import stable_work_id
+        from scripts.cao_requirements import resolve_requirement
+        candidate = resolve_requirement(repo_root(args.repo), args.requirement)
+        existing = load_work(repo_root(args.repo), stable_work_id(repo_root(args.repo), candidate)) if candidate else None
+        chosen = args.sdd_provider or (config(repo_root(args.repo)).get('sdd') or {}).get('provider')
+        same_provider_change = bool(existing and existing.get('status') == 'active' and chosen != existing['sdd']['provider'] and chosen != 'auto')
+    if same_provider_change:
+        from scripts.work_operations import preview
+        preflight = preview(repo_root(args.repo), existing["id"])
+        if not preflight["ready"]:
+            print(json.dumps({"ok": False, "error": preflight["blockers"][0]}))
+            return 2
+    if args.replace and not same_provider_change:
         from scripts.deferred_work import defer
         from scripts.work_operations import switch
         work = defer(args)
         repo = repo_root(args.repo)
         identity = host_session_identity(getattr(args, 'host', None))
-        result = switch(repo, work['id'], 'explicit start --replace', identity[1] if identity else None, identity[0] if identity else None)
+        result = switch(repo, work['id'], 'Execution re-anchored to another work item: explicit start --replace', identity[1] if identity else None, identity[0] if identity else None)
         if result['ok']:
             result['work_item'] = work_summary(load_work(repo, work['id']))
         print(json.dumps(result, ensure_ascii=False))
@@ -414,7 +428,11 @@ def cmd_block(args: argparse.Namespace) -> int:
             raise
         # Authority and its conflict projection committed; more explicit fixes remain.
     if args.suspend:
-        create_handoff(repo, work, None, None, reason=args.reason)
+        try:
+            create_handoff(repo, work, None, None, reason=args.reason)
+        except RuntimeError as exc:
+            if not repair or not str(exc).startswith("MULTIPLE_ACTIVE_WORK_ITEMS:"):
+                raise
     out = {"ok": True, "blocker": b, "status": work["status"]}
     remaining = other_active_work(repo, work["id"])
     if len(remaining) > 1:
@@ -542,9 +560,16 @@ def cmd_resume(args: argparse.Namespace) -> int:
         print(json.dumps({'ok': False, 'error': project['reason'], 'next': project,
                           'context': preparation_context(repo, work)}, ensure_ascii=False, indent=2))
         return 2
+    from scripts.recovery_plan import plan as recovery_plan
+    recovery = recovery_plan(repo, work)
+    if recovery.get('unresolved_runs'):
+        print(json.dumps({'ok': False, 'error': 'RECOVERY_EXECUTION_UNRESOLVED', 'recovery': recovery}, ensure_ascii=False))
+        return 2
     if reconcile_native_sdd_state(repo, work):
         work = load_work(repo, work['id']) or work
     if work.get("status") in {"todo", "suspended"} and args.reactivate:
+        if _activation_denied(repo, work["id"]):
+            return 2
         from scripts.work_operations import switch
         result = switch(repo, work["id"], "resume reactivation", args.session, args.host)
         if not result["ok"]:
@@ -563,6 +588,8 @@ def cmd_resume(args: argparse.Namespace) -> int:
     session_id = args.session or (identity[1] if identity else None)
     session = register_session(repo, work, session_id, args.host or "unknown", event="resume") if session_id else None
     print(render_context(repo, work, session_id=session_id, host=args.host))
+    from scripts.recovery_plan import summary as recovery_summary
+    print("\n## Recovery inspection\n" + json.dumps(recovery_summary(recovery), ensure_ascii=False))
     print("\n## Session\n" + json.dumps(session, ensure_ascii=False, indent=2))
     return 0
 

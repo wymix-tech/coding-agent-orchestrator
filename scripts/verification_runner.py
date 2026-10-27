@@ -13,6 +13,9 @@ from scripts.test_discovery import DiscoveryReceipt
 
 def run_script(command: str, repo: Path, timeout: float = 300.0, max_bytes: int = 4000,
                env: dict[str, str] | None = None, log_sink=None) -> dict:
+    cancelled = bool(log_sink is not None and getattr(log_sink, 'cancel_requested', lambda: False)())
+    if cancelled:
+        return {'exit_code': 130, 'stdout_tail': '', 'stderr_tail': 'VERIFICATION_CANCELLED', 'timed_out': False, 'process_status': 'cancelled'}
     timeout = normalize_timeout(timeout)
     if isinstance(max_bytes, bool) or not isinstance(max_bytes, int) or max_bytes < 1:
         raise ValueError("VERIFICATION_LIMIT_INVALID")
@@ -78,7 +81,20 @@ def run_script(command: str, repo: Path, timeout: float = 300.0, max_bytes: int 
         for thread in readers:
             thread.start()
             started_readers.append(thread)
-        child.wait(timeout=max(0, deadline - time.monotonic()))
+        while True:
+            if log_sink is not None and getattr(log_sink, 'cancel_requested', lambda: False)():
+                cancelled = True
+                break
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise subprocess.TimeoutExpired(command, timeout)
+            try:
+                child.wait(timeout=min(0.2, remaining))
+                break
+            except subprocess.TimeoutExpired:
+                continue
+        if cancelled:
+            kill_group()
         for thread in readers:
             thread.join(timeout=max(0, deadline - time.monotonic()))
         timed_out = any(thread.is_alive() for thread in readers)
@@ -116,7 +132,7 @@ def run_script(command: str, repo: Path, timeout: float = 300.0, max_bytes: int 
     receipts = [item.finish() for item in discovery]
     receipt = {"observed": any(item["observed"] for item in receipts),
                "maximum_count": max(item["maximum_count"] for item in receipts)}
-    return {"exit_code": 125 if errors else 124 if timed_out else child.returncode,
-            "process_status": "timed_out" if timed_out else "exited",
+    return {"exit_code": 125 if errors else 130 if cancelled else 124 if timed_out else child.returncode,
+            "process_status": "cancelled" if cancelled else "timed_out" if timed_out else "exited",
             "stdout_tail": stdout, "stderr_tail": stderr, "timed_out": timed_out,
             "stdout_bytes": byte_counts[0], "stderr_bytes": byte_counts[1], "test_discovery": receipt}

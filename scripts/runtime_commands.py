@@ -21,6 +21,46 @@ def _query(repo, work, args):
         return page(events(repo, wid), args.limit, args.cursor)
     if action == "runs":
         return page(runs(repo, work), args.limit, args.cursor)
+    if action == "abandon":
+        from scripts.runtime_execution import owner_status
+        from scripts.path_guard import repo_file
+        from scripts.cao_runtime import sha256_file
+        from scripts.cao_work_store import save_work
+        from scripts.runtime_store import queue_record
+        from scripts.state_store import repo_transaction
+        with repo_transaction(repo):
+            current = inspect_run(repo, work, args.run)
+            if owner_status(repo, work['id'], args.run) == 'running':
+                raise ValueError('RUNTIME_RUN_ACTIVE')
+            run = work.get('verification') or {}
+            if run.get('run_id') != args.run or run.get('status') != 'running':
+                raise ValueError('RUNTIME_CURRENT_UNRESOLVED_RUN_REQUIRED')
+            path = repo_file(repo, args.evidence)
+            if not path.is_file() or not path.read_bytes().strip():
+                raise ValueError('RUN_INSPECTION_EVIDENCE_REQUIRED')
+            run.update(status='blocked', reason_code='RUN_OUTCOME_UNKNOWN_ABANDONED', outcome_unknown=True,
+                       resolution={'source': 'agent_declaration', 'path': path.relative_to(repo).as_posix(), 'sha256': sha256_file(path), 'reason': args.reason})
+            work['execution_generation'] = work.get('execution_generation', 0) + 1
+            queue_record(repo, work, 'verification.finished', run)
+            save_work(repo, work)
+            return {'ok': True, 'status': 'abandoned', 'outcome_unknown': True, 'note': 'No success or process termination is certified; a later attempt uses a new generation.'}
+    if action == "cancel":
+        from scripts.runtime_store import run_path, read_record, write_record
+        from scripts.runtime_execution import owner_status
+        current = inspect_run(repo, work, args.run)
+        if current['start']['source'] != 'cao_executor' or owner_status(repo, work['id'], args.run) != 'running':
+            raise ValueError('CONTROLLED_LIVE_EXECUTOR_REQUIRED')
+        if current['start'].get('generation') != work.get('execution_generation', 0):
+            raise ValueError('RUNTIME_CANCEL_GENERATION_MISMATCH')
+        path = run_path(repo, work['id'], args.run, 'cancel.json')
+        if not read_record(path):
+            write_record(path, {'schema_version': 1, 'work_id': work['id'], 'run_id': args.run, 'reason': args.reason})
+        return {'ok': True, 'status': 'cancellation_requested', 'note': 'Wait for the executor receipt; no PID is killed by this query process.'}
+    if action == "settle-effect":
+        from scripts.effect_resolution import settle
+        from scripts.state_store import repo_transaction
+        with repo_transaction(repo):
+            return settle(repo, work, args)
     if action == "finalize":
         from scripts.runtime_finalize import finalize
         return finalize(repo, work, args.run)
@@ -89,7 +129,7 @@ def cmd_runtime(args) -> int:
                 result["runtime_diagnostic"] = "RUNTIME_RECOVERY_OBSERVATION_FAILED"
         print(json.dumps(redact_object({"ok": True, "work_item_id": wid, **result},
                                        settings(repo).get("redact_values", [])), ensure_ascii=False, indent=2))
-        return 0
+        return 0 if result.get("ok", True) else 2
     except (OSError, ValueError, RuntimeError) as exc:
         print(json.dumps({"ok": False, "error": str(exc)}, ensure_ascii=False))
         return 2
@@ -98,10 +138,22 @@ def cmd_runtime(args) -> int:
 def register_parser(sub) -> None:
     runtime = sub.add_parser("runtime", help="Inspect task execution facts without changing gates")
     commands = runtime.add_subparsers(dest="runtime_command", required=True)
-    for name in ("status", "events", "runs", "show", "logs", "recover", "rebuild", "prune", "configure", "finalize"):
+    for name in ("status", "events", "runs", "show", "logs", "recover", "rebuild", "prune", "configure", "finalize", "settle-effect", "cancel", "abandon"):
         parser = commands.add_parser(name)
         parser.add_argument("--repo", default=".")
         parser.add_argument("--work")
+        if name == 'abandon':
+            parser.add_argument('--evidence', required=True)
+            parser.add_argument('--reason', required=True)
+        if name == 'cancel':
+            parser.add_argument('--reason', required=True)
+        if name == 'settle-effect':
+            parser.add_argument('--host', required=True)
+            parser.add_argument('--session', required=True)
+            parser.add_argument('--call', required=True)
+            parser.add_argument('--evidence', required=True)
+            parser.add_argument('--reason', required=True)
+            parser.add_argument('--resolution', choices=['observed-complete', 'observed-stopped'], required=True)
         if name == 'configure':
             parser.add_argument('--max-bytes-per-work', type=int)
             parser.add_argument('--closed-work-days', type=int)
@@ -111,7 +163,7 @@ def register_parser(sub) -> None:
         if name in {"events", "runs"}:
             parser.add_argument("--limit", type=int, default=50)
             parser.add_argument("--cursor")
-        if name in {"show", "logs", "finalize"}:
+        if name in {"show", "logs", "finalize", "cancel", "abandon"}:
             parser.add_argument("--run", required=True)
         if name == "logs":
             parser.add_argument("--command", dest="command_id", required=True)

@@ -125,9 +125,18 @@ def work_prerequisite_action(repo: Path, work: dict | None) -> dict | None:
 
 
 def current_work_action(repo: Path, work: dict | None, *, check_completion: bool = True, completion: dict | None = None) -> dict:
+    from scripts.work_operations import pending
+    operations = pending(repo)
+    if operations:
+        return action('agent', 'Inspect and recover the unfinished operation with `cao switch recover --operation ' + operations[0]['id'] + '` before business writes.', stage='recovery', reason='WORK_TRANSITION_PENDING')
     prerequisite = work_prerequisite_action(repo, work)
     if prerequisite:
         return prerequisite
+    run = (work or {}).get('verification') or {}
+    if run.get('status') == 'running' and run.get('run_id'):
+        from scripts.runtime_queries import inspect_run
+        state = inspect_run(repo, work, run['run_id'])
+        return action('agent', 'Inspect `cao runtime show --run ' + run['run_id'] + '`. Wait for a live executor, use guarded runtime finalize for complete receipts, or inspect unknown effects before a new attempt.', stage='recovery', reason='RUNTIME_RUN_UNRESOLVED')
     route = native_route_state(repo, work)
     if not route["ready"]:
         return route_preparation_action(repo, work, route)

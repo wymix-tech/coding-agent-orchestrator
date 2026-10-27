@@ -85,7 +85,7 @@ def preview(repo, target_id):
             key = (event.get('host'), event.get('session_id'), event.get('tool_call_id'))
             if key[-1] and event.get('event') == 'tool.started':
                 starts.add(key)
-            if key[-1] and event.get('event') == 'tool.finished':
+            if key[-1] and event.get('event') in {'tool.finished', 'tool.effect.settled'}:
                 finishes.add(key)
         if starts - finishes:
             blockers.append('SOURCE_HOST_EFFECT_UNRESOLVED')
@@ -100,8 +100,13 @@ def switch(repo, target_id, reason, session=None, host=None):
     from scripts.project_context import make_binding
     from scripts.cao_snapshot import anchor_verification
     from scripts.cao_runtime import config
+    from scripts.lifecycle_guard import digest
     with repo_transaction(repo):
         barrier(repo)
+        # Explicit mutation may seal interrupted authorized Work writes before read-only preflight.
+        from scripts.cao_defaults import WORK_DIR
+        for path in (repo / WORK_DIR).glob("*.json"):
+            load_work(repo, path.stem)
         state = preview(repo, target_id)
         source, target = state['source'], state['target']
         if source and source['id'] == target_id:
@@ -128,6 +133,7 @@ def switch(repo, target_id, reason, session=None, host=None):
         changes = []
         if source:
             after = deepcopy(source)
+            after.setdefault('resume', {}).setdefault('pending', []).append('Execution re-anchored to another Work; inspect changed inputs before returning.')
             after['status'] = 'suspended'
             after['execution_generation'] = int(source.get('execution_generation', 0)) + 1
             changes.append({'before': source, 'after': after})
@@ -137,7 +143,10 @@ def switch(repo, target_id, reason, session=None, host=None):
                      'target': target_id, 'source': source['id'] if source else None,
                      'changes': changes, 'handoff_id': handoff['id'] if handoff else None,
                      'session': session, 'host': host,
-                     'product_snapshot': (handoff or {}).get('continuity', {}).get('product_snapshot')}
+                     'product_snapshot': (handoff or {}).get('continuity', {}).get('product_snapshot'),
+                     'config_fingerprint': digest(config(repo))}
+        from scripts.lifecycle_guard import digest
+        operation['intent_sha256'] = digest({k: v for k, v in operation.items() if k != 'status'})
         atomic_json(root(repo) / (identity + '.json'), operation)
         return recover(repo, identity)
 
@@ -150,10 +159,22 @@ def recover(repo, identity):
     path = root(repo) / (identifier(identity) + '.json')
     with repo_transaction(repo), authorized():
         operation = json.loads(path.read_text())
+        from scripts.lifecycle_guard import digest
+        if operation.get('intent_sha256') != digest({k: v for k, v in operation.items() if k not in {'status', 'intent_sha256'}}):
+            raise ValueError('OPERATION_INTENT_INVALID')
+        if operation['status'] not in {'prepared', 'applying', 'committed'}:
+            raise ValueError('OPERATION_STATUS_INVALID')
+        if any(change['before']['id'] != change['after']['id'] for change in operation['changes']):
+            raise ValueError('OPERATION_WORK_MISMATCH')
         if operation['id'] != identity:
             raise ValueError('OPERATION_ID_MISMATCH')
         if operation['status'] == 'committed':
             return {'ok': True, 'status': 'unchanged', 'operation': identity}
+        if operation.get('config_fingerprint'):
+            from scripts.cao_runtime import config
+            from scripts.lifecycle_guard import digest
+            if digest(config(repo)) != operation['config_fingerprint']:
+                raise ValueError('SWITCH_RECOVERY_CONFIG_CHANGED')
         if operation.get('product_snapshot'):
             from scripts.cao_snapshot import code_snapshot
             if code_snapshot(repo) != operation['product_snapshot']:

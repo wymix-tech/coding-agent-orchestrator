@@ -57,7 +57,8 @@ class IntakeRecovery(RepairCase):
         work = self.read_work(wid)
         req = self.repo / work["requirement"]["path"]
         req.write_text("# 功能需求\n开发一个登录系统，需要密码哈希和 JWT。\n")
-        self.assertEqual(self.run_cli("start", "--requirement", req, "--replace")[0], 0)
+        self.assertEqual(self.run_cli("start", "--requirement", req, "--replace")[0], 2)
+        self.assertEqual(self.run_cli("reopen", "--work", wid, "--reanchor", "--reason", "explicit revised authentication requirement")[0], 0)
         rc, out = self.run_cli("path", "assess", "--profile", "light", "--reason", "Agent forgot risk flags")
         self.assertEqual(rc, 0, out)
         assessment = out["path_assessment"]

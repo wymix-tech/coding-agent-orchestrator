@@ -118,3 +118,123 @@ class OperationsTests(RepairCase):
         rc, out = self.run_cli('switch', '--to', target)
         self.assertEqual(rc, 2, out)
         self.assertEqual(out['error'], 'SOURCE_HOST_EFFECT_UNRESOLVED')
+
+    def test_pending_operation_blocks_unrelated_writes(self):
+        wid = self.start()
+        from scripts.work_operations import root
+        from scripts.state_store import atomic_json
+        atomic_json(root(self.repo) / 'pending.json', {'id': 'pending', 'status': 'prepared'})
+        before = self.read_work(wid)
+        self.assertNotEqual(self.run_cli('checkpoint', '--summary', 'must not commit')[0], 0)
+        self.assertEqual(before, self.read_work(wid))
+        rc, out = self.run_cli('host-event', '--host', 'pi', payload={'event': 'pre_tool', 'session_id': 'writer', 'toolName': 'write', 'input': {'path': '_bmad-output/task.md'}})
+        self.assertEqual(rc, 0, out)
+        self.assertEqual(out['decision'], 'deny')
+
+    def test_old_session_cannot_write_new_work(self):
+        self.start()
+        self.run_cli('host-event', '--host', 'pi', payload={'event': 'session_start', 'session_id': 'old'})
+        target = self.queue()
+        self.assertEqual(self.run_cli('switch', '--to', target)[0], 0)
+        rc, out = self.run_cli('host-event', '--host', 'pi', payload={'event': 'pre_tool', 'session_id': 'old', 'toolName': 'write', 'input': {'path': '_bmad-output/new.md'}})
+        self.assertEqual(rc, 0, out)
+        self.assertEqual(out['decision'], 'deny')
+        self.assertIn('STALE_SESSION_WORK', out['reason'])
+
+    def test_archive_integrity_is_checked(self):
+        self.start()
+        path = self.repo / '_bmad-output/result.md'
+        path.parent.mkdir(exist_ok=True)
+        path.write_text('status: passed\n')
+        _, out = self.run_cli('evidence', 'attach', '--kind', 'test', '--path', '_bmad-output/result.md')
+        (self.repo / out['evidence']['archive']).write_bytes(b'corrupt')
+        self.assertNotEqual(self.run_cli('evidence', 'show', '--id', out['evidence']['id'])[0], 0)
+
+    def test_later_failed_attempt_cannot_be_hidden_by_old_pass(self):
+        wid = self.start()
+        self.assertEqual(self.run_cli('lifecycle', 'migrate', '--work', wid)[0], 0)
+        path = self.repo / '_bmad-output/result.md'
+        path.parent.mkdir(exist_ok=True)
+        path.write_text('status: passed\n')
+        _, passed = self.run_cli('evidence', 'attach', '--kind', 'test', '--path', '_bmad-output/result.md')
+        failed = self.repo / '_bmad-output/failed.md'
+        failed.write_text('status: failed\n')
+        self.assertEqual(self.run_cli('evidence', 'attach', '--kind', 'test', '--path', '_bmad-output/failed.md')[0], 0)
+        from scripts.evidence_archive import select
+        with self.assertRaisesRegex(ValueError, 'LATER_UNRESOLVED'):
+            select(self.repo, self.read_work(wid), [passed['evidence']['id']])
+
+    def test_cancelled_execution_never_launches_the_command(self):
+        from scripts.verification_runner import run_script
+        class Sink:
+            def cancel_requested(self):
+                return True
+        output = self.repo / 'must-not-exist'
+        result = run_script('touch ' + str(output), self.repo, log_sink=Sink())
+        self.assertEqual(result['exit_code'], 130)
+        self.assertEqual(result['process_status'], 'cancelled')
+        self.assertFalse(output.exists())
+
+    def test_handoff_acceptance_is_work_and_session_bound(self):
+        wid = self.start()
+        self.run_cli('resume', '--work', wid, '--host', 'pi', '--session', 'receiver')
+        _, handoff = self.run_cli('handoff', '--work', wid)
+        key = handoff['handoff']['id']
+        rc, out = self.run_cli('handoff', 'accept', '--work', wid, '--id', key, '--host', 'pi', '--session', 'receiver')
+        self.assertEqual(rc, 0, out)
+        self.assertNotEqual(self.run_cli('handoff', 'accept', '--work', wid, '--id', key, '--host', 'pi', '--session', 'missing')[0], 0)
+
+    def test_switch_recovers_before_and_after_each_journal_and_authority_write(self):
+        import shutil, tempfile
+        from scripts import state_store, cao_work_store
+        from scripts.work_operations import switch, pending, recover
+        wid = self.start()
+        self.assertEqual(self.run_cli('lifecycle', 'migrate', '--work', wid)[0], 0)
+        target = self.queue()
+        for module, name, counts in [(state_store, 'atomic_json', range(1, 4)),
+                                     (cao_work_store, 'save_json', range(1, 7))]:
+            real = getattr(module, name)
+            for number in counts:
+                for after in (False, True):
+                    with self.subTest(writer=name, number=number, after=after), tempfile.TemporaryDirectory() as folder:
+                        repo = Path(folder) / 'copy'
+                        shutil.copytree(self.repo, repo)
+                        calls = [0]
+                        def interrupted(*args, **kwargs):
+                            calls[0] += 1
+                            if calls[0] == number and not after:
+                                raise OSError('before durable write')
+                            value = real(*args, **kwargs)
+                            if calls[0] == number and after:
+                                raise OSError('after durable write')
+                            return value
+                        with patch.object(module, name, side_effect=interrupted):
+                            try:
+                                switch(repo, target, 'fault injection')
+                            except OSError:
+                                pass
+                        journals = pending(repo)
+                        if journals:
+                            self.assertTrue(recover(repo, journals[0]['id'])['ok'])
+                        else:
+                            self.assertTrue(switch(repo, target, 'retry pre-journal failure')['ok'])
+                        active = [p for p in (repo / '.orchestrator/work').glob('*.json') if __import__('json').loads(p.read_text())['status'] == 'active']
+                        self.assertEqual([p.stem for p in active], [target])
+
+    def test_unknown_run_is_not_replayed_without_explicit_disposition(self):
+        wid = self.start()
+        from scripts import cao
+        from scripts.runtime_store import start_run
+        work = cao.load_work(self.repo, wid)
+        start_run(self.repo, wid, 'unknown', 'verification', {}, generation=work.get('execution_generation', 0))
+        work['verification'] = {'run_id': 'unknown', 'status': 'running'}
+        cao.save_work(self.repo, work)
+        rc, out = self.run_cli('verify')
+        self.assertEqual(rc, 2, out)
+        self.assertEqual(out['error'], 'VERIFICATION_RUN_UNRESOLVED')
+        inspection = self.repo / 'inspection.md'
+        inspection.write_text('Inspected process and actual output; outcome remains unknown, no active writer observed.\n')
+        rc, out = self.run_cli('runtime', 'abandon', '--run', 'unknown', '--evidence', str(inspection), '--reason', 'explicit inspected disposition')
+        self.assertEqual(rc, 0, out)
+        self.assertTrue(out['outcome_unknown'])
+        self.assertEqual(self.read_work(wid)['verification']['status'], 'blocked')

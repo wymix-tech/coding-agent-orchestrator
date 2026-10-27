@@ -915,6 +915,8 @@ test('real Pi runtime correlates late tool results without changing result conte
     const tool = {toolName: 'write', toolCallId: 'runtime-call-1', input: {
       path: '.orchestrator/requirements/runtime-note.md', content: 'Sensitive original tool content stays outside diagnostics'}};
     assert.equal(await f.handlers.get('tool_call')(tool, ctx), undefined);
+    // Settle the physical effect before switching; a late duplicate remains bound to the original Work.
+    await f.handlers.get('tool_result')({...tool, isError: true}, ctx);
     const secondPath = f.cli('requirement', 'next-id', '--title', 'Runtime second').path;
     writeFileSync(path.join(f.dir, secondPath), '# Second runtime fixture');
     const second = f.cli('start', '--replace', '--requirement', secondPath).work_item.id;

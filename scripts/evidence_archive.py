@@ -2,6 +2,7 @@
 import hashlib
 import os
 import tempfile
+from pathlib import Path
 from scripts.runtime_store import safe_path, settings
 
 
@@ -17,10 +18,10 @@ def retain(repo, wid, data):
     if root.exists():
         for base, dirs, names in os.walk(root, followlinks=False):
             for name in dirs + names:
-                entry = __import__('pathlib').Path(base) / name
+                entry = Path(base) / name
                 if entry.is_symlink():
                     raise ValueError('RUNTIME_SYMLINK')
-            used += sum((__import__('pathlib').Path(base) / n).stat().st_size for n in names)
+            used += sum((Path(base) / n).stat().st_size for n in names)
     if used + len(data) > settings(repo)['retention']['max_bytes_per_work']:
         raise ValueError('EVIDENCE_ARCHIVE_QUOTA')
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -41,7 +42,8 @@ def retain(repo, wid, data):
 def select(repo, work, ids):
     from scripts.cao_runtime import sha256_file
     from scripts.path_guard import repo_file
-    records = (work.get('sdd') or {}).get('implementation_evidence') or []
+    from scripts.implementation_evidence import records as read_records
+    records = read_records(repo, work)
     selected = []
     for identity in ids:
         row = next((r for r in records if r['id'] == identity), None)
@@ -53,7 +55,7 @@ def select(repo, work, ids):
         from scripts.lifecycle_contract import inputs
         if row.get('inputs') != inputs(repo, work):
             raise ValueError('IMPLEMENTATION_EVIDENCE_INPUT_CHANGED')
-        if row.get('generation') != work.get('execution_generation', 0) or row.get('requirement') != work.get('requirement'):
+        if row.get('requirement') != work.get('requirement'):
             raise ValueError('IMPLEMENTATION_EVIDENCE_INPUT_CHANGED')
         # A later failure/unknown on overlapping scope cannot be hidden by selecting an older pass.
         index = records.index(row)

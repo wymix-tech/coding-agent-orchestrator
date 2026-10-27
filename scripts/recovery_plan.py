@@ -39,6 +39,9 @@ def plan(repo, work):
     from scripts.project_verification import project_prerequisite
     handoff = latest_handoff(repo, work['id'])
     current = snapshot(repo, work)
+    if old_work := (handoff or {}).get('work_item'):
+        if old_work != work['id']:
+            raise ValueError('HANDOFF_WORK_MISMATCH')
     old = (handoff or {}).get('continuity') or {}
     changed = [key for key in current if key != 'capture_limits' and old and old.get(key) != current[key]]
     unresolved = []
@@ -55,13 +58,15 @@ def plan(repo, work):
     if prerequisite:
         return {'work_id': work['id'], 'status': work['status'], 'ready': False,
                 'next': prerequisite, 'check_only': True, 'pending_work': {'id': work['id'], 'status': work['status']}}
+    from scripts.evidence_domains import changed as domain_changes
+    diagnostics = domain_changes(old.get('evidence_domains') or {}, current.get('evidence_domains') or {}) if old else {}
     next_action = ('Inspect unresolved runs; never replay unknown side effects.' if unresolved else
                    'Review changed inputs and refresh affected native evidence.' if changed else
                    'Continue original native workflow from the recorded unit; preserve current Work.')
     return {'work_id': work['id'], 'status': work['status'], 'check_only': True,
             'ready': work['status'] in {'active', 'suspended', 'todo'} and not unresolved and not changed,
             'continuity': view(work, handoff), 'current': current, 'changed_domains': changed,
-            'native_progress': native, 'unresolved_runs': unresolved,
+            'native_progress': native, 'unresolved_runs': unresolved, 'evidence_changes': diagnostics,
             'next': next_action, 'historical': work['status'] == 'completed'}
 
 
@@ -90,3 +95,19 @@ def accept(repo, work, handoff_id, host, session_id):
     identity = 'accept-' + digest(record)[:24]
     write_record(safe_path(repo, work['id'], 'handoff-acceptance', identity + '.json'), record)
     return {'id': identity, 'record': record, 'note': 'Reception observation only; no completion authority.'}
+
+
+def summary(report):
+    """Bound model context; full inspection remains available through --check."""
+    from scripts.continuity_view import page
+    result = deepcopy(report)
+    if result.get('current'):
+        current = result['current']
+        result['current'] = {k: current.get(k) for k in ('product_snapshot', 'workspace', 'native_unit_error')}
+        result['current']['product_files'] = page(current.get('product_files'))
+        result['current']['native_units'] = page(current.get('native_units'))
+    if result.get('native_progress'):
+        native = result['native_progress']
+        result['native_progress'] = {k: native.get(k) for k in ('ready', 'state', 'reason', 'next')}
+        result['native_progress']['pending'] = page(native.get('pending'))
+    return result

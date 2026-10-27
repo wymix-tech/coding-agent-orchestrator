@@ -20,7 +20,7 @@ class HostTests(RepairCase):
         self.event('pre_tool', toolName='write', toolCallId='call-1', input={
             'path': '.orchestrator/requirements/note.md', 'content': 'do not record full content'})
         # The write must settle before a safe switch; a delayed duplicate still belongs to A.
-        self.event('post_tool', toolName='write', toolCallId='call-1', isError=False)
+        self.event('post_tool', toolName='write', toolCallId='call-1', isError=True)
         req = self.repo / '.orchestrator/requirements/b.md'; req.write_text('# b\n')
         rc, out = self.run_cli('start', '--replace', '--requirement', '.orchestrator/requirements/b.md')
         self.assertEqual(rc, 0, out)

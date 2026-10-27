@@ -112,6 +112,9 @@ class LightSpecTests(RepairCase):
         req = self.read_work(wid)["requirement"]["path"]
         (self.repo / req).write_text("Changed requirement")
         self.run_cli("start", "--requirement", req, "--replace")
+        self.assertIn("spec_binding", self.read_work(wid)["sdd"])
+        rc, out = self.run_cli("reopen", "--work", wid, "--reanchor", "--reason", "explicit requirement revision")
+        self.assertEqual(rc, 0, out)
         self.assertNotIn("spec_binding", self.read_work(wid)["sdd"])
 
     def test_standard_keeps_native_contract(self):

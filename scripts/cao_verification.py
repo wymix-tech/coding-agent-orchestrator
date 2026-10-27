@@ -246,6 +246,12 @@ def _prepare_verification(args: argparse.Namespace):
                     else f'cao resume --work {wid} --reactivate')
         print(json.dumps(record_denial(repo, work, "verify", {"ok": False, "error": "VERIFICATION_WORK_NOT_ACTIVE", "status": work.get("status"), "next": recovery}))); return 2
 
+    current_run = work.get('verification') or {}
+    if current_run.get('status') == 'running':
+        print(json.dumps({'ok': False, 'error': 'VERIFICATION_RUN_UNRESOLVED', 'run_id': current_run.get('run_id'),
+                          'next': 'Inspect runtime show; wait/cancel a live executor, finalize complete receipts, or explicitly abandon after inspecting unknown effects. No command is replayed.'}))
+        return 2
+
     from scripts.project_verification import project_prerequisite
     project = project_prerequisite(repo, work)
     if project:

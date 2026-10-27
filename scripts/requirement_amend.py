@@ -52,6 +52,8 @@ def command(args):
                    'requirement_path': work['requirement']['path'],
                    'before_bytes': base64.b64encode(target.read_bytes()).decode(),
                    'after_bytes': base64.b64encode(data).decode()}
+        from scripts.lifecycle_guard import digest as intent_digest
+        journal['intent_sha256'] = intent_digest({k: v for k, v in journal.items() if k != 'status'})
         atomic_json(root(repo) / (identity + '.json'), journal)
         from scripts.work_operations import recover
         result = recover(repo, identity)

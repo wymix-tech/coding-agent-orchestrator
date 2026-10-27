@@ -1,0 +1,52 @@
+{
+  "kind": "synthetic_scaling_probe",
+  "repeats": 5,
+  "rows": [
+    {
+      "native_units": 100,
+      "handoffs": 100,
+      "observations": 1000,
+      "bounded_view": {
+        "p50_seconds": 5.269800021778792e-05,
+        "p95_seconds": 0.00014896999982738635,
+        "peak_bytes": 5016,
+        "result_bytes": 949
+      },
+      "latest_handoff": {
+        "p50_seconds": 0.005295405999731884,
+        "p95_seconds": 0.0066583839998202166,
+        "peak_bytes": 124474,
+        "result_bytes": 84
+      },
+      "event_page": {
+        "p50_seconds": 0.09436934399991515,
+        "p95_seconds": 0.13457557400033693,
+        "peak_bytes": 56341,
+        "result_bytes": 5704
+      }
+    },
+    {
+      "native_units": 1000,
+      "handoffs": 1000,
+      "observations": 10000,
+      "bounded_view": {
+        "p50_seconds": 8.028799993553548e-05,
+        "p95_seconds": 0.00015317599991249153,
+        "peak_bytes": 10876,
+        "result_bytes": 951
+      },
+      "latest_handoff": {
+        "p50_seconds": 0.05903641900022194,
+        "p95_seconds": 0.07137779999993654,
+        "peak_bytes": 1173302,
+        "result_bytes": 87
+      },
+      "event_page": {
+        "p50_seconds": 1.0560531060000358,
+        "p95_seconds": 1.2239889980000953,
+        "peak_bytes": 883474,
+        "result_bytes": 5804
+      }
+    }
+  ]
+}

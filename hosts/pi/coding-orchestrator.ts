@@ -244,6 +244,14 @@ export default function (pi: ExtensionAPI) {
     remind(await request("before_compact", {}, ctx), ctx);
   });
 
+  pi.on("session_before_switch", async (_event, ctx) => {
+    remind(await request("before_transfer", {}, ctx), ctx);
+  });
+
+  pi.on("session_before_fork", async (_event, ctx) => {
+    remind(await request("before_transfer", {}, ctx), ctx);
+  });
+
   pi.on("session_shutdown", async (event, ctx) => {
     await request("session_end", { reason: event.reason }, ctx);
     presentation.reset(ctx);

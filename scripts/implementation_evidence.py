@@ -3,6 +3,22 @@ from copy import deepcopy
 import json
 
 
+def records(repo, work):
+    from scripts.path_guard import repo_file
+    from scripts.runtime_store import read_record
+    from scripts.lifecycle_guard import digest
+    rows = []
+    for ref in (work.get('sdd') or {}).get('implementation_evidence') or []:
+        if 'record' not in ref:
+            rows.append(ref)
+            continue
+        row = read_record(repo_file(repo, ref['record']))
+        if not row or row.get('id') != ref['id'] or digest(row) != ref['sha256']:
+            raise ValueError('IMPLEMENTATION_EVIDENCE_RECORD_CORRUPT')
+        rows.append(row)
+    return rows
+
+
 def command(args):
     from scripts.cao_runtime import repo_root, ensure_initialized, sha256_file, now
     from scripts.cao_work_store import resolve_work, save_work, queue_event
@@ -16,12 +32,20 @@ def command(args):
         work = resolve_work(repo, args.work)
         if not work:
             raise ValueError('WORK_ITEM_NOT_FOUND')
-        records = (work.get('sdd') or {}).get('implementation_evidence') or []
+        refs = (work.get('sdd') or {}).get('implementation_evidence') or []
+        if args.evidence_command == 'list':
+            if args.cursor < 0:
+                raise ValueError('EVIDENCE_CURSOR_INVALID')
+            selected = deepcopy(work)
+            selected['sdd']['implementation_evidence'] = list(reversed(refs))[args.cursor:args.cursor + args.limit]
+            evidence_rows = records(repo, selected)
+        else:
+            evidence_rows = records(repo, work)
         if args.evidence_command == 'show':
             import base64
             from scripts.path_guard import repo_file
             from hashlib import sha256
-            row = next((r for r in records if r['id'] == args.id), None)
+            row = next((r for r in evidence_rows if r['id'] == args.id), None)
             if not row:
                 raise ValueError('IMPLEMENTATION_EVIDENCE_NOT_FOUND')
             data = repo_file(repo, row['archive']).read_bytes() if row.get('archive') else None
@@ -31,7 +55,7 @@ def command(args):
             return 0
         if args.evidence_command == 'list':
             rows = []
-            for row in records:
+            for row in evidence_rows:
                 item = deepcopy(row)
                 try:
                     path = provider_artifact(repo, row['path'], provider_output_dirs(work['sdd']['provider'], repo))
@@ -71,9 +95,11 @@ def command(args):
         if sha256_file(path) != before:
             raise ValueError('IMPLEMENTATION_EVIDENCE_CHANGED_DURING_CAPTURE')
         from scripts.lifecycle_contract import inputs
-        record['inputs'] = inputs(repo, work)
+        candidate = deepcopy(work)
+        candidate['sdd'].setdefault('implementation_evidence', []).append(deepcopy(record))
+        record['inputs'] = inputs(repo, candidate)
         if args.supersedes:
-            if args.supersedes not in {r['id'] for r in records}:
+            if args.supersedes not in {r['id'] for r in evidence_rows}:
                 raise ValueError('IMPLEMENTATION_EVIDENCE_NOT_FOUND')
             record['supersedes'] = args.supersedes
         if args.session:
@@ -92,7 +118,7 @@ def command(args):
             record['source'] = 'executor_receipt' if run['start']['source'] == 'cao_executor' else 'agent_declaration'
             record['execution_inputs'] = run['start']['inputs']
         identity = 'evidence-' + digest(record)[:24]
-        if any(row['id'] == identity for row in records):
+        if any(row['id'] == identity for row in evidence_rows):
             print(json.dumps({'ok': True, 'status': 'unchanged', 'evidence_id': identity}))
             return 0
         from scripts.evidence_archive import retain
@@ -103,10 +129,13 @@ def command(args):
         record.update(id=identity, schema_version=1, attached_at=now(),
                       archive=retain(repo, work['id'], data))
         if args.supersedes:
-            if args.supersedes not in {r['id'] for r in records}:
+            if args.supersedes not in {r['id'] for r in evidence_rows}:
                 raise ValueError('IMPLEMENTATION_EVIDENCE_NOT_FOUND')
             record['supersedes'] = args.supersedes
-        work['sdd'].setdefault('implementation_evidence', []).append(record)
+        from scripts.runtime_store import safe_path, write_record
+        record_path = safe_path(repo, work['id'], 'implementation-evidence', identity + '.json')
+        write_record(record_path, record)
+        work['sdd'].setdefault('implementation_evidence', []).append({'id': identity, 'record': record_path.relative_to(repo).as_posix(), 'sha256': digest(record)})
         queue_event(work, {'event': 'sdd.implementation_evidence.attached',
                           'work_item_id': work['id'], 'evidence_id': identity})
         save_work(repo, work)
@@ -133,5 +162,6 @@ def register_parser(sub):
             p.add_argument('--session')
             p.add_argument('--host')
         elif name == 'list':
+            p.add_argument('--cursor', type=int, default=0)
             p.add_argument('--limit', type=int, choices=range(1, 501), default=50)
         p.set_defaults(fn=command)

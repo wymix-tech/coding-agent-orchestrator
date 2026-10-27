@@ -104,6 +104,7 @@ def execute(repo: Path, wid: str, run_id: str, command_id: str,
         except OSError as exc:
             budget, capture_error = 0, type(exc).__name__
     sink = LogSink(folder, cfg["logs"], budget, secrets)
+    sink.cancel_requested = lambda: read_record(run_path(repo, wid, run_id, "cancel.json")) is not None
     clock = time.monotonic()
     try:
         try:

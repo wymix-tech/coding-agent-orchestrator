@@ -43,7 +43,15 @@ def snapshot(repo, work):
         observed_units, unit_error = [], str(exc)
     from scripts.runtime_queries import runs
     unresolved = [r for r in runs(repo, work) if r['recovery_status'] not in {'complete', 'projection_missing', 'superseded'}]
-    return {'native_units': observed_units, 'native_unit_error': unit_error, 'unresolved_runs': unresolved, 'product_snapshot': product, 'product_files': product_files, 'requirement': requirement, 'observed_requirement_sha256': actual,
+    from scripts.evidence_domains import capture
+    try:
+        domains = capture(repo, work)
+        domain_error = None
+    except (ValueError, OSError, RuntimeError, KeyError) as exc:
+        domains, domain_error = {}, str(exc)
+    from scripts.cao_provider_workflows import provider_native_skills
+    skills = {r['name']: sha256_file(repo_file(repo, r['rel_path'])) for r in provider_native_skills(repo, sdd.get('provider'))}
+    return {'capture_complete': not domain_error and not unit_error, 'current_unit': (work.get('resume') or {}).get('current_unit'), 'read_before_resume': (work.get('resume') or {}).get('read_before_resume', []), 'evidence_domains': domains, 'domain_error': domain_error, 'provider_skills': skills, 'native_units': observed_units, 'native_unit_error': unit_error, 'unresolved_runs': unresolved, 'product_snapshot': product, 'product_files': product_files, 'requirement': requirement, 'observed_requirement_sha256': actual,
             'project_binding': deepcopy(work.get('project_binding')),
             'native': {key: deepcopy(sdd.get(key)) for key in
                        ('provider', 'native_ref', 'route_decision', 'plan_scope', 'native_state',
@@ -66,6 +74,7 @@ def view(work, handoff=None):
             differences.append('legacy_handoff_missing_source_snapshot')
     return {'work_id': work['id'], 'state_revision': work.get('state_revision'),
             'execution_generation': work.get('execution_generation', 0),
+            'current_unit': resume.get('current_unit'), 'read_before_resume': resume.get('read_before_resume', []),
             'coordination_items': page([r for r in resume.get('items', []) if r.get('status') == 'open']),
             'completed': page(resume.get('completed')), 'pending': page(resume.get('pending')),
             'handoff': {'id': (handoff or {}).get('id'), 'version': (handoff or {}).get('version'),

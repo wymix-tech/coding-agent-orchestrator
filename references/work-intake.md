@@ -117,3 +117,5 @@ unrecognized outputs and never grant gates. `--unit` is a descriptive native
 reference, not verified scope coverage. Changed or missing original bytes appear
 in evidence listing; the original hash is retained. Complete the native workflow
 and use the existing `cao lifecycle bind --report ...` for final admission.
+
+For request switching, strictly read-only previews, process evidence archives and run recovery, follow [Task continuity](task-continuity.md).

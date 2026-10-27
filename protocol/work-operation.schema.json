@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Recoverable Work operation",
+  "type": "object",
+  "required": [
+    "version",
+    "id",
+    "status",
+    "changes",
+    "intent_sha256"
+  ],
+  "properties": {
+    "version": {
+      "const": 1
+    },
+    "status": {
+      "enum": [
+        "prepared",
+        "applying",
+        "committed",
+        "aborted"
+      ]
+    },
+    "changes": {
+      "type": "array",
+      "minItems": 1
+    }
+  },
+  "additionalProperties": true
+}

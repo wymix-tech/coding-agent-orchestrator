@@ -67,3 +67,5 @@ The original Work is active with corrected scope and fresh applicable evidence; 
 ## If blocked
 
 If genuine user input/authorization or a native independent reviewer is required and unavailable, record the exact blocker and wait. Do not replace the Work or create false approval/review evidence.
+
+For request switching, strictly read-only previews, process evidence archives and run recovery, follow [Task continuity](task-continuity.md).

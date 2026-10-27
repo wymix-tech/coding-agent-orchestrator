@@ -231,6 +231,9 @@ def update_session_event(
     session = load_session(repo, session_ref, host=host)
     if session is None:
         return register_session(repo, event_work, session_ref, host, event=event, kind=kind, parent_session_id=parent_session_id)
+    if event_work and session.get('work_item_id') and session['work_item_id'] != event_work['id']:
+        # A new prompt/tool event is not an explicit cross-Work attachment.
+        event_work = None
     if session.get("host") == "unknown" and host and host != "unknown":
         # Re-register to re-key the stored file using the now-known Host identity.
         return register_session(
