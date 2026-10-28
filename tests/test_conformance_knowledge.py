@@ -121,6 +121,8 @@ class SessionConformance(unittest.TestCase):
             t.hook('turn_end', kind='subagent', subagent_id=child, last_assistant_message='[]')
             report['findings_file'] = raw.relative_to(t.repo).as_posix()
             report_path.write_text(json.dumps(report))
+            from tests.helpers import bind_fixture_finding_content
+            bind_fixture_finding_content(t.repo, report_path)
             t.env['PI_SESSION_ID'] = 'primary-fixture'
             t.run_cli('sdd', 'review', 'import', '--layer', layer, '--report', package['report'])
         for package in packages:

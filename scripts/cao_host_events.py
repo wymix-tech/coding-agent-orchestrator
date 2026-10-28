@@ -275,6 +275,13 @@ def host_event(args: argparse.Namespace) -> int:
         return respond({"decision": "allow", "additional_context": render_context(repo, work, session_id=host_session_id, host=args.host)})
 
     if event == "pre_tool":
+        if work and session and session.get('review_ticket'):
+            layer = session['review_ticket']['layer']
+            run = (work.get('sdd', {}).get('native_reviews') or {}).get(layer) or {}
+            if (run.get('execution_binding') or {}).get('session_id') != session['id']:
+                return respond({'decision': 'deny', 'reason':
+                    'NATIVE_REVIEW_EXECUTION_UNBOUND: host startup binding must succeed before inspection; '
+                    'coordinator should run cao sdd review diagnose --layer ' + layer})
         if work and kind == "primary":
             question_text = json.dumps(raw.get('tool_input') or raw.get('input') or raw.get('arguments') or {}, ensure_ascii=False).lower()
             baseline_question = '验证基线' in question_text or 'verification baseline' in question_text
@@ -347,7 +354,7 @@ def host_event(args: argparse.Namespace) -> int:
                     return respond({'decision': 'deny', 'reason': loopback_scope['reason'] + ': ' + loopback_scope['next']})
                 review_patches = dispatch_patch_state(repo, work, code_snapshot)
                 if not review_patches["ready"] and not verification_scaffold_write(repo, raw):
-                    return respond({"decision": "deny", "reason": review_patches["reason"] + ": classify every active native layer before patching; follow native loopback for intent/spec gaps."})
+                    return respond({"decision": "deny", "reason": review_patches["reason"] + ": classify every active native layer before patching; use `cao sdd review diagnose --layer <layer>` for read-only evidence diagnostics, or `review recover` with the exact original message. Follow native loopback for intent/spec gaps."})
                 path_state = path_assessment_state(repo, work)
                 if not path_state["ready"]:
                     next_step = path_assessment_instruction(work)

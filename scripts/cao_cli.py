@@ -151,7 +151,7 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--repo", default="."); sp.add_argument("--work"); sp.set_defaults(fn=cmd_sdd_sync)
     review = sdd_sub.add_parser("review", help="Record independent native reviews and pre-patch dispatch classification")
     review_sub = review.add_subparsers(dest="review_action", required=True)
-    for name in ("begin", "attach", "submit", "classify", "resolve", "findings", "prepare", "import", "status", "check", "draft", "classify-batch", "loopback"):
+    for name in ("begin", "attach", "submit", "classify", "resolve", "findings", "prepare", "import", "status", "check", "draft", "classify-batch", "loopback", "diagnose", "recover"):
         sp = review_sub.add_parser(name)
         sp.add_argument("--repo", default="."); sp.add_argument("--work")
         if name not in {'findings', 'prepare', 'status', 'classify-batch', 'loopback'}:
@@ -165,14 +165,14 @@ def build_parser() -> argparse.ArgumentParser:
                 capability.add_argument('--external-session', action='store_true', help='Prepare independent external-host handoff; adapter is verified on attach')
         elif name == 'findings':
             sp.add_argument('--source', required=True, help='Unmodified native Markdown list or JSON findings under _bmad-output')
-        elif name == 'draft':
+        elif name in {'draft', 'recover'}:
             sp.add_argument('--source', required=True, help='Original native Markdown/JSON findings; generates triage skeleton')
         elif name == 'loopback':
             sp.add_argument('--extend', action='store_true', help='Record additional exact files discovered during the active native replan; preserves the old round')
             sp.add_argument('--reason', required=True)
             sp.add_argument('--keep', required=True, help='Native KEEP instructions retained before reverting')
             sp.add_argument('--path', action='append', required=True, help='Exact product file to revert/reimplement; repeat for all affected files')
-        elif name == 'status':
+        elif name in {'status', 'diagnose'}:
             pass
         elif name == 'check':
             sp.add_argument('--reviewer-session', help='Coordinator runs a check for its bound observed reviewer child')

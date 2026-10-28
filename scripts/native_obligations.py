@@ -195,7 +195,7 @@ def review_next(repo, work, inputs):
             reviewer = binding.get('reviewer') or {}
             if reviewer and binding.get('host'):
                 session = load_session(repo, reviewer['session_id'], host=binding['host'])
-                if not session or session.get('status') != 'active':
+                if (not session or session.get('status') != 'active') and not (session or {}).get('review_output_sha256'):
                     return ('Bound reviewer for ' + layer + ' has exited. If its original ticket-bound findings were collected, classify them; otherwise restore its actual host session or explicitly restart this layer. Do not attach another identity to the existing ticket.')
         if dispatch(work):
             return dispatch_review_next(records, layers, inputs)
@@ -472,6 +472,19 @@ def validate_finding_mapping(raw, findings):
                 {'ids': actual_ids, 'extra': sorted(actual - expected), 'duplicate': duplicates})
 
 
+def validate_finding_content(run, report, source, raw):
+    if run.get('finding_binding_version') != 1:
+        return
+    expected = hashlib.sha256(source.read_bytes()).hexdigest()
+    if report.get('source_sha256') != expected:
+        invalid('NATIVE_REVIEW_SOURCE_DIGEST_MISMATCH', '$.source_sha256', expected, report.get('source_sha256'))
+    originals = {item['id']: digest(item) for item in raw}
+    for index, item in enumerate(report['findings']):
+        if item.get('content_sha256') != originals[item['id']]:
+            invalid('NATIVE_REVIEW_FINDING_CONTENT_MISMATCH', f'$.findings[{index}].content_sha256',
+                    originals[item['id']], item.get('content_sha256'))
+
+
 def validate_judgments(report, dispatch_route):
     findings = report['findings']
     conflicts = report.get('intent_conflicts', [])
@@ -528,6 +541,7 @@ def classify_review(repo, work, layer, report_path, code_snapshot):
     if not isinstance(raw, list) or not isinstance(findings, list):
         raise ValueError('NATIVE_REVIEW_TRIAGE_REQUIRED')
     validate_finding_mapping(raw, findings)
+    validate_finding_content(run, report, findings_file, raw)
     conflicts, loopback = validate_judgments(report, dispatch(work))
     run.update(status='classified', reviewer=report['reviewer'], findings=findings,
                loopback_required=loopback, intent_conflicts=conflicts, raw_count=len(raw), classified_count=len(findings),
@@ -630,6 +644,7 @@ def submit_review(repo, work, layer, report_path, code_snapshot):
     if classified and findings_file.relative_to(repo).as_posix() not in run.get('triage_hashes', {}):
         raise ValueError('NATIVE_REVIEW_TRIAGE_STALE')
     validate_finding_mapping(load_findings(findings_file), findings)
+    validate_finding_content(run, report, findings_file, load_findings(findings_file))
     _, loopback = validate_judgments(report, False)
     if loopback:
         raise ValueError('NATIVE_REVIEW_LOOPBACK_REQUIRED')

@@ -96,6 +96,16 @@ def begin_review(repo, work, args, identity):
     old_contract = records.get('_contract') or {}
     target = records.get(args.layer) or {}
     round_id = old_contract.get('round_id') or new_id('review-round')
+    if args.restart and target:
+        from scripts.runtime_store import read_record, safe_path
+        previous = read_record(safe_path(repo, work['id'], 'review-retry.json')) or {}
+        if (previous.get('count', 0) >= 2 and previous.get('layer') == args.layer
+                and previous.get('input_sha256') == target.get('input_sha256')
+                and target.get('inputs') == review_inputs(repo, work, code_snapshot)
+                and str((previous.get('response') or {}).get('error', '')).startswith(
+                    ('NATIVE_REVIEW_OUTPUT_SOURCE_MISMATCH', 'NATIVE_REVIEW_OUTPUT_UNOBSERVED'))):
+            invalid('NATIVE_REVIEW_EVIDENCE_RECOVERY_REQUIRED', 'review',
+                    'use review diagnose/recover; restarting unchanged input cannot repair collected output provenance')
     if args.restart and target and target.get('round_id') == old_contract.get('round_id'):
         round_id = new_id('review-round')
     proposed['round_id'] = round_id
@@ -158,7 +168,7 @@ def begin_review(repo, work, args, identity):
         work['sdd'].setdefault('native_review_history', []).append({'layer': args.layer, 'review': existing, 'replacement_reason': 'explicit restart'})
     run = existing if reused else {"id": new_id("review"), "status": "running", "inputs": inputs,
            "input_sha256": native_digest(inputs), "model": args.model,
-           "task_binding_version": 1, "layer": args.layer,
+           "task_binding_version": 1, "finding_binding_version": 1, "layer": args.layer,
            "round_id": proposed['round_id'],
            "model_source": model_source,
            "existing_session_ids": [session['id'] for session in list_sessions(repo)],
@@ -178,7 +188,7 @@ def begin_review(repo, work, args, identity):
     output['reviewer_start'] = (f'{cao_invocation()["command"]} sdd review attach --work {work["id"]} '
         f'--layer {args.layer} --run {run["id"]} --input-sha256 {run["input_sha256"]} --model {shlex.quote(args.model)}')
     output['task_marker'] = task_marker(run, args.layer)
-    output['next'] = ('Include task_marker as an exact standalone line in the actual reviewer task prompt. Never bind by session order. Begin ALL active layers before launching reviewers. Each new independent reviewer must be bound before review, via child reviewer_start or coordinator --reviewer-session with observed child metadata. '
+    output['next'] = ('Include task_marker as an exact standalone line in the actual reviewer task prompt. Never bind by session order. Begin ALL active layers before launching reviewers. The host automatically binds each ticket-marked observed child before inspection using parent/model/tools metadata. Use reviewer_start or coordinator --reviewer-session only for compatible manual/external attachment; never attach after inspection. '
         'to acknowledge this ticket and frozen input, then inspect that exact code without product writes. '
         + ('Preserve unmodified native Markdown/JSON findings for each layer; classify ALL layers before patches, then resolve ALL layers. '
            'Use `cao sdd review classify --layer <layer> --report <triage.json>`, then `cao sdd review resolve --layer <layer> --report <resolved.json>`.'
@@ -376,8 +386,8 @@ def draft_report(repo, work, layer, source):
     if path.exists() and json.loads(path.read_text()).get('findings'):
         invalid('NATIVE_REVIEW_DRAFT_EXISTS', 'report', 'reuse the existing triage; never overwrite judgments', str(path.relative_to(repo)))
     report = {'run_id': run['id'], 'input_sha256': run['input_sha256'], 'reviewer': binding['reviewer'],
-              'findings_file': raw.relative_to(repo).as_posix(), 'intent_conflicts': [],
-              'findings': [{'id': item, 'verdict': None, 'disposition': None, 'evidence': ''} for item in ids]}
+              'findings_file': raw.relative_to(repo).as_posix(), 'source_sha256': hashlib.sha256(raw.read_bytes()).hexdigest(), 'intent_conflicts': [],
+              'findings': [{'id': item['id'], 'content_sha256': native_digest(item), 'verdict': None, 'disposition': None, 'evidence': ''} for item in findings]}
     atomic_json(path, report)
     return {'ok': True, 'report': path.relative_to(repo).as_posix(), 'findings': findings,
             'source_sha256': hashlib.sha256(raw.read_bytes()).hexdigest(),
