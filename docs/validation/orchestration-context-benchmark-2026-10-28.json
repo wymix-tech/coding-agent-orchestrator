@@ -1,0 +1,105 @@
+{
+  "environment": {
+    "platform": "Linux",
+    "python": "3.12.14",
+    "baseline": "695173d",
+    "samples_per_case": 12,
+    "note": "Shared container while regression shards were running. P95 uses nearest-rank (maximum for n=12). This is a bounded synthetic file-set benchmark, not a production repository SLA."
+  },
+  "results": [
+    {
+      "version": "cao-baseline",
+      "extra_files": 0,
+      "extra_file_bytes": 0,
+      "render_context": {
+        "p50_seconds": 0.17222976949997815,
+        "p95_seconds": 0.21292493400000012,
+        "samples": 12,
+        "calls": {
+          "verification_inputs": 6,
+          "project_prerequisite": 6,
+          "code_snapshot": 9,
+          "capture": 3
+        },
+        "output_bytes": 4075
+      },
+      "host_event": {
+        "p50_seconds": 0.294834000499975,
+        "p95_seconds": 0.37095085400000016,
+        "samples": 12,
+        "calls": {},
+        "output_bytes": 26
+      }
+    },
+    {
+      "version": "cao-baseline",
+      "extra_files": 500,
+      "extra_file_bytes": 455890,
+      "render_context": {
+        "p50_seconds": 0.5920322900000201,
+        "p95_seconds": 0.7323543410000184,
+        "samples": 12,
+        "calls": {
+          "verification_inputs": 6,
+          "code_snapshot": 9,
+          "project_prerequisite": 6,
+          "capture": 3
+        },
+        "output_bytes": 4075
+      },
+      "host_event": {
+        "p50_seconds": 0.46024507850003715,
+        "p95_seconds": 0.47927467300002036,
+        "samples": 12,
+        "calls": {},
+        "output_bytes": 26
+      }
+    },
+    {
+      "version": "cao",
+      "extra_files": 0,
+      "extra_file_bytes": 0,
+      "render_context": {
+        "p50_seconds": 0.07040170300001591,
+        "p95_seconds": 0.10051605000001018,
+        "samples": 12,
+        "calls": {
+          "code_snapshot": 1,
+          "project_prerequisite": 4,
+          "capture": 1
+        },
+        "output_bytes": 4030
+      },
+      "host_event": {
+        "p50_seconds": 0.24201644850001003,
+        "p95_seconds": 0.2760170119999543,
+        "samples": 12,
+        "calls": {},
+        "output_bytes": 26
+      }
+    },
+    {
+      "version": "cao",
+      "extra_files": 500,
+      "extra_file_bytes": 455890,
+      "render_context": {
+        "p50_seconds": 0.11403558000000658,
+        "p95_seconds": 0.1411944150000295,
+        "samples": 12,
+        "calls": {
+          "code_snapshot": 1,
+          "project_prerequisite": 4,
+          "capture": 1
+        },
+        "output_bytes": 4030
+      },
+      "host_event": {
+        "p50_seconds": 0.39429745949996686,
+        "p95_seconds": 0.5223299650000399,
+        "samples": 12,
+        "calls": {},
+        "output_bytes": 26
+      }
+    }
+  ]
+}

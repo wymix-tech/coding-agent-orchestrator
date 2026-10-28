@@ -156,15 +156,18 @@ def project_state(repo, scopes=None, work=None):
         standard = project_standard(repo, scope)
         certified = certification(repo, scope, record) or {}
         failed = [row for row in record.get('results', []) if row.get('status') == 'failed']
-        product_failure = (work and work.get('status') == 'active' and record.get('status') == 'failed'
+        repair = ((work or {}).get('sdd') or {}).get('completion_repair') or {}
+        diagnosed = repair.get('kind') == 'product' and repair.get('source') == 'project_preparation' and repair.get('run_id') == record.get('run_id')
+        product_failure = (work and work.get('status') == 'active' and record.get('status') in {'failed', 'error', 'blocked'}
                            and record.get('standard') == standard and certified.get('status') == 'passed'
-                           and certified.get('standard') == standard and bool(failed)
-                           and all(row.get('status') in {'passed', 'failed'} for row in record.get('results', []))
-                           and all(assertion_failure(row) for row in failed))
+                           and certified.get('standard') == standard and (bool(failed) or diagnosed)
+                           and (diagnosed or (all(row.get('status') in {'passed', 'failed'} for row in record.get('results', []))
+                                              and all(assertion_failure(row) for row in failed))))
         if not product_failure and (record.get('status') != 'passed' or record.get('standard') != standard):
             return {'ready': False, 'reason': 'PROJECT_VERIFICATION_CHECK_REQUIRED',
-                    'next': 'Review existing checks against accepted project technology and project-wide quality standards, then run `cao verification check --project --scope ' + scope + '`; inspect failures and repair project-wide checks before creating or resuming Work. Keep the pending Work unchanged; do not derive baseline scripts from its requirement.',
-                    'scope': scope, 'last_status': record.get('status')}
+                    'next': 'Review existing checks against accepted project technology and project-wide quality standards, then run `cao verification check --project --scope ' + scope + '`; inspect failures and repair project-wide checks before creating or resuming Work. Keep the pending Work unchanged; do not derive baseline scripts from its requirement.' + (' Existing standard certification is valid: inspect this failure, then record its diagnosis with `cao lifecycle repair --kind product|environment|baseline|unknown --reason <diagnosis>`. A product diagnosis permits repair in the current Work but never certifies final completion.' if work and certified.get('standard') == standard else ''),
+                    'scope': scope, 'last_status': record.get('status'),
+                    'repair_command': 'cao lifecycle repair --kind product|environment|baseline|unknown --reason <diagnosis>' if work and certified.get('standard') == standard else None}
     return {'ready': True}
 
 

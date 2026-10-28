@@ -230,3 +230,18 @@ class RecoveryClosure(unittest.TestCase):
         self.check('sdd', 'transition', 'resolve', '--work', self.wid, '--operation', operation, '--outcome', 'applied', '--evidence', 'inspection.md', '--reason', 'observed external result')
         self.assertEqual(0, transition(self.repo, 'done', self.wid)['exit_code'])
         self.assertEqual('x', (self.repo / 'transition-count').read_text())
+
+    def test_opaque_project_failure_requires_explicit_product_diagnosis(self):
+        from scripts.verification_probe import project_state
+        (self.repo / 'feature.py').write_text('valid = True\n')
+        (self.repo / 'preparation_suite.py').write_text('import feature\nprint("Ran 1 test")\nraise SystemExit(0 if feature.valid else 1)\n')
+        self.check('verification', 'check', '--project')
+        self.check('reopen', '--reanchor', '--reason', 'accepted opaque existing runner')
+        (self.repo / 'feature.py').write_text('valid = False\n')
+        self.assertEqual(1, self.cli('verification', 'check', '--project')[0])
+        self.assertFalse(project_state(self.repo, work=self.work())['ready'])
+        self.check('lifecycle', 'repair', '--kind', 'unknown', '--reason', 'investigating')
+        self.assertFalse(project_state(self.repo, work=self.work())['ready'])
+        self.check('lifecycle', 'repair', '--kind', 'product', '--reason', 'inspected assertion: feature.valid must be true')
+        self.assertTrue(project_state(self.repo, work=self.work())['ready'])
+        self.assertNotEqual(0, self.cli('done')[0])
