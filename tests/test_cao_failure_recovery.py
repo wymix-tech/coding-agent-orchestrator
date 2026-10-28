@@ -79,6 +79,7 @@ class FailureRecovery(unittest.TestCase):
         work['verification'] = {'status': 'failed', 'run_id': 'baseline-failed'}
         save_work(self.repo, work)
         self.check('lifecycle', 'repair', '--kind', 'product', '--reason', 'Observed assertion regression')
+        self.assertEqual(2, self.cli('lifecycle', 'repair', '--kind', 'environment', '--reason', 'Cannot waive product repair')[0])
         self.assertEqual('implementation', self.work()['execution']['phase'])
         self.assertEqual('execution', self.check('next')['action']['stage'])
         self.assertEqual(2, self.cli('verify')[0])

@@ -109,6 +109,8 @@ def repair(args):
         if not args.reason.strip():
             raise ValueError('REPAIR_REASON_REQUIRED')
         previous = work['sdd'].get('completion_repair')
+        if previous and previous.get('kind') == 'product' and args.kind != 'product':
+            raise ValueError('NATIVE_PRODUCT_REPAIR_UNRESOLVED: complete native repair before changing its classification')
         if previous:
             work['sdd'].setdefault('completion_repair_history', []).append(previous)
         row = {'kind': args.kind, 'reason': args.reason, 'run_id': run.get('run_id'), 'at': now()}
