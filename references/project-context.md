@@ -83,3 +83,14 @@ Current scope background and applicable initialization/verification are ready; r
 ## If blocked
 
 Follow the structured reason and project inspect/diff output. Preserve the original request and existing Work; never recreate it to repair project context.
+
+## Project architecture Skills
+
+Before planning, scaffolding or business implementation, inspect `cao project
+architecture show --scope <scope>`. Read every returned Skill path, including
+inherited root rules. Use accepted package identity and scope paths. For missing
+rules follow [architecture selection and adoption](project-architecture.md).
+Do not infer DDD merely from Spring Boot. Plans must place files by responsibility;
+provider review must cite applicable ARCH rule IDs and assess semantic boundaries.
+Resume, switching and child agents preserve the Work architecture binding. Changed
+rules require reviewed `project bind --refresh`; never reset Work progress.

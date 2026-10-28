@@ -195,8 +195,10 @@ def make_binding(repo, scopes=None):
     if not context:
         raise ValueError('PROJECT_CONTEXT_REQUIRED')
     scopes = selected_scopes(context, scopes)
+    from scripts.project_architecture import snapshot
+    architecture = snapshot(repo, scopes)
     return {'version': 1, 'revision': context['revision'], 'scopes': scopes,
-            'fingerprint': fingerprint(context, scopes)}
+            'fingerprint': fingerprint(context, scopes), 'architecture': architecture}
 
 
 def binding_state(repo, work):
@@ -210,4 +212,8 @@ def binding_state(repo, work):
     if binding and binding['fingerprint'] != state['fingerprint']:
         return {**state, 'ready': False, 'reason': 'WORK_PROJECT_BINDING_STALE',
                 'next': 'Review affected project fields and verification baseline, then `cao project bind --work ' + work['id'] + ' --refresh`; refresh related evidence.'}
-    return state
+    from scripts.project_architecture import state as architecture_state
+    architecture = architecture_state(repo, state['scopes'], work)
+    if not architecture['ready']:
+        return {**state, **architecture}
+    return {**state, 'architecture': architecture}

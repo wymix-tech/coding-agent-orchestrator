@@ -43,6 +43,11 @@ class ProjectVerificationBootstrap(unittest.TestCase):
         (self.repo / 'openspec/config.yaml').write_text('context: fixture\n')
         (self.repo / 'openspec/feature.md').write_text('# Feature\n## Acceptance\n- Current operation works.\n')
         self.call('init')
+        # Verification preparation fixtures predate architecture adoption.
+        path = self.repo / '.orchestrator/config.json'
+        cfg = json.loads(path.read_text())
+        cfg.pop('architecture_policy', None)
+        path.write_text(json.dumps(cfg))
         self.call('sdd', 'select', '--provider', 'openspec')
 
     def test_existing_project_cli_requires_actual_entries_and_real_probe_before_start(self):

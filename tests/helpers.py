@@ -211,6 +211,8 @@ def provision_fixture_background(repo):
     commit_context(repo, context, None)
     path = repo / '.orchestrator/config.json'
     cfg = json.loads(path.read_text())
+    # This helper models projects initialized before architecture adoption.
+    cfg.pop('architecture_policy', None)
     cfg.setdefault('lifecycle_contract', 1)
     cfg.setdefault('verification', {})['context_binding'] = verification_binding(repo)
     if not cfg['verification'].get('scripts'):

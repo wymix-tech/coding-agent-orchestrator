@@ -279,6 +279,11 @@ def _prepare_verification(args: argparse.Namespace):
     if project:
         print(json.dumps({"ok": False, "error": project["reason"], "next": project}))
         return 2
+    from scripts.project_architecture import check as architecture_check
+    architecture = architecture_check(repo, (work.get('project_binding') or {}).get('scopes', ['root']))
+    if not architecture['ready']:
+        print(json.dumps({'ok': False, 'error': 'ARCHITECTURE_CHECK_FAILED', 'architecture': architecture}))
+        return 2
     route = native_route_state(repo, work)
     if not route["ready"]:
         print(json.dumps(record_denial(repo, work, "verify", {"ok": False, "error": route["reason"], "next": route["next"]}))); return 2

@@ -28,6 +28,7 @@ class ProjectAcceptanceTests(unittest.TestCase):
         # This suite preserves the original dual-executor contract as legacy coverage.
         path = self.repo / '.orchestrator/config.json'
         cfg = json.loads(path.read_text())
+        cfg.pop('architecture_policy', None)  # pre-adoption project fixture
         cfg['lifecycle_contract'] = 1
         path.write_text(json.dumps(cfg))
 

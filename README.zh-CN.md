@@ -302,3 +302,11 @@ SDD provider 负责功能代码评审；CAO 核查声明的产物、过程及有
 新评审票据校验实际子任务、层和原始输出，不再按会话列表顺序推断。
 新验收声明需要逐项检查回执，不能将一次脚本退出 0 广播为全部通过。
 原生 Finalize 完成后才允许 CAO 关闭；功能代码评审仍属于 SDD provider。
+
+
+项目架构规则支持在项目准备阶段选择目录与依赖约束，并由 Work 继承。
+规则保存于 `.orchestrator/project/architecture/`，内置 Spring Boot、NestJS、
+Express、FastAPI、Django、Go、ASP.NET Core、React、Vue 和 Next.js 模板。
+运行 `cao project architecture list` 查看；选择、扩展、迁移和检查覆盖范围见
+[项目架构 Skills](references/project-architecture.md)。Spring Boot 自动检查禁止依赖
+和基础包中平铺业务类；其他语义约束由原生评审按规则执行。

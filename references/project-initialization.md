@@ -125,3 +125,14 @@ review or baseline acceptance to trial its current declared checks. This is a
 preparation result, not final `cao verify` or SDD acceptance. Keep formal gates.
 
 Existing products establish actual required entries and run `cao verification check` before creating new Work. For wrapper preparation, migration and exact write grants see [verification baseline](verification-setup.md#project-preparation-before-work).
+
+## Project architecture Skills
+
+Before planning, scaffolding or business implementation, inspect `cao project
+architecture show --scope <scope>`. Read every returned Skill path, including
+inherited root rules. Use accepted package identity and scope paths. For missing
+rules follow [architecture selection and adoption](project-architecture.md).
+Do not infer DDD merely from Spring Boot. Plans must place files by responsibility;
+provider review must cite applicable ARCH rule IDs and assess semantic boundaries.
+Resume, switching and child agents preserve the Work architecture binding. Changed
+rules require reviewed `project bind --refresh`; never reset Work progress.

@@ -62,7 +62,8 @@ def technical_inputs(repo, work, cfg, *, manifest=None):
             'verification_config_sha256': verification_snapshot(cfg, repo),
             'project_context_sha256': state['fingerprint'],
             'technical_policy_sha256': digest({'gates': technical_gates,
-                                               'scopes': state['scopes']})}
+                                               'scopes': state['scopes'],
+                                               'architecture': state.get('architecture', {}).get('rules', [])})}
 
 
 def task_inputs(repo, work, cfg):

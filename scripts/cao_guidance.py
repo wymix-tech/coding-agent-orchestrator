@@ -25,6 +25,7 @@ def resume_payload(repo: Path, work: dict[str, Any], session_id: str | None = No
     from scripts.cao_sessions import latest_handoff
     from scripts.project_context import context_state
     from scripts.continuity_view import view
+    from scripts.project_architecture import state as architecture_state
 
     c = completion_status(repo, work)
     current = next_action or current_work_action(repo, work, completion=c)
@@ -35,6 +36,7 @@ def resume_payload(repo: Path, work: dict[str, Any], session_id: str | None = No
         "work_item": summary,
         "project_context": context_state(repo, work=work),
         "project_binding": work.get("project_binding"),
+        "architecture": architecture_state(repo, work=work),
         "requirement": work.get("requirement"),
         "execution": {**(work.get("execution") or {}), "next_action": current},
         "path_assessment": work.get("path_assessment"),
@@ -235,6 +237,7 @@ def runtime_action_context(repo: Path, work: dict | None, current: dict) -> str:
 
 
 def render_context(repo: Path, work: dict[str, Any] | None, *, session_id: str | None = None, host: str | None = None) -> str:
+    from scripts.project_architecture import context_excerpt as architecture_excerpt
     from scripts.cao_tool_policy import verification_baseline_state
 
     restart = restart_state(repo, host or detect_current_host())
@@ -271,6 +274,7 @@ def render_context(repo: Path, work: dict[str, Any] | None, *, session_id: str |
         navigation,
         f"Work Item: {p['work_item']['title']} ({p['work_item']['id']})",
         "Project background: " + json.dumps(p["project_context"], ensure_ascii=False),
+        "Architecture Skills (read before planning, implementation and provider review): " + architecture_excerpt(repo, work),
         f"Status: {p['work_item']['status']}",
         f"Requirement: {p['requirement']['path']}",
         f"SDD: {(p.get('work_item', {}).get('sdd') or {}).get('provider', 'none')}",
