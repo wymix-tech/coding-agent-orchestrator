@@ -133,3 +133,14 @@ New Work follows the [native lifecycle](native-lifecycle.md): native reviews/tes
 Implementation artifacts may be registered incrementally with `cao evidence attach --kind <kind> --path <native-artifact>`. These are process declarations, including failed/unknown outcomes; they do not grant completion. See the continuity section in [Work intake](work-intake.md) before transfer.
 
 For request switching, strictly read-only previews, process evidence archives and run recovery, follow [Task continuity](task-continuity.md).
+
+## Project architecture Skills
+
+Before planning, scaffolding or business implementation, inspect `cao project
+architecture show --scope <scope>`. Read every returned Skill path, including
+inherited root rules. Use accepted package identity and scope paths. For missing
+rules follow [architecture selection and adoption](project-architecture.md).
+Do not infer DDD merely from Spring Boot. Plans must place files by responsibility;
+provider review must cite applicable ARCH rule IDs and assess semantic boundaries.
+Resume, switching and child agents preserve the Work architecture binding. Changed
+rules require reviewed `project bind --refresh`; never reset Work progress.

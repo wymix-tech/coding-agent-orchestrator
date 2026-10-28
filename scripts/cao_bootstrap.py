@@ -54,7 +54,9 @@ def cmd_bootstrap(args: argparse.Namespace) -> int:
     # and files the user deleted. Never overwrites an existing file.
     project_instructions = install_project_instruction_templates(repo, getattr(args, "host", None) or detect_current_host())
     if not (repo / CONFIG_REL).exists():
-        save_json(repo / CONFIG_REL, json.loads(json.dumps(DEFAULT_CONFIG)))
+        initial_config = json.loads(json.dumps(DEFAULT_CONFIG))
+        initial_config["architecture_policy"] = 1
+        save_json(repo / CONFIG_REL, initial_config)
         save_index(repo, load_index(repo))
         for d in (WORK_DIR, SESSION_DIR, HANDOFF_DIR):
             (repo / d).mkdir(parents=True, exist_ok=True)

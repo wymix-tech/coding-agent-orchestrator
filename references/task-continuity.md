@@ -135,3 +135,14 @@ before compaction. Existing Session/turn/tool events remain supported for Pi,
 Claude Code and Codex. Hosts lacking a compaction event use explicit checkpoint,
 handoff and resume; no imaginary hook capability is advertised. Automated host
 fixtures and installed CLI smoke are separate from real model/provider dialogue.
+
+## Project architecture Skills
+
+Before planning, scaffolding or business implementation, inspect `cao project
+architecture show --scope <scope>`. Read every returned Skill path, including
+inherited root rules. Use accepted package identity and scope paths. For missing
+rules follow [architecture selection and adoption](project-architecture.md).
+Do not infer DDD merely from Spring Boot. Plans must place files by responsibility;
+provider review must cite applicable ARCH rule IDs and assess semantic boundaries.
+Resume, switching and child agents preserve the Work architecture binding. Changed
+rules require reviewed `project bind --refresh`; never reset Work progress.

@@ -32,7 +32,7 @@ def parse(text, *, template=False):
     match = re.fullmatch(r'---\r?\n(.*?)\r?\n---\r?\n(.*)', text, re.S)
     if not match:
         raise ValueError('ARCHITECTURE_FRONTMATTER_REQUIRED')
-    # JSON is a YAML 1.2 subset: dependency-free, bounded, no executable tags.
+    # JSON is a YAML 1.2 subset; YAML uses safe loading without references.
     try:
         try:
             meta = json.loads(match[1])
@@ -41,24 +41,40 @@ def parse(text, *, template=False):
             # Reject aliases and tags: rule metadata is a small plain data tree.
             if re.search(r'(^|\s)[&*!][A-Za-z]', match[1]):
                 raise ValueError('ARCHITECTURE_YAML_REFERENCE_UNSUPPORTED')
-            meta = yaml.safe_load(match[1])
+            try:
+                meta = yaml.safe_load(match[1])
+            except yaml.YAMLError as exc:
+                raise ValueError('ARCHITECTURE_YAML_INVALID') from exc
         cao = meta['metadata']['cao']
-        assert re.fullmatch(r'[a-z0-9][a-z0-9-]{0,63}', meta['name'])
-        assert isinstance(meta['description'], str) and meta['description'].strip()
-        assert cao['schema_version'] == 1 and type(cao['rule_version']) is int and cao['rule_version'] > 0
-        assert re.fullmatch(r'[a-z0-9][a-z0-9-]{0,63}', cao['rule_id'])
-        assert isinstance(cao['stack'], dict) and isinstance(cao['style'], str)
-        assert all(isinstance(v, str) for v in cao['stack'].values())
-        assert set(cao) <= {'schema_version', 'rule_id', 'rule_version', 'stack', 'style', 'scope', 'source_roots', 'test_roots', 'checks'}
+        if not (re.fullmatch(r'[a-z0-9][a-z0-9-]{0,63}', meta['name'])):
+            raise ValueError('ARCHITECTURE_METADATA_INVALID')
+        if not (isinstance(meta['description'], str) and meta['description'].strip()):
+            raise ValueError('ARCHITECTURE_METADATA_INVALID')
+        if not (cao['schema_version'] == 1 and type(cao['rule_version']) is int and cao['rule_version'] > 0):
+            raise ValueError('ARCHITECTURE_METADATA_INVALID')
+        if not (re.fullmatch(r'[a-z0-9][a-z0-9-]{0,63}', cao['rule_id'])):
+            raise ValueError('ARCHITECTURE_METADATA_INVALID')
+        if not (isinstance(cao['stack'], dict) and isinstance(cao['style'], str)):
+            raise ValueError('ARCHITECTURE_METADATA_INVALID')
+        if not (all(isinstance(v, str) for v in cao['stack'].values())):
+            raise ValueError('ARCHITECTURE_METADATA_INVALID')
+        if not (set(cao) <= {'schema_version', 'rule_id', 'rule_version', 'stack', 'style', 'scope', 'source_roots', 'test_roots', 'checks'}):
+            raise ValueError('ARCHITECTURE_METADATA_INVALID')
         for key in ('source_roots', 'test_roots'):
-            assert isinstance(cao[key], list) and cao[key]
+            if not (isinstance(cao[key], list) and cao[key]):
+                raise ValueError('ARCHITECTURE_METADATA_INVALID')
             for value in cao[key]:
-                assert isinstance(value, str) and value and not Path(value).is_absolute()
-                assert '..' not in value.replace('\\', '/').split('/') and ':' not in value
+                if not (isinstance(value, str) and value and not Path(value).is_absolute()):
+                    raise ValueError('ARCHITECTURE_METADATA_INVALID')
+                if not ('..' not in value.replace('\\', '/').split('/') and ':' not in value):
+                    raise ValueError('ARCHITECTURE_METADATA_INVALID')
         for check in cao.get('checks', []):
-            assert set(check) == {'id', 'kind', 'from', 'forbidden'}
-            assert check['kind'] == 'java-package-dependency'
-            assert all(isinstance(check[k], str) and check[k] for k in check)
+            if not (set(check) == {'id', 'kind', 'from', 'forbidden'}):
+                raise ValueError('ARCHITECTURE_METADATA_INVALID')
+            if not (check['kind'] == 'java-package-dependency'):
+                raise ValueError('ARCHITECTURE_METADATA_INVALID')
+            if not (all(isinstance(check[k], str) and check[k] for k in check)):
+                raise ValueError('ARCHITECTURE_METADATA_INVALID')
     except (ValueError, KeyError, TypeError, AssertionError, AttributeError):
         raise ValueError('ARCHITECTURE_METADATA_INVALID') from None
     body = match[2]

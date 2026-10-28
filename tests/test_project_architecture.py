@@ -99,3 +99,36 @@ class ArchitectureTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+class ArchitectureIntegrationTests(ArchitectureTests):
+    def test_yaml_custom_rule(self):
+        import yaml
+        text = self.text()
+        front, body = text[4:].split('\n---\n',1)
+        result = arch.parse('---\n'+yaml.safe_dump(json.loads(front))+'---\n'+body)
+        self.assertEqual('spring-boot-modular-ddd', result['rule_id'])
+
+    def test_new_project_policy_blocks_missing_architecture(self):
+        with patch('scripts.cao_runtime.config', return_value={'architecture_policy':1}):
+            self.assertEqual('ARCHITECTURE_REQUIRED', arch.state(self.repo,['root'])['reason'])
+            self.adopt()
+            self.assertTrue(arch.state(self.repo,['root'])['ready'])
+
+    def test_old_work_can_resume_and_new_scope_rules_inherit(self):
+        work={'project_binding':{'scopes':['backend']}}
+        self.assertTrue(arch.state(self.repo,work=work)['ready'])
+        self.adopt()
+        self.assertEqual(1,len(arch.snapshot(self.repo,['backend'])))
+
+    def test_accept_revalidates_edited_input(self):
+        arch.draft(self.repo,'backend','generic-custom',{'source_root':'backend/src','test_root':'backend/tests'})
+        path=self.repo/arch.ROOT/'architecture-inputs/backend.md'
+        path.write_text(path.read_text().replace('backend/src','frontend/src'))
+        with patch('scripts.project_sources.user_evidence',return_value={}):
+            with self.assertRaisesRegex(ValueError,'SCOPE_PATH'):
+                arch.accept(self.repo,'backend','evidence',arch.sha(''))
+
+    def test_packaged_templates(self):
+        from tools.release.build_release import included_files
+        files={p.name for p in included_files()}
+        self.assertIn('spring-boot-modular-ddd.md',files)
