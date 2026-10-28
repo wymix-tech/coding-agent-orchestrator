@@ -62,3 +62,8 @@ setup plans and the Agent places requirement-owned code using the accepted Skill
 
 Full regression results will be recorded after the final run; a checkpoint is not
 a claim that all acceptance checks passed.
+
+## Final verification
+
+All phases completed. See [validation report](project-architecture-validation.md)
+for full regression, installed-package scenarios and explicit coverage limits.
