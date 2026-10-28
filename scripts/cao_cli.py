@@ -111,6 +111,17 @@ def build_parser() -> argparse.ArgumentParser:
     sp.set_defaults(fn=cmd_language_apply)
     sdd = sub.add_parser("sdd", help="Detect, select, and install a project SDD")
     sdd_sub = sdd.add_subparsers(dest="sdd_command", required=True)
+    transition = sdd_sub.add_parser('transition', help='Resolve inspected external transition effects')
+    transition_sub = transition.add_subparsers(dest='transition_action', required=True)
+    sp = transition_sub.add_parser('resolve')
+    sp.add_argument('--repo', default='.')
+    sp.add_argument('--work', required=True)
+    sp.add_argument('--operation', required=True)
+    sp.add_argument('--outcome', choices=['applied', 'not-applied'], required=True)
+    sp.add_argument('--evidence', required=True)
+    sp.add_argument('--reason', required=True)
+    from scripts.provider_execution import resolve as resolve_transition
+    sp.set_defaults(fn=resolve_transition)
     route = sdd_sub.add_parser("route", help="Record evidence-backed native routes separately from CAO quality profiles")
     route_sub = route.add_subparsers(dest="route_action", required=True)
     for name in ("propose", "show", "prepare", "rule", "check"):

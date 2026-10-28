@@ -2,15 +2,15 @@
 import json
 import sys
 import unittest
-from tests.test_native_lifecycle_contract import NativeLifecycle
+from tests import test_native_lifecycle_contract as lifecycle_fixture
 
 
 class RecoveryClosure(unittest.TestCase):
-    setUp = NativeLifecycle.setUp
-    check = NativeLifecycle.check
-    cli = NativeLifecycle.cli
-    work = NativeLifecycle.work
-    bind = NativeLifecycle.bind
+    setUp = lifecycle_fixture.NativeLifecycle.setUp
+    check = lifecycle_fixture.NativeLifecycle.check
+    cli = lifecycle_fixture.NativeLifecycle.cli
+    work = lifecycle_fixture.NativeLifecycle.work
+    bind = lifecycle_fixture.NativeLifecycle.bind
 
     def execute(self):
         return self.check('lifecycle', 'execute', '--command', sys.executable + ' preparation_suite.py', '--report', 'openspec/completion.md')
@@ -73,3 +73,33 @@ class RecoveryClosure(unittest.TestCase):
         self.assertEqual(1, self.cli('verification', 'check', '--project')[0])
         self.assertEqual('allow', self.fixture.cli('host-event', '--host', 'pi', payload=raw)[1]['decision'])
         self.assertNotEqual(0, self.cli('done')[0])
+
+    def test_transition_success_is_not_replayed_after_product_change(self):
+        from scripts.provider_execution import transition
+        path = self.repo / '.orchestrator/config.json'
+        cfg = json.loads(path.read_text())
+        cfg['sdd']['command']['transition'] = sys.executable + ' transition.py'
+        path.write_text(json.dumps(cfg))
+        (self.repo / 'transition.py').write_text("from pathlib import Path\np=Path('transition-count')\np.write_text(p.read_text()+'x' if p.exists() else 'x')\n")
+        first = transition(self.repo, 'done', self.wid)
+        self.assertEqual(0, first['exit_code'])
+        second = transition(self.repo, 'done', self.wid)
+        self.assertEqual(first, second)
+        self.assertEqual('x', (self.repo / 'transition-count').read_text())
+
+    def test_external_command_timeout_has_receipt_and_bounded_output(self):
+        from scripts.provider_execution import run
+        result = run(self.repo, [sys.executable, '-c', 'import time; print("started", flush=True); time.sleep(10)'], kind='provider_inspect', timeout=0.1)
+        self.assertEqual(124, result['exit_code'])
+        self.assertEqual('timed_out', result['process_status'])
+
+    def test_unknown_transition_is_not_automatically_replayed(self):
+        from scripts.provider_execution import transition
+        path = self.repo / '.orchestrator/config.json'
+        cfg = json.loads(path.read_text())
+        cfg['sdd']['command']['transition'] = sys.executable + ' transition.py'
+        path.write_text(json.dumps(cfg))
+        (self.repo / 'transition.py').write_text('raise SystemExit(1)\n')
+        self.assertEqual(1, transition(self.repo, 'done', self.wid)['exit_code'])
+        with self.assertRaisesRegex(ValueError, 'PROVIDER_TRANSITION_UNRESOLVED'):
+            transition(self.repo, 'done', self.wid)

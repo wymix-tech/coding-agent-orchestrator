@@ -272,8 +272,11 @@ def work_sdd_ready(repo: Path, work: dict[str, Any] | None) -> tuple[bool, dict[
     return bool(detected["installed"]), detected
 
 
-def sdd_transition(repo: Path, target: str) -> dict[str, Any] | None:
-    return run_sdd_command(repo, "transition", [target])
+def sdd_transition(repo: Path, target: str, work_id: str | None = None) -> dict[str, Any] | None:
+    if work_id:
+        from scripts.provider_execution import transition
+        return transition(repo, target, work_id)
+    return run_sdd_command(repo, 'transition', [target])
 
 
 def completion_next_instruction(repo: Path, work: dict[str, Any] | None, completion: dict[str, Any]) -> str:
