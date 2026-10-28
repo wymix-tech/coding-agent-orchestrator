@@ -26,6 +26,11 @@ class ContextRefinement(unittest.TestCase):
         (self.repo / 'openspec').mkdir()
         (self.repo / 'openspec/config.yaml').write_text('context: fixture\n')
         self.call('init')
+        # This suite exercises legacy setup refinements before architecture adoption.
+        cfg_path = self.repo / '.orchestrator/config.json'
+        cfg = json.loads(cfg_path.read_text())
+        cfg.pop('architecture_policy', None)
+        cfg_path.write_text(json.dumps(cfg))
         proof = self.proof('Java SpringBoot JUnit Maven')
         self.call('project', 'context', 'set', '--language', 'Java', '--framework', 'SpringBoot',
                   '--test-framework', 'JUnit', '--build-tool', 'Maven', '--source', 'user-specified', '--evidence', proof)

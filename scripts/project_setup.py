@@ -210,6 +210,7 @@ def normalize_plan(repo, scope, raw):
     validate_scope(repo, initial)
     plan = {'schema_version': 1, 'scope': scope, 'identity': identity, 'evidence': evidence,
             'context_sha256': fingerprint(context, [scope]), 'bases': bases, 'rule': rule,
+            'architecture': architecture.get('rules', []),
             'basis': raw.get('basis'), 'files': files, 'checks': checks,
             'required_capabilities': sorted(capabilities), 'outputs': outputs,
             'identity_sources': identity_sources, 'identity_evidence': evidence_records,
@@ -257,6 +258,12 @@ def state(repo, scope='root'):
         return {'ready': False, 'stage': 'identity_required', 'reason': 'PROJECT_SETUP_REQUIRED',
                 'next': 'Run `cao project setup rules`, then `cao project setup identity --rule <applicable-rule>`. Ask and save one missing identity field at a time; then draft/plan/apply/check.'}
     plan = record['plan']
+    if 'architecture' in plan:
+        from scripts.project_architecture import state as architecture_state
+        architecture = architecture_state(repo, [scope])
+        if not architecture['ready'] or architecture.get('rules') != plan['architecture']:
+            return {'ready': False, 'stage': 'architecture_required', 'reason': 'PROJECT_SETUP_ARCHITECTURE_STALE',
+                    'next': 'Review architecture changes and regenerate the initialization plan; preserve existing product files.'}
     if plan['rule']['id'] != 'explicit':
         from scripts.setup_rules import describe
         try:
@@ -314,6 +321,10 @@ def apply(repo, scope):
         if record.get('running'):
             raise ValueError('PROJECT_SETUP_CHECK_RUNNING')
         plan = record['plan']
+        if 'architecture' in plan:
+            from scripts.project_architecture import snapshot as architecture_snapshot
+            if architecture_snapshot(repo, [scope]) != plan['architecture']:
+                raise ValueError('PROJECT_SETUP_ARCHITECTURE_STALE')
         if fingerprint(load_context(repo), [scope]) != plan['context_sha256']:
             raise ValueError('PROJECT_SETUP_CONTEXT_STALE')
         from scripts.snapshot_scope import validate_scope

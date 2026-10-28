@@ -132,3 +132,32 @@ class ArchitectureIntegrationTests(ArchitectureTests):
         from tools.release.build_release import included_files
         files={p.name for p in included_files()}
         self.assertIn('spring-boot-modular-ddd.md',files)
+
+from tests.repair_helpers import RepairCase
+
+class ArchitectureCliFlow(RepairCase):
+    def test_first_work_adopts_real_cli_rule_and_retains_binding(self):
+        from scripts.project_sources import observe_prompt
+        from scripts import cao
+        config_path=self.repo/'.orchestrator/config.json'
+        cfg=json.loads(config_path.read_text())
+        cfg['architecture_policy']=1
+        config_path.write_text(json.dumps(cfg))
+        rc,out=self.run_cli('project','architecture','show')
+        self.assertEqual((2,'ARCHITECTURE_REQUIRED'),(rc,out['reason']))
+        ref=observe_prompt(self.repo,'Use generic-custom architecture for this project.','pi','architecture-session')
+        rc,out=self.run_cli('project','architecture','draft','--template','generic-custom',
+                            '--variable','source_root=acceptance-tests','--variable','test_root=acceptance-tests')
+        self.assertEqual(0,rc,out)
+        rc,out=self.run_cli('project','architecture','diff')
+        self.assertEqual(0,rc,out)
+        rc,out=self.run_cli('project','architecture','apply','--evidence',ref,'--expected-sha256',out['expected_sha256'])
+        self.assertEqual(0,rc,out)
+        wid=self.start(profile='light')
+        work=cao.load_work(self.repo,wid)
+        self.assertEqual('generic-custom',work['project_binding']['architecture'][0]['rule_id'])
+        from scripts.project_context import binding_state
+        self.assertTrue(binding_state(self.repo,work)['ready'])
+        path=self.repo/arch.scope_file('root')
+        path.write_text(path.read_text()+'\nChanged contract\n')
+        self.assertEqual('ARCHITECTURE_RULE_STALE',binding_state(self.repo,work)['reason'])

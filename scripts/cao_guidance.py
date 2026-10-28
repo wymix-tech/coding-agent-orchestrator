@@ -35,6 +35,7 @@ def resume_payload(repo: Path, work: dict[str, Any], session_id: str | None = No
         "work_item": summary,
         "project_context": context_state(repo, work=work),
         "project_binding": work.get("project_binding"),
+        "architecture": __import__("scripts.project_architecture", fromlist=["state"]).state(repo, work=work),
         "requirement": work.get("requirement"),
         "execution": {**(work.get("execution") or {}), "next_action": current},
         "path_assessment": work.get("path_assessment"),

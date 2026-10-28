@@ -75,7 +75,7 @@ def parse(text, *, template=False):
                 raise ValueError('ARCHITECTURE_METADATA_INVALID')
             if not (all(isinstance(check[k], str) and check[k] for k in check)):
                 raise ValueError('ARCHITECTURE_METADATA_INVALID')
-    except (ValueError, KeyError, TypeError, AssertionError, AttributeError):
+    except (ValueError, KeyError, TypeError, AssertionError, AttributeError, RecursionError):
         raise ValueError('ARCHITECTURE_METADATA_INVALID') from None
     body = match[2]
     if any(not re.search(r'^## ' + re.escape(section) + r'\s*\n\S', body, re.M) for section in SECTIONS):
@@ -197,7 +197,8 @@ def draft(repo, scope, template, variables):
     if path.exists():
         raise ValueError('ARCHITECTURE_DRAFT_EXISTS: preserve/edit existing input')
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(text, encoding='utf-8')
+    with path.open('x', encoding='utf-8') as stream:
+        stream.write(text)
     return {'path': str(path.relative_to(repo)), 'source': row['origin'], 'sha256': sha(text)}
 
 
