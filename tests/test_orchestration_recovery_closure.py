@@ -89,10 +89,17 @@ class RecoveryClosure(unittest.TestCase):
         (self.repo / 'feature.py').write_text('valid = True\n')
         self.execute()
         self.bind()
+        # Refresh the failed project check against the repaired product before
+        # switching to a Work that cannot inherit this Work's repair permission.
+        self.check('verification', 'check', '--project')
         queued = self.repo / '.orchestrator/requirements/after-repair.md'
+        queued.parent.mkdir(parents=True, exist_ok=True)
         queued.write_text('# Follow-up\nImplement an independent follow-up operation.\n')
         target = self.check('start', '--defer', '--requirement', str(queued))['work_item']['id']
-        self.check('resume')
+        import subprocess
+        from tests.test_project_context_acceptance import CLI
+        resumed = subprocess.run([sys.executable, str(CLI), 'resume', '--repo', str(self.repo)], env=self.fixture.env, capture_output=True, text=True, timeout=30)
+        self.assertEqual(0, resumed.returncode, resumed.stdout + resumed.stderr)
         self.check('switch', '--to', target)
         self.check('switch', '--to', self.wid)
         self.check('verify')

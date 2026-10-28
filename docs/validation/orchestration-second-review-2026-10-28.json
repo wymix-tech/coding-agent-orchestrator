@@ -1,0 +1,57 @@
+{
+  "baseline": "d349083",
+  "python": {
+    "discovered": 1222,
+    "run": 1222,
+    "passed": 1218,
+    "skipped": 4,
+    "failed": 0,
+    "shards": [
+      {
+        "shard": 0,
+        "run": 200,
+        "seconds": 266.607,
+        "skipped": 0
+      },
+      {
+        "shard": 1,
+        "run": 211,
+        "seconds": 304.26,
+        "skipped": 0
+      },
+      {
+        "shard": 2,
+        "run": 162,
+        "seconds": 217.736,
+        "skipped": 0
+      },
+      {
+        "shard": 3,
+        "run": 239,
+        "seconds": 267.846,
+        "skipped": 0
+      },
+      {
+        "shard": 4,
+        "run": 230,
+        "seconds": 221.07,
+        "skipped": 4
+      },
+      {
+        "shard": 5,
+        "run": 180,
+        "seconds": 204.619,
+        "skipped": 0
+      }
+    ],
+    "collection": "Six disjoint module groups; final shard 0 replaces initial runs. No focused repeats added."
+  },
+  "core_tests": 25,
+  "pi_passed": 39,
+  "typescript": "passed",
+  "compileall": "passed",
+  "diff_check": "passed",
+  "release_manifest_files": 195,
+  "installed_smoke_cases": 24,
+  "wheel_sha256": "d204b835b81d012987ac2a14f135623f7dea56e831c7b7a58593236d10b13f10"
+}

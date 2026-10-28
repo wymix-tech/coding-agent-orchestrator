@@ -23,7 +23,10 @@ try:
  for i in range(n):(folder/f'module_{i}.py').write_text('VALUE = '+str(i)+'\n'+'# sample\n'*100)
  case.bind()
  work=case.work()
+ from scripts.evidence_domains import capture
+ product_paths=sorted(capture(case.repo,work)['product'])
  result={'version':sys.argv[3],'extra_files':n,'extra_file_bytes':sum(p.stat().st_size for p in folder.iterdir())}
+ result['scan_scope']={'product_files':len(product_paths),'product_bytes':sum((case.repo/p).stat().st_size for p in product_paths if (case.repo/p).is_file()),'extra_file_root':'products/'}
  result['render_context']=measure(lambda:render_context(case.repo,work))
  payload={'event':'pre_tool','session_id':'benchmark','toolName':'write','input':{'path':'feature.py','content':'valid = True\n'}}
  result['host_event']=measure(lambda:case.fixture.cli('host-event','--host','pi',payload=payload))

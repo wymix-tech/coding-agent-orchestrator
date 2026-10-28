@@ -1,0 +1,123 @@
+{
+  "baseline": "695173d",
+  "current_parent": "b35ecce",
+  "environment": "Linux / Python 3.12.14; shared container during regression shards",
+  "samples": 12,
+  "p95": "nearest rank",
+  "results": [
+    {
+      "version": "baseline",
+      "extra_files": 0,
+      "extra_file_bytes": 0,
+      "scan_scope": {
+        "product_files": 6,
+        "product_bytes": 6436,
+        "extra_file_root": "products/"
+      },
+      "render_context": {
+        "p50_seconds": 0.23223695650005993,
+        "p95_seconds": 0.31589720299984947,
+        "samples": 12,
+        "calls": {
+          "verification_inputs": 6,
+          "code_snapshot": 9,
+          "capture": 3,
+          "project_prerequisite": 6
+        },
+        "output_bytes": 4075
+      },
+      "host_event": {
+        "p50_seconds": 0.3244801150000285,
+        "p95_seconds": 0.3825972960000854,
+        "samples": 12,
+        "calls": {},
+        "output_bytes": 26
+      }
+    },
+    {
+      "version": "baseline",
+      "extra_files": 500,
+      "extra_file_bytes": 455890,
+      "scan_scope": {
+        "product_files": 506,
+        "product_bytes": 462326,
+        "extra_file_root": "products/"
+      },
+      "render_context": {
+        "p50_seconds": 0.7765649819998544,
+        "p95_seconds": 0.9084570970001096,
+        "samples": 12,
+        "calls": {
+          "verification_inputs": 6,
+          "code_snapshot": 9,
+          "capture": 3,
+          "project_prerequisite": 6
+        },
+        "output_bytes": 4075
+      },
+      "host_event": {
+        "p50_seconds": 0.5348113084999113,
+        "p95_seconds": 0.55102246499996,
+        "samples": 12,
+        "calls": {},
+        "output_bytes": 26
+      }
+    },
+    {
+      "version": "current",
+      "extra_files": 0,
+      "extra_file_bytes": 0,
+      "scan_scope": {
+        "product_files": 6,
+        "product_bytes": 6346,
+        "extra_file_root": "products/"
+      },
+      "render_context": {
+        "p50_seconds": 0.07831008099992687,
+        "p95_seconds": 0.10238519200015617,
+        "samples": 12,
+        "calls": {
+          "code_snapshot": 1,
+          "capture": 1,
+          "project_prerequisite": 4
+        },
+        "output_bytes": 4030
+      },
+      "host_event": {
+        "p50_seconds": 0.2713347835001514,
+        "p95_seconds": 0.3418605629999547,
+        "samples": 12,
+        "calls": {},
+        "output_bytes": 26
+      }
+    },
+    {
+      "version": "current",
+      "extra_files": 500,
+      "extra_file_bytes": 455890,
+      "scan_scope": {
+        "product_files": 506,
+        "product_bytes": 462236,
+        "extra_file_root": "products/"
+      },
+      "render_context": {
+        "p50_seconds": 0.1414086974999691,
+        "p95_seconds": 0.17676079700004266,
+        "samples": 12,
+        "calls": {
+          "code_snapshot": 1,
+          "capture": 1,
+          "project_prerequisite": 4
+        },
+        "output_bytes": 4030
+      },
+      "host_event": {
+        "p50_seconds": 0.47134528949993637,
+        "p95_seconds": 0.6271652190000623,
+        "samples": 12,
+        "calls": {},
+        "output_bytes": 26
+      }
+    }
+  ]
+}
