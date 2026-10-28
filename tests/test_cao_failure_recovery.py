@@ -51,7 +51,8 @@ class FailureRecovery(unittest.TestCase):
     def test_failed_execution_blocks_binding_old_success(self):
         import sys
         self.bind()
-        self.assertEqual(2, self.cli('lifecycle', 'execute', '--command', sys.executable + ' -c "raise SystemExit(1)"',
+        (self.repo / 'preparation_suite.py').write_text('raise SystemExit(1)\n')
+        self.assertEqual(2, self.cli('lifecycle', 'execute', '--command', sys.executable + ' preparation_suite.py',
                                     '--report', 'openspec/failure.log')[0])
         self.assertEqual(2, self.cli('conformance', 'check')[0])
         self.assertEqual(2, self.cli('lifecycle', 'bind', '--report', 'openspec/completion.md')[0])
@@ -69,3 +70,41 @@ class FailureRecovery(unittest.TestCase):
         self.assertEqual('PROJECT_BASELINE_FAILED', action['reason'])
         self.assertIn('Diagnose', action['instruction'])
         self.assertEqual('verification', self.work()['execution']['phase'])
+
+    def test_product_diagnosis_requires_native_reexecution(self):
+        import sys
+        from scripts.cao_work_store import load_work, save_work
+        self.bind()
+        work = load_work(self.repo, self.wid)
+        work['verification'] = {'status': 'failed', 'run_id': 'baseline-failed'}
+        save_work(self.repo, work)
+        self.check('lifecycle', 'repair', '--kind', 'product', '--reason', 'Observed assertion regression')
+        self.assertEqual('implementation', self.work()['execution']['phase'])
+        self.assertEqual('execution', self.check('next')['action']['stage'])
+        self.assertEqual(2, self.cli('verify')[0])
+        self.assertEqual(2, self.cli('lifecycle', 'bind', '--report', 'openspec/completion.md')[0])
+        self.check('lifecycle', 'execute', '--command', sys.executable + ' preparation_suite.py', '--report', 'openspec/completion.md')
+        self.bind()
+        self.assertNotIn('completion_repair', self.work()['sdd'])
+        self.check('verify')
+        self.check('done')
+
+    def test_environment_diagnosis_preserves_native_binding(self):
+        from scripts.cao_work_store import load_work, save_work
+        self.bind()
+        before = self.work()['sdd']['completion_evidence']
+        work = load_work(self.repo, self.wid)
+        work['verification'] = {'status': 'blocked', 'run_id': 'environment-failed'}
+        work['execution'].update(phase='verification', step='verification')
+        save_work(self.repo, work)
+        self.check('lifecycle', 'repair', '--kind', 'environment', '--reason', 'Service unavailable')
+        self.assertEqual('verification', self.work()['execution']['phase'])
+        self.assertEqual(before, self.work()['sdd']['completion_evidence'])
+        self.check('verify')
+        self.check('done')
+
+    def test_report_copy_is_not_an_executable_native_check(self):
+        self.bind()
+        self.assertEqual(2, self.cli('lifecycle', 'execute', '--command', 'cat openspec/completion.md',
+                                    '--report', 'openspec/copied.log')[0])
+        self.assertFalse(self.work()['sdd'].get('completion_executions'))

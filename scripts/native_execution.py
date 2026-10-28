@@ -21,7 +21,7 @@ def receipt_matches(repo, work, reports):
     for row in reversed(rows):
         if row.get('inputs') != current or row.get('domains') != material_inputs(repo, work):
             continue
-        if row.get('status') != 'passed' or row.get('generation') != work.get('execution_generation', 0):
+        if row.get('status') != 'passed':
             break
         accepted.extend(row.get('reports', []))
     return all(ref in accepted and sha256_file(repo_file(repo, ref['path'])) == ref['sha256'] for ref in reports)
@@ -43,6 +43,7 @@ def command(args):
         work = resolve_work(repo, args.work)
         if not work or not enabled(work) or work.get('status') != 'active':
             raise ValueError('ACTIVE_CONTRACT_2_WORK_REQUIRED')
+        validate_command(work, args.command)
         path = provider_artifact(repo, args.report, provider_output_dirs(work['sdd']['provider'], repo))
         if path.suffix.lower() not in {'.md', '.txt', '.log'} or not path.parent.is_dir():
             raise ValueError('NATIVE_EXECUTION_LOG_PATH_REQUIRED')
@@ -54,7 +55,7 @@ def command(args):
             rows[-1]['status'] = 'abandoned'
         run_id = 'native-' + uuid.uuid4().hex
         captured = inputs(repo, work)
-        row = {'run_id': run_id, 'status': 'running', 'inputs': captured,
+        row = {'run_id': run_id, 'status': 'running', 'inputs': captured, 'command': args.command,
                'generation': work.get('execution_generation', 0), 'domains': material_inputs(repo, work), 'at': now()}
         rows.append(row)
         start_run(repo, work['id'], run_id, 'native_completion', captured, generation=row['generation'])
@@ -66,11 +67,12 @@ def command(args):
         with repo_transaction(repo):
             work = load_work(repo, wid)
             row = next(r for r in work['sdd']['completion_executions'] if r['run_id'] == run_id)
-            valid = work.get('status') == 'active' and work.get('execution_generation', 0) == row['generation'] and inputs(repo, work) == captured and material_inputs(repo, work) == row['domains']
+            valid = work['sdd']['completion_executions'][-1]['run_id'] == run_id and work.get('status') == 'active' and work.get('execution_generation', 0) == row['generation'] and inputs(repo, work) == captured and material_inputs(repo, work) == row['domains']
             row.update(status='failed', exit_code=result['exit_code'], runtime=result['runtime'])
-            if valid and result['exit_code'] == 0:
+            if valid and result['exit_code'] == 0 and max(result.get('stdout_bytes', 0), result.get('stderr_bytes', 0)) <= 8 * 1024 * 1024:
                 # Store actual runner output, never merely attach an existing report.
                 body = result.get('stdout_tail', '') + '\n' + result.get('stderr_tail', '')
+                path = provider_artifact(repo, args.report, provider_output_dirs(work['sdd']['provider'], repo))
                 path.write_text(body, encoding='utf-8')
                 try:
                     read(repo, work, path)
@@ -86,3 +88,49 @@ def command(args):
             save_work(repo, work)
     print(json.dumps({'ok': row['status'] == 'passed', 'execution': row}))
     return 0 if row['status'] == 'passed' else 2
+
+
+def repair(args):
+    from scripts.cao_runtime import repo_root, now
+    from scripts.cao_work_store import resolve_work, save_work, queue_event
+    from scripts.state_store import repo_transaction
+    repo = repo_root(args.repo)
+    with repo_transaction(repo):
+        work = resolve_work(repo, args.work)
+        if not work or work.get('status') != 'active' or work.get('lifecycle_contract') != 2:
+            raise ValueError('ACTIVE_CONTRACT_2_WORK_REQUIRED')
+        run = work.get('verification') or {}
+        if run.get('status') not in {'failed', 'blocked', 'error', 'stale'}:
+            raise ValueError('FAILED_BASELINE_REQUIRED')
+        if not args.reason.strip():
+            raise ValueError('REPAIR_REASON_REQUIRED')
+        previous = work['sdd'].get('completion_repair')
+        if previous:
+            work['sdd'].setdefault('completion_repair_history', []).append(previous)
+        row = {'kind': args.kind, 'reason': args.reason, 'run_id': run.get('run_id'), 'at': now()}
+        work['sdd']['completion_repair'] = row
+        work['execution'].update(phase='implementation' if args.kind == 'product' else 'verification',
+                                 step='implementation' if args.kind == 'product' else 'verification')
+        queue_event(work, {'event': 'sdd.completion.repair.classified', 'work_item_id': work['id'], **row})
+        save_work(repo, work)
+    print(json.dumps({'ok': True, 'repair': row}))
+    return 0
+
+
+def validate_command(work, command):
+    """Only replay a recorded native invocation, never cat/echo an old result."""
+    import shlex
+    from pathlib import Path
+    def identity(value):
+        tokens = shlex.split(value)
+        if tokens and Path(tokens[0]).name.startswith('python'):
+            tokens[0] = 'python'
+        return tokens
+    sdd = work.get('sdd') or {}
+    expected = [value for row in (sdd.get('completion_evidence') or {}).get('observations', []) for value in row.get('commands', [])]
+    expected.extend(row['command'] for row in sdd.get('completion_executions', []) if row.get('status') == 'passed' and row.get('command'))
+    recorded = ((sdd.get('workflow') or {}).get('execution') or {}).get('command')
+    if recorded:
+        expected.append(recorded)
+    if not expected or not any(identity(command) == identity(value) for value in expected):
+        raise ValueError('NATIVE_EXECUTION_COMMAND_UNBOUND: use the recorded native workflow/report command; restoring a report with cat/echo is not native execution')

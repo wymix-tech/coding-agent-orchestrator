@@ -125,3 +125,52 @@ authorized state with a new generation and audit event. Do not hand-edit guards.
 This is an authority check in the current engine, not an operating-system write
 sandbox: an old binary can alter files physically, but its projection is not
 silently accepted by the guarded engine. Stop old writers before migration.
+
+## Failed CAO baseline and return to native repair
+
+`cao next` preserves failed/blocked/error diagnostics rather than suggesting a
+blind rerun. Inspect `verification.results` and `cao runtime show`, then record
+an evidence-based diagnosis on the same active Work:
+
+```bash
+cao lifecycle repair --kind product --reason "Observed regression and reproduction"
+# Alternatives: environment, baseline, unknown
+```
+
+Product diagnosis returns CAO to implementation and blocks completion until the
+affected native tasks, reviews and acceptance are completed. Reopen the actual
+provider task through its native workflow. Environment diagnosis retains
+verification and existing valid native results; restore services and retry.
+Baseline changes retain their normal review/reanchor requirement. Unknown causes
+require diagnosis; no automatic replay or relaxed checks are introduced.
+
+After material product/native input changes, merely binding or copying an old
+report cannot refresh its execution. Capture the affected **native command**
+using the existing runtime command transport, then bind its original output:
+
+```bash
+cao lifecycle execute --command "<actual native test/acceptance command>" --report openspec/native-test.log
+cao lifecycle bind --report openspec/native-test.log
+cao conformance check
+cao verify
+cao done
+```
+
+Use the installed provider's output directory instead of `openspec/` for BMAD or
+Spec Kit. The command is chosen from the native workflow, not an additional CAO
+functional suite. It must emit a recognized native result on stdout/stderr;
+CAO retains those bytes and binds actual execution inputs, generation and report
+hash. Execute each required command/report separately, then bind all reports.
+Identical output from a fresh execution is valid. Attachment alone, changing a
+path, or declaring a new snapshot is not fresh execution. Unchanged-input
+registration repairs can still reuse existing valid declarations.
+
+A failed or interrupted native command cannot certify completion. Inspect its
+runtime record. An unresolved command is never automatically replayed; after
+inspection, explicitly use `--retry-of <native-run-id>` when the old owner is no
+longer running. Historical completed Work remains immutable.
+
+These receipts establish observed command execution and inputs, not semantic
+truthfulness or independent review identity. External/manual outputs without a
+current execution association remain insufficient to refresh materially stale
+completion evidence; do not bypass this by attaching them again.
