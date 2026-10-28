@@ -253,6 +253,10 @@ def review_inputs(repo, work, code_snapshot):
     excluded, acceptance_standard = acceptance_review_scope(repo, work)
     result = {'instructions': instructions, 'work_id': work['id'], 'requirement_sha256': work['requirement']['sha256'],
               'code_snapshot': code_snapshot(repo, {work['requirement']['path'], *excluded}, {'_bmad-output', '_bmad', '.agents', '.pi', 'openspec', '.specify', 'specs', *bmad_output_dirs(repo)}), **source}
+    from scripts.project_architecture import snapshot as architecture_snapshot
+    architecture = architecture_snapshot(repo, (work.get('project_binding') or {}).get('scopes', ['root']))
+    if architecture:
+        result['architecture_sha256'] = digest(architecture)
     if acceptance_standard is not None:
         result['acceptance_standard_sha256'] = digest(acceptance_standard)
     if work.get('lifecycle_contract') == 2 and (work.get('sdd') or {}).get('native_review_dependencies'):

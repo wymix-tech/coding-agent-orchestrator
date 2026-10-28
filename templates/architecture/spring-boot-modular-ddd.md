@@ -33,13 +33,13 @@
           "forbidden": "web"
         },
         {
-          "id": "ARCH-DEP-002",
+          "id": "ARCH-DEP-003",
           "kind": "java-package-dependency",
           "from": "domain",
           "forbidden": "application"
         },
         {
-          "id": "ARCH-DEP-002",
+          "id": "ARCH-DEP-004",
           "kind": "java-package-dependency",
           "from": "domain",
           "forbidden": "infrastructure"
@@ -68,6 +68,7 @@ Use for accepted java spring-boot scopes using modular-ddd. Preserve existing fr
 |-- order/web/response/
 |-- order/application/service/
 |-- order/application/command/
+|-- order/application/result/
 |-- order/domain/model/
 |-- order/domain/service/
 |-- order/domain/repository/
@@ -108,3 +109,5 @@ Mirror feature responsibilities under the accepted test roots. Run the project's
 Record a concrete rule ID, reason and affected paths in the native design/review. Resolve conflict with accepted project rules before implementation; exceptions never silently rewrite the project contract. Template upgrades require reviewed draft/diff/apply.
 
 Keep Application.java in the base package for component scanning. Use web request/response DTOs, application commands, domain repository interfaces and infrastructure implementations in DDD. Keep transaction boundaries in application orchestration; do not require every service to have an interface.
+
+Map application output into application/result DTOs; the web adapter converts those into response DTOs. Domain repository ports expose domain objects, not JPA entities. Infrastructure mappers reconstitute domain state without repeating creation side effects.

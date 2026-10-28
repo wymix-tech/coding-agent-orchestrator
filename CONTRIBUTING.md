@@ -12,7 +12,7 @@ cao --help
 ```
 
 
-CAO's core and test suite use the Python standard library. Python 3.10 or newer is required. The integration tests also use Git and create temporary repositories; they do not require a real SDD installation or network access.
+CAO's core and test suite primarily use the Python standard library; custom architecture Skills with YAML frontmatter use the declared PyYAML dependency (built-in JSON frontmatter loads with the standard library). Python 3.10 or newer is required. The integration tests also use Git and create temporary repositories; they do not require a real SDD installation or network access.
 
 ## Run checks
 

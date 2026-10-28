@@ -329,3 +329,11 @@ New native review tickets bind the actual child task, layer and original output,
 not session order. New acceptance declarations require criterion-specific check
 receipts. Native Finalize remains required before `cao done`; CAO checks process
 and evidence rather than adding another functional code review.
+
+
+Project architecture Skills define scope-owned directory and dependency contracts
+under `.orchestrator/project/architecture/`. Run `cao project architecture list`
+for built-in and custom templates. New initialization requires an accepted rule;
+Work bindings and resume context retain applicable rules and detect content changes.
+See [architecture selection, extension and migration](references/project-architecture.md)
+for setup and verification coverage, including Java import and flat-package checks.

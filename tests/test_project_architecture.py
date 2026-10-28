@@ -158,6 +158,11 @@ class ArchitectureCliFlow(RepairCase):
         self.assertEqual('generic-custom',work['project_binding']['architecture'][0]['rule_id'])
         from scripts.project_context import binding_state
         self.assertTrue(binding_state(self.repo,work)['ready'])
+        from scripts.native_obligations import review_inputs
+        with patch('scripts.native_obligations.review_source', return_value={'fixture': True}):
+            before = review_inputs(self.repo, work, lambda *args, **kwargs: 'same-code')
+            self.assertIn('architecture_sha256', before)
+            self.assertEqual(arch.sha(json.dumps(work['project_binding']['architecture'], sort_keys=True, ensure_ascii=False)), before['architecture_sha256'])
         path=self.repo/arch.scope_file('root')
         path.write_text(path.read_text()+'\nChanged contract\n')
         self.assertEqual('ARCHITECTURE_RULE_STALE',binding_state(self.repo,work)['reason'])

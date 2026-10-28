@@ -15,8 +15,10 @@ SECTIONS = ('Applicability', 'Directory tree', 'Responsibilities', 'Naming', 'Ca
 
 
 def technology_token(value):
+    if str(value).strip().lower() in {'c#', 'csharp', 'cs'}:
+        return 'csharp'
     token = re.sub(r'[^a-z0-9]', '', str(value).lower())
-    return {'c': 'csharp', 'cs': 'csharp', 'ts': 'typescript', 'js': 'javascript'}.get(token, token)
+    return {'ts': 'typescript', 'js': 'javascript'}.get(token, token)
 
 
 def sha(text):
@@ -42,7 +44,10 @@ def parse(text, *, template=False):
         try:
             meta = json.loads(match[1])
         except ValueError:
-            import yaml
+            try:
+                import yaml
+            except ImportError as exc:
+                raise ValueError('ARCHITECTURE_YAML_PARSER_UNAVAILABLE: install declared project package dependencies or use JSON frontmatter') from exc
             # Reject aliases and tags: rule metadata is a small plain data tree.
             if re.search(r'(^|\s)[&*!][A-Za-z]', match[1]):
                 raise ValueError('ARCHITECTURE_YAML_REFERENCE_UNSUPPORTED')
@@ -73,7 +78,11 @@ def parse(text, *, template=False):
                     raise ValueError('ARCHITECTURE_METADATA_INVALID')
                 if not ('..' not in value.replace('\\', '/').split('/') and ':' not in value):
                     raise ValueError('ARCHITECTURE_METADATA_INVALID')
+        check_ids = set()
         for check in cao.get('checks', []):
+            if check.get('id') in check_ids:
+                raise ValueError('ARCHITECTURE_DUPLICATE_CHECK_ID')
+            check_ids.add(check.get('id'))
             if not (set(check) == {'id', 'kind', 'from', 'forbidden'}):
                 raise ValueError('ARCHITECTURE_METADATA_INVALID')
             if not (check['kind'] in {'java-package-dependency', 'java-source-layout'}):
@@ -157,17 +166,19 @@ def state(repo, scopes=None, work=None, *, required=False):
     required = required or (not work and config(repo).get('architecture_policy') == 1)
     try:
         rules = snapshot(repo, scopes)
-        missing = [s for s in scopes if not any(r['scope'] in {'root', s} for r in rules)]
+        missing = [s for s in scopes if context['scopes'][s]['technology'].get('language', {}).get('status') != 'not_applicable' and not any(r['scope'] in {'root', s} for r in rules)]
         if required and missing:
             raise ValueError('ARCHITECTURE_REQUIRED: ' + ','.join(missing))
         expected = (work or {}).get('project_binding', {}).get('architecture')
+        if work and expected is None and rules:
+            raise ValueError('WORK_ARCHITECTURE_BINDING_REQUIRED')
         if expected is not None and expected != rules:
             raise ValueError('WORK_ARCHITECTURE_BINDING_STALE')
         return {'ready': True, 'rules': rules, 'missing_scopes': missing,
                 'instruction': 'Read every applicable architecture Skill before planning, writes and review. Preserve dependency and data boundaries; semantic review belongs to the provider.'}
     except (ValueError, OSError) as exc:
         return {'ready': False, 'reason': str(exc).split(':')[0], 'detail': str(exc),
-                'next': 'Inspect `cao project architecture diff`; draft/select/validate/apply the applicable scope rule. For existing Work review and run `cao project bind --refresh --work <id>`; preserve progress.'}
+                'next': 'Run `cao project architecture list`; select the applicable style and collect missing package identity with `cao project setup identity`. Draft using accepted scope/identity paths, then validate/diff/apply. For changed rules inspect diff; for existing Work review and run `cao project bind --refresh --work <id>`, preserving progress.'}
 
 
 def context_excerpt(repo, work):

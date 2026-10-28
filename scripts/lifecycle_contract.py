@@ -28,6 +28,8 @@ def inputs(repo, work, technical=None):
     technical = technical if technical is not None else verification_inputs(repo, work, config(repo))
     sdd = work.get('sdd') or {}
     from scripts.evidence_domains import dependencies, scope
+    from scripts.project_architecture import snapshot as architecture_snapshot
+    architecture = architecture_snapshot(repo, (work.get('project_binding') or {}).get('scopes', ['root']))
     return {
         'work_id': work['id'], 'provider': sdd.get('provider'),
         'requirement_sha256': sha256_file(repo / work['requirement']['path']),
