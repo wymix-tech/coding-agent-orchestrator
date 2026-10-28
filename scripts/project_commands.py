@@ -149,7 +149,7 @@ def cmd_project(args):
             return emit({'ok': False, **state}) or 2
         binding = make_binding(repo, scopes)
         previous = work.get('project_binding')
-        if previous and previous['fingerprint'] != binding['fingerprint'] and not args.refresh:
+        if previous and (previous['fingerprint'] != binding['fingerprint'] or previous.get('architecture') != binding.get('architecture')) and not args.refresh:
             raise ValueError('WORK_PROJECT_BINDING_STALE: review and use --refresh')
         if previous == binding:
             return emit({'status': 'unchanged', 'project_binding': binding})
@@ -244,6 +244,8 @@ def register_parser(sub):
     actions = project.add_subparsers(required=True)
     from scripts.project_setup import register
     register(actions)
+    from scripts.project_architecture import register as register_architecture
+    register_architecture(actions)
     for name in ('inspect', 'decisions'):
         parser = actions.add_parser(name)
         parser.add_argument('--repo', default='.')

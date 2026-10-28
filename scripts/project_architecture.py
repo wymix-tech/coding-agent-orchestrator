@@ -1,0 +1,275 @@
+"""Scope-owned Markdown architecture contracts. Never execute rule text."""
+from __future__ import annotations
+import argparse
+import difflib
+import hashlib
+import json
+import re
+from pathlib import Path
+from scripts.project_context import ROOT, load_context, selected_scopes, relative, read
+from scripts.state_store import atomic_json, repo_transaction
+
+DIRECTORY = ROOT / 'architecture'
+SECTIONS = ('Applicability', 'Directory tree', 'Responsibilities', 'Naming', 'Calls',
+            'Dependencies', 'Data conversion', 'Module boundaries', 'Constraints', 'Tests', 'Exceptions')
+
+
+def sha(text):
+    return hashlib.sha256(text.encode('utf-8')).hexdigest()
+
+
+def safe(repo, name):
+    relative(repo, str(name))
+    path = repo / name
+    if any(p.is_symlink() for p in (path, *path.parents) if p != repo and repo in p.parents):
+        raise ValueError('ARCHITECTURE_SYMLINK')
+    return path
+
+
+def parse(text, *, template=False):
+    if len(text.encode()) > 128 * 1024:
+        raise ValueError('ARCHITECTURE_TOO_LARGE')
+    match = re.fullmatch(r'---\r?\n(.*?)\r?\n---\r?\n(.*)', text, re.S)
+    if not match:
+        raise ValueError('ARCHITECTURE_FRONTMATTER_REQUIRED')
+    # JSON is a YAML 1.2 subset: dependency-free, bounded, no executable tags.
+    try:
+        meta = json.loads(match[1])
+        cao = meta['metadata']['cao']
+        assert re.fullmatch(r'[a-z0-9][a-z0-9-]{0,63}', meta['name'])
+        assert isinstance(meta['description'], str) and meta['description'].strip()
+        assert cao['schema_version'] == 1 and type(cao['rule_version']) is int and cao['rule_version'] > 0
+        assert re.fullmatch(r'[a-z0-9][a-z0-9-]{0,63}', cao['rule_id'])
+        assert isinstance(cao['stack'], dict) and isinstance(cao['style'], str)
+        assert all(isinstance(v, str) for v in cao['stack'].values())
+        assert set(cao) <= {'schema_version', 'rule_id', 'rule_version', 'stack', 'style', 'scope', 'source_roots', 'test_roots', 'checks'}
+        for key in ('source_roots', 'test_roots'):
+            assert isinstance(cao[key], list) and cao[key]
+            for value in cao[key]:
+                assert isinstance(value, str) and value and not Path(value).is_absolute()
+                assert '..' not in value.replace('\\', '/').split('/') and ':' not in value
+        for check in cao.get('checks', []):
+            assert set(check) == {'id', 'kind', 'from', 'forbidden'}
+            assert check['kind'] == 'java-package-dependency'
+            assert all(isinstance(check[k], str) and check[k] for k in check)
+    except (ValueError, KeyError, TypeError, AssertionError):
+        raise ValueError('ARCHITECTURE_METADATA_INVALID') from None
+    body = match[2]
+    if any(not re.search(r'^## ' + re.escape(section) + r'\s*\n\S', body, re.M) for section in SECTIONS):
+        raise ValueError('ARCHITECTURE_SECTIONS_REQUIRED')
+    if '```text\n' not in body or not re.search(r'ARCH-[A-Z]+-\d+', body):
+        raise ValueError('ARCHITECTURE_CONSTRAINTS_REQUIRED')
+    if not template and re.search(r'\{\{.*?\}\}', text):
+        raise ValueError('ARCHITECTURE_UNRESOLVED_VARIABLE')
+    return cao
+
+
+def template_dir():
+    from scripts.cao_instructions import package_root_dir
+    root = package_root_dir()
+    if not root:
+        raise ValueError('ARCHITECTURE_RESOURCES_UNAVAILABLE')
+    return root / 'templates' / 'architecture'
+
+
+def catalog(repo):
+    rows = {}
+    for base, origin in ((template_dir(), 'builtin'), (safe(repo, DIRECTORY / 'custom'), 'custom')):
+        if not base.exists():
+            continue
+        for path in sorted(base.rglob('*.md')):
+            if path.is_symlink() or path.stat().st_size > 128 * 1024:
+                raise ValueError('ARCHITECTURE_UNSAFE_RESOURCE')
+            if origin == 'custom':
+                safe(repo, path.relative_to(repo))
+            text = path.read_text(encoding='utf-8')
+            meta = parse(text, template=True)
+            rid = meta['rule_id']
+            if rid in rows:
+                raise ValueError('ARCHITECTURE_DUPLICATE_ID: ' + rid)
+            rows[rid] = {'metadata': meta, 'origin': origin, 'path': str(path), 'text': text}
+    return rows
+
+
+def scope_file(scope):
+    if not re.fullmatch(r'[A-Za-z0-9_.-]+', scope) or scope in {'.', '..'}:
+        raise ValueError('ARCHITECTURE_SCOPE_INVALID')
+    return DIRECTORY / ('SKILL.md' if scope == 'root' else scope + '/SKILL.md')
+
+
+def receipt_path(scope):
+    scope_file(scope)
+    return DIRECTORY / 'accepted' / (scope + '.json')
+
+
+def snapshot(repo, scopes):
+    result = []
+    for scope in sorted(set(scopes) | {'root'}):
+        path = safe(repo, scope_file(scope))
+        receipt = read(safe(repo, receipt_path(scope)))
+        if not path.exists() and not receipt:
+            continue
+        if not path.is_file() or not receipt:
+            raise ValueError('ARCHITECTURE_ACCEPTANCE_REQUIRED: ' + scope)
+        text = path.read_text(encoding='utf-8')
+        meta = parse(text)
+        if receipt.get('sha256') != sha(text):
+            raise ValueError('ARCHITECTURE_RULE_STALE: ' + scope)
+        result.append({'scope': scope, 'path': path.relative_to(repo).as_posix(),
+                       'rule_id': meta['rule_id'], 'version': meta['rule_version'], 'sha256': sha(text)})
+    return result
+
+
+def state(repo, scopes=None, work=None, *, required=False):
+    context = load_context(repo)
+    if not context:
+        return {'ready': False, 'reason': 'PROJECT_CONTEXT_REQUIRED', 'next': 'Run cao project inspect.'}
+    scopes = selected_scopes(context, scopes, work)
+    try:
+        rules = snapshot(repo, scopes)
+        missing = [s for s in scopes if not any(r['scope'] in {'root', s} for r in rules)]
+        if required and missing:
+            raise ValueError('ARCHITECTURE_REQUIRED: ' + ','.join(missing))
+        expected = (work or {}).get('project_binding', {}).get('architecture')
+        if expected is not None and expected != rules:
+            raise ValueError('WORK_ARCHITECTURE_BINDING_STALE')
+        return {'ready': True, 'rules': rules, 'missing_scopes': missing,
+                'instruction': 'Read every applicable architecture Skill before planning, writes and review. Preserve dependency and data boundaries; semantic review belongs to the provider.'}
+    except (ValueError, OSError) as exc:
+        return {'ready': False, 'reason': str(exc).split(':')[0], 'detail': str(exc),
+                'next': 'Inspect `cao project architecture diff`; draft/select/validate/apply the applicable scope rule. For existing Work review and run `cao project bind --refresh --work <id>`; preserve progress.'}
+
+
+def context_excerpt(repo, work):
+    return json.dumps(state(repo, work=work), ensure_ascii=False)
+
+
+def draft(repo, scope, template, variables):
+    context = load_context(repo)
+    if not context or scope not in context['scopes']:
+        raise ValueError('PROJECT_SCOPE_REQUIRED')
+    row = catalog(repo).get(template)
+    if not row:
+        raise ValueError('ARCHITECTURE_TEMPLATE_UNKNOWN')
+    text = row['text']
+    values = {'scope': scope, **variables}
+    for key, value in values.items():
+        if not re.fullmatch(r'[A-Za-z0-9_]+', key) or not re.fullmatch(r'[A-Za-z0-9_./-]+', value):
+            raise ValueError('ARCHITECTURE_VARIABLE_INVALID')
+        text = text.replace('{{' + key + '}}', value)
+    meta = parse(text)
+    tech = context['scopes'][scope]['technology']
+    normalize = lambda v: re.sub(r'[^a-z0-9]', '', v.lower())
+    for field, value in meta['stack'].items():
+        actual = tech.get(field, {})
+        if actual.get('status') == 'accepted' and normalize(str(actual['value'])) != normalize(value):
+            raise ValueError('ARCHITECTURE_STACK_MISMATCH: ' + field)
+    for root in meta['source_roots'] + meta['test_roots']:
+        relative(repo, root)
+        if not any(root == p or root.startswith(p.rstrip('/') + '/') or p == '.' for p in context['scopes'][scope]['paths']):
+            raise ValueError('ARCHITECTURE_SCOPE_PATH_MISMATCH')
+    path = safe(repo, ROOT / 'architecture-inputs' / (scope + '.md'))
+    if path.exists():
+        raise ValueError('ARCHITECTURE_DRAFT_EXISTS: preserve/edit existing input')
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding='utf-8')
+    return {'path': str(path.relative_to(repo)), 'source': row['origin'], 'sha256': sha(text)}
+
+
+def accept(repo, scope, evidence, expected):
+    from scripts.project_sources import user_evidence
+    if not evidence:
+        raise ValueError('ARCHITECTURE_EVIDENCE_REQUIRED')
+    with repo_transaction(repo):
+        path = safe(repo, scope_file(scope))
+        old = path.read_text(encoding='utf-8') if path.exists() else ''
+        if sha(old) != expected:
+            raise ValueError('ARCHITECTURE_REVISION_CONFLICT')
+        text = safe(repo, ROOT / 'architecture-inputs' / (scope + '.md')).read_text(encoding='utf-8')
+        meta = parse(text)
+        user_evidence(repo, evidence, {'architecture': meta['rule_id']})
+        if meta['scope'] != scope:
+            raise ValueError('ARCHITECTURE_SCOPE_MISMATCH')
+        path.parent.mkdir(parents=True, exist_ok=True)
+        import os, tempfile
+        fd, temporary = tempfile.mkstemp(dir=path.parent)
+        try:
+            with os.fdopen(fd, 'w', encoding='utf-8') as stream:
+                stream.write(text)
+                stream.flush()
+                os.fsync(stream.fileno())
+            os.replace(temporary, path)
+        finally:
+            if os.path.exists(temporary):
+                os.unlink(temporary)
+        atomic_json(safe(repo, receipt_path(scope)), {'sha256': sha(text), 'evidence': evidence})
+    return {'status': 'accepted', 'sha256': sha(text), 'path': str(path.relative_to(repo))}
+
+
+def check(repo, scopes):
+    rows = snapshot(repo, scopes)
+    results = []
+    for row in rows:
+        meta = parse(safe(repo, Path(row['path'])).read_text())
+        for rule in meta.get('checks', []):
+            failures = []
+            for root in meta['source_roots']:
+                source = safe(repo, Path(root))
+                for file in source.rglob('*.java') if source.exists() else []:
+                    safe(repo, file.relative_to(repo))
+                    # Strip comments/string literals before recognizing Java package/import tokens.
+                    text = re.sub(r'""".*?"""|"(?:\\.|[^"\\])*"|\'(?:\\.|[^\'\\])*\'|/\*.*?\*/|//[^\n]*', ' ', file.read_text(), flags=re.S)
+                    package = re.search(r'\bpackage\s+([\w.]+)\s*;', text)
+                    if package and rule['from'] in package[1].split('.'):
+                        for target in re.findall(r'\bimport\s+(?:static\s+)?([\w.*]+)\s*;', text):
+                            if rule['forbidden'] in target.split('.'):
+                                failures.append({'path': str(file.relative_to(repo)), 'dependency': target})
+            results.append({'rule_id': rule['id'], 'status': 'failed' if failures else 'passed', 'violations': failures,
+                            'coverage': 'Java explicit imports only; fully qualified references, reflection and semantic boundaries require provider review.'})
+        results.append({'rule_id': row['rule_id'] + ':semantic', 'status': 'unsupported',
+                        'next': 'Provider review must read this Skill and assess responsibilities, module boundaries and data conversion.'})
+    return {'ready': not any(r['status'] == 'failed' for r in results), 'results': results,
+            'semantic_review_required': True}
+
+
+def dispatch(args):
+    from scripts.cao_runtime import repo_root
+    repo = repo_root(args.repo)
+    action = args.architecture_action
+    if action == 'list':
+        result = {key: {k: v for k, v in row.items() if k != 'text'} for key, row in catalog(repo).items()}
+    elif action == 'draft':
+        result = draft(repo, args.scope, args.template, dict(v.split('=', 1) for v in args.variable))
+    elif action == 'apply':
+        result = accept(repo, args.scope, args.evidence, args.expected_sha256)
+    elif action == 'diff':
+        path = safe(repo, scope_file(args.scope))
+        old = path.read_text() if path.exists() else ''
+        new = safe(repo, ROOT / 'architecture-inputs' / (args.scope + '.md')).read_text()
+        result = {'expected_sha256': sha(old), 'diff': ''.join(difflib.unified_diff(old.splitlines(True), new.splitlines(True)))}
+    elif action == 'validate':
+        path = safe(repo, Path(args.path)) if args.path else safe(repo, ROOT / 'architecture-inputs' / (args.scope + '.md'))
+        result = {'valid': True, 'metadata': parse(path.read_text(encoding='utf-8'))}
+    elif action == 'check':
+        result = check(repo, [args.scope])
+    else:
+        result = state(repo, [args.scope], required=True)
+    print(json.dumps(result, ensure_ascii=False, indent=2))
+    return 2 if result.get('ready') is False else 0
+
+
+def register(actions):
+    commands = actions.add_parser('architecture', help='Scope-owned architecture Skills').add_subparsers(dest='architecture_action', required=True)
+    for name in ('list', 'inspect', 'show', 'draft', 'validate', 'diff', 'apply', 'check'):
+        p = commands.add_parser(name)
+        p.add_argument('--repo', default='.')
+        p.add_argument('--scope', default='root')
+        p.set_defaults(fn=dispatch)
+        if name == 'draft':
+            p.add_argument('--template', required=True)
+            p.add_argument('--variable', action='append', default=[])
+        if name == 'validate':
+            p.add_argument('--path')
+        if name == 'apply':
+            p.add_argument('--evidence', required=True)
+            p.add_argument('--expected-sha256', required=True)

@@ -43,5 +43,7 @@ packages = ["scripts"]
 "share/coding-agent-orchestrator/hosts/pi" = ["hosts/pi/coding-orchestrator.ts"]
 "share/coding-agent-orchestrator/hosts/pi/internal" = ["hosts/pi/internal/*.ts"]
 
+"share/coding-agent-orchestrator/templates/architecture" = ["templates/architecture/*.md"]
+
 [tool.setuptools.package-data]
 scripts = ["dashboard.html"]
