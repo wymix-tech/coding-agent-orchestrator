@@ -784,7 +784,7 @@ def reconcile_native_sdd_state(repo: Path, work: dict[str, Any]) -> bool:
         desired = 'review' if (ready or baseline_only) and current_action['stage'] != 'execution' else 'implementation'
         # Preserve genuine planning/ready phases until native execution starts.
         active = canonical in {'in_progress', 'in_review', 'completed'} or phase in {'review', 'verification'}
-        if active and not (ready and phase == 'verification'):
+        if active and not (ready and phase == 'verification' and current_action['stage'] != 'execution'):
             if execution.get('step') != desired or execution.get('phase') != desired:
                 execution.update(step=desired, phase=desired)
                 changed = True

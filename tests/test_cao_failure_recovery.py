@@ -1,0 +1,139 @@
+"""Recovery must not turn old native execution into current acceptance."""
+from tests.test_native_lifecycle_contract import NativeLifecycle
+
+
+import unittest
+
+
+class FailureRecovery(unittest.TestCase):
+    setUp = NativeLifecycle.setUp
+    check = NativeLifecycle.check
+    cli = NativeLifecycle.cli
+    work = NativeLifecycle.work
+    bind = NativeLifecycle.bind
+    def test_old_report_cannot_be_rebound_after_product_edit(self):
+        self.bind()
+        (self.repo / 'feature.py').write_text('changed = True\n')
+        rc, out = self.cli('lifecycle', 'bind', '--report', 'openspec/completion.md')
+        self.assertEqual(2, rc, out)
+        self.assertIn('NATIVE_COMPLETION_REEXECUTION_REQUIRED', str(out))
+
+    def test_stale_native_evidence_returns_phase_to_implementation(self):
+        from scripts.cao_work_store import load_work, save_work
+        self.bind()
+        work = load_work(self.repo, self.wid)
+        work['execution'].update(phase='verification', step='verification')
+        save_work(self.repo, work)
+        (self.repo / 'feature.py').write_text('changed = True\n')
+        self.check('next')
+        self.assertEqual('implementation', self.work()['execution']['phase'])
+
+    def test_copying_old_report_does_not_refresh_execution(self):
+        self.bind()
+        (self.repo / 'feature.py').write_text('changed = True\n')
+        (self.repo / 'openspec/copied.md').write_bytes(self.report.read_bytes())
+        self.assertEqual(2, self.cli('lifecycle', 'bind', '--report', 'openspec/copied.md')[0])
+
+    def test_new_execution_with_identical_output_can_close(self):
+        import sys
+        self.bind()
+        (self.repo / 'feature.py').write_text('changed = True\n')
+        result = self.check('lifecycle', 'execute', '--command', sys.executable + ' preparation_suite.py',
+                            '--report', 'openspec/completion.md')
+        self.assertEqual('passed', result['execution']['status'])
+        original = self.report.read_bytes()
+        self.bind()
+        self.check('verify')
+        self.check('done')
+        self.assertEqual('completed', self.work()['status'])
+        self.assertEqual(original, self.report.read_bytes())
+
+    def test_failed_execution_blocks_binding_old_success(self):
+        import sys
+        self.bind()
+        (self.repo / 'preparation_suite.py').write_text('raise SystemExit(1)\n')
+        self.assertEqual(2, self.cli('lifecycle', 'execute', '--command', sys.executable + ' preparation_suite.py',
+                                    '--report', 'openspec/failure.log')[0])
+        self.assertEqual(2, self.cli('conformance', 'check')[0])
+        self.assertEqual(2, self.cli('lifecycle', 'bind', '--report', 'openspec/completion.md')[0])
+        self.assertEqual(2, self.cli('done')[0])
+
+    def test_failed_baseline_next_requires_diagnosis(self):
+        from scripts.cao_work_store import load_work, save_work
+        self.bind()
+        work = load_work(self.repo, self.wid)
+        work['verification'] = {'status': 'failed', 'results': [{'reason': 'AssertionError'}]}
+        work['execution'].update(phase='verification', step='verification')
+        save_work(self.repo, work)
+        action = self.check('next')['action']
+        self.assertEqual('recovery', action['stage'])
+        self.assertEqual('PROJECT_BASELINE_FAILED', action['reason'])
+        self.assertIn('Diagnose', action['instruction'])
+        self.assertEqual('verification', self.work()['execution']['phase'])
+
+    def test_product_diagnosis_requires_native_reexecution(self):
+        import sys
+        from scripts.cao_work_store import load_work, save_work
+        self.bind()
+        work = load_work(self.repo, self.wid)
+        work['verification'] = {'status': 'failed', 'run_id': 'baseline-failed'}
+        save_work(self.repo, work)
+        self.check('lifecycle', 'repair', '--kind', 'product', '--reason', 'Observed assertion regression')
+        self.assertEqual(2, self.cli('lifecycle', 'repair', '--kind', 'environment', '--reason', 'Cannot waive product repair')[0])
+        self.assertEqual('implementation', self.work()['execution']['phase'])
+        self.assertEqual('execution', self.check('next')['action']['stage'])
+        self.assertEqual(2, self.cli('verify')[0])
+        self.assertEqual(2, self.cli('lifecycle', 'bind', '--report', 'openspec/completion.md')[0])
+        self.check('lifecycle', 'execute', '--command', sys.executable + ' preparation_suite.py', '--report', 'openspec/completion.md')
+        self.bind()
+        self.assertNotIn('completion_repair', self.work()['sdd'])
+        self.check('verify')
+        self.check('done')
+
+    def test_environment_diagnosis_preserves_native_binding(self):
+        from scripts.cao_work_store import load_work, save_work
+        self.bind()
+        before = self.work()['sdd']['completion_evidence']
+        work = load_work(self.repo, self.wid)
+        work['verification'] = {'status': 'blocked', 'run_id': 'environment-failed'}
+        work['execution'].update(phase='verification', step='verification')
+        save_work(self.repo, work)
+        self.check('lifecycle', 'repair', '--kind', 'environment', '--reason', 'Service unavailable')
+        self.assertEqual('verification', self.work()['execution']['phase'])
+        self.assertEqual(before, self.work()['sdd']['completion_evidence'])
+        self.check('verify')
+        self.check('done')
+
+    def test_report_copy_is_not_an_executable_native_check(self):
+        self.bind()
+        self.assertEqual(2, self.cli('lifecycle', 'execute', '--command', 'cat openspec/completion.md',
+                                    '--report', 'openspec/copied.log')[0])
+        self.assertFalse(self.work()['sdd'].get('completion_executions'))
+
+    def test_identical_bytes_from_new_execution_are_valid(self):
+        import sys
+        self.bind()
+        suite = self.repo / 'preparation_suite.py'
+        suite.write_text("import unittest,sys\nclass T(unittest.TestCase):\n def test_real(self): self.assertEqual(2+2,4)\nr=unittest.TestResult()\nunittest.defaultTestLoader.loadTestsFromTestCase(T).run(r)\nprint('Ran 1 test in native execution\\nOK' if r.wasSuccessful() else 'FAILED')\nsys.exit(not r.wasSuccessful())\n")
+        self.check('verification', 'check', '--project')
+        self.check('reopen', '--reanchor', '--reason', 'Reviewed deterministic native test runner')
+        command = sys.executable + ' preparation_suite.py'
+        self.check('lifecycle', 'execute', '--command', command, '--report', 'openspec/completion.md')
+        self.bind()
+        original = self.report.read_bytes()
+        (self.repo / 'feature.py').write_text('updated_product = True\n')
+        self.check('lifecycle', 'execute', '--command', command, '--report', 'openspec/completion.md')
+        self.assertEqual(original, self.report.read_bytes())
+        self.bind()
+        self.check('verify')
+        self.check('done')
+
+    def test_product_edit_during_native_execution_cannot_pass(self):
+        import sys
+        self.bind()
+        (self.repo / 'preparation_suite.py').write_text("from pathlib import Path\nPath('feature.py').write_text('changed_during_run = True')\nprint('status: passed')\n")
+        rc, out = self.cli('lifecycle', 'execute', '--command', sys.executable + ' preparation_suite.py',
+                           '--report', 'openspec/completion.md')
+        self.assertEqual(2, rc, out)
+        self.assertEqual('stale', out['execution']['status'])
+        self.assertEqual(2, self.cli('done')[0])
