@@ -27,3 +27,13 @@ Fault identity excludes command action and generated run ID, so moving between d
 Regression coverage includes acceptance envelopes, distinct detailed artifacts and summaries, modified snapshots, wrong-ticket output, cross-round finding-content mismatch, exited reviewers, legacy recovery, startup binding, observed writes, and retries across actions/runs. Existing integration fixtures explicitly include the new digest metadata.
 
 The uploaded demo archive is diagnostic history, not the live demo project. Repository changes provide recovery tooling; they do not claim to have modified the user's live `.orchestrator` state.
+
+### Final local results
+
+- Python discovery: 1,233 cases, including 24 duplicate imported identities; all 1,209 distinct test identities were accounted for against the discovery list.
+- 1,205 distinct cases passed; four environment-dependent cases skipped (Maven/JDK, Gradle/JDK, Go, and the optional official BMAD v6.12.4 source checkout). No remaining failures or missing identities.
+- Tests were executed in module groups, with `PYTHONPATH=tests:.` for modules importing sibling test fixtures. The initial grouped launch lacked that path for some modules; all affected modules were rerun successfully. A two-layer fixture was updated to include the now-required source digest and rerun successfully.
+- `make check`: passed.
+- `npm run check:pi`: passed.
+- `npm run test:pi`: 39 passed, zero failed/skipped, including the actual Pi runtime contract test.
+- The local commit trees were compared with the GitHub-created commit trees and match exactly. GitHub Actions cross-version/platform jobs are tracked separately from these local results.
