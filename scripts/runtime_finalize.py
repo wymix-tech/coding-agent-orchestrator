@@ -20,6 +20,8 @@ def finalize(repo, work, rid):
         state = inspect_run(repo, work, rid)
         if state['admission_status'] in {'passed', 'failed', 'blocked', 'error', 'stale'}:
             return {'ok': True, 'status': 'unchanged', 'run_id': rid}
+        if state['start']['kind'] == 'native_completion':
+            raise ValueError('NATIVE_FINALIZE_COMPLETE_AUTHORITY_REQUIRED: runtime receipts alone cannot reconstruct native report admission; inspect actual effects and use cao runtime abandon --run ' + rid + ' --evidence <inspection-file> --reason <diagnosis>, then explicitly execute the affected native command and bind its output')
         if state['start']['kind'] != 'verification' or state['start']['source'] != 'cao_executor':
             raise ValueError('RUNTIME_FINALIZE_CONTROLLED_VERIFICATION_REQUIRED')
         if owner_status(repo, work['id'], rid) == 'running':

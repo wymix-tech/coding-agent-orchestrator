@@ -61,7 +61,7 @@ def _query(repo, work, args):
         current = inspect_run(repo, work, args.run)
         if current['start']['source'] != 'cao_executor' or owner_status(repo, work['id'], args.run) != 'running':
             raise ValueError('CONTROLLED_LIVE_EXECUTOR_REQUIRED')
-        if current['start'].get('generation') != work.get('execution_generation', 0):
+        if not current['kind'].startswith('provider_') and current['start'].get('generation') != work.get('execution_generation', 0):
             raise ValueError('RUNTIME_CANCEL_GENERATION_MISMATCH')
         path = run_path(repo, work['id'], args.run, 'cancel.json')
         if not read_record(path):
@@ -117,8 +117,10 @@ def cmd_runtime(args) -> int:
                 raise ValueError("NO_WORK_ITEM: choose --work <id> or --work _unassigned for events")
             wid = identifier(selected)
             work = load_work(repo, wid) if wid != "_unassigned" else None
-            if wid == "_unassigned" and action != "events":
-                raise ValueError("RUNTIME_UNASSIGNED_EVENTS_ONLY")
+            if wid == "_unassigned":
+                if action not in {"events", "runs", "show", "logs", "status", "cancel"}:
+                    raise ValueError("RUNTIME_UNASSIGNED_QUERY_OR_CANCEL_ONLY")
+                work = {"id": wid}
             if wid != "_unassigned" and not work:
                 raise ValueError("WORK_ITEM_NOT_FOUND")
             if action == "rebuild":
@@ -128,7 +130,7 @@ def cmd_runtime(args) -> int:
         if action not in {"rebuild", "prune"}:
             # Read immutable facts against a Work snapshot without holding the
             # repository writer lock while scanning history or reading log bodies.
-            result = page(events(repo, wid), args.limit, args.cursor) if wid == "_unassigned" else _query(repo, work, args)
+            result = page(events(repo, wid), args.limit, args.cursor) if wid == "_unassigned" and action == "events" else _query(repo, work, args)
         if action == "recover":
             identity = "recovery-" + uuid.uuid4().hex
             occurred = time.time()

@@ -58,6 +58,10 @@ def command(args):
             if owner_status(repo, work['id'], previous) == 'running' or args.retry_of != previous:
                 raise ValueError('NATIVE_EXECUTION_UNRESOLVED: inspect runtime show; explicitly retry with --retry-of ' + previous + ' only after inspecting unknown effects')
             rows[-1]['status'] = 'abandoned'
+            rows[-1]['resolution'] = {'source': 'agent_declaration', 'kind': 'explicit_retry',
+                                     'retry_of': previous, 'at': now()}
+            queue_event(work, {'event': 'sdd.completion.execution.abandoned', 'work_item_id': work['id'],
+                               'run_id': previous, 'resolution': rows[-1]['resolution']})
         run_id = 'native-' + uuid.uuid4().hex
         captured = inputs(repo, work)
         row = {'run_id': run_id, 'status': 'running', 'inputs': captured, 'command': args.command,

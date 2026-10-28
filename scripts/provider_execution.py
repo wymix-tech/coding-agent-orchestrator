@@ -56,8 +56,6 @@ def _transition(repo, target, wid):
     from scripts.lifecycle_guard import digest
     import os
     command = str(((config(repo).get('sdd') or {}).get('command') or {}).get('transition') or '').strip()
-    if not command:
-        return None
     with repo_transaction(repo):
         work = load_work(repo, wid)
         if not work or work.get('status') != 'active':
@@ -65,6 +63,11 @@ def _transition(repo, target, wid):
         identity = {'command': command, 'target': target, 'generation': work.get('execution_generation', 0),
                     'inputs': verification_inputs(repo, work, config(repo))}
         rows = work.setdefault('sdd', {}).setdefault('transition_runs', [])
+        unresolved = next((row for row in reversed(rows) if row['status'] in {'running', 'unknown'}), None)
+        if unresolved:
+            raise ValueError('PROVIDER_TRANSITION_UNRESOLVED: inspect effects; cao sdd transition resolve --work ' + wid + ' --operation ' + unresolved['id'] + ' --outcome applied|not-applied --evidence <inspection-file> --reason <diagnosis>')
+        if not command:
+            return None
         for row in reversed(rows):
             if all(row['identity'].get(key) == identity[key] for key in ('command', 'target', 'generation')):
                 if row['status'] == 'passed':
@@ -72,8 +75,6 @@ def _transition(repo, target, wid):
                 if row['status'] != 'not_applied':
                     raise ValueError('PROVIDER_TRANSITION_UNRESOLVED: inspect the operation and use cao sdd transition resolve --work ' + wid + ' --operation ' + row['id'] + ' --outcome applied|not-applied --evidence <inspection-file> --reason <diagnosis>')
                 break
-        if any(row['status'] in {'running', 'unknown'} for row in rows):
-            raise ValueError('PROVIDER_TRANSITION_UNRESOLVED: resolve the existing transition before new inputs')
         row = {'id': 'transition-' + uuid.uuid4().hex, 'identity': identity, 'status': 'running'}
         rows.append(row)
         save_work(repo, work)

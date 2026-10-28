@@ -107,7 +107,9 @@ def inspect_run(repo: Path, work: dict, rid: str, official: dict | None = None) 
     superseded = not terminal and bool(current_id) and (current_id != rid or (
         start.get("generation") is not None and start["generation"] != work.get("execution_generation")))
     owner = owner_status(repo, wid, rid)
-    if terminal:
+    if start["kind"].startswith("provider_") and receipt:
+        recovery = "complete"  # Execution fact only; no Work admission is granted.
+    elif terminal:
         recovery = "complete" if projection else "projection_missing"
     elif owner == "running":
         recovery = "running"
@@ -129,6 +131,8 @@ def inspect_run(repo: Path, work: dict, rid: str, official: dict | None = None) 
               "current_run": current_id == rid,
               "process_status": "exited" if receipt else "running" if owner == "running" else "unknown",
               "next": "Inspect actual artifacts and processes; use the existing verify/acceptance command for a new run when appropriate. No command is rerun by recovery."}
+    if start['kind'] == 'native_completion' and not terminal:
+        result['next'] = 'Inspect actual output and effects with cao runtime show --run ' + rid + '; wait for a live executor. For an interrupted unknown result, record inspection using cao runtime abandon --run ' + rid + ' --evidence <inspection-file> --reason <diagnosis> before a new lifecycle execute. Never replay automatically.'
     if receipt:
         statuses = receipt.get("commands") or []
         if any(item.get("timed_out") for item in statuses):

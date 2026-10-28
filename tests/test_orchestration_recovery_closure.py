@@ -18,8 +18,13 @@ class RecoveryClosure(unittest.TestCase):
     def test_native_success_is_resolved_and_resumable(self):
         from scripts.runtime_queries import inspect_run
         from scripts.recovery_plan import plan
+        queued = self.repo / '.orchestrator/requirements/queued.md'
+        queued.parent.mkdir(parents=True, exist_ok=True)
+        queued.write_text('# Queued independent requirement\nProvide an independent follow-up change.\n')
+        target = self.check('start', '--defer', '--requirement', str(queued))['work_item']['id']
         self.bind()
         rid = self.execute()['execution']['run_id']
+        self.bind()
         state = inspect_run(self.repo, self.work(), rid)
         self.assertEqual('passed', state['admission_status'])
         self.assertTrue(state['current_run'])
@@ -28,6 +33,11 @@ class RecoveryClosure(unittest.TestCase):
         from tests.test_project_context_acceptance import CLI
         resumed = subprocess.run([sys.executable, str(CLI), 'resume', '--repo', str(self.repo)], env=self.fixture.env, capture_output=True, text=True, timeout=30)
         self.assertEqual(0, resumed.returncode, resumed.stdout + resumed.stderr)
+        self.check('switch', '--to', target)
+        self.check('switch', '--to', self.wid)
+        self.check('verify')
+        self.check('done')
+        self.assertEqual('completed', self.work()['status'])
 
     def test_corrected_gate_request_can_bind(self):
         for _ in range(2):
@@ -101,6 +111,8 @@ class RecoveryClosure(unittest.TestCase):
         path.write_text(json.dumps(cfg))
         (self.repo / 'transition.py').write_text('raise SystemExit(1)\n')
         self.assertEqual(1, transition(self.repo, 'done', self.wid)['exit_code'])
+        cfg['sdd']['command']['transition'] = ''
+        path.write_text(json.dumps(cfg))
         with self.assertRaisesRegex(ValueError, 'PROVIDER_TRANSITION_UNRESOLVED'):
             transition(self.repo, 'done', self.wid)
 
@@ -159,3 +171,62 @@ class RecoveryClosure(unittest.TestCase):
         (self.repo / 'inspection.md').write_text('Provider did not apply the transition.\n')
         self.check('sdd', 'transition', 'resolve', '--work', self.wid, '--operation', operation, '--outcome', 'not-applied', '--evidence', 'inspection.md', '--reason', 'inspected provider state')
         self.assertFalse(plan(self.repo, self.work())['unresolved_runs'])
+
+    def test_project_owned_provider_command_can_be_cancelled(self):
+        import time
+        from concurrent.futures import ThreadPoolExecutor
+        from scripts.provider_execution import run
+        from scripts.runtime_store import run_records
+        from scripts.runtime_execution import owner_status
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            future = pool.submit(run, self.repo, [sys.executable, '-c', 'import time;time.sleep(10)'], kind='provider_inspect', timeout=3)
+            deadline = time.monotonic() + 2
+            rid = None
+            while time.monotonic() < deadline:
+                rid = next((p.name for p in run_records(self.repo, '_unassigned') if owner_status(self.repo, '_unassigned', p.name) == 'running'), None)
+                if rid:
+                    break
+                time.sleep(.01)
+            self.assertIsNotNone(rid)
+            self.check('runtime', 'cancel', '--work', '_unassigned', '--run', rid, '--reason', 'operator cancellation')
+            result = future.result(timeout=5)
+        self.assertEqual(130, result['exit_code'])
+        self.assertEqual('cancelled', result['process_status'])
+        self.assertEqual('complete', self.check('runtime', 'show', '--work', '_unassigned', '--run', rid)['recovery_status'])
+
+    def test_context_evaluation_is_not_cached_across_calls(self):
+        from scripts.cao_guidance import render_context, current_work_action
+        self.bind()
+        before = render_context(self.repo, self.work())
+        self.assertEqual('PROJECT_BASELINE_REQUIRED', current_work_action(self.repo, self.work())['reason'])
+        (self.repo / 'feature.py').write_text('valid = False\n')
+        after = render_context(self.repo, self.work())
+        self.assertNotEqual(before, after)
+        self.assertIn('NATIVE_COMPLETION_EVIDENCE_STALE', after)
+        self.assertEqual('NATIVE_COMPLETION_EVIDENCE_STALE', current_work_action(self.repo, self.work())['reason'])
+
+    def test_transition_commit_interruption_requires_inspection_without_replay(self):
+        from unittest.mock import patch
+        from scripts.provider_execution import transition
+        from scripts.cao_work_store import save_work
+        path = self.repo / '.orchestrator/config.json'
+        cfg = json.loads(path.read_text())
+        cfg['sdd']['command']['transition'] = sys.executable + ' transition.py'
+        path.write_text(json.dumps(cfg))
+        (self.repo / 'transition.py').write_text("from pathlib import Path\np=Path('transition-count')\np.write_text(p.read_text()+'x' if p.exists() else 'x')\n")
+        calls = []
+        def interrupt(repo, work):
+            calls.append(True)
+            if len(calls) == 2:
+                raise OSError('injected commit interruption')
+            return save_work(repo, work)
+        with patch('scripts.cao_work_store.save_work', side_effect=interrupt):
+            with self.assertRaisesRegex(OSError, 'injected commit'):
+                transition(self.repo, 'done', self.wid)
+        with self.assertRaisesRegex(ValueError, 'PROVIDER_TRANSITION_UNRESOLVED'):
+            transition(self.repo, 'done', self.wid)
+        operation = self.work()['sdd']['transition_runs'][-1]['id']
+        (self.repo / 'inspection.md').write_text('Provider applied the transition; observed transition-count is x.\n')
+        self.check('sdd', 'transition', 'resolve', '--work', self.wid, '--operation', operation, '--outcome', 'applied', '--evidence', 'inspection.md', '--reason', 'observed external result')
+        self.assertEqual(0, transition(self.repo, 'done', self.wid)['exit_code'])
+        self.assertEqual('x', (self.repo / 'transition-count').read_text())
