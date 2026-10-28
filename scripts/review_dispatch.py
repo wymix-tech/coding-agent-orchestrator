@@ -376,8 +376,8 @@ def draft_report(repo, work, layer, source):
     if path.exists() and json.loads(path.read_text()).get('findings'):
         invalid('NATIVE_REVIEW_DRAFT_EXISTS', 'report', 'reuse the existing triage; never overwrite judgments', str(path.relative_to(repo)))
     report = {'run_id': run['id'], 'input_sha256': run['input_sha256'], 'reviewer': binding['reviewer'],
-              'findings_file': raw.relative_to(repo).as_posix(), 'intent_conflicts': [],
-              'findings': [{'id': item, 'verdict': None, 'disposition': None, 'evidence': ''} for item in ids]}
+              'findings_file': raw.relative_to(repo).as_posix(), 'source_sha256': hashlib.sha256(raw.read_bytes()).hexdigest(), 'intent_conflicts': [],
+              'findings': [{'id': item['id'], 'content_sha256': native_digest(item), 'verdict': None, 'disposition': None, 'evidence': ''} for item in findings]}
     atomic_json(path, report)
     return {'ok': True, 'report': path.relative_to(repo).as_posix(), 'findings': findings,
             'source_sha256': hashlib.sha256(raw.read_bytes()).hexdigest(),
