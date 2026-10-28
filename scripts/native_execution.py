@@ -17,8 +17,18 @@ def receipt_matches(repo, work, reports):
     rows = (work.get('sdd') or {}).get('completion_executions') or []
     if not rows or rows[-1].get('status') != 'passed':
         return False
+    repair = (work.get('sdd') or {}).get('completion_repair') or {}
+    excluded = set()
+    if repair.get('kind') == 'product':
+        # Historical repairs have no reliable execution boundary. A new execute
+        # captures it under the same transaction before admitting a new run.
+        if 'execution_boundary' not in repair:
+            return False
+        excluded = set(repair['execution_boundary'])
     accepted = []
     for row in reversed(rows):
+        if row.get('run_id') in excluded:
+            continue
         if row.get('generation') != work.get('execution_generation', 0) or row.get('inputs') != current or row.get('domains') != material_inputs(repo, work):
             continue
         if row.get('status') != 'passed':
@@ -49,10 +59,17 @@ def command(args):
             raise ValueError('NATIVE_EXECUTION_LOG_PATH_REQUIRED')
         if path.relative_to(repo).as_posix() in material_inputs(repo, work)['native_sources']:
             raise ValueError('NATIVE_EXECUTION_REPORT_IS_SOURCE')
+        outputs = work['sdd'].setdefault('native_execution_reports', [])
+        output = path.relative_to(repo).as_posix()
+        if output not in outputs:
+            outputs.append(output)
         from scripts.evidence_domains import dependencies
         observed_dependencies = dependencies(repo, work, [args.command])
         work['sdd']['native_execution_dependencies'] = sorted(set(work['sdd'].get('native_execution_dependencies', [])) | set(observed_dependencies))
         rows = work['sdd'].setdefault('completion_executions', [])
+        repair = work['sdd'].get('completion_repair') or {}
+        if repair.get('kind') == 'product' and 'execution_boundary' not in repair:
+            repair['execution_boundary'] = [row['run_id'] for row in rows]
         if rows and rows[-1]['status'] == 'running':
             previous = rows[-1]['run_id']
             if owner_status(repo, work['id'], previous) == 'running' or args.retry_of != previous:
@@ -132,6 +149,8 @@ def repair(args):
         if previous:
             work['sdd'].setdefault('completion_repair_history', []).append(previous)
         row = {'kind': args.kind, 'reason': args.reason, 'run_id': run.get('run_id'), 'at': now(), 'source': run.get('source', 'work_verification')}
+        if args.kind == 'product':
+            row['execution_boundary'] = [item['run_id'] for item in work['sdd'].get('completion_executions', [])]
         work['sdd']['completion_repair'] = row
         work['execution'].update(phase='implementation' if args.kind == 'product' else 'verification',
                                  step='implementation' if args.kind == 'product' else 'verification')

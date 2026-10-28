@@ -65,6 +65,8 @@ class RecoveryClosure(unittest.TestCase):
         work['verification'] = {'status': 'failed', 'run_id': 'failed-baseline'}
         save_work(self.repo, work)
         self.check('lifecycle', 'repair', '--kind', 'product', '--reason', 'product diagnosis')
+        self.assertNotEqual(0, self.cli('lifecycle', 'bind', '--report', 'openspec/completion.md')[0])
+        self.assertIn('completion_repair', self.work()['sdd'])
         self.execute()
         self.bind()
         self.assertNotIn('completion_repair', self.work()['sdd'])
@@ -252,3 +254,82 @@ class RecoveryClosure(unittest.TestCase):
         self.check('lifecycle', 'repair', '--kind', 'product', '--reason', 'inspected assertion: feature.valid must be true')
         self.assertTrue(project_state(self.repo, work=self.work())['ready'])
         self.assertNotEqual(0, self.cli('done')[0])
+
+    def prepare_product_repair(self):
+        from scripts.cao_work_store import save_work
+        self.bind()
+        self.execute()
+        self.bind()
+        work = self.work()
+        work['verification'] = {'status': 'failed', 'run_id': 'review-failure'}
+        save_work(self.repo, work)
+        self.check('lifecycle', 'repair', '--kind', 'product', '--reason', 'reviewed defect')
+
+    def test_legacy_repair_requires_new_execution_without_timestamp_guessing(self):
+        from scripts.cao_work_store import save_work
+        self.prepare_product_repair()
+        work = self.work()
+        work['sdd']['completion_repair'].pop('execution_boundary')
+        save_work(self.repo, work)
+        self.assertNotEqual(0, self.cli('lifecycle', 'bind', '--report', 'openspec/completion.md')[0])
+        self.execute()
+        self.bind()
+        self.assertNotIn('completion_repair', self.work()['sdd'])
+
+    def test_new_execution_in_old_generation_cannot_resolve_repair(self):
+        from scripts.cao_work_store import save_work
+        self.prepare_product_repair()
+        self.execute()
+        work = self.work()
+        work['execution_generation'] = work.get('execution_generation', 0) + 1
+        save_work(self.repo, work)
+        self.assertNotEqual(0, self.cli('lifecycle', 'bind', '--report', 'openspec/completion.md')[0])
+        self.assertIn('completion_repair', self.work()['sdd'])
+
+    def test_multiple_reports_require_post_repair_receipt_for_each(self):
+        self.prepare_product_repair()
+        self.check('lifecycle', 'execute', '--command', sys.executable + ' preparation_suite.py', '--report', 'openspec/second.log')
+        self.assertNotEqual(0, self.cli('lifecycle', 'bind', '--report', 'openspec/completion.md', '--report', 'openspec/second.log')[0])
+        self.execute()
+        self.check('lifecycle', 'bind', '--report', 'openspec/completion.md', '--report', 'openspec/second.log')
+        self.assertNotIn('completion_repair', self.work()['sdd'])
+
+    def test_binding_commit_failure_keeps_repair_recoverable(self):
+        import contextlib
+        import io
+        from unittest.mock import patch
+        from scripts.cao_cli import build_parser
+        from scripts.lifecycle_contract import command
+        from scripts.cao_work_store import save_work
+        self.prepare_product_repair()
+        self.execute()
+        args = build_parser().parse_args(['lifecycle', 'bind', '--repo', str(self.repo), '--report', 'openspec/completion.md'])
+        calls = []
+        def fail_once(repo, work):
+            calls.append(True)
+            if len(calls) == 1:
+                raise OSError('injected bind commit interruption')
+            return save_work(repo, work)
+        with patch('scripts.cao_work_store.save_work', side_effect=fail_once), contextlib.redirect_stdout(io.StringIO()):
+            self.assertNotEqual(0, command(args))
+        self.assertIn('completion_repair', self.work()['sdd'])
+        self.bind()
+        self.assertNotIn('completion_repair', self.work()['sdd'])
+
+    def test_native_commit_rejects_inputs_changed_during_execution(self):
+        import contextlib
+        import io
+        from unittest.mock import patch
+        from scripts.cao_cli import build_parser
+        from scripts.native_execution import command
+        from scripts.runtime_execution import execute
+        self.bind()
+        def changed(*args, **kwargs):
+            result = execute(*args, **kwargs)
+            (self.repo / 'feature.py').write_text('valid = False\n')
+            return result
+        args = build_parser().parse_args(['lifecycle', 'execute', '--repo', str(self.repo), '--command', sys.executable + ' preparation_suite.py', '--report', 'openspec/completion.md'])
+        with patch('scripts.runtime_execution.execute', side_effect=changed), contextlib.redirect_stdout(io.StringIO()):
+            self.assertNotEqual(0, command(args))
+        self.assertEqual('stale', self.work()['sdd']['completion_executions'][-1]['status'])
+        self.assertNotEqual(0, self.cli('lifecycle', 'bind', '--report', 'openspec/completion.md')[0])

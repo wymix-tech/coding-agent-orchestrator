@@ -28,7 +28,8 @@ def technical_inputs(repo, work, cfg, *, manifest=None):
         from scripts.path_guard import provider_artifact
         from pathlib import Path
         from scripts.implementation_evidence import records as process_records
-        report_refs = list(((work.get('sdd') or {}).get('completion_evidence') or {}).get('reports', []))
+        report_refs = [{'path': name} for name in (work.get('sdd') or {}).get('native_execution_reports', [])]
+        report_refs += list(((work.get('sdd') or {}).get('completion_evidence') or {}).get('reports', []))
         report_refs.extend({'path': row['path']} for row in process_records(repo, work) if row.get('path') and Path(row['path']).suffix.lower() in {'.md', '.json', '.yaml', '.yml', '.txt', '.log'})
         for ref in report_refs:
             name = ref['path']
