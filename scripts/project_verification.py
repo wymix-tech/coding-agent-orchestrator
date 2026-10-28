@@ -91,6 +91,11 @@ def project_prerequisite(repo, work=None, scopes=None):
     from scripts.project_context import binding_state
     state = binding_state(repo, work) if work else context_state(repo, scopes, check_sources=True)
     if state['ready']:
+        from scripts.project_architecture import state as architecture_state
+        architecture = architecture_state(repo, scopes, work)
+        if not architecture['ready']:
+            state = architecture
+    if state['ready']:
         from scripts.project_setup import prerequisite
         setup = prerequisite(repo, work, scopes)
         if setup:

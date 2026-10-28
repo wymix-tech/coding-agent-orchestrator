@@ -34,7 +34,14 @@ def parse(text, *, template=False):
         raise ValueError('ARCHITECTURE_FRONTMATTER_REQUIRED')
     # JSON is a YAML 1.2 subset: dependency-free, bounded, no executable tags.
     try:
-        meta = json.loads(match[1])
+        try:
+            meta = json.loads(match[1])
+        except ValueError:
+            import yaml
+            # Reject aliases and tags: rule metadata is a small plain data tree.
+            if re.search(r'(^|\s)[&*!][A-Za-z]', match[1]):
+                raise ValueError('ARCHITECTURE_YAML_REFERENCE_UNSUPPORTED')
+            meta = yaml.safe_load(match[1])
         cao = meta['metadata']['cao']
         assert re.fullmatch(r'[a-z0-9][a-z0-9-]{0,63}', meta['name'])
         assert isinstance(meta['description'], str) and meta['description'].strip()
@@ -52,7 +59,7 @@ def parse(text, *, template=False):
             assert set(check) == {'id', 'kind', 'from', 'forbidden'}
             assert check['kind'] == 'java-package-dependency'
             assert all(isinstance(check[k], str) and check[k] for k in check)
-    except (ValueError, KeyError, TypeError, AssertionError):
+    except (ValueError, KeyError, TypeError, AssertionError, AttributeError):
         raise ValueError('ARCHITECTURE_METADATA_INVALID') from None
     body = match[2]
     if any(not re.search(r'^## ' + re.escape(section) + r'\s*\n\S', body, re.M) for section in SECTIONS):
@@ -112,7 +119,7 @@ def snapshot(repo, scopes):
         if not path.is_file() or not receipt:
             raise ValueError('ARCHITECTURE_ACCEPTANCE_REQUIRED: ' + scope)
         text = path.read_text(encoding='utf-8')
-        meta = parse(text)
+        meta = validate_instance(repo, scope, text)
         if receipt.get('sha256') != sha(text):
             raise ValueError('ARCHITECTURE_RULE_STALE: ' + scope)
         result.append({'scope': scope, 'path': path.relative_to(repo).as_posix(),
@@ -125,6 +132,8 @@ def state(repo, scopes=None, work=None, *, required=False):
     if not context:
         return {'ready': False, 'reason': 'PROJECT_CONTEXT_REQUIRED', 'next': 'Run cao project inspect.'}
     scopes = selected_scopes(context, scopes, work)
+    from scripts.cao_runtime import config
+    required = required or (not work and config(repo).get('architecture_policy') == 1)
     try:
         rules = snapshot(repo, scopes)
         missing = [s for s in scopes if not any(r['scope'] in {'root', s} for r in rules)]
@@ -176,6 +185,35 @@ def draft(repo, scope, template, variables):
     return {'path': str(path.relative_to(repo)), 'source': row['origin'], 'sha256': sha(text)}
 
 
+def validate_instance(repo, scope, text):
+    meta = parse(text)
+    context = load_context(repo)
+    if not context or scope not in context['scopes'] or meta.get('scope') != scope:
+        raise ValueError('ARCHITECTURE_SCOPE_MISMATCH')
+    normalize = lambda v: re.sub(r'[^a-z0-9]', '', str(v).lower())
+    for field, value in meta['stack'].items():
+        actual = context['scopes'][scope]['technology'].get(field, {})
+        if actual.get('status') == 'accepted' and normalize(actual['value']) != normalize(value):
+            raise ValueError('ARCHITECTURE_STACK_MISMATCH: ' + field)
+    for root in meta['source_roots'] + meta['test_roots']:
+        safe(repo, Path(root))
+        if not any(p == '.' or root == p or root.startswith(p.rstrip('/') + '/') for p in context['scopes'][scope]['paths']):
+            raise ValueError('ARCHITECTURE_SCOPE_PATH_MISMATCH')
+    return meta
+
+
+def writable_input(repo, target):
+    try:
+        path = Path(target)
+        if path.is_absolute():
+            path = path.relative_to(repo)
+        safe(repo, path)
+        return (path.parent == ROOT / 'architecture-inputs' and path.suffix == '.md') or (
+            path.is_relative_to(DIRECTORY / 'custom') and path.suffix == '.md')
+    except (ValueError, OSError):
+        return False
+
+
 def accept(repo, scope, evidence, expected):
     from scripts.project_sources import user_evidence
     if not evidence:
@@ -186,7 +224,7 @@ def accept(repo, scope, evidence, expected):
         if sha(old) != expected:
             raise ValueError('ARCHITECTURE_REVISION_CONFLICT')
         text = safe(repo, ROOT / 'architecture-inputs' / (scope + '.md')).read_text(encoding='utf-8')
-        meta = parse(text)
+        meta = validate_instance(repo, scope, text)
         user_evidence(repo, evidence, {'architecture': meta['rule_id']})
         if meta['scope'] != scope:
             raise ValueError('ARCHITECTURE_SCOPE_MISMATCH')

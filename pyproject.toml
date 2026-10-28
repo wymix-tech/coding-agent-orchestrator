@@ -8,7 +8,7 @@ version = "0.1.0"
 description = "Agent-neutral lightweight coding workflow control plane"
 readme = "README.md"
 requires-python = ">=3.10"
-dependencies = ["tomli>=2.0.1; python_version < '3.11'"]
+dependencies = ["PyYAML>=6.0.2,<7", "tomli>=2.0.1; python_version < '3.11'"]
 classifiers = [
   "Development Status :: 3 - Alpha",
   "Environment :: Console",

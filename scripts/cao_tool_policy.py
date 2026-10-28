@@ -93,6 +93,8 @@ def write_targets_protected_state(repo: Path, raw: dict[str, Any], work: dict | 
                     and inside(resolved, state)
                     and (lexical_state is None or lexical.is_relative_to(lexical_state / "requirements")))
         writable = writable or writable_input(repo, target, work)
+        from scripts.project_architecture import writable_input as architecture_input
+        writable = writable or architecture_input(repo, target)
         if state_target and not writable and target not in hits:
             hits.append(target)
     return hits

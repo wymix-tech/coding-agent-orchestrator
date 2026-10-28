@@ -271,6 +271,7 @@ def render_context(repo: Path, work: dict[str, Any] | None, *, session_id: str |
         navigation,
         f"Work Item: {p['work_item']['title']} ({p['work_item']['id']})",
         "Project background: " + json.dumps(p["project_context"], ensure_ascii=False),
+        "Architecture Skills (read before planning, implementation and provider review): " + __import__("scripts.project_architecture", fromlist=["context_excerpt"]).context_excerpt(repo, work),
         f"Status: {p['work_item']['status']}",
         f"Requirement: {p['requirement']['path']}",
         f"SDD: {(p.get('work_item', {}).get('sdd') or {}).get('provider', 'none')}",

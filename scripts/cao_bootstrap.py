@@ -235,6 +235,7 @@ def _initialize_state(args: argparse.Namespace):
     # (and CI) still works while the hook gap stays visible.
     host = args.host or detect_current_host()
     cfg = json.loads(json.dumps(DEFAULT_CONFIG))
+    cfg["architecture_policy"] = 1
     if args.sdd:
         cfg["sdd"]["provider"] = args.sdd
     if getattr(args, "language", None):

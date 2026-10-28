@@ -79,6 +79,10 @@ def normalize_plan(repo, scope, raw):
     state = context_state(repo, [scope])
     if not state['ready']:
         raise ValueError(state['reason'])
+    from scripts.project_architecture import state as architecture_state
+    architecture = architecture_state(repo, [scope])
+    if not architecture['ready']:
+        raise ValueError(architecture['reason'])
     if not isinstance(raw, dict) or type(raw.get('schema_version')) is not int or raw['schema_version'] != 1:
         raise ValueError('PROJECT_SETUP_PLAN_INVALID')
     identity = raw.get('identity')
