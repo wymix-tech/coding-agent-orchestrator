@@ -54,7 +54,7 @@ def _transition(repo, target, wid):
     from scripts.state_store import repo_transaction
     from scripts.cao_completion import verification_inputs
     from scripts.lifecycle_guard import digest
-    from scripts.cao_providers import run_sdd_command
+    import os
     command = str(((config(repo).get('sdd') or {}).get('command') or {}).get('transition') or '').strip()
     if not command:
         return None
@@ -77,7 +77,10 @@ def _transition(repo, target, wid):
         row = {'id': 'transition-' + uuid.uuid4().hex, 'identity': identity, 'status': 'running'}
         rows.append(row)
         save_work(repo, work)
-    result = run_sdd_command(repo, 'transition', [target])
+    env = os.environ.copy()
+    env.update(CAO_REPO=str(repo), CAO_COMMAND='transition')
+    result = run(repo, shlex.split(command) + [target], kind='provider_transition',
+                 timeout=(config(repo).get('sdd') or {}).get('command_timeout_seconds', 300), env=env)
     with repo_transaction(repo):
         work = load_work(repo, wid)
         saved = next(r for r in work['sdd']['transition_runs'] if r['id'] == row['id'])
@@ -90,7 +93,7 @@ def _transition(repo, target, wid):
 
 
 def resolve(args):
-    from scripts.cao_runtime import repo_root, sha256_file
+    from scripts.cao_runtime import repo_root
     repo = repo_root(args.repo)
     with transition_owner(repo, args.work):
         return _resolve(args, repo)

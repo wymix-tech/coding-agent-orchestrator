@@ -15,7 +15,7 @@ def receipt_matches(repo, work, reports):
     from scripts.path_guard import repo_file
     current = inputs(repo, work)
     rows = (work.get('sdd') or {}).get('completion_executions') or []
-    if not rows:
+    if not rows or rows[-1].get('status') != 'passed':
         return False
     accepted = []
     for row in reversed(rows):

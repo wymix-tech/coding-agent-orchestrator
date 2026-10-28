@@ -83,7 +83,7 @@ def scope(repo, work):
     return result
 
 
-def capture(repo, work, commands=()):
+def capture(repo, work, commands=(), *, evaluation=None):
     from scripts.acceptance_inputs import technical_inputs
     from scripts.cao_runtime import config
     from scripts.cao_provider_workflows import provider_output_dirs
@@ -91,6 +91,8 @@ def capture(repo, work, commands=()):
     from scripts.native_metadata import semantic_hash
     manifest = []
     technical = technical_inputs(repo, work, config(repo), manifest=manifest)
+    if evaluation is not None:
+        evaluation['technical'] = technical
     sdd = work.get('sdd') or {}
     route = sdd.get('route_decision') or {}
     sources = set((sdd.get('workflow') or {}).get('artifacts') or [])
@@ -113,9 +115,10 @@ def capture(repo, work, commands=()):
     declaration = {key: verification[key] for key in ('scripts', 'timeout_seconds', 'environment_variables', 'maximum_evidence_age_seconds', 'context_binding') if key in verification}
     from scripts.project_architecture import snapshot as architecture_snapshot
     architecture = architecture_snapshot(repo, (work.get('project_binding') or {}).get('scopes', ['root']))
+    native_scope = scope(repo, work)
     return {'product': {row['path']: {k: v for k, v in row.items() if k != 'path'} for row in manifest},
-            'native_sources': native_sources, 'native_scope': {**scope(repo, work).get('observations', {}),
-                'scope:bindings': {key: value for key, value in scope(repo, work).items() if key != 'observations'}},
+            'native_sources': native_sources, 'native_scope': {**native_scope.get('observations', {}),
+                'scope:bindings': {key: value for key, value in native_scope.items() if key != 'observations'}},
             'reports': files(repo, reports),
             'native_dependencies': dependencies(repo, work, commands),
             'baseline': {'config': technical['verification_config_sha256'], 'declaration_sha256': digest(declaration),

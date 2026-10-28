@@ -41,7 +41,7 @@ def inputs(repo, work, technical=None):
     }
 
 
-def evidence_state(repo, work):
+def evidence_state(repo, work, *, evaluation=None):
     """Validate original native reports; never execute a second acceptance suite."""
     from scripts.cao_runtime import sha256_file
     from scripts.cao_provider_workflows import provider_output_dirs
@@ -68,9 +68,10 @@ def evidence_state(repo, work):
                     'repair': repair, 'next': 'Correct the original native report/source error, then bind the corrected evidence; do not repeat code reviews for report repair.'}
         from scripts.evidence_domains import capture, changed as domain_changes
         commands = [command for row in record.get('observations', []) for command in row.get('commands', [])]
-        domains = capture(repo, work, commands)
+        evaluation = evaluation if evaluation is not None else {}
+        domains = capture(repo, work, commands, evaluation=evaluation)
         diagnostics = domain_changes(record.get('domains') or {}, domains) if record.get('domains') else {}
-        current = inputs(repo, work)
+        current = inputs(repo, work, technical=evaluation['technical'])
         changed = [key for key, value in current.items() if record.get('inputs', {}).get(key) != value]
         if changed:
             return {**pending, 'state': 'stale', 'reason': 'NATIVE_COMPLETION_EVIDENCE_STALE',
@@ -110,11 +111,11 @@ def evidence_state(repo, work):
         return {**pending, 'state': 'blocked', 'reason': 'NATIVE_COMPLETION_SOURCE_INVALID', 'error': str(exc)}
 
 
-def conformance(repo, work):
+def conformance(repo, work, *, native=None, evaluation=None):
     from scripts.conformance import summarize
-    native = prerequisites(repo, work)
+    native = prerequisites(repo, work) if native is None else native
     report = summarize(repo, work, native)
-    evidence = evidence_state(repo, work)
+    evidence = evidence_state(repo, work, evaluation=evaluation)
     if not evidence['ready']:
         report['ready'] = False
         report['blockers'].append({'requirement_id': 'native_completion_evidence',
@@ -132,10 +133,16 @@ def completion(repo, work):
         result = deepcopy(work.get('completion_result') or {})
         return {**result, 'ready': False, 'historical': True,
                 'reason': 'work status is completed', 'next': 'Work is completed; explicitly reopen before validating current inputs.'}
-    report = conformance(repo, work)
+    obligations = prerequisites(repo, work)
+    evaluation = {}
+    report = conformance(repo, work, native=obligations, evaluation=evaluation)
+    current_inputs = None
     run = work.get('verification') or {}
     try:
-        fresh = verification_fresh(work, verification_inputs(repo, work, config(repo)))
+        current_inputs = evaluation.get('technical')
+        if current_inputs is None:
+            current_inputs = verification_inputs(repo, work, config(repo))
+        fresh = verification_fresh(work, current_inputs)
     except (ValueError, OSError, RuntimeError) as exc:
         fresh = False
         report['input_error'] = str(exc)
@@ -146,21 +153,21 @@ def completion(repo, work):
     if not fresh:
         blockers.append('PROJECT_BASELINE_NOT_PASSED')
     ready = report['ready'] and fresh
-    action = next_action(repo, work)
+    action = next_action(repo, work, native=obligations, evidence=report['native_completion_evidence'], current_inputs=current_inputs)
     return {'ready': ready, 'reason': blockers[0] if blockers else None, 'blockers': blockers,
             'conformance': report, 'technical_acceptance': technical,
             'native_completion': native, 'task_acceptance': {**native, 'fresh': native['ready']},
             'lifecycle_ready': report['ready'], 'next_action': action, 'next': action['instruction']}
 
 
-def next_action(repo, work):
+def next_action(repo, work, *, native=None, evidence=None, current_inputs=None):
     """One precedence shared by next, sync, verification and completion."""
-    native = prerequisites(repo, work)
+    native = prerequisites(repo, work) if native is None else native
     if not native['ready']:
         blocker = native['blockers'][0]
         return {'type': 'agent', 'stage': 'verification_setup' if blocker.get('obligation') == 'baseline' else 'execution', 'reason': blocker.get('reason'),
                 'instruction': blocker.get('next') or 'Continue the selected native workflow; complete all associated tasks and native review/finalize obligations.'}
-    evidence = evidence_state(repo, work)
+    evidence = evidence_state(repo, work) if evidence is None else evidence
     if not evidence['ready']:
         return {'type': 'agent', 'stage': 'execution' if evidence.get('changed_inputs') else 'completion',
                 'reason': evidence['reason'], 'instruction': evidence['next']}
@@ -171,7 +178,7 @@ def next_action(repo, work):
     if run.get('status') in {'failed', 'blocked', 'error', 'stale'}:
         return {'type': 'agent', 'stage': 'recovery', 'reason': 'PROJECT_BASELINE_' + run['status'].upper(),
                 'instruction': 'Inspect verification.results and runtime logs before retrying. Diagnose product defects versus environment or baseline failures; record with cao lifecycle repair --kind product|environment|baseline|unknown --reason <diagnosis>. For a product defect, reopen the affected native task and repair through SDD; refresh native execution evidence after edits. For environment failures restore the environment and rerun cao verify. Baseline standard changes require existing review/reanchor; do not weaken checks.'}
-    if not verification_fresh(work, verification_inputs(repo, work, config(repo))):
+    if not verification_fresh(work, current_inputs if current_inputs is not None else verification_inputs(repo, work, config(repo))):
         return {'type': 'agent', 'stage': 'completion', 'reason': 'PROJECT_BASELINE_REQUIRED',
                 'instruction': 'Inspect `cao conformance check`, then run `cao verify` against the accepted project baseline.'}
     return {'type': 'agent', 'stage': 'completion', 'instruction': 'Run `cao done`.'}
@@ -309,11 +316,12 @@ def command(args):
     from scripts.state_store import repo_transaction
     from scripts.completion_repairs import current, record, response
     repo = repo_root(args.repo)
+    request = {key: sorted(set(getattr(args, key, None) or [])) for key in ('report', 'gate', 'evidence')}
     with repo_transaction(repo):
         work = resolve_work(repo, args.work)
         if work and enabled(work):
             row = current(repo, work)
-            if row and row['paused'] and sorted(args.report) == sorted(row['reports']):
+            if row and row['paused'] and sorted(set(args.report)) == sorted(row['reports']) and row.get('request') == request:
                 print(json.dumps(response(row), ensure_ascii=False))
                 return 2
         try:
@@ -325,7 +333,7 @@ def command(args):
             work = resolve_work(repo, args.work)
             if not work or not enabled(work) or work.get('status') != 'active':
                 raise
-            row = record(repo, work, args.report, error)
+            row = record(repo, work, args.report, error, request)
             print(json.dumps(response(row), ensure_ascii=False))
             return 2
 

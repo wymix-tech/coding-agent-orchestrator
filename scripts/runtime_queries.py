@@ -99,8 +99,10 @@ def inspect_run(repo: Path, work: dict, rid: str, official: dict | None = None) 
     elif start["kind"] == "native_completion":
         rows = (work.get("sdd") or {}).get("completion_executions") or []
         current = rows[-1] if rows else {}
-    else:
+    elif start["kind"] == "sdd_acceptance":
         current = (((work.get("sdd") or {}).get("acceptance") or {}).get("run") or {})
+    else:
+        current = {}
     current_id = current.get("run_id") or current.get("id")
     superseded = not terminal and bool(current_id) and (current_id != rid or (
         start.get("generation") is not None and start["generation"] != work.get("execution_generation")))

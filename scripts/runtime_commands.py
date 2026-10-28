@@ -32,16 +32,27 @@ def _query(repo, work, args):
             current = inspect_run(repo, work, args.run)
             if owner_status(repo, work['id'], args.run) == 'running':
                 raise ValueError('RUNTIME_RUN_ACTIVE')
-            run = work.get('verification') or {}
+            from scripts.cao_work_store import load_work
+            work = load_work(repo, work['id'])
+            kind = current['kind']
+            if kind == 'verification':
+                run = work.get('verification') or {}
+            elif kind == 'native_completion':
+                rows = (work.get('sdd') or {}).get('completion_executions') or []
+                run = rows[-1] if rows else {}
+            else:
+                raise ValueError('RUNTIME_ABANDON_KIND_UNSUPPORTED')
             if run.get('run_id') != args.run or run.get('status') != 'running':
                 raise ValueError('RUNTIME_CURRENT_UNRESOLVED_RUN_REQUIRED')
             path = repo_file(repo, args.evidence)
             if not path.is_file() or not path.read_bytes().strip():
                 raise ValueError('RUN_INSPECTION_EVIDENCE_REQUIRED')
-            run.update(status='blocked', reason_code='RUN_OUTCOME_UNKNOWN_ABANDONED', outcome_unknown=True,
+            if not args.reason.strip():
+                raise ValueError('RUN_INSPECTION_REASON_REQUIRED')
+            run.update(status='abandoned' if kind == 'native_completion' else 'blocked', reason_code='RUN_OUTCOME_UNKNOWN_ABANDONED', outcome_unknown=True,
                        resolution={'source': 'agent_declaration', 'path': path.relative_to(repo).as_posix(), 'sha256': sha256_file(path), 'reason': args.reason})
             work['execution_generation'] = work.get('execution_generation', 0) + 1
-            queue_record(repo, work, 'verification.finished', run)
+            queue_record(repo, work, 'sdd.completion.executed' if kind == 'native_completion' else 'verification.finished', run)
             save_work(repo, work)
             return {'ok': True, 'status': 'abandoned', 'outcome_unknown': True, 'note': 'No success or process termination is certified; a later attempt uses a new generation.'}
     if action == "cancel":

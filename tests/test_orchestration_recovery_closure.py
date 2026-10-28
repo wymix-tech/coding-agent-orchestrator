@@ -103,3 +103,59 @@ class RecoveryClosure(unittest.TestCase):
         self.assertEqual(1, transition(self.repo, 'done', self.wid)['exit_code'])
         with self.assertRaisesRegex(ValueError, 'PROVIDER_TRANSITION_UNRESOLVED'):
             transition(self.repo, 'done', self.wid)
+
+    def test_missing_projection_does_not_make_native_success_unresolved(self):
+        from scripts.runtime_store import run_path
+        from scripts.runtime_queries import inspect_run
+        self.bind()
+        rid = self.execute()['execution']['run_id']
+        run_path(self.repo, self.wid, rid, 'result.json').unlink(missing_ok=True)
+        state = inspect_run(self.repo, self.work(), rid)
+        self.assertEqual('projection_missing', state['recovery_status'])
+        self.assertEqual('passed', state['admission_status'])
+
+    def test_duplicate_report_argument_cannot_bypass_pause(self):
+        self.report.write_text('status: failed\n')
+        for _ in range(2):
+            self.assertEqual(2, self.cli('lifecycle', 'bind', '--report', 'openspec/completion.md')[0])
+        code, out = self.cli('lifecycle', 'bind', '--report', 'openspec/completion.md', '--report', 'openspec/completion.md')
+        self.assertEqual(2, code)
+        self.assertEqual('NATIVE_COMPLETION_REPAIR_PAUSED', out['error'])
+        self.assertEqual(2, self.work()['sdd']['completion_binding_failure']['attempts'])
+
+    def test_unknown_project_failure_does_not_inherit_write_permission(self):
+        from scripts.verification_probe import project_state
+        (self.repo / 'preparation_suite.py').write_text('raise RuntimeError("environment unavailable")\n')
+        self.assertNotEqual(0, self.cli('verification', 'check', '--project')[0])
+        self.assertFalse(project_state(self.repo, work=self.work())['ready'])
+
+    def test_native_abandon_requires_inspection_and_retains_history(self):
+        from scripts.cao_work_store import save_work
+        from scripts.runtime_store import start_run
+        work = self.work()
+        rid = 'native-interrupted'
+        work['sdd']['completion_executions'] = [{'run_id': rid, 'status': 'running', 'generation': work.get('execution_generation', 0)}]
+        start_run(self.repo, self.wid, rid, 'native_completion', {}, generation=work.get('execution_generation', 0))
+        save_work(self.repo, work)
+        self.assertNotEqual(0, self.cli('runtime', 'abandon', '--run', rid, '--evidence', 'missing.md', '--reason', 'inspected')[0])
+        (self.repo / 'inspection.md').write_text('No process remains; inspected product effects.\n')
+        self.check('runtime', 'abandon', '--run', rid, '--evidence', 'inspection.md', '--reason', 'inspected effects')
+        row = self.work()['sdd']['completion_executions'][-1]
+        self.assertEqual('abandoned', row['status'])
+        self.assertTrue(row['outcome_unknown'])
+        self.assertIn('resolution', row)
+
+    def test_unknown_transition_blocks_recovery_until_inspected(self):
+        from scripts.provider_execution import transition
+        from scripts.recovery_plan import plan
+        path = self.repo / '.orchestrator/config.json'
+        cfg = json.loads(path.read_text())
+        cfg['sdd']['command']['transition'] = sys.executable + ' transition.py'
+        path.write_text(json.dumps(cfg))
+        (self.repo / 'transition.py').write_text('raise SystemExit(1)\n')
+        transition(self.repo, 'done', self.wid)
+        self.assertEqual('provider_transition', plan(self.repo, self.work())['unresolved_runs'][-1]['kind'])
+        operation = self.work()['sdd']['transition_runs'][-1]['id']
+        (self.repo / 'inspection.md').write_text('Provider did not apply the transition.\n')
+        self.check('sdd', 'transition', 'resolve', '--work', self.wid, '--operation', operation, '--outcome', 'not-applied', '--evidence', 'inspection.md', '--reason', 'inspected provider state')
+        self.assertFalse(plan(self.repo, self.work())['unresolved_runs'])
