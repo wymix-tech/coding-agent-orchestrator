@@ -333,3 +333,23 @@ class RecoveryClosure(unittest.TestCase):
             self.assertNotEqual(0, command(args))
         self.assertEqual('stale', self.work()['sdd']['completion_executions'][-1]['status'])
         self.assertNotEqual(0, self.cli('lifecycle', 'bind', '--report', 'openspec/completion.md')[0])
+
+    def test_static_shell_helper_change_invalidates_native_receipt(self):
+        from scripts.cao_runtime import config
+        folder = self.repo / '.orchestrator/scripts/verification'
+        folder.mkdir(parents=True, exist_ok=True)
+        helper = folder / 'native-helper.sh'
+        helper.write_text('# declared static helper\n')
+        command = 'bash .orchestrator/scripts/verification/native-wrapper.sh'
+        (folder / 'native-wrapper.sh').write_text('source .orchestrator/scripts/verification/native-helper.sh\n' + sys.executable + ' preparation_suite.py\n')
+        self.check('verification', 'check', '--project')
+        self.check('reopen', '--reanchor', '--reason', 'accepted static helper')
+        self.report.write_text('Command: ' + command + '\nstatus: passed\n')
+        self.bind()
+        self.check('lifecycle', 'execute', '--command', command, '--report', 'openspec/completion.md')
+        self.bind()
+        helper.write_text('# helper changed after execution\n')
+        from scripts.native_execution import receipt_matches
+        work = self.work()
+        self.assertFalse(receipt_matches(self.repo, work, work['sdd']['completion_evidence']['reports']))
+        self.assertNotEqual(0, self.cli('lifecycle', 'bind', '--report', 'openspec/completion.md')[0])
