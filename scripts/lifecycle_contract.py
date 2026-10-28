@@ -49,6 +49,10 @@ def evidence_state(repo, work):
     record = (work.get('sdd') or {}).get('completion_evidence') or {}
     pending = {'ready': False, 'state': 'pending', 'reason': 'NATIVE_COMPLETION_EVIDENCE_REQUIRED',
                'next': 'Finish the native workflow and bind its actual test/acceptance completion report with `cao lifecycle bind --report <native-report>`; no separate CAO functional executor is required.'}
+    executions = (work.get('sdd') or {}).get('completion_executions') or []
+    if executions and executions[-1].get('status') != 'passed':
+        return {**pending, 'state': 'blocked', 'reason': 'NATIVE_EXECUTION_NOT_PASSED',
+                'next': 'Inspect the native execution runtime and resolve its failure before explicitly rerunning the native command.'}
     if not record:
         return pending
     try:
@@ -158,6 +162,10 @@ def next_action(repo, work):
     from scripts.cao_completion import verification_inputs
     from scripts.cao_runtime import config
     from scripts.completion_policy import verification_fresh
+    run = work.get('verification') or {}
+    if run.get('status') in {'failed', 'blocked', 'error', 'stale'}:
+        return {'type': 'agent', 'stage': 'recovery', 'reason': 'PROJECT_BASELINE_' + run['status'].upper(),
+                'instruction': 'Inspect verification.results and runtime logs before retrying. Diagnose product defects versus environment or baseline failures. For a product defect, reopen the affected native task and repair through SDD; refresh native execution evidence after edits. For environment failures restore the environment and rerun cao verify. Baseline standard changes require existing review/reanchor; do not weaken checks.'}
     if not verification_fresh(work, verification_inputs(repo, work, config(repo))):
         return {'type': 'agent', 'stage': 'completion', 'reason': 'PROJECT_BASELINE_REQUIRED',
                 'instruction': 'Inspect `cao conformance check`, then run `cao verify` against the accepted project baseline.'}
@@ -248,6 +256,13 @@ def binding_command(args):
                   'provenance': {'kind': 'native_workflow_binding', 'workflow': workflow.get('name'),
                                  'execution': deepcopy(workflow.get('execution')),
                                  'review_ids': [v.get('id') for v in (sdd.get('native_reviews') or {}).values() if isinstance(v, dict) and v.get('id')]}}
+        from scripts.native_execution import receipt_matches
+        previous = sdd.get('completion_evidence') or {}
+        from scripts.evidence_domains import changed as changed_domains
+        material_changes = set(changed_domains(previous.get('domains', {}), record['domains'])['changed_domains']) & {'product', 'native_sources', 'native_scope', 'native_dependencies', 'policy'}
+        changed_native_inputs = bool(previous and (previous.get('inputs') != record['inputs'] or material_changes))
+        if (changed_native_inputs or sdd.get('completion_executions')) and not receipt_matches(repo, candidate, reports):
+            raise ValueError('NATIVE_COMPLETION_REEXECUTION_REQUIRED: run the affected native command with cao lifecycle execute --command <native-command> --report <native-log>, then bind its actual output')
         from scripts.evidence_archive import validate_manifest
         record['selected_evidence_ids'] = validate_manifest(repo, candidate, reports, getattr(args, 'evidence', None) or [])
         old = sdd.get('completion_evidence')
@@ -268,6 +283,9 @@ def binding_command(args):
 
 
 def command(args):
+    if args.lifecycle_command == 'execute':
+        from scripts.native_execution import command as execute_native
+        return execute_native(args)
     if args.lifecycle_command != 'bind':
         return binding_command(args)
     import json
@@ -301,15 +319,21 @@ def register(sub):
         'rollback': 'Restore an unchanged migration checkpoint without losing later progress',
         'protect': 'Enroll existing contract-2 Work in guarded persistence',
         'recover': 'Restore last authorized Work and quarantine unsupported writer output',
+        'execute': 'Capture an actual native command result for current inputs',
         'dependencies': 'Declare shared inputs used by native execution or reviewers',
         'bind': 'Bind original native test/acceptance completion reports',
     }
-    for name in ('preflight', 'migrate', 'rollback', 'protect', 'recover', 'dependencies', 'bind'):
+    for name in ('preflight', 'migrate', 'rollback', 'protect', 'recover', 'dependencies', 'execute', 'bind'):
         parser = sub.add_parser(name, help=descriptions[name])
         parser.add_argument('--repo', default='.')
         parser.add_argument('--work')
         if name in {'migrate', 'rollback', 'recover'}:
             parser.add_argument('--check', action='store_true', help='Read-only preflight; do not change Work or guard state')
+        if name == 'execute':
+            parser.add_argument('--command', required=True)
+            parser.add_argument('--report', required=True)
+            parser.add_argument('--timeout-seconds', type=float, default=300)
+            parser.add_argument('--retry-of')
         if name == 'dependencies':
             parser.add_argument('--path', action='append', required=True)
             parser.add_argument('--review', action='store_true', help='Declare shared inputs used by native reviewers')
