@@ -32,16 +32,27 @@ def _query(repo, work, args):
             current = inspect_run(repo, work, args.run)
             if owner_status(repo, work['id'], args.run) == 'running':
                 raise ValueError('RUNTIME_RUN_ACTIVE')
-            run = work.get('verification') or {}
+            from scripts.cao_work_store import load_work
+            work = load_work(repo, work['id'])
+            kind = current['kind']
+            if kind == 'verification':
+                run = work.get('verification') or {}
+            elif kind == 'native_completion':
+                rows = (work.get('sdd') or {}).get('completion_executions') or []
+                run = rows[-1] if rows else {}
+            else:
+                raise ValueError('RUNTIME_ABANDON_KIND_UNSUPPORTED')
             if run.get('run_id') != args.run or run.get('status') != 'running':
                 raise ValueError('RUNTIME_CURRENT_UNRESOLVED_RUN_REQUIRED')
             path = repo_file(repo, args.evidence)
             if not path.is_file() or not path.read_bytes().strip():
                 raise ValueError('RUN_INSPECTION_EVIDENCE_REQUIRED')
-            run.update(status='blocked', reason_code='RUN_OUTCOME_UNKNOWN_ABANDONED', outcome_unknown=True,
+            if not args.reason.strip():
+                raise ValueError('RUN_INSPECTION_REASON_REQUIRED')
+            run.update(status='abandoned' if kind == 'native_completion' else 'blocked', reason_code='RUN_OUTCOME_UNKNOWN_ABANDONED', outcome_unknown=True,
                        resolution={'source': 'agent_declaration', 'path': path.relative_to(repo).as_posix(), 'sha256': sha256_file(path), 'reason': args.reason})
             work['execution_generation'] = work.get('execution_generation', 0) + 1
-            queue_record(repo, work, 'verification.finished', run)
+            queue_record(repo, work, 'sdd.completion.executed' if kind == 'native_completion' else 'verification.finished', run)
             save_work(repo, work)
             return {'ok': True, 'status': 'abandoned', 'outcome_unknown': True, 'note': 'No success or process termination is certified; a later attempt uses a new generation.'}
     if action == "cancel":
@@ -50,7 +61,7 @@ def _query(repo, work, args):
         current = inspect_run(repo, work, args.run)
         if current['start']['source'] != 'cao_executor' or owner_status(repo, work['id'], args.run) != 'running':
             raise ValueError('CONTROLLED_LIVE_EXECUTOR_REQUIRED')
-        if current['start'].get('generation') != work.get('execution_generation', 0):
+        if not current['kind'].startswith('provider_') and current['start'].get('generation') != work.get('execution_generation', 0):
             raise ValueError('RUNTIME_CANCEL_GENERATION_MISMATCH')
         path = run_path(repo, work['id'], args.run, 'cancel.json')
         if not read_record(path):
@@ -106,8 +117,10 @@ def cmd_runtime(args) -> int:
                 raise ValueError("NO_WORK_ITEM: choose --work <id> or --work _unassigned for events")
             wid = identifier(selected)
             work = load_work(repo, wid) if wid != "_unassigned" else None
-            if wid == "_unassigned" and action != "events":
-                raise ValueError("RUNTIME_UNASSIGNED_EVENTS_ONLY")
+            if wid == "_unassigned":
+                if action not in {"events", "runs", "show", "logs", "status", "cancel"}:
+                    raise ValueError("RUNTIME_UNASSIGNED_QUERY_OR_CANCEL_ONLY")
+                work = {"id": wid}
             if wid != "_unassigned" and not work:
                 raise ValueError("WORK_ITEM_NOT_FOUND")
             if action == "rebuild":
@@ -117,7 +130,7 @@ def cmd_runtime(args) -> int:
         if action not in {"rebuild", "prune"}:
             # Read immutable facts against a Work snapshot without holding the
             # repository writer lock while scanning history or reading log bodies.
-            result = page(events(repo, wid), args.limit, args.cursor) if wid == "_unassigned" else _query(repo, work, args)
+            result = page(events(repo, wid), args.limit, args.cursor) if wid == "_unassigned" and action == "events" else _query(repo, work, args)
         if action == "recover":
             identity = "recovery-" + uuid.uuid4().hex
             occurred = time.time()

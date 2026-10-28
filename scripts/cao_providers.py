@@ -219,12 +219,9 @@ def choose_external_install_command(provider: str, upgrade: bool = False) -> lis
 
 
 def run_install_command(argv: list[str], repo: Path) -> dict[str, Any]:
-    started = now()
-    try:
-        result = subprocess.run(argv, cwd=repo, text=True, capture_output=True)
-    except OSError as exc:
-        return {"command": shlex.join(argv), "exit_code": 127, "stdout": "", "stderr": str(exc), "started_at": started}
-    return {"command": shlex.join(argv), "exit_code": result.returncode, "stdout": result.stdout.strip(), "stderr": result.stderr.strip(), "started_at": started}
+    from scripts.provider_execution import run
+    timeout = (config(repo).get('sdd') or {}).get('install_timeout_seconds', 900)
+    return run(repo, argv, kind='provider_install', timeout=timeout)
 
 
 def infer_sdd_provider(repo: Path, requirement: Path, cfg: dict[str, Any]) -> str:
@@ -249,8 +246,10 @@ def run_sdd_command(repo: Path, name: str, extra: list[str]) -> dict[str, Any] |
         return None
     env = os.environ.copy()
     env.update({"CAO_REPO": str(repo), "CAO_COMMAND": name})
-    result = subprocess.run(shlex.split(command) + extra, cwd=repo, text=True, capture_output=True, env=env)
-    return {"command": command, "args": extra, "exit_code": result.returncode, "stdout": result.stdout.strip(), "stderr": result.stderr.strip()}
+    from scripts.provider_execution import run
+    timeout = (config(repo).get('sdd') or {}).get('command_timeout_seconds', 300)
+    result = run(repo, shlex.split(command) + extra, kind='provider_' + name, timeout=timeout, env=env)
+    return {**result, 'command': command, 'args': extra}
 
 
 def cmd_sdd_list(args: argparse.Namespace) -> int:
@@ -509,14 +508,10 @@ def cmd_sdd_install(args: argparse.Namespace) -> int:
     # confirmation via --yes. Built-in commands are constructed in non-
     # interactive form so Bootstrap never gets trapped inside a provider prompt.
     if project_command:
-        try:
-            result = subprocess.run(project_command, cwd=repo, text=True)
-            results.append({"command": shlex.join(project_command), "exit_code": result.returncode})
-        except OSError as exc:
-            results.append({"command": shlex.join(project_command), "exit_code": 127, "stderr": str(exc)})
-            result = None
-        if result is None or result.returncode != 0:
-            print(json.dumps({"ok": False, "error": "SDD_PROJECT_INSTALL_FAILED", "provider": provider, "results": results}, ensure_ascii=False, indent=2))
+        result = run_install_command(project_command, repo)
+        results.append(result)
+        if result['exit_code'] != 0:
+            print(json.dumps({'ok': False, 'error': 'SDD_PROJECT_INSTALL_FAILED', 'provider': provider, 'results': results}, ensure_ascii=False, indent=2))
             return 1
 
     final = detect_sdd(repo, provider)

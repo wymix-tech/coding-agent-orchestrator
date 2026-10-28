@@ -49,14 +49,14 @@ class ProviderRestartTests(unittest.TestCase):
                     (root / "config.user.toml").write_text(
                         '[core]\nuser_name = "Dev"\ncommunication_language = "English"\n'
                         'document_output_language = "English"\n', encoding="utf-8")
-            return cao.subprocess.CompletedProcess(args[0], 1 if fail else 0)
+            return {'command': 'fixture provider install', 'exit_code': 1 if fail else 0, 'stdout': '', 'stderr': ''}
 
         # Only external provider execution is faked. State, configuration,
         # detection, command routing and lifecycle hooks are the real core.
         with patch("scripts.cao_providers.sdd_prerequisite_check", return_value={"ok": True}), \
              patch("scripts.cao_providers.choose_external_install_command", return_value=None), \
              patch("scripts.cao_providers.repo_root", return_value=self.repo), \
-             patch.object(cao.subprocess, "run", side_effect=project_install):
+             patch("scripts.cao_providers.run_install_command", side_effect=project_install):
             return self.cli("sdd", "install", "--provider", provider, "--host", host, "--yes",
                             *(["--upgrade"] if upgrade else []))
 

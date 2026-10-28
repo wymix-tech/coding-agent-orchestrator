@@ -13,6 +13,7 @@ def prune(repo: Path, work: dict, apply: bool = False) -> dict:
     cfg = settings(repo)
     current = {str((work.get("verification") or {}).get("run_id")),
                str((((work.get("sdd") or {}).get("acceptance") or {}).get("run") or {}).get("id"))}
+    current.update(str(row.get('run_id')) for row in (work.get('sdd') or {}).get('completion_executions', []) if row.get('status') in {'running', 'passed'})
     cutoff = time.time() - cfg["retention"]["closed_work_days"] * 86400
     candidates, protected = [], []
     # Caller holds the repository lock; starts, receipts, and pruning serialize.

@@ -5,8 +5,9 @@ They never update Work verification, gates, or final acceptance results.
 import json
 import uuid
 import os
+import re
 
-from scripts.cao_runtime import repo_root, config, ensure_initialized
+from scripts.cao_runtime import repo_root, config, ensure_initialized, now
 from scripts.cao_work_store import resolve_work
 from scripts.cao_snapshot import code_snapshot, verification_snapshot
 from scripts.completion_policy import normalize_scripts
@@ -53,9 +54,11 @@ def command(args):
         before = probe_inputs(repo, cfg, scopes) if not work else {'code': code_snapshot(repo), 'verification': verification_snapshot(cfg, repo)}
         run_id = 'probe-' + uuid.uuid4().hex
         path = safe_path(repo, work['id'], 'runs', run_id + '.json') if work else repo / '.orchestrator/project/verification-runs' / (run_id + '.json')
+        certifications = {}
         if not work:
             for scope in scopes:
                 current = read_project_result(repo, scope)
+                certifications[scope] = certification(repo, scope, current)
                 running = current.get('running') or {}
                 if running:
                     try:
@@ -64,13 +67,13 @@ def command(args):
                         pass
                     else:
                         raise ValueError('PROJECT_VERIFICATION_CHECK_RUNNING')
-        record = {'id': run_id, 'purpose': 'baseline_preparation', 'work_item_id': work['id'] if work else None,
+        record = {'at': now(), 'id': run_id, 'purpose': 'baseline_preparation', 'work_item_id': work['id'] if work else None,
                   'inputs': before, 'status': 'running'}
         if not work:
             record['owner'] = {'kind': 'project', 'scopes': scopes}
             record['purpose'] = 'initialization'
             for scope in scopes:
-                atomic_json(project_result_path(repo, scope), {'running': {'id': run_id, 'owner_pid': os.getpid()}})
+                atomic_json(project_result_path(repo, scope), {'certification': certifications[scope], 'running': {'id': run_id, 'owner_pid': os.getpid()}})
         atomic_json(path, record)
     results = []
     for check in checks:
@@ -100,7 +103,8 @@ def command(args):
         if not work:
             for scope in scopes:
                 atomic_json(project_result_path(repo, scope), {'status': status, 'run_id': run_id,
-                    'standard': project_standard(repo, scope) if after is not None else None})
+                    'standard': project_standard(repo, scope) if after is not None else None,
+                    'certification': certifications[scope], 'at': now(), 'results': results})
     print(json.dumps({'ok': status == 'passed', **record,
           'next': 'Review the actual preparation results; accept the applicable baseline, then continue the native workflow. This probe does not qualify final acceptance.'}, ensure_ascii=False, indent=2))
     return {'passed': 0, 'failed': 1, 'blocked': 2, 'stale': 2, 'error': 3}[status]
@@ -149,8 +153,48 @@ def project_state(repo, scopes=None, work=None):
     from scripts.project_context import load_context, selected_scopes
     for scope in selected_scopes(load_context(repo), scopes, work):
         record = read_project_result(repo, scope)
-        if record.get('status') != 'passed' or record.get('standard') != project_standard(repo, scope):
+        standard = project_standard(repo, scope)
+        certified = certification(repo, scope, record) or {}
+        failed = [row for row in record.get('results', []) if row.get('status') == 'failed']
+        repair = ((work or {}).get('sdd') or {}).get('completion_repair') or {}
+        diagnosed = repair.get('kind') == 'product' and repair.get('source') == 'project_preparation' and repair.get('run_id') == record.get('run_id')
+        product_failure = (work and work.get('status') == 'active' and record.get('status') in {'failed', 'error', 'blocked'}
+                           and record.get('standard') == standard and certified.get('status') == 'passed'
+                           and certified.get('standard') == standard and (bool(failed) or diagnosed)
+                           and (diagnosed or (all(row.get('status') in {'passed', 'failed'} for row in record.get('results', []))
+                                              and all(assertion_failure(row) for row in failed))))
+        if not product_failure and (record.get('status') != 'passed' or record.get('standard') != standard):
             return {'ready': False, 'reason': 'PROJECT_VERIFICATION_CHECK_REQUIRED',
-                    'next': 'Review existing checks against accepted project technology and project-wide quality standards, then run `cao verification check --project --scope ' + scope + '`; inspect failures and repair project-wide checks before creating or resuming Work. Keep the pending Work unchanged; do not derive baseline scripts from its requirement.',
-                    'scope': scope, 'last_status': record.get('status')}
+                    'next': 'Review existing checks against accepted project technology and project-wide quality standards, then run `cao verification check --project --scope ' + scope + '`; inspect failures and repair project-wide checks before creating or resuming Work. Keep the pending Work unchanged; do not derive baseline scripts from its requirement.' + (' Existing standard certification is valid: inspect this failure, then record its diagnosis with `cao lifecycle repair --kind product|environment|baseline|unknown --reason <diagnosis>`. A product diagnosis permits repair in the current Work but never certifies final completion.' if work and certified.get('standard') == standard else ''),
+                    'scope': scope, 'last_status': record.get('status'),
+                    'repair_command': 'cao lifecycle repair --kind product|environment|baseline|unknown --reason <diagnosis>' if work and certified.get('standard') == standard else None}
     return {'ready': True}
+
+
+def assertion_failure(row):
+    """Only recognize explicit assertion diagnostics; mixed/unknown failures block."""
+    text = row.get('stdout_tail', '') + '\n' + row.get('stderr_tail', '')
+    if re.search(r'(?:ImportError|ModuleNotFoundError|FileNotFoundError|PermissionError|RuntimeError|SyntaxError|ERROR:|errors=[1-9])', text):
+        return False
+    return bool(re.search(r'(?:AssertionError|^FAIL: |^FAILED .+ - AssertionError)', text, re.MULTILINE))
+
+
+def certification(repo, scope, current):
+    if current.get('status') == 'passed':
+        return {k: current[k] for k in ('status', 'run_id', 'standard', 'at') if k in current}
+    if current.get('certification'):
+        return current['certification']
+    # Historical project probes are execution facts, unlike a failed latest view.
+    from scripts.project_context import read
+    standard = project_standard(repo, scope)
+    folder = repo / '.orchestrator/project/verification-runs'
+    if folder.is_symlink():
+        raise ValueError('PROJECT_VERIFICATION_HISTORY_SYMLINK')
+    for path in sorted(folder.glob('probe-*.json'), reverse=True):
+        if path.is_symlink():
+            raise ValueError('PROJECT_VERIFICATION_HISTORY_SYMLINK')
+        row = read(path) or {}
+        if (row.get('status') == 'passed' and row.get('id') == path.stem
+                and (row.get('inputs') or {}).get('standards', {}).get(scope) == standard):
+            return {'status': 'passed', 'run_id': row['id'], 'standard': standard, 'at': row.get('at'), 'source': 'project_probe_history'}
+    return None

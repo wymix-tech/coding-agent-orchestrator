@@ -15,11 +15,21 @@ def receipt_matches(repo, work, reports):
     from scripts.path_guard import repo_file
     current = inputs(repo, work)
     rows = (work.get('sdd') or {}).get('completion_executions') or []
-    if not rows:
+    if not rows or rows[-1].get('status') != 'passed':
         return False
+    repair = (work.get('sdd') or {}).get('completion_repair') or {}
+    excluded = set()
+    if repair.get('kind') == 'product':
+        # Historical repairs have no reliable execution boundary. A new execute
+        # captures it under the same transaction before admitting a new run.
+        if 'execution_boundary' not in repair:
+            return False
+        excluded = set(repair['execution_boundary'])
     accepted = []
     for row in reversed(rows):
-        if row.get('inputs') != current or row.get('domains') != material_inputs(repo, work):
+        if row.get('run_id') in excluded:
+            continue
+        if row.get('generation') != work.get('execution_generation', 0) or row.get('inputs') != current or row.get('domains') != material_inputs(repo, work):
             continue
         if row.get('status') != 'passed':
             break
@@ -49,16 +59,30 @@ def command(args):
             raise ValueError('NATIVE_EXECUTION_LOG_PATH_REQUIRED')
         if path.relative_to(repo).as_posix() in material_inputs(repo, work)['native_sources']:
             raise ValueError('NATIVE_EXECUTION_REPORT_IS_SOURCE')
+        outputs = work['sdd'].setdefault('native_execution_reports', [])
+        output = path.relative_to(repo).as_posix()
+        if output not in outputs:
+            outputs.append(output)
+        from scripts.evidence_domains import dependencies
+        observed_dependencies = dependencies(repo, work, [args.command])
+        work['sdd']['native_execution_dependencies'] = sorted(set(work['sdd'].get('native_execution_dependencies', [])) | set(observed_dependencies))
         rows = work['sdd'].setdefault('completion_executions', [])
+        repair = work['sdd'].get('completion_repair') or {}
+        if repair.get('kind') == 'product' and 'execution_boundary' not in repair:
+            repair['execution_boundary'] = [row['run_id'] for row in rows]
         if rows and rows[-1]['status'] == 'running':
             previous = rows[-1]['run_id']
             if owner_status(repo, work['id'], previous) == 'running' or args.retry_of != previous:
                 raise ValueError('NATIVE_EXECUTION_UNRESOLVED: inspect runtime show; explicitly retry with --retry-of ' + previous + ' only after inspecting unknown effects')
             rows[-1]['status'] = 'abandoned'
+            rows[-1]['resolution'] = {'source': 'agent_declaration', 'kind': 'explicit_retry',
+                                     'retry_of': previous, 'at': now()}
+            queue_event(work, {'event': 'sdd.completion.execution.abandoned', 'work_item_id': work['id'],
+                               'run_id': previous, 'resolution': rows[-1]['resolution']})
         run_id = 'native-' + uuid.uuid4().hex
         captured = inputs(repo, work)
         row = {'run_id': run_id, 'status': 'running', 'inputs': captured, 'command': args.command,
-               'generation': work.get('execution_generation', 0), 'domains': material_inputs(repo, work), 'at': now()}
+               'generation': work.get('execution_generation', 0), 'dependencies': observed_dependencies, 'domains': material_inputs(repo, work), 'at': now()}
         rows.append(row)
         start_run(repo, work['id'], run_id, 'native_completion', captured, generation=row['generation'])
         save_work(repo, work)
@@ -101,11 +125,22 @@ def repair(args):
     repo = repo_root(args.repo)
     with repo_transaction(repo):
         work = resolve_work(repo, args.work)
-        if not work or work.get('status') != 'active' or work.get('lifecycle_contract') != 2:
+        if not work or work.get('status') != 'active' or work.get('lifecycle_contract') not in {1, 2}:
             raise ValueError('ACTIVE_CONTRACT_2_WORK_REQUIRED')
         run = work.get('verification') or {}
         if run.get('status') not in {'failed', 'blocked', 'error', 'stale'}:
-            raise ValueError('FAILED_BASELINE_REQUIRED')
+            from scripts.verification_probe import read_project_result, project_standard, certification
+            from scripts.project_context import load_context, selected_scopes
+            records = [(scope, read_project_result(repo, scope)) for scope in selected_scopes(load_context(repo), work=work)]
+            failed = [(scope, row) for scope, row in records if row.get('status') in {'failed', 'blocked', 'error'}]
+            if not failed or len({row.get('run_id') for _, row in failed}) != 1:
+                raise ValueError('FAILED_BASELINE_REQUIRED: inspect or rerun cao verification check --project for the bound scopes')
+            for scope, row in failed:
+                standard = project_standard(repo, scope)
+                certified = certification(repo, scope, row) or {}
+                if row.get('standard') != standard or certified.get('status') != 'passed' or certified.get('standard') != standard:
+                    raise ValueError('PROJECT_VERIFICATION_CHECK_REQUIRED: establish the current project standard before classifying a product repair')
+            run = {'run_id': failed[0][1]['run_id'], 'status': failed[0][1]['status'], 'source': 'project_preparation'}
         if not args.reason.strip():
             raise ValueError('REPAIR_REASON_REQUIRED')
         previous = work['sdd'].get('completion_repair')
@@ -113,7 +148,9 @@ def repair(args):
             raise ValueError('NATIVE_PRODUCT_REPAIR_UNRESOLVED: complete native repair before changing its classification')
         if previous:
             work['sdd'].setdefault('completion_repair_history', []).append(previous)
-        row = {'kind': args.kind, 'reason': args.reason, 'run_id': run.get('run_id'), 'at': now()}
+        row = {'kind': args.kind, 'reason': args.reason, 'run_id': run.get('run_id'), 'at': now(), 'source': run.get('source', 'work_verification')}
+        if args.kind == 'product':
+            row['execution_boundary'] = [item['run_id'] for item in work['sdd'].get('completion_executions', [])]
         work['sdd']['completion_repair'] = row
         work['execution'].update(phase='implementation' if args.kind == 'product' else 'verification',
                                  step='implementation' if args.kind == 'product' else 'verification')

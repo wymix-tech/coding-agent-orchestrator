@@ -21,13 +21,13 @@ from scripts.technology_guidance import technology_instruction
 from scripts.verification_setup import setup_state, verification_setup_context
 
 
-def resume_payload(repo: Path, work: dict[str, Any], session_id: str | None = None, host: str | None = None, *, next_action: dict | None = None) -> dict[str, Any]:
+def resume_payload(repo: Path, work: dict[str, Any], session_id: str | None = None, host: str | None = None, *, next_action: dict | None = None, completion: dict | None = None) -> dict[str, Any]:
     from scripts.cao_sessions import latest_handoff
     from scripts.project_context import context_state
     from scripts.continuity_view import view
     from scripts.project_architecture import state as architecture_state
 
-    c = completion_status(repo, work)
+    c = completion if completion is not None else completion_status(repo, work)
     current = next_action or current_work_action(repo, work, completion=c)
     summary = work_summary(work)
     summary["next_action"] = current
@@ -126,7 +126,7 @@ def work_prerequisite_action(repo: Path, work: dict | None) -> dict | None:
     return None
 
 
-def current_work_action(repo: Path, work: dict | None, *, check_completion: bool = True, completion: dict | None = None) -> dict:
+def current_work_action(repo: Path, work: dict | None, *, check_completion: bool = True, completion: dict | None = None, evaluation: dict | None = None) -> dict:
     from scripts.work_operations import pending
     operations = pending(repo)
     if operations:
@@ -144,7 +144,10 @@ def current_work_action(repo: Path, work: dict | None, *, check_completion: bool
         return route_preparation_action(repo, work, route)
     from scripts.lifecycle_contract import enabled, next_action
     if enabled(work):
-        return next_action(repo, work)
+        if evaluation is not None:
+            completion = completion if completion is not None else completion_status(repo, work)
+            evaluation['completion'] = completion
+        return completion['next_action'] if completion and completion.get('next_action') else next_action(repo, work)
     loopback = (work.get('sdd') or {}).get('native_loopback') or {}
     if loopback.get('status') == 'reimplementing':
         return action('agent', 'Follow the recorded native loopback: preserve KEEP, revert only recorded product files, resolve human intent gaps, refresh route/approval, then reimplement from step-03. When complete, run `cao sdd review prepare` for a new round.', stage='recovery', reason='NATIVE_REVIEW_REIMPLEMENTATION_REQUIRED')
@@ -245,7 +248,8 @@ def render_context(repo: Path, work: dict[str, Any] | None, *, session_id: str |
         return restart["reason"] + ": " + restart["next"]
     from scripts.project_context import context_state
     inspection = setup_state(config(repo))
-    current = current_work_action(repo, work)
+    evaluation = {}
+    current = current_work_action(repo, work, evaluation=evaluation)
     project = context_state(repo, work=work) if current.get("stage") != "startup" else {}
     navigation = "## Read before acting\n" + json.dumps(agent_guidance(repo, work, next_action=current), ensure_ascii=False)
     if current.get('owner') == 'project':
@@ -267,7 +271,7 @@ def render_context(repo: Path, work: dict[str, Any] | None, *, session_id: str |
             baseline.get('next') or current['instruction'],
             json.dumps(preparation_context(repo, work, purpose='work_baseline_adoption'), ensure_ascii=False),
         ])
-    p = resume_payload(repo, work, session_id=session_id, host=host, next_action=current)
+    p = resume_payload(repo, work, session_id=session_id, host=host, next_action=current, completion=evaluation.get('completion'))
     e = p["execution"] or {}
     lines = [
         "# Coding Agent Orchestrator Resume Context",

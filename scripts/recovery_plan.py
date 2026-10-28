@@ -53,6 +53,10 @@ def plan(repo, work):
     for row in runs(repo, work):
         if row['recovery_status'] not in {'complete', 'projection_missing', 'superseded'}:
             unresolved.append(row)
+    for row in (work.get('sdd') or {}).get('transition_runs', []):
+        if row.get('status') in {'running', 'unknown'}:
+            unresolved.append({'run_id': row['id'], 'kind': 'provider_transition', 'recovery_status': 'outcome_unknown',
+                               'next': 'Inspect external effects, then use cao sdd transition resolve --work ' + work['id'] + ' --operation ' + row['id'] + ' --outcome applied|not-applied --evidence <inspection-file> --reason <diagnosis>.'})
     native = {}
     try:
         from scripts.cao_plans import provider_verification_plan_state

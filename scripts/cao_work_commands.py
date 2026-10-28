@@ -739,7 +739,7 @@ def cmd_done(args: argparse.Namespace) -> int:
         c = completion_status(repo, work)
         if not c["ready"]:
             return _completion_blocked(repo, work, c)
-    transition = sdd_transition(repo, "done")
+    transition = sdd_transition(repo, "done", wid)
     if transition is not None and transition["exit_code"] != 0:
         print(json.dumps({"ok": False, "error": "SDD_TRANSITION_FAILED", "transition": transition}, ensure_ascii=False, indent=2)); return 1
     # Native transitions can change both state and freshness. Judge again before closing.

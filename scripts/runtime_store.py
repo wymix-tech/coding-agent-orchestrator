@@ -269,6 +269,7 @@ def run_records(repo: Path, wid: str):
 def official_runs(work: dict) -> dict:
     records = list(work.get("verification_history") or []) + [work.get("verification") or {}]
     records.append(((work.get("sdd") or {}).get("acceptance") or {}).get("run") or {})
+    records.extend((work.get("sdd") or {}).get("completion_executions") or [])
     return {str(item.get("run_id") or item.get("id")): item for item in records
             if item.get("run_id") or item.get("id")}
 

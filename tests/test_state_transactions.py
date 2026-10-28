@@ -309,7 +309,7 @@ class TransactionsTests(RepairCase):
         from tests.helpers import complete_acceptance
         complete_acceptance(self.repo, lambda repo, *args: self.run_cli(*args))
         self.assertTrue(cao.completion_status(self.repo, self.read_work(wid))["ready"])
-        def transition(repo, state):
+        def transition(repo, state, work_id=None):
             with ThreadPoolExecutor(max_workers=1) as pool:
                 rc, out = pool.submit(self.run_cli, "block", "--work", wid,
                                       "--reason", "during transition").result(timeout=15)
