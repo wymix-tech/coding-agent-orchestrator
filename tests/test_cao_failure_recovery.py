@@ -108,3 +108,31 @@ class FailureRecovery(unittest.TestCase):
         self.assertEqual(2, self.cli('lifecycle', 'execute', '--command', 'cat openspec/completion.md',
                                     '--report', 'openspec/copied.log')[0])
         self.assertFalse(self.work()['sdd'].get('completion_executions'))
+
+    def test_identical_bytes_from_new_execution_are_valid(self):
+        import sys
+        self.bind()
+        suite = self.repo / 'preparation_suite.py'
+        suite.write_text("import unittest,sys\nclass T(unittest.TestCase):\n def test_real(self): self.assertEqual(2+2,4)\nr=unittest.TestResult()\nunittest.defaultTestLoader.loadTestsFromTestCase(T).run(r)\nprint('Ran 1 test in native execution\\nOK' if r.wasSuccessful() else 'FAILED')\nsys.exit(not r.wasSuccessful())\n")
+        self.check('verification', 'check', '--project')
+        self.check('reopen', '--reanchor', '--reason', 'Reviewed deterministic native test runner')
+        command = sys.executable + ' preparation_suite.py'
+        self.check('lifecycle', 'execute', '--command', command, '--report', 'openspec/completion.md')
+        self.bind()
+        original = self.report.read_bytes()
+        (self.repo / 'feature.py').write_text('updated_product = True\n')
+        self.check('lifecycle', 'execute', '--command', command, '--report', 'openspec/completion.md')
+        self.assertEqual(original, self.report.read_bytes())
+        self.bind()
+        self.check('verify')
+        self.check('done')
+
+    def test_product_edit_during_native_execution_cannot_pass(self):
+        import sys
+        self.bind()
+        (self.repo / 'preparation_suite.py').write_text("from pathlib import Path\nPath('feature.py').write_text('changed_during_run = True')\nprint('status: passed')\n")
+        rc, out = self.cli('lifecycle', 'execute', '--command', sys.executable + ' preparation_suite.py',
+                           '--report', 'openspec/completion.md')
+        self.assertEqual(2, rc, out)
+        self.assertEqual('stale', out['execution']['status'])
+        self.assertEqual(2, self.cli('done')[0])
