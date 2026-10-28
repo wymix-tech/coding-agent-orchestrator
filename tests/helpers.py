@@ -153,6 +153,7 @@ def fixture_native_review(repo, run, wid=None, reviewer_cli=None):
         'reviewer':reviewer,
         'findings_file':raw.relative_to(repo).as_posix(),'findings':[{'id':'finding-1','verdict':'false','disposition':'reject',
         'evidence':'A separate local Python process inspected the fixture directory; this fixture does not assert expert semantic review.'}]}))
+    bind_fixture_finding_content(repo, report)
     args=['sdd','review','submit','--layer','blind-hunter','--report',report.relative_to(repo).as_posix()]
     if wid:args+=['--work',wid]
     rc,out=run(repo,*args);assert rc==0,out
@@ -253,3 +254,17 @@ def seed_project_preparation(repo):
         materialize(repo)
         atomic_json(project_result_path(repo, 'root'), {'status': 'passed',
             'purpose': 'unit-test-fixture', 'standard': project_standard(repo, 'root')})
+
+
+def bind_fixture_finding_content(repo, report_path):
+    """Build valid digest metadata when hand-authoring a synthetic triage fixture."""
+    import hashlib
+    from scripts.native_obligations import load_findings, digest
+    path = pathlib.Path(report_path)
+    report = json.loads(path.read_text())
+    source = pathlib.Path(repo) / report['findings_file']
+    report['source_sha256'] = hashlib.sha256(source.read_bytes()).hexdigest()
+    originals = {f['id']: digest(f) for f in load_findings(source)}
+    for finding in report['findings']:
+        finding['content_sha256'] = originals[finding['id']]
+    path.write_text(json.dumps(report))

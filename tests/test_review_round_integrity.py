@@ -45,6 +45,8 @@ class RoundIntegrity(RepairCase):
             report = raw.with_name(layer + '-triage.json')
             report.write_text(json.dumps({'reviewer': reviewer, 'findings_file': raw.relative_to(self.repo).as_posix(),
                 'findings': [{'id': 'finding-1', 'verdict': 'false', 'disposition': 'reject', 'evidence': 'Inspected source'}]}))
+            from tests.helpers import bind_fixture_finding_content
+            bind_fixture_finding_content(self.repo, report)
             reports[layer] = report
         return reports
 

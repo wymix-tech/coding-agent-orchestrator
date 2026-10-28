@@ -157,6 +157,8 @@ class ReviewLaunchAndRecovery(unittest.TestCase):
                   'findings': [{'id': f['id'], 'verdict': 'medium', 'disposition': 'patch', 'evidence': 'Confirmed current code'}
                                for f in parsed['findings']]}
         t.write('_bmad-output/triage.json', json.dumps(report))
+        from tests.helpers import bind_fixture_finding_content
+        bind_fixture_finding_content(t.repo, t.repo / '_bmad-output/triage.json')
         t.run_cli('sdd', 'review', 'classify', '--layer', 'blind-hunter', '--report', '_bmad-output/triage.json')
         t.write('product.py', 'patched = True\n')
         again = self.begin()

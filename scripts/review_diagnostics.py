@@ -97,7 +97,7 @@ def paused_failure(repo, work, args):
     from scripts.runtime_store import read_record, safe_path
     try:
         record = read_record(safe_path(repo, work['id'], 'review-retry.json')) or {}
-        if record.get('request_id') == request_identity(repo, work, args) and record.get('count', 0) >= 2:
+        if args.review_action not in {'status', 'diagnose', 'recover'} and record.get('request_id') == request_identity(repo, work, args) and record.get('count', 0) >= 2:
             return record.get('response')
     except (ValueError, OSError, RuntimeError):
         pass
@@ -110,8 +110,8 @@ def failure(repo, work, args, exc):
     diagnostics = getattr(exc, 'diagnostics', None) or [{'code': str(exc), 'field': 'review',
                                                         'expected': 'current native review contract and evidence'}]
     run = ((work.get('sdd') or {}).get('native_reviews') or {}).get(getattr(args, 'layer', None)) or {}
-    fault = {'work': work['id'], 'run': run.get('id'), 'input': run.get('input_sha256'),
-             'action': args.review_action, 'layer': getattr(args, 'layer', None),
+    fault = {'work': work['id'], 'input': run.get('input_sha256'),
+             'layer': getattr(args, 'layer', None),
              'diagnostics': [{key: row.get(key) for key in ('code', 'field')} for row in diagnostics]}
     repair_id = hashlib.sha256(json.dumps(fault, sort_keys=True).encode()).hexdigest()[:24]
     count, history = 1, {}
@@ -126,11 +126,11 @@ def failure(repo, work, args, exc):
     response = {'ok': False, 'error': str(exc), 'diagnostics': diagnostics, 'repair_id': repair_id,
                 'retry_count': count, 'pause_retry': count >= 2,
                 'retry_when': 'Correct the named prerequisite or judgment with evidence. Identical failed requests are paused; report cosmetics do not reset the fault count.',
-                'next': 'Use `cao sdd review status` and fix the named field. Reuse native findings; do not repeat code review to repair metadata.'}
+                'next': ('Use `cao sdd review diagnose --layer <layer>` to inspect bound artifacts and hashes. For legacy output, `cao sdd review recover --layer <layer> --source <original-message>` requires the exact observed full message. Reuse findings; do not restart reviewers for metadata repair. ' + ('Dispatch route: draft, classify ALL layers, patch, then resolve.' if (work.get('sdd', {}).get('route_decision') or {}).get('build_route') == 'dispatch' else 'Oneshot route: draft, classify ALL layers, patch, then submit a resolved JSON report.'))}
     if path:
         history[repair_id] = count
         try:
-            write_record(path, {'schema_version': 1, 'repair_id': repair_id, 'count': count,
+            write_record(path, {'schema_version': 1, 'input_sha256': run.get('input_sha256'), 'layer': getattr(args, 'layer', None), 'repair_id': repair_id, 'count': count,
                                'faults': dict(list(history.items())[-128:]),
                                'request_id': request_identity(repo, work, args), 'response': response}, immutable=False)
         except (ValueError, OSError, RuntimeError):

@@ -152,6 +152,27 @@ class ReviewIntegrationTests(unittest.TestCase):
         status = t.run_cli('sdd', 'review', 'status')
         self.assertTrue(status['acceptance_preflight']['ready'])
 
+    def test_host_binding_collection_and_classification_without_shell(self):
+        t = self.t
+        package = self.package()
+        t.hook('subagent_start', subagent_id='auto-reviewer', model='fixture-model',
+               host_tools=['read', 'grep'], prompt=package['task_marker'])
+        status = t.run_cli('sdd', 'review', 'diagnose', '--layer', package['layer'])
+        self.assertEqual('bound', status['phase'])
+        t.hook('turn_end', kind='subagent', subagent_id='auto-reviewer',
+               last_assistant_message='- Real original finding\n\n```acceptance-report\n{}\n```')
+        status = t.run_cli('sdd', 'review', 'diagnose', '--layer', package['layer'])
+        self.assertEqual('collected', status['phase'])
+        drafted = t.run_cli('sdd', 'review', 'draft', '--layer', package['layer'],
+                           '--source', status['artifacts'][0]['path'])
+        report = json.loads((t.repo / drafted['report']).read_text())
+        self.assertIn('source_sha256', report)
+        self.assertIn('content_sha256', report['findings'][0])
+        report['findings'][0].update(verdict='false', disposition='reject', evidence='Inspected original finding')
+        t.write(drafted['report'], json.dumps(report))
+        t.run_cli('sdd', 'review', 'classify', '--layer', package['layer'], '--report', drafted['report'])
+        self.assertEqual('classified', t.run_cli('sdd', 'review', 'diagnose', '--layer', package['layer'])['phase'])
+
     def test_unobserved_child_or_model_cannot_be_attached(self):
         t = self.t
         package = self.package()

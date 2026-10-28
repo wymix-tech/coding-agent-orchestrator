@@ -7,7 +7,6 @@ import json
 import re
 
 from scripts.cao_sessions import save_session
-from scripts.state_store import atomic_json
 
 PREFIX = 'CAO_REVIEW_TICKET '
 
@@ -60,12 +59,12 @@ def observe(repo, work, session, raw, event):
             if binding.get('session_id') == session['id']:
                 from scripts.review_dispatch import bundle_root
                 root = bundle_root(repo, work, run['layer'], run)
-                original = root / 'original-message.txt'
+                original = root / ('original-message-' + session['review_output_sha256'] + '.txt')
                 if not original.exists():
                     root.mkdir(parents=True, exist_ok=True)
                     original.write_text(message, encoding='utf-8')
                     findings = extract_findings(message)
-                    path = root / 'message-findings.md'
+                    path = root / ('message-findings-' + session['review_output_sha256'] + '.md')
                     path.write_text(findings, encoding='utf-8')
                     session['review_message_artifact'] = artifact_record(repo, path)
             save_session(repo, session)
@@ -73,7 +72,8 @@ def observe(repo, work, session, raw, event):
 
 def extract_findings(message):
     # Only the host's explicit trailing transport envelope is removed.
-    return re.sub(r'\n```acceptance-report[ \t]*\n.*?\n```[ \t]*\s*\Z', '', message, flags=re.S).strip()
+    findings = re.sub(r'\n```acceptance-report[ \t]*\n.*?\n```[ \t]*\s*\Z', '', message, flags=re.S)
+    return findings.strip() if findings != message else message
 
 
 def artifact_record(repo, path):
@@ -156,6 +156,8 @@ def validate_source(repo, run, source):
             raise ValueError('NATIVE_REVIEW_COLLECTED_EVIDENCE_CHANGED')
         if hashlib.sha256(source.read_bytes()).hexdigest() == record['sha256']:
             return
+    if session.get('review_artifacts') or session.get('review_message_artifact'):
+        raise ValueError('NATIVE_REVIEW_OUTPUT_SOURCE_MISMATCH: use the exact collected artifact bytes')
     expected = session.get('review_output_sha256')
     if not expected:
         raise ValueError('NATIVE_REVIEW_OUTPUT_UNOBSERVED: collect the bound reviewer final output through its host adapter')

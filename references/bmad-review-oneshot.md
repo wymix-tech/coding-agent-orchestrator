@@ -81,3 +81,9 @@ an observed child ticket and original output hash. Missing runtime association
 remains pending; do not infer it from session order. Frozen product manifests and
 observed round/task counts follow the same provenance rules as
 [dispatch review](bmad-review-dispatch.md#observed-identities-and-frozen-change-manifest).
+
+## Output provenance recovery
+
+The host automatically binds a ticket-marked observed reviewer child before inspection. Check the actual effective tools/model/parent adapter; a failed binding must be repaired before review starts. Return the original findings; keep runtime acceptance reports separate. If writing a findings file, use the host's direct write tool so its successful write can be collected with a byte digest. A final summary may differ from an attested file, but an arbitrary file is not accepted as original evidence.
+
+Use `cao sdd review diagnose --layer <layer>` for read-only artifact/binding/hash diagnostics when shell probes are gated. Use the collected original artifact with `review draft`; preserve its generated `source_sha256` and each finding's `content_sha256`. Do not copy old numbered triage to new output. For legacy output, `review recover --layer <layer> --source <original-message>` requires the exact previously observed final message including its acceptance envelope. Classify all layers, patch, then follow the current route's resolve/submit command. Do not restart reviews to repair metadata.
