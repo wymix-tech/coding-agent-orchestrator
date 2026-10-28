@@ -48,5 +48,16 @@ def record(repo, work, names, error, request=None):
 
 
 def response(row):
+    import shlex
+    request = row.get('request') or {'report': list(row['reports'])}
+    argv = ['cao', 'lifecycle', 'bind']
+    for key in ('report', 'gate', 'evidence'):
+        for value in request.get(key, []):
+            argv.extend(['--' + key, value])
+    command = shlex.join(argv)
     return {'ok': False, 'error': 'NATIVE_COMPLETION_REPAIR_PAUSED' if row['paused'] else row['reason'],
-            'repair': row, 'next': 'Inspect the original native report and the reported outcome/source error. Correct those inputs before retrying; do not restart native code reviews or recreate Work for an unchanged report failure.'}
+            'repair': row, 'owner': 'agent', 'blocking_reports': list(row['reports']),
+            'retry_command': command,
+            'next': 'Inspect ' + ', '.join(row['reports']) + ': ' + row['detail'] +
+                    '. Correct the report or source inputs, then retry `' + command +
+                    '`. Unchanged requests remain paused; changed evidence selections are revalidated.'}

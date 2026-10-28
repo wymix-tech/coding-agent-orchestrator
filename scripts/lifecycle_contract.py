@@ -166,11 +166,11 @@ def next_action(repo, work, *, native=None, evidence=None, current_inputs=None):
     if not native['ready']:
         blocker = native['blockers'][0]
         return {'type': 'agent', 'stage': 'verification_setup' if blocker.get('obligation') == 'baseline' else 'execution', 'reason': blocker.get('reason'),
-                'instruction': blocker.get('next') or 'Continue the selected native workflow; complete all associated tasks and native review/finalize obligations.'}
+                'blocker': blocker, 'instruction': blocker.get('next') or 'Run `cao conformance check` and resolve the reported native obligation before binding completion evidence.'}
     evidence = evidence_state(repo, work) if evidence is None else evidence
     if not evidence['ready']:
         return {'type': 'agent', 'stage': 'execution' if evidence.get('changed_inputs') else 'completion',
-                'reason': evidence['reason'], 'instruction': evidence['next']}
+                'reason': evidence['reason'], 'blocker': evidence, 'instruction': evidence['next']}
     from scripts.cao_completion import verification_inputs
     from scripts.cao_runtime import config
     from scripts.completion_policy import verification_fresh
@@ -321,7 +321,7 @@ def command(args):
         work = resolve_work(repo, args.work)
         if work and enabled(work):
             row = current(repo, work)
-            if row and row['paused'] and sorted(set(args.report)) == sorted(row['reports']) and row.get('request') == request:
+            if row and row['paused'] and row.get('request') == request:
                 print(json.dumps(response(row), ensure_ascii=False))
                 return 2
         try:

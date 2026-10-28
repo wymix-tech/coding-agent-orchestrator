@@ -89,6 +89,12 @@ class RecoveryClosure(unittest.TestCase):
         (self.repo / 'feature.py').write_text('valid = True\n')
         self.execute()
         self.bind()
+        queued = self.repo / '.orchestrator/requirements/after-repair.md'
+        queued.write_text('# Follow-up\nImplement an independent follow-up operation.\n')
+        target = self.check('start', '--defer', '--requirement', str(queued))['work_item']['id']
+        self.check('resume')
+        self.check('switch', '--to', target)
+        self.check('switch', '--to', self.wid)
         self.check('verify')
         self.check('done')
         self.assertEqual('completed', self.work()['status'])
@@ -143,6 +149,20 @@ class RecoveryClosure(unittest.TestCase):
         self.assertEqual(2, code)
         self.assertEqual('NATIVE_COMPLETION_REPAIR_PAUSED', out['error'])
         self.assertEqual(2, self.work()['sdd']['completion_binding_failure']['attempts'])
+
+    def test_evidence_selection_pause_does_not_append_repeated_failures(self):
+        from scripts.runtime_store import work_events
+        self.report.write_text('status: failed\n')
+        identity = self.check('evidence', 'attach', '--kind', 'test', '--path', 'openspec/completion.md')['evidence']['id']
+        for _ in range(2):
+            self.assertEqual(2, self.cli('lifecycle', 'bind', '--evidence', identity)[0])
+        before = list(work_events(self.repo, self.wid))
+        code, result = self.cli('lifecycle', 'bind', '--evidence', identity, '--evidence', identity)
+        self.assertEqual(2, code)
+        self.assertEqual('NATIVE_COMPLETION_REPAIR_PAUSED', result['error'])
+        self.assertEqual(before, list(work_events(self.repo, self.wid)))
+        self.assertIn('cao lifecycle bind', result['next'])
+        self.assertIn(identity, result['retry_command'])
 
     def test_unknown_project_failure_does_not_inherit_write_permission(self):
         from scripts.verification_probe import project_state
@@ -202,6 +222,16 @@ class RecoveryClosure(unittest.TestCase):
         self.assertEqual(130, result['exit_code'])
         self.assertEqual('cancelled', result['process_status'])
         self.assertEqual('complete', self.check('runtime', 'show', '--work', '_unassigned', '--run', rid)['recovery_status'])
+
+    def test_reused_evaluation_matches_independent_decisions(self):
+        from scripts.lifecycle_contract import completion, conformance, next_action
+        self.bind()
+        for changed in (False, True):
+            if changed:
+                (self.repo / 'feature.py').write_text('valid = False\n')
+            combined = completion(self.repo, self.work())
+            self.assertEqual(conformance(self.repo, self.work()), combined['conformance'])
+            self.assertEqual(next_action(self.repo, self.work()), combined['next_action'])
 
     def test_context_evaluation_is_not_cached_across_calls(self):
         from scripts.cao_guidance import render_context, current_work_action
