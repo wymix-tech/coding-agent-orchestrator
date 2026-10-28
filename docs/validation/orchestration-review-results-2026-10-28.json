@@ -1,0 +1,66 @@
+{
+  "review_baseline": "ba09779",
+  "implementation": "282dc71",
+  "date": "2026-10-28",
+  "environment": "Linux / Python 3.12.14",
+  "python": {
+    "discovered": 1220,
+    "run": 1220,
+    "passed": 1216,
+    "skipped": 4,
+    "failed": 0,
+    "shards": [
+      {
+        "shard": 0,
+        "run": 198,
+        "seconds": 274.882,
+        "skipped": 0
+      },
+      {
+        "shard": 1,
+        "run": 211,
+        "seconds": 364.853,
+        "skipped": 0
+      },
+      {
+        "shard": 2,
+        "run": 162,
+        "seconds": 291.043,
+        "skipped": 0
+      },
+      {
+        "shard": 3,
+        "run": 239,
+        "seconds": 333.871,
+        "skipped": 0
+      },
+      {
+        "shard": 4,
+        "run": 230,
+        "seconds": 291.908,
+        "skipped": 4
+      },
+      {
+        "shard": 5,
+        "run": 180,
+        "seconds": 275.198,
+        "skipped": 0
+      }
+    ],
+    "collection": "Six disjoint module partitions; shard 0 replaced by its final rerun including helper test. Earlier runs are not added to totals."
+  },
+  "pi": {
+    "passed": 39,
+    "failed": 0
+  },
+  "typescript": "passed",
+  "installed_wheel_smoke": {
+    "cases": 24,
+    "passed": 24
+  },
+  "compileall": "passed",
+  "diff_check": "passed",
+  "release_manifest_files": 195,
+  "pre_fix_regression": "test_identical_binding_finishes_product_repair_once failed at assertNotEqual(0, bind return code) before production fix",
+  "new_core_tests": 23
+}
