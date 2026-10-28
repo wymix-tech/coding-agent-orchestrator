@@ -24,7 +24,10 @@ class RecoveryClosure(unittest.TestCase):
         self.assertEqual('passed', state['admission_status'])
         self.assertTrue(state['current_run'])
         self.assertFalse(plan(self.repo, self.work())['unresolved_runs'])
-        self.assertEqual(0, self.cli('resume')[0])
+        import subprocess
+        from tests.test_project_context_acceptance import CLI
+        resumed = subprocess.run([sys.executable, str(CLI), 'resume', '--repo', str(self.repo)], env=self.fixture.env, capture_output=True, text=True, timeout=30)
+        self.assertEqual(0, resumed.returncode, resumed.stdout + resumed.stderr)
 
     def test_corrected_gate_request_can_bind(self):
         for _ in range(2):
@@ -63,6 +66,7 @@ class RecoveryClosure(unittest.TestCase):
         (self.repo / 'feature.py').write_text('valid = True\n')
         (self.repo / 'preparation_suite.py').write_text('import unittest,feature\nclass T(unittest.TestCase):\n def test_behavior(self):self.assertTrue(feature.valid)\nunittest.main()\n')
         self.check('verification', 'check', '--project')
+        self.check('reopen', '--reanchor', '--reason', 'reviewed product test suite')
         raw = {'event': 'pre_tool', 'session_id': 'writer', 'toolName': 'write', 'input': {'path': 'feature.py', 'content': 'valid = True\n'}}
         self.assertEqual('allow', self.fixture.cli('host-event', '--host', 'pi', payload=raw)[1]['decision'])
         (self.repo / 'feature.py').write_text('valid = False\n')

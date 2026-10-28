@@ -19,7 +19,7 @@ def receipt_matches(repo, work, reports):
         return False
     accepted = []
     for row in reversed(rows):
-        if row.get('inputs') != current or row.get('domains') != material_inputs(repo, work):
+        if row.get('generation') != work.get('execution_generation', 0) or row.get('inputs') != current or row.get('domains') != material_inputs(repo, work):
             continue
         if row.get('status') != 'passed':
             break
@@ -49,6 +49,9 @@ def command(args):
             raise ValueError('NATIVE_EXECUTION_LOG_PATH_REQUIRED')
         if path.relative_to(repo).as_posix() in material_inputs(repo, work)['native_sources']:
             raise ValueError('NATIVE_EXECUTION_REPORT_IS_SOURCE')
+        from scripts.evidence_domains import dependencies
+        observed_dependencies = dependencies(repo, work, [args.command])
+        work['sdd']['native_execution_dependencies'] = sorted(set(work['sdd'].get('native_execution_dependencies', [])) | set(observed_dependencies))
         rows = work['sdd'].setdefault('completion_executions', [])
         if rows and rows[-1]['status'] == 'running':
             previous = rows[-1]['run_id']
@@ -58,7 +61,7 @@ def command(args):
         run_id = 'native-' + uuid.uuid4().hex
         captured = inputs(repo, work)
         row = {'run_id': run_id, 'status': 'running', 'inputs': captured, 'command': args.command,
-               'generation': work.get('execution_generation', 0), 'domains': material_inputs(repo, work), 'at': now()}
+               'generation': work.get('execution_generation', 0), 'dependencies': observed_dependencies, 'domains': material_inputs(repo, work), 'at': now()}
         rows.append(row)
         start_run(repo, work['id'], run_id, 'native_completion', captured, generation=row['generation'])
         save_work(repo, work)

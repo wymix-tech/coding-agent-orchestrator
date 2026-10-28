@@ -19,7 +19,7 @@ def signature(repo, work, names):
 
 def current(repo, work):
     row = (work.get('sdd') or {}).get('completion_binding_failure')
-    if not row:
+    if not row or row.get('reason') in {'NATIVE_COMPLETION_GATE_UNKNOWN', 'NATIVE_COMPLETION_REPORT_REQUIRED'}:
         return None
     key, _ = signature(repo, work, list(row['reports']))
     return row if row['signature'] == key else None

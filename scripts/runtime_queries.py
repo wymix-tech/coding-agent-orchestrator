@@ -15,7 +15,7 @@ from scripts.runtime_store import (
     identifier, official_runs, read_record, run_path, run_records, safe_path, settings, work_events, write_record,
 )
 
-TERMINAL = {"passed", "failed", "blocked", "error", "stale", "superseded"}
+TERMINAL = {"passed", "failed", "blocked", "error", "stale", "superseded", "abandoned", "cancelled"}
 
 
 def timestamp(value) -> float:
@@ -96,6 +96,9 @@ def inspect_run(repo: Path, work: dict, rid: str, official: dict | None = None) 
     terminal = accepted.get("status") in TERMINAL
     if start["kind"] == "verification":
         current = work.get("verification") or {}
+    elif start["kind"] == "native_completion":
+        rows = (work.get("sdd") or {}).get("completion_executions") or []
+        current = rows[-1] if rows else {}
     else:
         current = (((work.get("sdd") or {}).get("acceptance") or {}).get("run") or {})
     current_id = current.get("run_id") or current.get("id")

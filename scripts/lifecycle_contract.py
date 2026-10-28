@@ -272,7 +272,12 @@ def binding_command(args):
         record['selected_evidence_ids'] = validate_manifest(repo, candidate, reports, getattr(args, 'evidence', None) or [])
         old = sdd.get('completion_evidence')
         if old and old.get('inputs') == record['inputs'] and old.get('reports') == reports and old.get('gates', []) == gates and old.get('domains') == record['domains'] and old.get('observations') == observations and old.get('selected_evidence_ids', []) == record['selected_evidence_ids']:
-            if sdd.pop('completion_binding_failure', None):
+            changed = bool(sdd.pop('completion_binding_failure', None))
+            if (sdd.get('completion_repair') or {}).get('kind') == 'product':
+                sdd.setdefault('completion_repair_history', []).append(sdd.pop('completion_repair'))
+                queue_event(work, {'event': 'sdd.completion.repair.resolved', 'work_item_id': work['id']})
+                changed = True
+            if changed:
                 save_work(repo, work)
             print(json.dumps({'ok': True, 'status': 'unchanged', 'work_id': work['id']}))
             return 0
@@ -314,6 +319,9 @@ def command(args):
         try:
             return binding_command(args)
         except (ValueError, OSError) as error:
+            if str(error).split(':', 1)[0] in {'NATIVE_COMPLETION_GATE_UNKNOWN', 'NATIVE_COMPLETION_REPORT_REQUIRED'}:
+                print(json.dumps({'ok': False, 'error': str(error), 'next': 'Correct the bind request parameters and retry; native reports do not need to change.'}))
+                return 2
             work = resolve_work(repo, args.work)
             if not work or not enabled(work) or work.get('status') != 'active':
                 raise

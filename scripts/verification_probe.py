@@ -53,9 +53,11 @@ def command(args):
         before = probe_inputs(repo, cfg, scopes) if not work else {'code': code_snapshot(repo), 'verification': verification_snapshot(cfg, repo)}
         run_id = 'probe-' + uuid.uuid4().hex
         path = safe_path(repo, work['id'], 'runs', run_id + '.json') if work else repo / '.orchestrator/project/verification-runs' / (run_id + '.json')
+        certifications = {}
         if not work:
             for scope in scopes:
                 current = read_project_result(repo, scope)
+                certifications[scope] = ({k: current[k] for k in ('status', 'run_id', 'standard') if k in current} if current.get('status') == 'passed' else current.get('certification'))
                 running = current.get('running') or {}
                 if running:
                     try:
@@ -70,7 +72,7 @@ def command(args):
             record['owner'] = {'kind': 'project', 'scopes': scopes}
             record['purpose'] = 'initialization'
             for scope in scopes:
-                atomic_json(project_result_path(repo, scope), {'running': {'id': run_id, 'owner_pid': os.getpid()}})
+                atomic_json(project_result_path(repo, scope), {'certification': certifications[scope], 'running': {'id': run_id, 'owner_pid': os.getpid()}})
         atomic_json(path, record)
     results = []
     for check in checks:
@@ -100,7 +102,8 @@ def command(args):
         if not work:
             for scope in scopes:
                 atomic_json(project_result_path(repo, scope), {'status': status, 'run_id': run_id,
-                    'standard': project_standard(repo, scope) if after is not None else None})
+                    'standard': project_standard(repo, scope) if after is not None else None,
+                    'certification': certifications[scope], 'results': results})
     print(json.dumps({'ok': status == 'passed', **record,
           'next': 'Review the actual preparation results; accept the applicable baseline, then continue the native workflow. This probe does not qualify final acceptance.'}, ensure_ascii=False, indent=2))
     return {'passed': 0, 'failed': 1, 'blocked': 2, 'stale': 2, 'error': 3}[status]
@@ -149,7 +152,14 @@ def project_state(repo, scopes=None, work=None):
     from scripts.project_context import load_context, selected_scopes
     for scope in selected_scopes(load_context(repo), scopes, work):
         record = read_project_result(repo, scope)
-        if record.get('status') != 'passed' or record.get('standard') != project_standard(repo, scope):
+        standard = project_standard(repo, scope)
+        certified = record.get('certification') or {}
+        product_failure = (work and work.get('status') == 'active' and record.get('status') == 'failed'
+                           and record.get('standard') == standard and certified.get('status') == 'passed'
+                           and certified.get('standard') == standard
+                           and all(row.get('status') in {'passed', 'failed'} for row in record.get('results', []))
+                           and any('AssertionError' in row.get('stderr_tail', '') or 'FAIL' in row.get('stdout_tail', '') for row in record.get('results', [])))
+        if not product_failure and (record.get('status') != 'passed' or record.get('standard') != standard):
             return {'ready': False, 'reason': 'PROJECT_VERIFICATION_CHECK_REQUIRED',
                     'next': 'Review existing checks against accepted project technology and project-wide quality standards, then run `cao verification check --project --scope ' + scope + '`; inspect failures and repair project-wide checks before creating or resuming Work. Keep the pending Work unchanged; do not derive baseline scripts from its requirement.',
                     'scope': scope, 'last_status': record.get('status')}
