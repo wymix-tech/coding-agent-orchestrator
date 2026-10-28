@@ -387,7 +387,7 @@ def main(argv: list[str] | None = None) -> int:
         if getattr(exc, "diagnostics", None):
             result.update(diagnostic=exc.diagnostics[0], diagnostics=exc.diagnostics)
         code = str(exc).split(':', 1)[0]
-        if code.startswith(('PROJECT_CONTEXT', 'PROJECT_SCOPE', 'PROJECT_SOURCE', 'PROJECT_REPOSITORY_SOURCE',
+        if code.startswith(('PROJECT_SETUP', 'PROJECT_IDENTITY', 'PROJECT_FRAMEWORK', 'PROJECT_DEPENDENCY', 'PROJECT_CONTEXT', 'PROJECT_SCOPE', 'PROJECT_SOURCE', 'PROJECT_REPOSITORY_SOURCE',
                             'PROJECT_DELEGATION', 'PROJECT_VERSION', 'PROJECT_FIELDS', 'PROJECT_FIELD_CONFLICT',
                             'PROJECT_FIELD_CATEGORY', 'PROJECT_CHANGE', 'PROJECT_BIND', 'PROJECT_REVISION', 'PROJECT_STATE', 'PROJECT_VERIFICATION')):
             from scripts.project_commands import error_context

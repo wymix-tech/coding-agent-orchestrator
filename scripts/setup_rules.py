@@ -37,16 +37,24 @@ for _rule, _constraints in {
     RULES[_rule]['technology'] = _constraints
 
 
-def describe(rule=None):
+def describe(rule=None, *, framework=None):
     if rule is None:
-        return {key: {'id': key, 'version': 1, **value} for key, value in RULES.items()}
+        return {key: describe(key, framework=framework) for key in RULES}
     if rule not in RULES:
         raise ValueError('PROJECT_SETUP_EXPLICIT_PLAN_REQUIRED: use a plan with exact files and checks; no built-in rule is required')
-    return {'id': rule, 'version': 1, **RULES[rule]}
+    result = {'id': rule, 'version': 1, **RULES[rule]}
+    from scripts.setup_frameworks import spring_boot
+    if rule in {'java-maven', 'java-gradle'}:
+        result['field_guidance'] = {'junit_version': 'Enter an exact JUnit release (major.minor.patch); for Spring Boot choose 5 to use its BOM-managed JUnit 5 generation.'}
+        if spring_boot(framework):
+            result['fields'] = [*result['fields'], 'framework_version']
+            result['capabilities'] = ['build', 'load', 'test']
+            result['field_guidance']['framework_version'] = 'Ask for the exact Spring Boot release (major.minor.patch). Do not select an old/default/latest version on behalf of the user.'
+    return result
 
 
-def validate_identity(rule, identity, *, partial=False):
-    spec = describe(rule)
+def validate_identity(rule, identity, *, partial=False, framework=None):
+    spec = describe(rule, framework=framework)
     if not isinstance(identity, dict):
         raise ValueError('PROJECT_IDENTITY_INVALID')
     if partial and any(field not in spec['fields'] for field in identity):
@@ -55,6 +63,11 @@ def validate_identity(rule, identity, *, partial=False):
         value = identity.get(field)
         if not isinstance(value, str) or not value or any(c in value for c in '\x00\n\r\\'):
             raise ValueError('PROJECT_IDENTITY_REQUIRED: ' + field)
+        if field in {'framework_version', 'junit_version'}:
+            from scripts.setup_frameworks import release, spring_boot
+            if not release(value) and not (field == 'junit_version' and value == '5' and spring_boot(framework)):
+                prefix = 'PROJECT_FRAMEWORK_VERSION_REQUIRED' if field == 'framework_version' else 'PROJECT_DEPENDENCY_VERSION_REQUIRED'
+                raise ValueError(prefix + ': ' + field + '; ask for a concrete major.minor.patch release; Spring Boot may manage JUnit generation 5')
         if field in {'namespace', 'import_name', 'crate_name', 'target_name'}:
             if not all(re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*', p) for p in value.split('.')):
                 raise ValueError('PROJECT_IDENTITY_INVALID: ' + field)
@@ -82,8 +95,14 @@ def validate_identity(rule, identity, *, partial=False):
     return spec
 
 
-def scaffold(rule, identity):
-    spec = validate_identity(rule, identity)
+def scaffold(rule, identity, *, framework=None):
+    spec = validate_identity(rule, identity, framework=framework)
+    from scripts.setup_frameworks import spring_boot, scaffold as framework_scaffold
+    if rule in {'java-maven', 'java-gradle'} and spring_boot(framework):
+        result = framework_scaffold(rule, identity)
+        result.update(schema_version=1, rule={'id': rule, 'version': spec['version']}, identity=identity,
+                      framework_support=framework)
+        return result
     i = identity
     files, checks, outputs = [], [], []
     def put(path, content, purpose):

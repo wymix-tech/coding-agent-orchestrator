@@ -6,6 +6,23 @@ Bootstrap or next reports project_setup, or project facts/scope/bindings need re
 
 ## Execute
 
+During first initialization, actual user answers may refine a generic technology
+choice (for example JUnit to JUnit 5). Identity version answers synchronize their
+documented technology fields; neither a generated manifest nor model inference
+authorizes a choice. An empty/CAO-scaffolded scope without any current or historical
+Work binding accepts authorized corrections with `project context set`. Existing
+initialization change proposals may also be applied without `--work`. Replan/check
+affected setup and refresh the project script baseline afterward. Do not create
+a temporary migration/business Work to repair project initialization.
+
+Existing products and scopes already bound to Work retain the migration workflow;
+JUnit 4 and JUnit 5 are distinct. Current conflict results identify fields and
+recovery ownership consistently across inspect/show/diff and baseline commands.
+Use the returned commands, prepared inputs and bundled guides/schema. Do not
+read/search installed CAO implementation scripts, tests or development docs for
+alternate entrypoints. If the same diagnostic repeats without changed input,
+stop retries and report the code, fields and pending action.
+
 Known field-category conflicts are rejected before saving: FastAPI is a
 framework, not a build tool. `diagnostics` identifies the expected field; ask
 only for the still-missing build choice. Custom technology names remain valid.
