@@ -8,7 +8,6 @@
       "rule_id": "vue-features",
       "rule_version": 1,
       "stack": {
-        "language": "typescript",
         "framework": "vue"
       },
       "style": "features",

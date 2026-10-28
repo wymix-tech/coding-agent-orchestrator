@@ -8,7 +8,6 @@
       "rule_id": "nextjs-app",
       "rule_version": 1,
       "stack": {
-        "language": "typescript",
         "framework": "nextjs"
       },
       "style": "app-router",

@@ -25,6 +25,12 @@
           "kind": "java-package-dependency",
           "from": "controller",
           "forbidden": "repository"
+        },
+        {
+          "id": "ARCH-STRUCT-001",
+          "kind": "java-source-layout",
+          "from": "source-root",
+          "forbidden": "flat-business-classes"
         }
       ]
     }

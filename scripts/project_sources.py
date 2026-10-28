@@ -64,6 +64,7 @@ def user_evidence(repo, reference, fields, delegated=False):
                      'build_tool': ('build', '构建'), 'test_framework': ('test', '测试'),
                      'storage': ('storage', '数据库', '存储'), 'delivery': ('delivery', '交付'),
                      'package_manager': ('package manager', '包管理'), 'runtime': ('runtime', '运行时'),
+                     'architecture': ('architecture', '架构'),
                      'name': ('project', '项目', 'identity', '标识', '命名')}
             if not any(term in quote.casefold() for term in (*terms.get(key, (key,)), '技术栈', 'technology stack')):
                 raise ValueError('PROJECT_DELEGATION_SCOPE_INVALID: ' + key)

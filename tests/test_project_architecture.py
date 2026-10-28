@@ -161,3 +161,16 @@ class ArchitectureCliFlow(RepairCase):
         path=self.repo/arch.scope_file('root')
         path.write_text(path.read_text()+'\nChanged contract\n')
         self.assertEqual('ARCHITECTURE_RULE_STALE',binding_state(self.repo,work)['reason'])
+
+class LayoutRegression(ArchitectureTests):
+    def test_flat_business_class_fails_but_boot_entry_passes(self):
+        self.adopt()
+        root=self.repo/'src'
+        root.mkdir()
+        (root/'OrderController.java').write_text('package app; class OrderController {}')
+        result=arch.check(self.repo,['root'])
+        self.assertFalse(result['ready'])
+        self.assertTrue(any(r['rule_id']=='ARCH-STRUCT-001' and r['status']=='failed' for r in result['results']))
+        (root/'OrderController.java').unlink()
+        (root/'OrderApplication.java').write_text('package app; class OrderApplication {}')
+        self.assertTrue(arch.check(self.repo,['root'])['ready'])

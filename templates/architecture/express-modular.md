@@ -8,7 +8,6 @@
       "rule_id": "express-modular",
       "rule_version": 1,
       "stack": {
-        "language": "typescript",
         "framework": "express"
       },
       "style": "modular",

@@ -8,7 +8,6 @@
       "rule_id": "react-features",
       "rule_version": 1,
       "stack": {
-        "language": "typescript",
         "framework": "react"
       },
       "style": "features",

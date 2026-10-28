@@ -105,3 +105,13 @@ Built-ins ship in templates/architecture through Python, npm and runtime archive
 Template updates never overwrite project instances. Regenerate a reviewed input
 explicitly when adopting a new template. The accepted hash includes all Markdown
 bytes, so an unchanged version number cannot conceal a boundary change.
+
+Explicit delegation can use `apply --source user-delegated` with observed user
+input that delegates the architecture choice (for example “架构由你选择”). The
+same host evidence validation used for project technology applies. Generic
+“continue” and provider choices do not authorize selecting a product architecture.
+
+Spring Boot checks also reject business Java classes directly in the declared base
+package, allowing application entrypoints and package/module descriptors. This
+catches flattened implementation without requiring a pre-created directory tree.
+No Java files is reported not_applicable, with an inspected-file count.

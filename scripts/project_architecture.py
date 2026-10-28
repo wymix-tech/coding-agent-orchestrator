@@ -14,6 +14,11 @@ SECTIONS = ('Applicability', 'Directory tree', 'Responsibilities', 'Naming', 'Ca
             'Dependencies', 'Data conversion', 'Module boundaries', 'Constraints', 'Tests', 'Exceptions')
 
 
+def technology_token(value):
+    token = re.sub(r'[^a-z0-9]', '', str(value).lower())
+    return {'c': 'csharp', 'cs': 'csharp', 'ts': 'typescript', 'js': 'javascript'}.get(token, token)
+
+
 def sha(text):
     return hashlib.sha256(text.encode('utf-8')).hexdigest()
 
@@ -50,11 +55,11 @@ def parse(text, *, template=False):
             raise ValueError('ARCHITECTURE_METADATA_INVALID')
         if not (isinstance(meta['description'], str) and meta['description'].strip()):
             raise ValueError('ARCHITECTURE_METADATA_INVALID')
-        if not (cao['schema_version'] == 1 and type(cao['rule_version']) is int and cao['rule_version'] > 0):
+        if not (type(cao['schema_version']) is int and cao['schema_version'] == 1 and type(cao['rule_version']) is int and cao['rule_version'] > 0):
             raise ValueError('ARCHITECTURE_METADATA_INVALID')
         if not (re.fullmatch(r'[a-z0-9][a-z0-9-]{0,63}', cao['rule_id'])):
             raise ValueError('ARCHITECTURE_METADATA_INVALID')
-        if not (isinstance(cao['stack'], dict) and isinstance(cao['style'], str)):
+        if not (isinstance(cao['stack'], dict) and isinstance(cao['style'], str) and cao['style'] and isinstance(cao.get('scope'), str) and cao['scope']):
             raise ValueError('ARCHITECTURE_METADATA_INVALID')
         if not (all(isinstance(v, str) for v in cao['stack'].values())):
             raise ValueError('ARCHITECTURE_METADATA_INVALID')
@@ -71,7 +76,7 @@ def parse(text, *, template=False):
         for check in cao.get('checks', []):
             if not (set(check) == {'id', 'kind', 'from', 'forbidden'}):
                 raise ValueError('ARCHITECTURE_METADATA_INVALID')
-            if not (check['kind'] == 'java-package-dependency'):
+            if not (check['kind'] in {'java-package-dependency', 'java-source-layout'}):
                 raise ValueError('ARCHITECTURE_METADATA_INVALID')
             if not (all(isinstance(check[k], str) and check[k] for k in check)):
                 raise ValueError('ARCHITECTURE_METADATA_INVALID')
@@ -184,7 +189,7 @@ def draft(repo, scope, template, variables):
         text = text.replace('{{' + key + '}}', value)
     meta = parse(text)
     tech = context['scopes'][scope]['technology']
-    normalize = lambda v: re.sub(r'[^a-z0-9]', '', v.lower())
+    normalize = technology_token
     for field, value in meta['stack'].items():
         actual = tech.get(field, {})
         if actual.get('status') == 'accepted' and normalize(str(actual['value'])) != normalize(value):
@@ -207,7 +212,7 @@ def validate_instance(repo, scope, text):
     context = load_context(repo)
     if not context or scope not in context['scopes'] or meta.get('scope') != scope:
         raise ValueError('ARCHITECTURE_SCOPE_MISMATCH')
-    normalize = lambda v: re.sub(r'[^a-z0-9]', '', str(v).lower())
+    normalize = technology_token
     for field, value in meta['stack'].items():
         actual = context['scopes'][scope]['technology'].get(field, {})
         if actual.get('status') == 'accepted' and normalize(actual['value']) != normalize(value):
@@ -231,7 +236,7 @@ def writable_input(repo, target):
         return False
 
 
-def accept(repo, scope, evidence, expected):
+def accept(repo, scope, evidence, expected, delegated=False):
     from scripts.project_sources import user_evidence
     if not evidence:
         raise ValueError('ARCHITECTURE_EVIDENCE_REQUIRED')
@@ -242,7 +247,7 @@ def accept(repo, scope, evidence, expected):
             raise ValueError('ARCHITECTURE_REVISION_CONFLICT')
         text = safe(repo, ROOT / 'architecture-inputs' / (scope + '.md')).read_text(encoding='utf-8')
         meta = validate_instance(repo, scope, text)
-        user_evidence(repo, evidence, {'architecture': meta['rule_id']})
+        user_evidence(repo, evidence, {'architecture': meta['style'] if delegated else meta['rule_id']}, delegated)
         if meta['scope'] != scope:
             raise ValueError('ARCHITECTURE_SCOPE_MISMATCH')
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -268,10 +273,16 @@ def check(repo, scopes):
         meta = parse(safe(repo, Path(row['path'])).read_text())
         for rule in meta.get('checks', []):
             failures = []
+            inspected = 0
             for root in meta['source_roots']:
                 source = safe(repo, Path(root))
                 for file in source.rglob('*.java') if source.exists() else []:
                     safe(repo, file.relative_to(repo))
+                    inspected += 1
+                    if rule['kind'] == 'java-source-layout':
+                        if file.parent == source and file.name not in {'Application.java', 'Main.java', 'package-info.java', 'module-info.java'} and not file.name.endswith('Application.java'):
+                            failures.append({'path': str(file.relative_to(repo)), 'dependency': 'Business classes must belong to feature/layer packages.'})
+                        continue
                     # Strip comments/string literals before recognizing Java package/import tokens.
                     text = re.sub(r'""".*?"""|"(?:\\.|[^"\\])*"|\'(?:\\.|[^\'\\])*\'|/\*.*?\*/|//[^\n]*', ' ', file.read_text(), flags=re.S)
                     package = re.search(r'\bpackage\s+([\w.]+)\s*;', text)
@@ -279,8 +290,8 @@ def check(repo, scopes):
                         for target in re.findall(r'\bimport\s+(?:static\s+)?([\w.*]+)\s*;', text):
                             if rule['forbidden'] in target.split('.'):
                                 failures.append({'path': str(file.relative_to(repo)), 'dependency': target})
-            results.append({'rule_id': rule['id'], 'status': 'failed' if failures else 'passed', 'violations': failures,
-                            'coverage': 'Java explicit imports only; fully qualified references, reflection and semantic boundaries require provider review.'})
+            results.append({'rule_id': rule['id'], 'status': 'failed' if failures else 'passed' if inspected else 'not_applicable', 'violations': failures, 'inspected_files': inspected,
+                            'coverage': 'Java direct source-root files only.' if rule['kind'] == 'java-source-layout' else 'Java explicit imports only; fully qualified references, reflection and semantic boundaries require provider review.'})
         results.append({'rule_id': row['rule_id'] + ':semantic', 'status': 'unsupported',
                         'next': 'Provider review must read this Skill and assess responsibilities, module boundaries and data conversion.'})
     return {'ready': not any(r['status'] == 'failed' for r in results), 'results': results,
@@ -293,10 +304,19 @@ def dispatch(args):
     action = args.architecture_action
     if action == 'list':
         result = {key: {k: v for k, v in row.items() if k != 'text'} for key, row in catalog(repo).items()}
+    elif action == 'inspect':
+        context = load_context(repo)
+        if not context or args.scope not in context['scopes']:
+            raise ValueError('PROJECT_SCOPE_REQUIRED')
+        from scripts.project_inspection import inspect
+        result = {'architecture': state(repo, [args.scope]),
+                  'product': inspect(repo, {args.scope: context['scopes'][args.scope]}),
+                  'templates': {key: row['metadata'] for key, row in catalog(repo).items()},
+                  'next': 'Preserve observed product structure. Choose an explicitly accepted style; generic-custom supports existing and unlisted stacks.'}
     elif action == 'draft':
         result = draft(repo, args.scope, args.template, dict(v.split('=', 1) for v in args.variable))
     elif action == 'apply':
-        result = accept(repo, args.scope, args.evidence, args.expected_sha256)
+        result = accept(repo, args.scope, args.evidence, args.expected_sha256, args.source == 'user-delegated')
     elif action == 'diff':
         path = safe(repo, scope_file(args.scope))
         old = path.read_text() if path.exists() else ''
@@ -328,3 +348,4 @@ def register(actions):
         if name == 'apply':
             p.add_argument('--evidence', required=True)
             p.add_argument('--expected-sha256', required=True)
+            p.add_argument('--source', choices=['user-specified', 'user-delegated'], default='user-specified')
