@@ -14,6 +14,17 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from tests.helpers import fixture_native_review, fixture_native_review_source, complete_acceptance, provision_bmad
 
 
+def adopt_architecture(cli, evidence, source_root, test_root):
+    assert len(cli('project', 'architecture', 'list')) >= 14
+    cli('project', 'architecture', 'draft', '--template', 'generic-custom',
+        '--variable', 'source_root=' + source_root, '--variable', 'test_root=' + test_root)
+    cli('project', 'architecture', 'validate')
+    diff = cli('project', 'architecture', 'diff')
+    cli('project', 'architecture', 'apply', '--evidence', evidence,
+        '--expected-sha256', diff['expected_sha256'])
+    assert cli('project', 'architecture', 'show')['ready']
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--cao", required=True)
@@ -54,11 +65,12 @@ def main():
                 return json.loads(result.stdout)
             setup_cli('init')
             setup_cli('host-event', '--host', host, payload={'event': 'prompt_submit', 'session_id': 'installed-setup',
-                'prompt': 'Initialize sample-dist with import sample_import. Use Python setuptools unittest.'})
+                'prompt': 'Initialize sample-dist with import sample_import. Use Python setuptools unittest. Choose generic-custom architecture.'})
             inspection = setup_cli('project', 'inspect')
             evidence = inspection['user_evidence'][-1]['id']
             setup_cli('project', 'context', 'set', '--language', 'Python', '--build-tool', 'setuptools',
                       '--test-framework', 'unittest', '--source', 'user-specified', '--evidence', evidence)
+            adopt_architecture(setup_cli, evidence, 'sample_import', 'tests')
             setup_cli('project', 'setup', 'draft', '--rule', 'python-unittest', '--identity',
                       '{"name":"sample-dist","import_name":"sample_import"}', '--evidence', evidence)
             setup_cli('project', 'setup', 'plan')
@@ -124,10 +136,11 @@ def main():
                 config['lifecycle_contract'] = 1
                 config_path.write_text(json.dumps(config))
                 assert cli('bootstrap')['mode'] == 'project_context_setup'
-                event('prompt_submit', prompt='Fixture uses Python, setuptools and unittest.')
+                event('prompt_submit', prompt='Fixture uses Python, setuptools and unittest. Choose generic-custom architecture.')
                 evidence = cli('project', 'inspect')['user_evidence'][0]['id']
                 cli('project', 'context', 'set', '--language', 'Python', '--build-tool', 'setuptools',
                     '--test-framework', 'unittest', '--source', 'user-specified', '--evidence', evidence)
+                adopt_architecture(cli, evidence, 'acceptance-tests', 'acceptance-tests')
                 cli('verification', 'configure', '--plan-only', '--test-script',
                     shell([args.python, '-m', 'unittest', 'discover', '-s', 'acceptance-tests']))
                 cli('verification', 'configure', '--test-script',

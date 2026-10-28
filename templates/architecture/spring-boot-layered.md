@@ -45,6 +45,7 @@ Use for accepted java spring-boot scopes using layered. Preserve existing framew
 ## Directory tree
 ```text
 {{source_root}}/
+|-- Application.java
 |-- controller/
 |-- service/
 |-- repository/

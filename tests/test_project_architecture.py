@@ -6,7 +6,7 @@ from unittest.mock import patch
 from scripts import project_architecture as arch
 
 
-class ArchitectureTests(unittest.TestCase):
+class ArchitectureFixture:
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
@@ -29,6 +29,8 @@ class ArchitectureTests(unittest.TestCase):
         arch.atomic_json(self.repo / arch.receipt_path(scope), {'sha256': arch.sha(text)})
         return p
 
+
+class ArchitectureTests(ArchitectureFixture, unittest.TestCase):
     def test_catalog_and_custom_duplicate(self):
         self.assertEqual(14, len(arch.catalog(self.repo)))
         p = self.repo / arch.DIRECTORY / 'custom' / 'duplicate.md'
@@ -100,7 +102,7 @@ class ArchitectureTests(unittest.TestCase):
 if __name__ == '__main__':
     unittest.main()
 
-class ArchitectureIntegrationTests(ArchitectureTests):
+class ArchitectureIntegrationTests(ArchitectureFixture, unittest.TestCase):
     def test_yaml_custom_rule(self):
         import yaml
         text = self.text()
@@ -167,7 +169,7 @@ class ArchitectureCliFlow(RepairCase):
         path.write_text(path.read_text()+'\nChanged contract\n')
         self.assertEqual('ARCHITECTURE_RULE_STALE',binding_state(self.repo,work)['reason'])
 
-class LayoutRegression(ArchitectureTests):
+class LayoutRegression(ArchitectureFixture, unittest.TestCase):
     def test_flat_business_class_fails_but_boot_entry_passes(self):
         self.adopt()
         root=self.repo/'src'
@@ -179,3 +181,11 @@ class LayoutRegression(ArchitectureTests):
         (root/'OrderController.java').unlink()
         (root/'OrderApplication.java').write_text('package app; class OrderApplication {}')
         self.assertTrue(arch.check(self.repo,['root'])['ready'])
+
+class DomainPurityRegression(ArchitectureFixture, unittest.TestCase):
+    def test_domain_framework_import_fails(self):
+        self.adopt()
+        p=self.repo/'src/order/domain/Order.java'
+        p.parent.mkdir(parents=True)
+        p.write_text('package app.order.domain; import jakarta.persistence.Entity; class Order {}')
+        self.assertFalse(arch.check(self.repo,['root'])['ready'])

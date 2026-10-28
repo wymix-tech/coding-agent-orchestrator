@@ -45,6 +45,7 @@ Use for accepted java spring-boot scopes using modular. Preserve existing framew
 ## Directory tree
 ```text
 {{source_root}}/
+|-- Application.java
 |-- order/web/
 |-- order/service/
 |-- order/repository/

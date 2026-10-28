@@ -49,6 +49,18 @@
           "kind": "java-source-layout",
           "from": "source-root",
           "forbidden": "flat-business-classes"
+        },
+        {
+          "id": "ARCH-DEP-005",
+          "kind": "java-package-dependency",
+          "from": "domain",
+          "forbidden": "springframework"
+        },
+        {
+          "id": "ARCH-DEP-006",
+          "kind": "java-package-dependency",
+          "from": "domain",
+          "forbidden": "persistence"
         }
       ]
     }
@@ -63,6 +75,7 @@ Use for accepted java spring-boot scopes using modular-ddd. Preserve existing fr
 ## Directory tree
 ```text
 {{source_root}}/
+|-- Application.java
 |-- order/web/controller/
 |-- order/web/request/
 |-- order/web/response/
@@ -111,3 +124,5 @@ Record a concrete rule ID, reason and affected paths in the native design/review
 Keep Application.java in the base package for component scanning. Use web request/response DTOs, application commands, domain repository interfaces and infrastructure implementations in DDD. Keep transaction boundaries in application orchestration; do not require every service to have an interface.
 
 Map application output into application/result DTOs; the web adapter converts those into response DTOs. Domain repository ports expose domain objects, not JPA entities. Infrastructure mappers reconstitute domain state without repeating creation side effects.
+
+ARCH-DEP-005: Keep the domain free of Spring and JPA imports. Infrastructure owns persistence annotations; application orchestration owns framework transaction annotations.
