@@ -171,6 +171,20 @@ class RecoveryClosure(unittest.TestCase):
         self.assertIn('cao lifecycle bind', result['next'])
         self.assertIn(identity, result['retry_command'])
 
+    def test_stale_evidence_pause_recovers_when_original_report_restored(self):
+        from scripts.runtime_store import work_events
+        original = self.report.read_bytes()
+        identity = self.check('evidence', 'attach', '--kind', 'test', '--path', 'openspec/completion.md')['evidence']['id']
+        self.report.write_text('status: failed\n')
+        for _ in range(2):
+            self.assertEqual(2, self.cli('lifecycle', 'bind', '--evidence', identity)[0])
+        before = list(work_events(self.repo, self.wid))
+        self.assertEqual('NATIVE_COMPLETION_REPAIR_PAUSED', self.cli('lifecycle', 'bind', '--evidence', identity)[1]['error'])
+        self.assertEqual(before, list(work_events(self.repo, self.wid)))
+        self.report.write_bytes(original)
+        self.check('lifecycle', 'bind', '--evidence', identity)
+        self.assertNotIn('completion_binding_failure', self.work()['sdd'])
+
     def test_unknown_project_failure_does_not_inherit_write_permission(self):
         from scripts.verification_probe import project_state
         (self.repo / 'preparation_suite.py').write_text('raise RuntimeError("environment unavailable")\n')

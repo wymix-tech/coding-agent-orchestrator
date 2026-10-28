@@ -7,8 +7,20 @@ def signature(repo, work, names, request=None):
     from scripts.lifecycle_contract import inputs
     from scripts.path_guard import repo_file
     from scripts.cao_runtime import sha256_file
+    # Observe selected paths even when select() rejects before expanding reports.
+    # This is a retry fingerprint only; select() still owns evidence admission.
+    names = set(names)
+    selection = None
+    if request and request.get('evidence'):
+        from scripts.implementation_evidence import records
+        try:
+            rows = {row['id']: row for row in records(repo, work)}
+            selection = {identity: rows.get(identity) for identity in request['evidence']}
+            names.update(row['path'] for row in selection.values() if row)
+        except (ValueError, OSError, RuntimeError) as exc:
+            selection = {'unavailable': str(exc)}
     reports = {}
-    for name in names:
+    for name in sorted(names):
         try:
             path = repo_file(repo, name)
             reports[name] = sha256_file(path) if path.is_file() else 'missing'
@@ -17,6 +29,8 @@ def signature(repo, work, names, request=None):
     payload = {'reports': reports, 'inputs': inputs(repo, work)}
     if request is not None:
         payload['request'] = request
+    if selection is not None:
+        payload['selection'] = selection
     return digest(payload), reports
 
 
