@@ -45,8 +45,10 @@ def command(args):
             raise ValueError('ACTIVE_CONTRACT_2_WORK_REQUIRED')
         validate_command(work, args.command)
         path = provider_artifact(repo, args.report, provider_output_dirs(work['sdd']['provider'], repo))
-        if path.suffix.lower() not in {'.md', '.txt', '.log'} or not path.parent.is_dir():
+        if path.suffix.lower() not in {'.md', '.txt', '.log', '.json', '.yaml', '.yml'} or not path.parent.is_dir():
             raise ValueError('NATIVE_EXECUTION_LOG_PATH_REQUIRED')
+        if path.relative_to(repo).as_posix() in material_inputs(repo, work)['native_sources']:
+            raise ValueError('NATIVE_EXECUTION_REPORT_IS_SOURCE')
         rows = work['sdd'].setdefault('completion_executions', [])
         if rows and rows[-1]['status'] == 'running':
             previous = rows[-1]['run_id']
@@ -72,6 +74,8 @@ def command(args):
             if valid and result['exit_code'] == 0 and max(result.get('stdout_bytes', 0), result.get('stderr_bytes', 0)) <= 8 * 1024 * 1024:
                 # Store actual runner output, never merely attach an existing report.
                 body = result.get('stdout_tail', '') + '\n' + result.get('stderr_tail', '')
+                if path.suffix.lower() in {'.json', '.yaml', '.yml'}:
+                    body = result.get('stdout_tail') or result.get('stderr_tail', '')
                 path = provider_artifact(repo, args.report, provider_output_dirs(work['sdd']['provider'], repo))
                 path.write_text(body, encoding='utf-8')
                 try:
