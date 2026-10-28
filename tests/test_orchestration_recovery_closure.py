@@ -77,12 +77,19 @@ class RecoveryClosure(unittest.TestCase):
         (self.repo / 'preparation_suite.py').write_text('import unittest,feature\nclass T(unittest.TestCase):\n def test_behavior(self):self.assertTrue(feature.valid)\nunittest.main()\n')
         self.check('verification', 'check', '--project')
         self.check('reopen', '--reanchor', '--reason', 'reviewed product test suite')
+        self.bind()
         raw = {'event': 'pre_tool', 'session_id': 'writer', 'toolName': 'write', 'input': {'path': 'feature.py', 'content': 'valid = True\n'}}
         self.assertEqual('allow', self.fixture.cli('host-event', '--host', 'pi', payload=raw)[1]['decision'])
         (self.repo / 'feature.py').write_text('valid = False\n')
         self.assertEqual(1, self.cli('verification', 'check', '--project')[0])
         self.assertEqual('allow', self.fixture.cli('host-event', '--host', 'pi', payload=raw)[1]['decision'])
         self.assertNotEqual(0, self.cli('done')[0])
+        (self.repo / 'feature.py').write_text('valid = True\n')
+        self.execute()
+        self.bind()
+        self.check('verify')
+        self.check('done')
+        self.assertEqual('completed', self.work()['status'])
 
     def test_transition_success_is_not_replayed_after_product_change(self):
         from scripts.provider_execution import transition

@@ -1,0 +1,242 @@
+{
+  "date": "2026-10-28",
+  "platform": "Linux",
+  "python": "3.12.14",
+  "baseline": "695173d14eeccc274015c39673d20df5b2711aa4",
+  "implementation_commit": "101b2c159ed6fe99984c4856fc6e0f4e74564849",
+  "python_tests": {
+    "discovered": 1214,
+    "modules": 98,
+    "run": 1214,
+    "passed": 1210,
+    "skipped": 4,
+    "failed": 0,
+    "shards": [
+      {
+        "shard": 0,
+        "run": 192,
+        "seconds": 235.315,
+        "skipped": 0,
+        "failed": 0
+      },
+      {
+        "shard": 1,
+        "run": 211,
+        "seconds": 252.964,
+        "skipped": 0,
+        "failed": 0
+      },
+      {
+        "shard": 2,
+        "run": 162,
+        "seconds": 180.67,
+        "skipped": 0,
+        "failed": 0
+      },
+      {
+        "shard": 3,
+        "run": 239,
+        "seconds": 220.083,
+        "skipped": 0,
+        "failed": 0
+      },
+      {
+        "shard": 4,
+        "run": 230,
+        "seconds": 184.251,
+        "skipped": 4,
+        "failed": 0
+      },
+      {
+        "shard": 5,
+        "run": 180,
+        "seconds": 170.256,
+        "skipped": 0,
+        "failed": 0
+      }
+    ],
+    "method": "unittest discovery followed by six disjoint module lists; PYTHONPATH includes checkout and tests; no repeated module collection"
+  },
+  "pi": {
+    "run": 39,
+    "passed": 39,
+    "failed": 0
+  },
+  "typescript": "passed",
+  "compileall": "passed",
+  "diff_check": "passed",
+  "release_manifest": {
+    "passed": true,
+    "files": 195
+  },
+  "wheel": {
+    "built": true,
+    "sha256": "4ef922287c86542d4d1d5418a381f99f4f7614587eb58512673eaf16144c1199",
+    "installed_outside_checkout": true,
+    "smoke_cases": [
+      {
+        "provider_fixture": "openspec",
+        "simulated_host": "claude-code",
+        "profile": "empty-project-native-lifecycle",
+        "status": "completed-with-native-report",
+        "work": "feature-f75616bb"
+      },
+      {
+        "provider_fixture": "openspec",
+        "simulated_host": "codex",
+        "profile": "empty-project-native-lifecycle",
+        "status": "completed-with-native-report",
+        "work": "feature-f75616bb"
+      },
+      {
+        "provider_fixture": "openspec",
+        "simulated_host": "pi",
+        "profile": "empty-project-native-lifecycle",
+        "status": "completed-with-native-report",
+        "work": "feature-f75616bb"
+      },
+      {
+        "provider_fixture": "bmad",
+        "simulated_host": "claude-code",
+        "status": "completed",
+        "profile": "light"
+      },
+      {
+        "provider_fixture": "bmad",
+        "simulated_host": "claude-code",
+        "profile": "standard",
+        "status": "completed",
+        "work": "002-requirement-full-profile-installed-fixture-2026-10-28-1b2779d4"
+      },
+      {
+        "provider_fixture": "bmad",
+        "simulated_host": "claude-code",
+        "profile": "light-oneshot",
+        "status": "completed",
+        "work": "003-requirement-installed-oneshot-fixture-2026-10-28-9cfb796d"
+      },
+      {
+        "provider_fixture": "bmad",
+        "simulated_host": "codex",
+        "status": "completed",
+        "profile": "light"
+      },
+      {
+        "provider_fixture": "bmad",
+        "simulated_host": "codex",
+        "profile": "standard",
+        "status": "completed",
+        "work": "002-requirement-full-profile-installed-fixture-2026-10-28-1b2779d4"
+      },
+      {
+        "provider_fixture": "bmad",
+        "simulated_host": "codex",
+        "profile": "light-oneshot",
+        "status": "completed",
+        "work": "003-requirement-installed-oneshot-fixture-2026-10-28-9cfb796d"
+      },
+      {
+        "provider_fixture": "bmad",
+        "simulated_host": "pi",
+        "status": "completed",
+        "profile": "light"
+      },
+      {
+        "provider_fixture": "bmad",
+        "simulated_host": "pi",
+        "profile": "standard",
+        "status": "completed",
+        "work": "002-requirement-full-profile-installed-fixture-2026-10-28-1b2779d4"
+      },
+      {
+        "provider_fixture": "bmad",
+        "simulated_host": "pi",
+        "profile": "light-oneshot",
+        "status": "completed",
+        "work": "003-requirement-installed-oneshot-fixture-2026-10-28-9cfb796d"
+      },
+      {
+        "provider_fixture": "openspec",
+        "simulated_host": "claude-code",
+        "status": "completed",
+        "profile": "light"
+      },
+      {
+        "provider_fixture": "openspec",
+        "simulated_host": "claude-code",
+        "profile": "standard",
+        "status": "completed",
+        "work": "002-requirement-full-profile-installed-fixture-2026-10-28-1b2779d4"
+      },
+      {
+        "provider_fixture": "openspec",
+        "simulated_host": "codex",
+        "status": "completed",
+        "profile": "light"
+      },
+      {
+        "provider_fixture": "openspec",
+        "simulated_host": "codex",
+        "profile": "standard",
+        "status": "completed",
+        "work": "002-requirement-full-profile-installed-fixture-2026-10-28-1b2779d4"
+      },
+      {
+        "provider_fixture": "openspec",
+        "simulated_host": "pi",
+        "status": "completed",
+        "profile": "light"
+      },
+      {
+        "provider_fixture": "openspec",
+        "simulated_host": "pi",
+        "profile": "standard",
+        "status": "completed",
+        "work": "002-requirement-full-profile-installed-fixture-2026-10-28-1b2779d4"
+      },
+      {
+        "provider_fixture": "speckit",
+        "simulated_host": "claude-code",
+        "status": "completed",
+        "profile": "light"
+      },
+      {
+        "provider_fixture": "speckit",
+        "simulated_host": "claude-code",
+        "profile": "standard",
+        "status": "completed",
+        "work": "002-requirement-full-profile-installed-fixture-2026-10-28-1b2779d4"
+      },
+      {
+        "provider_fixture": "speckit",
+        "simulated_host": "codex",
+        "status": "completed",
+        "profile": "light"
+      },
+      {
+        "provider_fixture": "speckit",
+        "simulated_host": "codex",
+        "profile": "standard",
+        "status": "completed",
+        "work": "002-requirement-full-profile-installed-fixture-2026-10-28-1b2779d4"
+      },
+      {
+        "provider_fixture": "speckit",
+        "simulated_host": "pi",
+        "status": "completed",
+        "profile": "light"
+      },
+      {
+        "provider_fixture": "speckit",
+        "simulated_host": "pi",
+        "profile": "standard",
+        "status": "completed",
+        "work": "002-requirement-full-profile-installed-fixture-2026-10-28-1b2779d4"
+      }
+    ]
+  },
+  "not_executed": [
+    "real provider/model/host combinations",
+    "macOS and Windows process cleanup in this environment"
+  ]
+}
