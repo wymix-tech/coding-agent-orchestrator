@@ -184,7 +184,8 @@ def command(args):
     ensure_initialized(repo)
     from contextlib import nullcontext
     preview = args.lifecycle_command == 'recover' and args.check
-    with nullcontext() if preview else repo_transaction(repo):
+    inspection = getattr(args, 'check', False) or args.lifecycle_command == 'preflight'
+    with nullcontext() if preview else repo_transaction(repo, owner_metadata=not inspection):
         # Recovery preview is advisory and lock-independent; mutation revalidates.
         # Avoid load_index/reconcile: --check/preflight must be read-only.
         wid = args.work or (load_json(repo / '.orchestrator/index.json', {}) or {}).get('active_work')

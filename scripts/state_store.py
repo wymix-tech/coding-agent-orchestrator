@@ -40,7 +40,7 @@ def _unlock(fd: int) -> None:
 
 
 @contextmanager
-def repo_transaction(repo: Path, timeout: float = 5.0):
+def repo_transaction(repo: Path, timeout: float = 5.0, *, owner_metadata: bool = True):
     key = str(repo.resolve())
     with _registry_guard:
         mutex = _registry.setdefault(key, threading.RLock())
@@ -72,12 +72,13 @@ def repo_transaction(repo: Path, timeout: float = 5.0):
                     time.sleep(.025)
             # Ownership metadata is advisory. Its write failure must neither
             # masquerade as lock contention nor make an acquired lock unusable.
-            try:
-                atomic_json(folder / 'state-lock-owner.json', {'pid': os.getpid(), 'host': socket.gethostname(),
-                'acquired_at': time.time(), 'thread': threading.get_ident(),
-                'operation': __import__('sys').argv[1:4], 'advisory_only': True})
-            except OSError:
-                pass
+            if owner_metadata:
+                try:
+                    atomic_json(folder / 'state-lock-owner.json', {'pid': os.getpid(), 'host': socket.gethostname(),
+                    'acquired_at': time.time(), 'thread': threading.get_ident(),
+                    'operation': __import__('sys').argv[1:4], 'advisory_only': True})
+                except OSError:
+                    pass
         depths[key] = depths.get(key, 0) + 1
         try:
             yield

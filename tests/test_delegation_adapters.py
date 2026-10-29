@@ -6,7 +6,7 @@ import unittest
 from argparse import Namespace
 from copy import deepcopy
 from unittest.mock import patch
-from tests.test_review_context_packages import ContextPackages
+from tests import test_review_context_packages as context_packages
 from scripts.delegation_adapters import command, normalize, validate, REGISTRY
 from scripts.review_packages import launch_guard
 from scripts.state_store import atomic_json
@@ -14,7 +14,7 @@ from scripts.state_store import atomic_json
 
 class DelegationAdapters(unittest.TestCase):
     def setUp(self):
-        self.fixture = ContextPackages('runTest')
+        self.fixture = context_packages.ContextPackages('runTest')
         self.fixture.setUp()
         self.addCleanup(self.fixture.doCleanups)
         self.repo, self.work = self.fixture.repo, self.fixture.work
