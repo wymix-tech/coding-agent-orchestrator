@@ -155,3 +155,24 @@ historical baselines are labeled explicitly. Manifest tampering blocks affected
 reviews. Context provided to each layer still follows its native independence
 contract. Review status and acceptance summary expose layer, task and observed
 round counts; historical tasks without a round are reported separately.
+
+## Executable native input packages
+
+New tickets expose `prompt_file`, `diff_file` and a hashed context policy. Send the
+exact prompt file as the independent child task. Do not ask every child to read
+the whole review step, SPEC, architecture or earlier findings. The layer's native
+prompt is preserved after runtime path substitution. Pi launch calls must set
+`async: false`; `worktree`, when supported, is a top-level host argument. Launch
+all blocking reviewers and await all final outputs before classification.
+
+Blind reads only its frozen diff and own prompt. Other layers may read declared
+product files and their own instruction files. Edge claims remain unavailable
+until observed diff/instruction/product reads. Broad shell interpreters and
+unscoped searches cannot enforce this boundary; use explicit scoped read tools
+and ask the coordinator for disposable native checks. Tool path/order checks
+are process evidence, not proof of semantic tracing quality. The host does not
+inject the coordinator's project/requirement/history context into child sessions.
+
+NO_VCS Work records retain baseline bytes in the bounded runtime archive. Legacy
+current-tree fallback is explicitly labeled best-effort when no historical
+baseline exists; it never claims a reconstructed historical change set.

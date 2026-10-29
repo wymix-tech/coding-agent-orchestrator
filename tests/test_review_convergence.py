@@ -128,7 +128,7 @@ class ReviewIntegrationTests(unittest.TestCase):
 
     def child(self, package, name='readonly-child', model='fixture-model'):
         t = self.t
-        t.hook('subagent_start', subagent_id=name, model=model, host_tools=['read', 'grep'], prompt=package['task_marker'])
+        t.hook('subagent_start', subagent_id=name, model=model, host_tools=['read', 'grep'], prompt=(t.repo / package['prompt_file']).read_text())
         return t.run_cli('sdd', 'review', 'attach', '--reviewer-session', name, '--layer', package['layer'],
                          '--run', package['run_id'], '--input-sha256', package['input_sha256'], '--model', 'fixture-model')
 
@@ -155,8 +155,14 @@ class ReviewIntegrationTests(unittest.TestCase):
     def test_host_binding_collection_and_classification_without_shell(self):
         t = self.t
         package = self.package()
-        t.hook('subagent_start', subagent_id='auto-reviewer', model='fixture-model',
-               host_tools=['read', 'grep'], prompt=package['task_marker'])
+        started = t.hook('subagent_start', subagent_id='auto-reviewer', model='fixture-model',
+               host_tools=['read', 'grep'], prompt=(t.repo / package['prompt_file']).read_text())
+        self.assertNotIn(t.spec, started.get('additional_context', ''))
+        self.assertNotIn('Architecture Skills', started.get('additional_context', ''))
+        forbidden = t.hook('pre_tool', kind='subagent', subagent_id='auto-reviewer',
+                           tool_name='read', tool_input={'path': t.spec})
+        self.assertEqual('deny', forbidden['decision'])
+        self.assertIn('CONTEXT_PATH_FORBIDDEN', forbidden['reason'])
         status = t.run_cli('sdd', 'review', 'diagnose', '--layer', package['layer'])
         self.assertEqual('bound', status['phase'])
         t.hook('turn_end', kind='subagent', subagent_id='auto-reviewer',
@@ -170,6 +176,14 @@ class ReviewIntegrationTests(unittest.TestCase):
         self.assertIn('content_sha256', report['findings'][0])
         report['findings'][0].update(verdict='false', disposition='reject', evidence='Inspected original finding')
         t.write(drafted['report'], json.dumps(report))
+        blocked = t.run_cli('sdd', 'review', 'classify', '--layer', package['layer'], '--report', drafted['report'], expected=2)
+        self.assertIn('ALL_OUTPUTS_REQUIRED', blocked['error'])
+        remaining = self.fixture.prepare('--external-session')['reviews']
+        for other in remaining:
+            if other['layer'] != package['layer']:
+                child = 'other-' + other['layer']
+                self.child(other, name=child)
+                t.hook('turn_end', kind='subagent', subagent_id=child, last_assistant_message='[]')
         t.run_cli('sdd', 'review', 'classify', '--layer', package['layer'], '--report', drafted['report'])
         self.assertEqual('classified', t.run_cli('sdd', 'review', 'diagnose', '--layer', package['layer'])['phase'])
 

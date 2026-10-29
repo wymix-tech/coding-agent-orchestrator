@@ -41,6 +41,11 @@ def observe(repo, work, session, raw, event):
             return
         if session['id'] in run.get('existing_session_ids', []):
             return
+        from scripts.review_packages import prompt_matches
+        if not prompt_matches(repo, run, prompt):
+            session['review_binding_error'] = 'NATIVE_REVIEW_PROMPT_PACKAGE_REQUIRED'
+            save_session(repo, session)
+            return
         previous = session.get('review_ticket')
         if previous and previous != value:
             return  # An existing task cannot be relabeled by a later prompt.
@@ -50,6 +55,8 @@ def observe(repo, work, session, raw, event):
         auto_bind(repo, work, session)
         if event == 'post_tool' and not raw.get('isError', raw.get('is_error', False)):
             collect_written_artifact(repo, work, session, raw)
+            from scripts.review_packages import observe_reads
+            observe_reads(repo, work, session, raw)
     if event in {'turn_end', 'stop', 'subagent_stop'} and session.get('review_ticket'):
         message = raw.get('last_assistant_message')
         if isinstance(message, str) and message.strip() and len(message.encode()) <= 1024 * 1024:

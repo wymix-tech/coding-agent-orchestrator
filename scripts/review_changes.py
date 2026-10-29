@@ -26,7 +26,9 @@ def inventory(repo, work):
 
 def capture_baseline(repo, work):
     snapshot, files = inventory(repo, work)
-    value = {'version': 1, 'kind': 'work_start', 'snapshot': snapshot, 'files': files}
+    from scripts.evidence_archive import retain
+    bodies = {row['path']: retain(repo, work['id'], repo_file(repo, row['path']).read_bytes()) for row in files}
+    value = {'version': 2, 'kind': 'work_start', 'snapshot': snapshot, 'files': files, 'bodies': bodies}
     path = safe_path(repo, work['id'], 'review-baseline.json')
     atomic_json(path, value)
     work['review_baseline'] = {'path': path.relative_to(repo).as_posix(), 'sha256': hashlib.sha256(path.read_bytes()).hexdigest()}
@@ -97,3 +99,51 @@ def freeze(repo, work, expected_snapshot):
         elif requested != 'HEAD':
             raise ValueError('NATIVE_REVIEW_BASELINE_COMMIT_UNAVAILABLE')
     return {'version': 1, 'baseline': baseline, 'code_snapshot': current_snapshot, 'files': files, 'changes': changes}
+
+
+def unified_diff(repo, work, manifest):
+    """Freeze exact changed bytes for Git and NO_VCS Work-start baselines."""
+    import difflib
+    baseline = manifest['baseline']
+    bodies = {}
+    if baseline['kind'] == 'work_start':
+        before = json.loads(repo_file(repo, baseline['reference']['path']).read_text())
+        bodies = before.get('bodies') or {}
+    chunks = []
+    for change in manifest['changes']:
+        name = change['path']
+        previous = change.get('previous_path', name)
+        old = b''
+        added = change['status'].startswith('A') or change['status'] == 'current'
+        if not added:
+            if baseline['kind'] == 'git_commit':
+                result = subprocess.run(['git', 'show', baseline['commit'] + ':' + previous], cwd=repo, capture_output=True, timeout=10)
+                if result.returncode:
+                    raise ValueError('NATIVE_REVIEW_DIFF_BASELINE_UNAVAILABLE: ' + previous)
+                old = result.stdout
+            elif previous in bodies:
+                old = repo_file(repo, bodies[previous]).read_bytes()
+                expected = (change.get('before') or {}).get('sha256')
+                if expected and hashlib.sha256(old).hexdigest() != expected:
+                    raise ValueError('NATIVE_REVIEW_BASELINE_STALE')
+            else:
+                raise ValueError('NATIVE_REVIEW_DIFF_BASELINE_UNAVAILABLE: restore the original baseline bytes or explicitly establish a native comparison baseline; ' + previous)
+        path = repo_file(repo, name)
+        new = path.read_bytes() if path.is_file() else b''
+        header = 'diff --git a/' + previous + ' b/' + name + '\n'
+        try:
+            a, b = old.decode('utf-8').splitlines(keepends=True), new.decode('utf-8').splitlines(keepends=True)
+            delta = ''.join(difflib.unified_diff(a, b, fromfile='/dev/null' if added else 'a/' + previous,
+                tofile='/dev/null' if change['status'].startswith('D') else 'b/' + name))
+            if not delta and previous != name:
+                delta = 'rename from ' + previous + '\nrename to ' + name + '\n'
+            if not delta and change.get('before') != change.get('after'):
+                delta = 'file mode or metadata changed\n'
+        except UnicodeError:
+            delta = 'Binary files differ\n'
+        if delta:
+            chunks.append(header + delta + ('\n' if not delta.endswith('\n') else ''))
+    if not chunks:
+        raise ValueError('NATIVE_REVIEW_DIFF_EMPTY: no product changes to review')
+    limitation = '# Baseline unavailable: best-effort current product content; this is not proof of historical additions.\n' if baseline['kind'] == 'legacy_current_tree' else ''
+    return limitation + ''.join(chunks)

@@ -22,6 +22,12 @@ Native execute accepts configured project commands. `cao lifecycle declare --sou
 
 Validation: 41 targeted tests passed (evidence roles, real CLI native lifecycle and lifecycle integrity). Broader regression remains scheduled in stage 6.
 
+## Stage 2
+
+Per-layer native prompts, actual unified diff files, immutable context policies and explicit blocking launch settings are generated. Guards run before the generic inspection fast path. Blind input isolation, edge claim ordering, own-layer instruction access and final-output collection barriers are enforced on observed tools. Child startup/prompt context no longer injects coordinator state. NO_VCS baseline bytes are retained with archive quotas and integrity validation.
+
+Validation: 61-case review/conformance/round suite found two old sequential-collection fixtures incompatible with the native all-output barrier; corrected both to collect before classify. Five package/launch/boundary cases and both corrected CLI flows pass. Full regression follows in stage 6.
+
 ## Remaining stages
 
-Stages 2–6 are pending; this checkpoint is not a completion claim.
+Stages 3–6 are pending; this checkpoint is not a completion claim.

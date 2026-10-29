@@ -116,6 +116,12 @@ def review_integrity(repo, work, snapshot=None, inputs=None):
     from scripts.cao_snapshot import code_snapshot
     for layer in layers:
         run = records.get(layer) or {}
+        if run.get('context_package'):
+            try:
+                from scripts.review_packages import policy
+                policy(repo, run, check_claims=run.get('status') == 'running')
+            except (ValueError, OSError, RuntimeError, KeyError) as exc:
+                return {'ready': False, 'reason': str(exc).split(':')[0], 'layer': layer}
         if not run.get('input_manifest'):
             continue
         ref = run['input_manifest']
@@ -515,6 +521,8 @@ def validate_judgments(report, dispatch_route):
 
 
 def classify_review(repo, work, layer, report_path, code_snapshot):
+    from scripts.review_packages import require_collected
+    require_collected(repo, work)
     require_review_integrity(repo, work, code_snapshot)
     if layer not in active_layers(repo, work):
         raise ValueError('NATIVE_REVIEW_LAYER_NOT_ACTIVE')

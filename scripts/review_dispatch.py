@@ -181,6 +181,8 @@ def begin_review(repo, work, args, identity):
         manifest_path = root / 'input-manifest.json'
         run['input_manifest'] = {'path': manifest_path.relative_to(repo).as_posix(), 'content_sha256': native_digest(manifest)}
         atomic_json(manifest_path, manifest)
+        from scripts.review_packages import render
+        render(repo, work, run, args.instructions, manifest)
     if loopback.get('status') == 'reimplementing':
         loopback['status'] = 'reviewing'
         loopback['review_round_id'] = proposed['round_id']
@@ -188,7 +190,13 @@ def begin_review(repo, work, args, identity):
     output['reviewer_start'] = (f'{cao_invocation()["command"]} sdd review attach --work {work["id"]} '
         f'--layer {args.layer} --run {run["id"]} --input-sha256 {run["input_sha256"]} --model {shlex.quote(args.model)}')
     output['task_marker'] = task_marker(run, args.layer)
-    output['next'] = ('Include task_marker as an exact standalone line in the actual reviewer task prompt. Never bind by session order. Begin ALL active layers before launching reviewers. The host automatically binds each ticket-marked observed child before inspection using parent/model/tools metadata. Use reviewer_start or coordinator --reviewer-session only for compatible manual/external attachment; never attach after inspection. '
+    if run.get('context_package'):
+        from scripts.review_packages import policy
+        package = policy(repo, run, check_claims=False)
+        output['prompt_file'] = package['prompt']
+        output['diff_file'] = package['diff']
+        output['launch'] = {'mode': 'synchronous', 'wait_for_all': True, 'async': False}
+    output['next'] = ('Use the generated prompt_file verbatim as the child task; do not add whole-step/spec/history context. Include task_marker as an exact standalone line in the actual reviewer task prompt. Never bind by session order. Begin ALL active layers before launching reviewers. The host automatically binds each ticket-marked observed child before inspection using parent/model/tools metadata. Use reviewer_start or coordinator --reviewer-session only for compatible manual/external attachment; never attach after inspection. '
         'to acknowledge this ticket and frozen input, then inspect that exact code without product writes. '
         + ('Preserve unmodified native Markdown/JSON findings for each layer; classify ALL layers before patches, then resolve ALL layers. '
            'Use `cao sdd review classify --layer <layer> --report <triage.json>`, then `cao sdd review resolve --layer <layer> --report <resolved.json>`.'
@@ -323,11 +331,19 @@ def prepare_batch(repo, work, args, identity):
                    'task_marker': output['task_marker'],
                    'round_id': run.get('round_id'),
                    'input_manifest': run.get('input_manifest'),
-                   'context_boundary': 'Follow only this layer\'s actual native instructions. Blind diff-only roles receive product changes without SPEC content; this manifest contains product paths/hashes, never requirement text.',
+                   'prompt_file': None,
+                'context_boundary': 'Follow only this layer\'s actual native instructions. Blind diff-only roles receive product changes without SPEC content; this manifest contains product paths/hashes, never requirement text.',
                    'report': report.relative_to(repo).as_posix(), 'capability': capability,
                    'task_contract': {'role': 'reviewer', 'product_writes': False, 'evidence': ['original-findings', 'review-input', 'reviewer-identity']},
                    'next': output['next'], 'status': run['status'],
                    'reviewer': (run.get('execution_binding') or {}).get('reviewer')}
+        if not output.get('reused'):
+            from scripts.review_packages import render
+            package.update(render(repo, work, run, args.instructions, manifest))
+        elif run.get('context_package'):
+            from scripts.review_packages import policy
+            frozen = policy(repo, run, check_claims=False)
+            package.update(prompt_file=frozen['prompt'], diff_file=frozen['diff'], launch={'mode': 'synchronous', 'wait_for_all': True, 'async': False})
         atomic_json(root / 'dispatch.json', package)
         outputs.append(package)
     return {'ok': True, 'reviews': outputs, 'owner': 'sdd_provider',

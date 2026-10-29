@@ -115,9 +115,13 @@ def bind_fixture_reviewer(repo, ticket, layer, model, reviewer_cli=None):
                                 text=True, capture_output=True, env=env, timeout=30)
         assert result.returncode == 0, (result.stdout, result.stderr)
         return json.loads(result.stdout)
+    prompt = __import__('scripts.review_observation', fromlist=['task_marker']).task_marker(ticket, layer)
+    if ticket.get('context_package'):
+        from scripts.review_packages import policy
+        prompt = (pathlib.Path(repo) / policy(pathlib.Path(repo), ticket)['prompt']).read_text()
     invoke('host-event', '--host', 'pi', payload={'event': 'subagent_start',
            'session_id': 'fixture-parent', 'subagent_id': session_id, 'model': model,
-           'prompt': __import__('scripts.review_observation', fromlist=['task_marker']).task_marker(ticket, layer)})
+           'prompt': prompt})
     out = invoke('sdd', 'review', 'attach', '--layer', layer, '--run', ticket['id'],
                  '--input-sha256', ticket['input_sha256'], '--model', model)
     return out['review']['execution_binding']['reviewer']
