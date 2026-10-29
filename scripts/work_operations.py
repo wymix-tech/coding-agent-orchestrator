@@ -82,23 +82,49 @@ def preview(repo, target_id):
     from scripts.cao_runtime import sha256_file
     if sha256_file(repo / target['requirement']['path']) != target['requirement']['sha256']:
         blockers.append('REQUIREMENT_CHANGED_REANCHOR_REQUIRED')
+    active_children = []
     if source:
         from scripts.recovery_plan import plan as recovery_plan
         if recovery_plan(repo, source).get('unresolved_runs'):
             blockers.append('SOURCE_RUN_UNRESOLVED')
         # In-flight host effects are observations, not controllable processes.
-        from scripts.runtime_queries import events
-        starts, finishes = set(), set()
-        for event in events(repo, source['id']):
-            key = (event.get('host'), event.get('session_id'), event.get('tool_call_id'))
-            if key[-1] and event.get('event') == 'tool.started':
-                starts.add(key)
-            if key[-1] and event.get('event') in {'tool.finished', 'tool.effect.settled'}:
-                finishes.add(key)
-        if starts - finishes:
+        from scripts.host_effects import effects
+        unresolved_effects = effects(repo, source['id'], pending_only=True)
+        if unresolved_effects:
             blockers.append('SOURCE_HOST_EFFECT_UNRESOLVED')
+        from scripts.cao_sessions import list_sessions
+        active_children = [{k: row.get(k) for k in ('id', 'host', 'host_session_id', 'parent_session_id', 'last_event_at')} for row in list_sessions(repo)
+                           if row.get('kind') == 'subagent' and row.get('status') == 'active' and row.get('work_item_id') == source['id']]
+        if active_children:
+            blockers.append('SOURCE_CHILD_SESSION_UNRESOLVED')
+    else:
+        unresolved_effects = []
     return {'source': source, 'target': target, 'recovery': recovery,
-            'blockers': blockers, 'ready': not blockers, 'pending_operations': pending(repo)}
+            'active_children': active_children, 'unresolved_effects': unresolved_effects, 'blockers': blockers, 'ready': not blockers, 'pending_operations': pending(repo)}
+
+
+def blocked_next(state):
+    """Explain the actual blocker, including when there is no active source."""
+    code = state['blockers'][0]
+    target = state['target']
+    source = state['source']
+    if code == 'PROJECT_PREPARATION_REQUIRED':
+        return state['recovery'].get('next') or 'Inspect cao project inspect and complete project preparation.'
+    if code == 'REQUIREMENT_CHANGED_REANCHOR_REQUIRED':
+        return ('Inspect changed requirement ' + target['requirement']['path'] + ' for Work ' + target['id']
+                + '; preserve the edited candidate and reconcile the anchored requirement before switching.')
+    if code == 'HOST_RESTART_REQUIRED':
+        return 'Restart the configured host, then retry cao switch --to ' + target['id']
+    if code == 'SDD_NOT_INSTALLED':
+        return 'Inspect cao status --work ' + target['id'] + ' and complete SDD installation before switching.'
+    if source:
+        if code == 'SOURCE_HOST_EFFECT_UNRESOLVED':
+            return 'Inspect cao runtime effects --work ' + source['id'] + ' --pending'
+        if code == 'SOURCE_CHILD_SESSION_UNRESOLVED':
+            return 'Inspect cao sessions list --work ' + source['id'] + ' --status active and collect the child execution results.'
+        if code == 'SOURCE_RUN_UNRESOLVED':
+            return 'Inspect cao runtime runs --work ' + source['id'] + ' and resolve the existing execution before switching.'
+    return 'Inspect cao switch --to ' + target['id'] + ' --check --full-json'
 
 
 def switch(repo, target_id, reason, session=None, host=None):
@@ -123,9 +149,29 @@ def switch(repo, target_id, reason, session=None, host=None):
                 register_session(repo, target, session, host, event='resume')
             return {'ok': True, 'status': 'unchanged', 'work_id': target_id}
         if not state['ready']:
-            return {'ok': False, 'error': state['blockers'][0], 'blockers': state['blockers']}
+            return {'ok': False, 'error': state['blockers'][0], 'blockers': state['blockers'], 'unresolved_effects': state['unresolved_effects'], 'active_children': state['active_children'], 'next': blocked_next(state)}
         if target.get('blockers'):
             return {'ok': False, 'error': 'TARGET_BLOCKERS_UNRESOLVED'}
+        from scripts.cao_providers import host_session_identity
+        from scripts.cao_sessions import list_sessions, load_session
+        explicit_session = bool(session)
+        if not session:
+            from scripts.control_context import identity as control_identity
+            identity = control_identity(repo, target_id)
+            env_identity = host_session_identity(host)
+            if not identity and env_identity and load_session(repo, env_identity[1], env_identity[0]):
+                identity = env_identity
+            if identity:
+                host, session = identity
+        if session:
+            observed = load_session(repo, session, host)
+            if not observed:
+                if not explicit_session or not host:
+                    raise ValueError('SWITCH_OBSERVED_COORDINATOR_REQUIRED')
+            else:
+                if observed.get('kind') != 'primary' or observed.get('work_item_id') not in {None, target_id, (source or {}).get('id')}:
+                    raise ValueError('SWITCH_OBSERVED_COORDINATOR_REQUIRED')
+                host, session = observed['host'], observed['host_session_id']
         handoff = create_handoff(repo, source, session, host, reason) if source else None
         if source:
             source = load_work(repo, source['id'])
@@ -230,7 +276,8 @@ def _recover(repo, identity):
         operation['status'] = 'committed'
         atomic_json(path, operation)
         return {'ok': True, 'status': 'switched', 'operation': identity,
-                'target': operation['target'], 'handoff_id': operation.get('handoff_id')}
+                'target': operation['target'], 'handoff_id': operation.get('handoff_id'),
+                'next': 'Run cao next --work ' + operation['target']}
 
 
 
@@ -314,6 +361,9 @@ def command(args):
         result = {'ok': True, 'check_only': True, **state}
     else:
         result = switch(repo, args.to, args.reason, args.session, args.host)
+    if not getattr(args, 'full_json', False):
+        from scripts.continuity_view import bounded_output
+        result = bounded_output(result)
     print(json.dumps(result, ensure_ascii=False))
     return 0 if result['ok'] else 2
 

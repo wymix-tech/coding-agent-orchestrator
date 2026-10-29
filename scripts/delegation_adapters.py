@@ -34,7 +34,11 @@ def put(value, path, item):
 def validate(row):
     if not isinstance(row, dict) or row.get('version') != 1:
         raise ValueError('DELEGATION_ADAPTER_VERSION_REQUIRED')
-    for key in ('plugin', 'tool', 'tasks_path', 'prompt_field', 'agent_field', 'blocking_path'):
+    if row.get('task_mode', 'batch') not in {'single', 'batch'}:
+        raise ValueError('DELEGATION_TASK_MODE_INVALID')
+    if row.get('task_mode') != 'single' and not isinstance(row.get('tasks_path'), str):
+        raise ValueError('DELEGATION_ADAPTER_FIELD_INVALID: tasks_path')
+    for key in ('plugin', 'tool', 'prompt_field', 'agent_field', 'blocking_path'):
         if not isinstance(row.get(key), str) or not re.fullmatch(r'[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)*', row[key]):
             raise ValueError('DELEGATION_ADAPTER_FIELD_INVALID: ' + key)
     if type(row.get('blocking_value')) not in (bool, str):
@@ -47,7 +51,7 @@ def validate(row):
         raise ValueError('DELEGATION_MATCH_VALUE_INVALID')
     if not isinstance(row.get('forbidden_task_fields', []), list):
         raise ValueError('DELEGATION_FORBIDDEN_FIELDS_INVALID')
-    for key in [*row['match'], *row.get('result_fields', {}).values(), *row.get('forbidden_task_fields', [])]:
+    for key in [*([row['tasks_path']] if row.get('task_mode') != 'single' else []), *row['match'], *row.get('result_fields', {}).values(), *row.get('forbidden_task_fields', [])]:
         if not isinstance(key, str) or not re.fullmatch(r'[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)*', key):
             raise ValueError('DELEGATION_FIELD_PATH_INVALID')
     return row
@@ -73,7 +77,7 @@ def normalize(repo, tool, payload):
     row = rows[0]
     if type(get(payload, row['blocking_path'])) is not type(row['blocking_value']) or get(payload, row['blocking_path']) != row['blocking_value']:
         raise ValueError('NATIVE_REVIEW_SYNCHRONOUS_REQUIRED: plugin=' + row['plugin'])
-    tasks = get(payload, row['tasks_path'])
+    tasks = [payload] if row.get('task_mode') == 'single' else get(payload, row['tasks_path'])
     if not isinstance(tasks, list) or not tasks:
         raise ValueError('DELEGATION_TASKS_REQUIRED')
     if any(not isinstance(task, dict) or not isinstance(get(task, row['prompt_field']), str) for task in tasks):
@@ -123,12 +127,21 @@ def command(args):
                     put(item, row['prompt_field'], task['task'])
                     put(item, row['agent_field'], args.agent)
                     items.append(item)
-                put(payload, row['tasks_path'], items)
-                if tasks:
-                    error = launch_guard(repo, work, {'toolName': row['tool'], 'input': payload})
+                if row.get('task_mode') == 'single':
+                    requests = []
+                    for task in tasks:
+                        request = deepcopy(payload)
+                        put(request, row['prompt_field'], task['task'])
+                        put(request, row['agent_field'], args.agent)
+                        requests.append(request)
+                else:
+                    put(payload, row['tasks_path'], items)
+                    requests = [payload] if tasks else []
+                for request in requests:
+                    error = launch_guard(repo, work, {'toolName': row['tool'], 'input': request})
                     if error:
                         raise ValueError(error)
-            output = {'ok': True, 'plugin': row['plugin'], 'tool': row['tool'], 'input': payload if tasks else None,
+            output = {'ok': True, 'plugin': row['plugin'], 'tool': row['tool'], 'input': requests[0] if len(requests) == 1 else None, 'requests': requests,
                       'next': 'Execute this request using the selected installed plugin. Collect all final outputs; resume existing bindings rather than relaunching them.'}
     print(json.dumps(output))
     return 0

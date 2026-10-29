@@ -17,6 +17,9 @@ from scripts.state_store import repo_transaction
 def _query(repo, work, args):
     wid = work["id"]
     action = args.runtime_command
+    if action == 'effects':
+        from scripts.host_effects import effects
+        return page(effects(repo, wid, args.pending), getattr(args, 'limit', 50), getattr(args, 'cursor', None))
     if action == "events":
         return page(events(repo, wid), args.limit, args.cursor)
     if action == "runs":
@@ -85,7 +88,10 @@ def _query(repo, work, args):
         counts[status] = counts.get(status, 0) + 1
         if status not in {"complete", "running"} and len(pending) < 50:
             pending.append({key: run[key] for key in ("run_id", "recovery_status", "admission_status", "next")})
-    return {"counts": counts, "needs_attention": pending, "check_only": True,
+    from scripts.host_effects import effects
+    host_effects = effects(repo, wid, True)
+    return {"counts": counts, "needs_attention": pending, "unresolved_effects": host_effects[:20],
+            "unresolved_effect_count": len(host_effects), "check_only": True,
             "human_summary": "Runtime facts never grant gates. Recovery checks do not execute commands or change Work state."}
 
 
@@ -151,10 +157,12 @@ def cmd_runtime(args) -> int:
 def register_parser(sub) -> None:
     runtime = sub.add_parser("runtime", help="Inspect task execution facts without changing gates")
     commands = runtime.add_subparsers(dest="runtime_command", required=True)
-    for name in ("status", "events", "runs", "show", "logs", "recover", "rebuild", "prune", "configure", "finalize", "settle-effect", "cancel", "abandon"):
+    for name in ("status", "effects", "events", "runs", "show", "logs", "recover", "rebuild", "prune", "configure", "finalize", "settle-effect", "cancel", "abandon"):
         parser = commands.add_parser(name)
         parser.add_argument("--repo", default=".")
         parser.add_argument("--work")
+        if name == 'effects':
+            parser.add_argument('--pending', action='store_true')
         if name == 'abandon':
             parser.add_argument('--evidence', required=True)
             parser.add_argument('--reason', required=True)
@@ -173,7 +181,7 @@ def register_parser(sub) -> None:
             parser.add_argument('--mode', choices=['off', 'bounded'])
             parser.add_argument('--segment-bytes', type=int)
             parser.add_argument('--max-bytes-per-stream', type=int)
-        if name in {"events", "runs"}:
+        if name in {"effects", "events", "runs"}:
             parser.add_argument("--limit", type=int, default=50)
             parser.add_argument("--cursor")
         if name in {"show", "logs", "finalize", "cancel", "abandon"}:

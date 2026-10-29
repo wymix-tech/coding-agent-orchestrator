@@ -804,6 +804,18 @@ def _readonly_tokens(tokens: list[str], cwd: Path | None = None) -> bool:
         return sed_effect(tokens)[0] == "read"
     # Build/test commands write caches and reports. Use registered preparation
     # or formal execution; never authorize them as generic read-only shell.
+    return cao_control_tokens(tokens, cwd)
+
+
+def cao_control_tokens(tokens, cwd=None):
+    return cao_control_arguments(tokens, cwd) is not None
+
+
+def cao_control_arguments(tokens, cwd=None):
+    """Return normalized CLI arguments only for a trusted CAO launcher."""
+    if not tokens or any(token in {'>', '>>', '<', '|', '&&', ';'} or any(c in token for c in '$`\n\r') for token in tokens):
+        return None
+    python_probe = re.fullmatch(r'python(?:3(?:\.\d+)?)?(?:\.exe)?', Path(tokens[0]).name.lower())
     # Standalone CAO commands own their state mutations; their arguments are not hand edits.
     command_tokens = tokens
     if python_probe:
@@ -811,12 +823,12 @@ def _readonly_tokens(tokens: list[str], cwd: Path | None = None) -> bool:
         while runner and runner[0] in {"-u", "-B", "-E", "-I", "-s", "-S"}:
             runner = runner[1:]
         if len(runner) < 2:
-            return False
+            return None
         try:
-            if Path(runner[0]).resolve() != Path(__file__).with_name("cao.py").resolve():
-                return False
+            if ((cwd or Path.cwd()) / runner[0]).resolve() != Path(__file__).with_name("cao.py").resolve():
+                return None
         except (OSError, ValueError, RuntimeError):
-            return False
+            return None
         command_tokens = runner[1:]
     elif tokens[0] == "cao":
         command_tokens = tokens[1:]
@@ -825,7 +837,7 @@ def _readonly_tokens(tokens: list[str], cwd: Path | None = None) -> bool:
         # A matching basename alone must not exempt an unrelated script.
         index = 1 if tokens[0] == "sh" else 0
         if len(tokens) <= index:
-            return False
+            return None
         root = package_root_dir()
         launchers = {str((root / "cao").resolve())} if root else set()
         from scripts.registered_launchers import project_launchers
@@ -836,14 +848,41 @@ def _readonly_tokens(tokens: list[str], cwd: Path | None = None) -> bool:
         try:
             target = str(((cwd or Path.cwd()) / tokens[index]).resolve())
         except (OSError, RuntimeError):
-            return False
+            return None
         if target not in launchers:
-            return False
+            return None
         command_tokens = tokens[index + 1:]
-    command_tokens = [token for token in command_tokens if token != "--compact-json"]
+    from scripts.cli_output import strip_output_flags
+    command_tokens = strip_output_flags(command_tokens)
     safe_control_commands = {
         "init", "bootstrap", "sdd", "start", "path", "list", "status", "next", "resume",
         "checkpoint", "decision", "block", "unblock", "handoff", "sessions", "verify", "done",
-        "switch", "amend", "lifecycle", "evidence", "conformance", "knowledge", "project", "acceptance", "runtime", "context", "artifact", "host", "host-event", "requirement", "language", "gate", "reopen", "verification", "instructions",
+        "switch", "amend", "diagnose", "delegation", "lifecycle", "evidence", "conformance", "knowledge", "project", "acceptance", "runtime", "context", "artifact", "host", "host-event", "requirement", "language", "gate", "reopen", "verification", "instructions",
     }
-    return bool(command_tokens and (command_tokens[0] in safe_control_commands or command_tokens in (["--help"], ["-h"])))
+    if command_tokens and (command_tokens[0] in safe_control_commands or command_tokens in (["--help"], ["-h"])):
+        return command_tokens
+    return None
+
+
+def control_shell_segments(command, cwd):
+    calls = control_shell_invocations(command, cwd)
+    return [call['arguments'] for call in calls] if calls else None
+
+
+def control_shell_invocations(command, cwd):
+    """Return trusted controls after literal cwd changes; reject pipelines/background."""
+    lexer = shlex.shlex(command, posix=True, punctuation_chars=';&|<>()')
+    lexer.whitespace_split = True
+    if any(token and all(c in ';&|<>()' for c in token) and token not in {';', '&&'} for token in lexer):
+        return None
+    directory = cwd or Path.cwd()
+    controls = []
+    for tokens in _shell_segments(command):
+        if tokens[0] == 'cd' and len(tokens) == 2 and not any(c in tokens[1] for c in '$`'):
+            directory = (directory / tokens[1]).resolve()
+        else:
+            arguments = cao_control_arguments(tokens, directory)
+            if arguments is None:
+                return None
+            controls.append({'arguments': arguments, 'cwd': directory})
+    return controls or None

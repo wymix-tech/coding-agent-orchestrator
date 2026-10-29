@@ -36,6 +36,31 @@ class OperationsTests(RepairCase):
         self.assertEqual(self.run_cli('switch', '--to', wid)[0], 0)
         self.assertEqual(self.read_work(wid)['status'], 'active')
 
+    def test_blocked_switch_without_active_source_returns_actionable_json(self):
+        from scripts.cao_work_store import load_work, save_work
+        wid = self.start()
+        target = self.queue()
+        target_work = load_work(self.repo, target)
+        requirement = target_work['requirement']['path']
+        (self.repo / requirement).write_text('# changed requirement\n')
+        rc, out = self.run_cli('switch', '--to', target)
+        self.assertEqual(2, rc, out)
+        self.assertEqual('REQUIREMENT_CHANGED_REANCHOR_REQUIRED', out['error'])
+        self.assertIn(requirement, out['next'])
+        self.assertNotIn('runtime effects', out['next'])
+        work = load_work(self.repo, wid)
+        work['status'] = 'suspended'
+        save_work(self.repo, work)
+        before = {key: self.read_work(key) for key in (wid, target)}
+        rc, out = self.run_cli('switch', '--to', target)
+        self.assertEqual(2, rc, out)
+        self.assertEqual('REQUIREMENT_CHANGED_REANCHOR_REQUIRED', out['error'])
+        self.assertIn(requirement, out['next'])
+        self.assertNotIn('runtime effects', out['next'])
+        self.assertEqual(before, {key: self.read_work(key) for key in (wid, target)})
+        from scripts.work_operations import pending
+        self.assertFalse(pending(self.repo))
+
     def test_switch_write_failure_recovers_same_journal(self):
         wid = self.start()
         target = self.queue()

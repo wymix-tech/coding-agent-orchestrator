@@ -50,3 +50,15 @@ installed, enabled, or required merely because the host is Pi.
 without binding them. A plugin run handle is not a CAO session ID. Attach only
 independent sessions observed by the host, preserving original reviewer outputs;
 a mapped ID or plugin-provided success flag never grants completion authority.
+
+For a plugin that exposes one task per call, explicitly select `"task_mode":
+"single"` and omit `tasks_path`. Each generated request places `prompt_field` and
+`agent_field` directly in the request object. `delegation launch` returns a
+`requests` list; execute the requests through that plugin's supported scheduling
+and collect all final outputs. A batch schema remains the default and requires
+an explicit `tasks_path`. Neither schema presumes a workflow facility.
+
+`delegation show`, help, register, launch and decode are CAO control operations
+and remain reachable during pending native review classification. Registration
+never executes the plugin or classifies its review. Frozen prompts must be passed
+verbatim; shortening them after a transport rejection invalidates their contract.

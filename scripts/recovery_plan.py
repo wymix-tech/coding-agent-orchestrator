@@ -83,7 +83,11 @@ def command(args):
     from scripts.cao_runtime import repo_root
     repo = repo_root(args.repo)
     work = read_work(repo, args.work)
-    print(json.dumps({'ok': True, 'recovery': plan(repo, work)}, ensure_ascii=False))
+    result = plan(repo, work)
+    if not getattr(args, 'full_json', False):
+        from scripts.continuity_view import bounded_output
+        result = bounded_output(result)
+    print(json.dumps({'ok': True, 'recovery': result}, ensure_ascii=False))
     return 0
 
 

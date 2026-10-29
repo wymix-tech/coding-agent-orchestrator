@@ -6,7 +6,7 @@ import time
 import uuid
 from pathlib import Path
 
-from scripts.cao_tool_policy import _collect_values_for_keys, _event_key, _shell_segments, tool_is_mutating
+from scripts.cao_tool_policy import _collect_values_for_keys, _event_key, SHELL_TOOLS, tool_is_mutating
 from scripts.runtime_store import event_key, observation, read_record, safe_path, settings
 
 
@@ -28,27 +28,25 @@ def _put(repo: Path, wid: str, identity: str, record: dict) -> None:
                                     "recorded_at": occurred, "idempotency_key": identity})
 
 
-def _meaningful(raw: dict) -> bool:
+def _meaningful(raw: dict, repo=None) -> bool:
     tool = _event_key(raw, "tool_name", "toolName", "toolname", "tool", "name").lower()
     commands = _collect_values_for_keys(raw, {"command", "cmd"})
-    if not commands and tool in {"bash", "shell"}:
-        payload = raw.get("input") or raw.get("arguments")
+    if not commands and tool in SHELL_TOOLS:
+        payload = raw.get("input") or raw.get("tool_input") or raw.get("arguments") or raw.get("params")
         if isinstance(payload, str):
             commands = [payload]
     if commands:
         try:
-            segments = [part for command in commands for part in _shell_segments(command)]
             # Control commands create their own lifecycle/run records. No recursion.
-            def control(tokens):
-                return (tokens[0] == "cao" or (tokens[0] == "sh" and len(tokens) > 1 and Path(tokens[1]).name == "cao")
-                        or (Path(tokens[0]).name.startswith("python") and any(Path(t).name == "cao.py" for t in tokens[1:3])))
-            if segments and all(control(part) or part[0] == "cd" for part in segments):
+            from scripts.cao_tool_policy import control_shell_segments, tool_cwd
+            if all(control_shell_segments(command, tool_cwd(raw, repo)) for command in commands):
                 return False
         except ValueError:
             pass
         if any(re.search(r"\b(test|pytest|unittest|build|verify|mvn|gradle|openspec|specify|bmad)\b", c) for c in commands):
             return True
-    return tool_is_mutating(raw)
+    # Unknown plugin tools may launch work; their name/action is no read-only proof.
+    return tool_is_mutating(raw) or tool not in {'bash', 'shell', 'exec_command', 'read', 'ls', 'grep', 'find', 'search_code', 'contact_supervisor', 'ask_user_question', 'askuserquestion', 'request_user_input'}
 
 
 def observe(repo: Path, work: dict | None, raw: dict, host: str, session: str,
@@ -56,13 +54,16 @@ def observe(repo: Path, work: dict | None, raw: dict, host: str, session: str,
     if event not in {"pre_tool", "post_tool"}:
         return None
     try:
+        from scripts.control_context import observe as observe_control
+        if result.get('decision') != 'deny':
+            observe_control(repo, raw, host, session, event)
         if settings(repo)["host_observation"] == "off":
             return None
         key = call_key(raw, host, session)
         route = binding(repo, raw, host, session) if key else None
         denied = result.get("decision") == "deny"
         failed = bool(raw.get("isError", raw.get("is_error", False)))
-        if not route and not denied and not failed and not _meaningful(raw):
+        if not route and not denied and not failed and not _meaningful(raw, repo):
             return None
         wid = route["bound_work_id"] if route else work["id"] if work and event == "pre_tool" else "_unassigned"
         tool = _event_key(raw, "tool_name", "toolName", "toolname", "tool", "name")[:100]
