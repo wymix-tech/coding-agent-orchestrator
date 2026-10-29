@@ -544,6 +544,9 @@ def cmd_handoff(args: argparse.Namespace) -> int:
     handoff = create_handoff(repo, work, args.session, args.host, args.reason)
     if args.end_session and args.session:
         end_session(repo, args.session, args.host, args.reason, event="stop")
+    if not getattr(args, 'full_json', False):
+        from scripts.continuity_view import bounded_output
+        handoff = bounded_output(handoff)
     print(json.dumps({"ok": True, "handoff": handoff}, ensure_ascii=False, indent=2)); return 0
 
 

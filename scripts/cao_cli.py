@@ -386,6 +386,7 @@ def main(argv: list[str] | None = None) -> int:
         agent_output = ('--agent-json' in arguments or os.environ.get('CAO_OUTPUT_MODE') == 'agent') and '--full-json' not in arguments
         arguments = [item for item in arguments if item not in {'--compact-json', '--agent-json', '--full-json'}]
         args = build_parser().parse_args(arguments)
+        args.full_json = '--full-json' in list(sys.argv[1:] if argv is None else argv)
         if getattr(args, "check", False) and args.command == "switch":
             return args.fn(args)
         if args.fn == cmd_handoff and args.check:
