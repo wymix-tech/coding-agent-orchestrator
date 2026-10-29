@@ -27,7 +27,7 @@ def inventory(repo, work):
 def capture_baseline(repo, work):
     snapshot, files = inventory(repo, work)
     from scripts.evidence_archive import retain
-    bodies = {row['path']: retain(repo, work['id'], repo_file(repo, row['path']).read_bytes()) for row in files}
+    bodies = {row['path']: retain(repo, work['id'], repo_file(repo, row['path']).read_bytes()) for row in files if row.get('sha256') is not None}
     value = {'version': 2, 'kind': 'work_start', 'snapshot': snapshot, 'files': files, 'bodies': bodies}
     path = safe_path(repo, work['id'], 'review-baseline.json')
     atomic_json(path, value)

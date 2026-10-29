@@ -24,7 +24,7 @@ from scripts.cao_native_sync import (
     cmd_sdd_sync,
 )
 from scripts.cao_path import cmd_gate, cmd_path_assess, cmd_path_show
-from scripts.cao_plans import cmd_sdd_plan_bind
+from scripts.cao_plans import cmd_sdd_plan_bind, cmd_sdd_plan_show
 from scripts.cao_providers import cmd_sdd_install, cmd_sdd_list, cmd_sdd_select, detect_current_host
 from scripts.cao_requirements import cmd_requirement_list, cmd_requirement_next_id
 from scripts.cao_runtime import action, repo_root
@@ -64,6 +64,8 @@ def cmd_dashboard(args: argparse.Namespace) -> int:
 
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="cao", description="Coding Agent Orchestrator")
+    p.add_argument("--agent-json", action="store_true", help="Bound agent navigation output (accepted anywhere)")
+    p.add_argument("--full-json", action="store_true", help="Complete machine JSON including evidence detail (accepted anywhere)")
     p.add_argument("--compact-json", action="store_true", help="Compact JSON; preserves errors and exit status (accepted anywhere)")
     sub = p.add_subparsers(dest="command", required=True)
     from scripts.implementation_evidence import register_parser as register_evidence_parser
@@ -151,10 +153,10 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--repo", default="."); sp.add_argument("--work"); sp.set_defaults(fn=cmd_sdd_sync)
     review = sdd_sub.add_parser("review", help="Record independent native reviews and pre-patch dispatch classification")
     review_sub = review.add_subparsers(dest="review_action", required=True)
-    for name in ("begin", "attach", "submit", "classify", "resolve", "findings", "prepare", "import", "status", "check", "draft", "classify-batch", "loopback", "diagnose", "recover", "resume", "resolution-draft"):
+    for name in ("begin", "attach", "submit", "classify", "resolve", "findings", "prepare", "import", "status", "check", "draft", "classify-batch", "loopback", "diagnose", "recover", "resume", "resolution-draft", "migrate"):
         sp = review_sub.add_parser(name)
         sp.add_argument("--repo", default="."); sp.add_argument("--work")
-        if name not in {'findings', 'prepare', 'status', 'classify-batch', 'loopback', 'resume'}:
+        if name not in {'findings', 'prepare', 'status', 'classify-batch', 'loopback', 'resume', 'migrate'}:
             sp.add_argument("--layer", required=True)
         if name in {"begin", "prepare"}:
             sp.add_argument("--model", help="Explicit supported reviewer model; default is the current host-observed coordinator model"); sp.add_argument("--instructions", required=True)
@@ -173,13 +175,20 @@ def build_parser() -> argparse.ArgumentParser:
             sp.add_argument('--reason', required=True)
             sp.add_argument('--keep', required=True, help='Native KEEP instructions retained before reverting')
             sp.add_argument('--path', action='append', required=True, help='Exact product file to revert/reimplement; repeat for all affected files')
+        elif name == 'migrate':
+            mode = sp.add_mutually_exclusive_group(required=True)
+            mode.add_argument('--check', action='store_true')
+            mode.add_argument('--apply', action='store_true')
+            mode.add_argument('--rollback', help='Restore an unchanged upgrade checkpoint by migration ID')
         elif name == 'resolution-draft':
             pass
         elif name == 'resume':
             sp.add_argument('--layer', action='append', help='Recover only these layers; default is all active layers')
             sp.add_argument('--transcript', action='append', default=[], help='Bound native session archive to search by observed final-message hash')
         elif name in {'status', 'diagnose'}:
-            pass
+            if name == 'status':
+                sp.add_argument('--history', action='store_true', help='Include review history explicitly')
+                sp.add_argument('--limit', type=int, choices=range(1, 101), default=20)
         elif name == 'check':
             sp.add_argument('--reviewer-session', help='Coordinator runs a check for its bound observed reviewer child')
             sp.add_argument('--script', required=True, help='Configured verification script name; executes in a temporary copy')
@@ -208,6 +217,10 @@ def build_parser() -> argparse.ArgumentParser:
     sp.set_defaults(fn=cmd_sdd_spec)
     plan = sdd_sub.add_parser("plan", help="Associate native execution items with this requirement")
     plan_sub = plan.add_subparsers(dest="plan_action", required=True)
+    show = plan_sub.add_parser("show")
+    show.add_argument("--repo", default=".")
+    show.add_argument("--work")
+    show.set_defaults(fn=cmd_sdd_plan_show)
     sp = plan_sub.add_parser("bind")
     sp.add_argument("--repo", default="."); sp.add_argument("--work")
     sp.add_argument("--plan", action="append", help="Associated native task file or quoted OpenSpec tracked-file glob; repeat for ALL changes/features")
@@ -348,8 +361,10 @@ def main(argv: list[str] | None = None) -> int:
         from contextlib import redirect_stdout
         from io import StringIO
         arguments = list(sys.argv[1:] if argv is None else argv)
+        import os
         compact = '--compact-json' in arguments
-        arguments = [item for item in arguments if item != '--compact-json']
+        agent_output = ('--agent-json' in arguments or os.environ.get('CAO_OUTPUT_MODE') == 'agent') and '--full-json' not in arguments
+        arguments = [item for item in arguments if item not in {'--compact-json', '--agent-json', '--full-json'}]
         args = build_parser().parse_args(arguments)
         if getattr(args, "check", False) and args.command == "switch":
             return args.fn(args)
@@ -390,12 +405,17 @@ def main(argv: list[str] | None = None) -> int:
                 if prerequisite:
                     print(json.dumps({'ok': False, 'error': prerequisite['reason'], 'next': prerequisite}))
                     return 2
-        if compact:
-            from scripts.cli_output import emit_summary
+        # Data-authoring and host protocol responses retain their complete schema.
+        viewable = (args.fn in {cmd_next, cmd_status, cmd_done, cmd_gate, cmd_sdd_sync, cmd_sdd_workflow, cmd_sdd_route}
+                    or getattr(args, 'conformance_action', None) in {'show', 'check'}
+                    or getattr(args, 'lifecycle_command', None) == 'bind'
+                    or (args.fn == cmd_sdd_review and args.review_action == 'status' and not args.history))
+        if compact or (agent_output and viewable):
+            from scripts.cli_output import emit_summary, emit_agent
             output = StringIO()
             with redirect_stdout(output):
                 code = int(args.fn(args))
-            emit_summary(output.getvalue())
+            (emit_agent if agent_output and viewable else emit_summary)(output.getvalue())
             return code
         return int(args.fn(args))
     except (OSError, RuntimeError, ValueError, json.JSONDecodeError) as exc:

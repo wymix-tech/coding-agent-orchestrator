@@ -193,6 +193,11 @@ def host_event(args: argparse.Namespace) -> int:
             parent = load_session(repo, parent_ref, host=args.host) if parent_ref else None
             bound = (parent or {}).get("work_item_id")
             observed_work = load_work(repo, bound) if bound else None
+        try:
+            from scripts.native_host_execution import observe as observe_native_execution
+            observe_native_execution(repo, observed_work, session, raw, args.host, event, result.get('decision'))
+        except (ValueError, OSError, KeyError, RuntimeError):
+            result['diagnostic'] = 'NATIVE_HOST_EXECUTION_CAPTURE_UNAVAILABLE: preserve native output or use cao lifecycle execute'
         diagnostic = observe_runtime(repo, observed_work, raw, args.host, host_session_id, event, result)
         if diagnostic:
             result["diagnostic"] = diagnostic

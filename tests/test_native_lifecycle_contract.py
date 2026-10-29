@@ -28,7 +28,7 @@ class NativeLifecycle(unittest.TestCase):
                              capture_output=True, text=True, check=True)
         from scripts.lifecycle_contract import inputs
         snapshot = inputs(self.repo, self.work())['code_snapshot']
-        self.report.write_text(f'work_id: {self.wid}\ncode_snapshot: {snapshot}\n' + '# Native fixture completion\n\nCommand: python preparation_suite.py\n'
+        self.report.write_text(f"work_id: {self.wid}\nrequirement_sha256: {self.work()['requirement']['sha256']}\ncode_snapshot: {snapshot}\n" + '# Native fixture completion\n\nCommand: python preparation_suite.py\n'
                                'Exit: 0\n\n' + run.stdout + run.stderr)
 
     def check(self, *args):
@@ -138,7 +138,7 @@ class NativeLifecycle(unittest.TestCase):
         candidate = deepcopy(self.work())
         candidate['sdd']['completion_evidence'] = {'reports': [{'path': 'openspec/completion.md'}]}
         result = subprocess.run([sys.executable, 'preparation_suite.py'], cwd=self.repo, capture_output=True, text=True, check=True)
-        self.report.write_text(f"work_id: {self.wid}\ncode_snapshot: {inputs(self.repo, candidate)['code_snapshot']}\nCommand: python preparation_suite.py\nExit: 0\n" + result.stdout + result.stderr)
+        self.report.write_text(f"work_id: {self.wid}\nrequirement_sha256: {self.work()['requirement']['sha256']}\ncode_snapshot: {inputs(self.repo, candidate)['code_snapshot']}\nCommand: python preparation_suite.py\nExit: 0\n" + result.stdout + result.stderr)
         self.bind()
         self.check('conformance', 'check')
         second.write_text('# Tasks\n- [ ] 1.1 Native fixture task\n')
@@ -169,7 +169,7 @@ class NativeLifecycle(unittest.TestCase):
         from scripts.lifecycle_contract import inputs
         security = self.repo / 'openspec/security.json'
         security.write_text(json.dumps({'status': 'passed', 'evidence_type': 'security_result',
-            'work_id': self.wid, 'code_snapshot': inputs(self.repo, self.work())['code_snapshot'],
+            'work_id': self.wid, 'requirement_sha256': self.work()['requirement']['sha256'], 'code_snapshot': inputs(self.repo, self.work())['code_snapshot'],
             'checks': [{'id': 'security-1', 'description': 'Fixture security acceptance', 'status': 'passed',
                         'evidence': 'Native fixture security check result', 'gates': ['security_verification']}]}))
         self.check('lifecycle', 'bind', '--report', 'openspec/completion.md', '--report', 'openspec/security.json', '--gate', 'security_verification')

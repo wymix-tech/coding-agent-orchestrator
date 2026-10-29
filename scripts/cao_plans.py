@@ -506,10 +506,23 @@ def cmd_sdd_plan_bind(args: argparse.Namespace) -> int:
         scope = bind_plan_scope(repo, work, list(selections) + (args.plan or []), selections, bool(getattr(args, 'no_plan', False)))
         scope["requirement_sha256"] = work["requirement"]["sha256"]
     except (ValueError, OSError, UnicodeError) as exc:
-        print(json.dumps({"ok": False, "error": str(exc).split(":", 1)[0], "reason": str(exc), "next": __import__("scripts.plan_navigation", fromlist=["repair"]).repair(repo, work)})); return 2
+        from scripts.plan_navigation import repair
+        print(json.dumps({"ok": False, "error": str(exc).split(":", 1)[0], "reason": str(exc), "next": repair(repo, work)})); return 2
     sdd["plan_scope"] = scope
     queue_event(work, {"event": "sdd.plan.bound", "work_item_id": work["id"], "source": "cao",
                        "plan_scope": scope, "occurred_at": now()})
     save_work(repo, work)
     reconcile_native_sdd_state(repo, work)
     print(json.dumps({"ok": True, "plan_scope": scope, "verification_plan": provider_verification_plan_state(repo, work)}, ensure_ascii=False)); return 0
+
+
+def cmd_sdd_plan_show(args):
+    repo = repo_root(args.repo)
+    ensure_initialized(repo)
+    work = resolve_work(repo, args.work)
+    if not work:
+        raise ValueError('NO_WORK_ITEM')
+    from scripts.plan_navigation import repair
+    print(json.dumps({'ok': True, 'plan_scope': work.get('sdd', {}).get('plan_scope'),
+                      'native_state': provider_verification_plan_state(repo, work), 'next': repair(repo, work)}, ensure_ascii=False))
+    return 0

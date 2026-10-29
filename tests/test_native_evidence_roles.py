@@ -39,7 +39,7 @@ class EvidenceRoles(unittest.TestCase):
             self.coverage(['security_verification'], observed=True)
 
     def test_manual_native_checks_need_scope_and_per_gate_evidence(self):
-        payload = {'evidence_type': 'acceptance_result', 'work_id': 'work-1', 'code_snapshot': 'snapshot',
+        payload = {'evidence_type': 'acceptance_result', 'work_id': 'work-1', 'requirement_sha256': 'req', 'code_snapshot': 'snapshot',
                    'status': 'passed', 'checks': [{'id': 'auth-1', 'description': 'Unauthorized request is rejected',
                      'status': 'passed', 'evidence': 'HTTP 401 captured by native acceptance', 'gates': ['sdd_acceptance', 'security_verification']}]}
         self.path.write_text(json.dumps(payload))

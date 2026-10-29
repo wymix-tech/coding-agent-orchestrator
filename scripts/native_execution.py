@@ -9,12 +9,17 @@ def material_inputs(repo, work):
     return {key: domains[key] for key in ('product', 'native_sources', 'native_scope', 'native_dependencies', 'policy')}
 
 
+def receipts(work):
+    sdd = work.get('sdd') or {}
+    return sorted([*sdd.get('completion_executions', []), *sdd.get('native_host_executions', [])], key=lambda row: row.get('at', 0))
+
+
 def receipt_matches(repo, work, reports):
     from scripts.lifecycle_contract import inputs
     from scripts.cao_runtime import sha256_file
     from scripts.path_guard import repo_file
     current = inputs(repo, work)
-    rows = (work.get('sdd') or {}).get('completion_executions') or []
+    rows = receipts(work)
     if not rows or rows[-1].get('status') != 'passed':
         return False
     repair = (work.get('sdd') or {}).get('completion_repair') or {}
@@ -172,7 +177,7 @@ def validate_command(work, command, repo=None):
         return tokens
     sdd = work.get('sdd') or {}
     expected = [value for row in (sdd.get('completion_evidence') or {}).get('observations', []) for value in row.get('commands', [])]
-    expected.extend(row['command'] for row in sdd.get('completion_executions', []) if row.get('status') == 'passed' and row.get('command'))
+    expected.extend(row['command'] for row in receipts(work) if row.get('status') == 'passed' and row.get('command'))
     recorded = ((sdd.get('workflow') or {}).get('execution') or {}).get('command')
     if recorded:
         expected.append(recorded)
@@ -184,3 +189,21 @@ def validate_command(work, command, repo=None):
         expected.extend(commands(repo, work))
     if not expected or not any(identity(command) == identity(value) for value in expected):
         raise ValueError('NATIVE_EXECUTION_COMMAND_UNBOUND: use a recorded native command, accepted project check, or declare a command from the bound native specification with cao lifecycle declare')
+
+
+def inspect_executions(args):
+    from scripts.cao_runtime import repo_root
+    from scripts.cao_work_store import resolve_work
+    from scripts.lifecycle_contract import inputs
+    repo = repo_root(args.repo)
+    work = resolve_work(repo, args.work)
+    if not work:
+        raise ValueError('NO_WORK_ITEM')
+    rows = list(reversed(receipts(work)))
+    current = inputs(repo, work)
+    selected = rows[args.cursor:args.cursor + args.limit]
+    result = [{**{k: row.get(k) for k in ('run_id', 'status', 'source', 'command', 'exit_code', 'reason', 'reports')},
+               'fresh': row.get('inputs') == current and row.get('domains') == material_inputs(repo, work)} for row in selected]
+    print(json.dumps({'ok': True, 'executions': result, 'total': len(rows),
+                      'next_cursor': args.cursor + len(selected) if args.cursor + len(selected) < len(rows) else None}))
+    return 0

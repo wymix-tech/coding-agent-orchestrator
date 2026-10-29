@@ -102,7 +102,10 @@ def capture(repo, work, commands=(), *, evaluation=None):
         if isinstance(ref, dict) and ref.get('path'):
             sources.add(ref['path'])
     reports = {r['path'] for r in (sdd.get('completion_evidence') or {}).get('reports', [])}
-    native_sources = files(repo, sources - reports)
+    mandatory = {row['path'] for row in route.get('required_artifacts', [])}
+    mandatory.update(ref['path'] for ref in ((sdd.get('spec_binding') or {}).get(key) for key in ('spec', 'criteria')) if ref)
+    historical_reports = set(sdd.get('native_completion_report_outputs', []))
+    native_sources = files(repo, (sources - reports - historical_reports) | mandatory)
     if (sdd.get('provider') == 'bmad' and route.get('build_route') == 'dispatch'
             and route.get('primary_artifact') in native_sources):
         source = route['primary_artifact']

@@ -21,6 +21,10 @@ def technical_inputs(repo, work, cfg, *, manifest=None):
             excluded.add(binding[key]['path'])
     excluded |= {path for path in ((work.get('sdd') or {}).get('workflow') or {}).get('artifacts', []) if path.endswith(('.md', '.yaml', '.yml'))}
     excluded |= sdd_acceptance_outputs(repo, work)
+    route = (work.get('sdd') or {}).get('route_decision') or {}
+    excluded.update(row['path'] for row in route.get('required_artifacts', []) if row['path'].endswith(('.md', '.yaml', '.yml')))
+    from scripts.review_artifacts import outputs as review_outputs
+    excluded |= review_outputs(repo, work)
     # Original completion reports are a separate evidence domain, never product code.
     # Only provider-owned, non-executable report types may be excluded.
     if work.get('lifecycle_contract') == 2:
@@ -29,6 +33,7 @@ def technical_inputs(repo, work, cfg, *, manifest=None):
         from pathlib import Path
         from scripts.implementation_evidence import records as process_records
         report_refs = [{'path': name} for name in (work.get('sdd') or {}).get('native_execution_reports', [])]
+        report_refs += [{'path': name} for name in (work.get('sdd') or {}).get('native_completion_report_outputs', [])]
         report_refs += list(((work.get('sdd') or {}).get('completion_evidence') or {}).get('reports', []))
         report_refs.extend({'path': row['path']} for row in process_records(repo, work) if row.get('path') and Path(row['path']).suffix.lower() in {'.md', '.json', '.yaml', '.yml', '.txt', '.log'})
         for ref in report_refs:

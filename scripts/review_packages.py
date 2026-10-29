@@ -28,6 +28,8 @@ def render(repo, work, run, instructions, manifest):
     root.mkdir(parents=True, exist_ok=True)
     diff = root / 'changes.diff'
     diff.write_text(unified_diff(repo, work, manifest), encoding='utf-8')
+    # Native patch/finalize may refresh its working diff; reviewer input stays immutable.
+    (root / 'current-changes.diff').write_bytes(diff.read_bytes())
     source = repo_file(repo, instructions)
     content = source.read_text()
     prompt = layer_prompt(content, run['layer'])
@@ -66,7 +68,7 @@ def render(repo, work, run, instructions, manifest):
     atomic_json(policy_path, policy)
     run['context_package'] = {'path': policy_path.relative_to(repo).as_posix(), 'sha256': hashlib.sha256(policy_path.read_bytes()).hexdigest()}
     return {'prompt_file': policy['prompt'], 'prompt_sha256': policy['prompt_sha256'],
-            'diff_file': policy['diff'], 'launch': {'mode': 'synchronous', 'wait_for_all': True,
+            'diff_file': policy['diff'], 'native_diff_file': (root / 'current-changes.diff').relative_to(repo).as_posix(), 'launch': {'mode': 'synchronous', 'wait_for_all': True,
             'pi': {'mode': 'parallel', 'async': False, 'worktree_argument': 'top-level-only'}},
             'context_package': run['context_package']}
 

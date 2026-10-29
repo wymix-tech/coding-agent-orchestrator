@@ -137,6 +137,8 @@ function sessionLineage(ctx: ExtensionContext): { kind: "primary" | "subagent"; 
 }
 
 export default function (pi: ExtensionAPI) {
+  // Child shell tools inherit bounded navigation output; --full-json is explicit.
+  process.env.CAO_OUTPUT_MODE ??= 'agent';
   const presentation = createContextPresentation(pi);
   const diagnostics = new Set<string>(), reminders = new Set<string>(), continued = new Set<string>();
   const managed = new Set<string>(), managedSessions = new Set<string>();

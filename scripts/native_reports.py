@@ -24,7 +24,8 @@ def read(repo, work, path, *, execution=None):
     if execution is None:
         from scripts.cao_runtime import sha256_file
         relative = path.relative_to(repo).as_posix()
-        execution = next((row for row in reversed((work.get('sdd') or {}).get('completion_executions', []))
+        from scripts.native_execution import receipts
+        execution = next((row for row in reversed(receipts(work))
                           if row.get('status') == 'passed' and {'path': relative, 'sha256': sha256_file(path)} in row.get('reports', [])), None)
     text = path.read_text(encoding='utf-8-sig')
     if (not text.strip() and not execution) or len(text.encode()) > 8 * 1024 * 1024:
@@ -157,6 +158,8 @@ def read(repo, work, path, *, execution=None):
         if identities['code_snapshot'] != inputs(repo, work)['code_snapshot']:
             raise ValueError('NATIVE_COMPLETION_REPORT_WRONG_SNAPSHOT')
     types = sorted(set(declared_types)) or ['test_result' if checks else 'execution_result' if execution and not declarations else 'workflow_declaration']
+    if set(types) - {'test_result', 'execution_result', 'acceptance_result', 'security_result', 'manual_result', 'workflow_declaration'}:
+        raise ValueError('NATIVE_COMPLETION_EVIDENCE_TYPE_UNSUPPORTED')
     coverage = {'verification'} if checks else set()
     for item in check_records:
         gates = item.get('gates', [])
@@ -184,6 +187,7 @@ def validate_coverage(repo, work, reports, observations, gates):
         scoped = identities.get('work_id', identities.get('work_item_id')) == work['id']
         from scripts.lifecycle_contract import inputs
         scoped = scoped and identities.get('code_snapshot') == inputs(repo, work)['code_snapshot']
+        scoped = scoped and identities.get('requirement_sha256') == work['requirement']['sha256']
         if not observed and not scoped:
             raise ValueError('NATIVE_COMPLETION_EXECUTION_SOURCE_REQUIRED: capture actual output with cao lifecycle execute, or supply a native check report identifying this Work and code_snapshot')
         covered.update(row['gate_coverage'])

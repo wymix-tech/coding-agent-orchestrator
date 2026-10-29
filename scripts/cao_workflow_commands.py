@@ -357,7 +357,7 @@ def _cmd_sdd_review_locked(args: argparse.Namespace) -> int:
         if work.get('sdd', {}).get('provider') != 'bmad':
             raise ValueError('NATIVE_REVIEW_NOT_APPLICABLE')
         from scripts.native_obligations import require_review_integrity
-        if args.review_action not in {'begin', 'prepare', 'status', 'diagnose', 'recover', 'resume', 'loopback'}:
+        if args.review_action not in {'begin', 'prepare', 'status', 'diagnose', 'recover', 'resume', 'migrate', 'loopback'}:
             require_review_integrity(repo, work)
         records = work.setdefault("sdd", {}).setdefault("native_reviews", {})
         identity = host_session_identity(None)
@@ -404,6 +404,10 @@ def _cmd_sdd_review_locked(args: argparse.Namespace) -> int:
                       'next': 'Read the frozen review input and native instructions. Return actual findings; do not patch product code.'}
             from scripts.review_dispatch import stamp_report
             stamp_report(repo, work, args.layer, attached)
+        elif args.review_action == 'migrate':
+            from scripts.review_migration import migrate
+            output = migrate(repo, work, apply=args.apply, rollback=args.rollback)
+            print(json.dumps(output, ensure_ascii=False)); return 0 if output['ok'] else 2
         elif args.review_action == 'resolution-draft':
             from scripts.review_resolution import draft
             output = draft(repo, work, args.layer)
@@ -427,8 +431,12 @@ def _cmd_sdd_review_locked(args: argparse.Namespace) -> int:
             from scripts.review_dispatch import review_counts
             output = {'ok': True, 'review_counts': review_counts(work), 'acceptance_preflight': acceptance_preflight(repo, work), 'state': review_state(repo, work, code_snapshot),
                       'layers': {key: {field: value.get(field) for field in
-                          ('id', 'round_id', 'status', 'execution_binding', 'raw_count', 'classified_count', 'input_manifest', 'model_source')}
+                          ('id', 'round_id', 'status', 'execution_binding', 'raw_count', 'classified_count', 'input_manifest', 'model_source', 'context_package', 'resolution_binding_version', 'resolution_evidence')}
                                  for key, value in records.items() if key != '_contract'}}
+            if getattr(args, 'history', False):
+                history = work['sdd'].get('native_review_history', [])
+                output['history'] = history[-args.limit:]
+                output['history_total'] = len(history)
             print(json.dumps(output, ensure_ascii=False)); return 0
         elif args.review_action == 'findings':
             source = provider_artifact(repo, args.source, bmad_output_dirs(repo))

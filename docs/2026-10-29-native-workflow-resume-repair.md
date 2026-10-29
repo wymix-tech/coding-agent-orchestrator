@@ -46,6 +46,12 @@ New tickets require per-finding original content identity, actual changed produc
 
 Validation: six resolution-specific cases and 27 protocol/session integration cases pass. A targeted loopback test confirms intent-conflict precedence over metadata recovery. The earlier round suite found this precedence regression and it was corrected.
 
-## Remaining stage
+## Stage 6 implementation checkpoint
 
-Stage 6 (migration, compact agent output and full replay/regression) is pending; this checkpoint is not a completion claim.
+Active review protocol upgrades now have explicit preview/apply, immutable checkpoints and rollback refusing later progress. Pi navigation defaults to bounded agent JSON while full machine JSON and explicit history remain available. Session/host schemas document collected artifacts, input observations and archive recovery.
+
+Purpose-built Pi bash receipts preserve only declared commands with correlated complete structured results and unchanged input domains. Generic runtime observations remain diagnostic. Historical reports and exact CAO review artifacts remain evidence outputs instead of accidentally becoming product inputs when report selection or resolution changes. Native specification roles remain sources even when previously misbound as reports.
+
+The sanitized BMAD replay passes: three layers, NO_VCS diff, interrupted legacy output recovery into a new primary session, one preserved review round, per-finding repair backed by real tests, SPEC-only evidence rejection, native acceptance binding, project baseline and explicit done. Reviewer findings are fixtures; this does not claim to rerun the original macOS model session or certify model semantics. Three real host-result reuse/incomplete-result tests pass.
+
+Full Python and Pi regression is running. This is a durable implementation checkpoint; final validation is still pending.

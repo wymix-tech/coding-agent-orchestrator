@@ -174,3 +174,52 @@ These receipts establish observed command execution and inputs, not semantic
 truthfulness or independent review identity. External/manual outputs without a
 current execution association remain insufficient to refresh materially stale
 completion evidence; do not bypass this by attaching them again.
+
+## Result roles and execution provenance
+
+Document `status: done` is workflow metadata, not verification/acceptance evidence.
+Native result parsing and gate coverage are separate. Ordinary test output covers
+verification; security/integration/data/compatibility and task acceptance require
+identified native checks explicitly covering those duties. A CLI gate flag cannot
+create coverage. Native checks remain provider-owned; CAO does not add a second
+functional executor or semantically certify the assertions.
+
+Prefer reusing an existing current execution receipt. `cao lifecycle executions`
+shows bounded receipts, report paths and freshness. Pi bash commands matching an
+accepted project check or a declared native command are collected automatically
+when the adapter receives correlated start/result events with complete structured
+output, exit code and unchanged inputs. Truncated/partial results and generic
+runtime diagnostic observations do not certify execution. Other adapters can keep
+native scope-identified reports or use `cao lifecycle execute` when necessary.
+
+`cao lifecycle declare --source <bound-spec-or-plan> --command <literal-command>
+--reason <native-validation-purpose>` admits a command explicitly written in the
+bound source. Declaration never claims execution. A changed source invalidates it.
+Actual native execution is captured with `cao lifecycle execute --command
+<native-command> --report <provider-owned-log>`; it does not need to equal the
+coordinator's `invoke skill ...` workflow invocation.
+
+External native check reports identify `work_id`, `requirement_sha256` and
+`code_snapshot`, plus `evidence_type: acceptance_result|security_result|manual_result`
+and `checks`. Each check contains `id`, `description`, `status`, `evidence` and
+explicit `gates`. Use actual native assertions/results, not an invented summary.
+Manual native checks retain declared authority; execution receipts retain observed
+authority. Changing report selection preserves old report ownership so historical
+logs never suddenly become product source inputs.
+
+## Protocol upgrades and bounded navigation
+
+Existing completed Work remains historical. For active old review tickets, inspect
+`cao sdd review migrate --check`, then apply with `--apply` when the original frozen
+manifest and finding identities are intact. This upgrades future resolution
+requirements, preserves tickets/judgments and records a checkpoint. It never
+certifies past context isolation. `--rollback <migration-id>` is allowed only while
+the review state still exactly matches the upgrade; later progress cannot be lost.
+
+Pi shell tools inherit agent navigation output. `--agent-json` requests that view
+elsewhere; `--full-json` retains the complete machine schema. `--compact-json`
+keeps its existing behavior. Errors, readiness, blocker actions and exit status are
+preserved. Raw findings/drafts, host events and explicit history queries retain
+full data. Use `review status --history --limit <count>` for prior rounds. The native
+working diff can be refreshed after patches; keep the per-ticket reviewer diff
+immutable and use the separate `native_diff_file` for subsequent working copies.

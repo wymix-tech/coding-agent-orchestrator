@@ -221,7 +221,7 @@ class Integrity(unittest.TestCase):
             candidate = deepcopy(fixture.read_work(fixture.wid))
             candidate['sdd']['completion_evidence'] = {'reports': [{'path': report.relative_to(fixture.repo).as_posix()}]}
             result = subprocess.run([sys.executable, '-m', 'unittest', 'discover', '-s', 'acceptance-tests'], cwd=fixture.repo, capture_output=True, text=True, check=True)
-            report.write_text(f"work_id: {fixture.wid}\ncode_snapshot: {inputs(fixture.repo, candidate)['code_snapshot']}\n" + result.stdout + result.stderr)
+            report.write_text(f"work_id: {fixture.wid}\nrequirement_sha256: {candidate['requirement']['sha256']}\ncode_snapshot: {inputs(fixture.repo, candidate)['code_snapshot']}\n" + result.stdout + result.stderr)
             for args in [('lifecycle', 'bind', '--report', report.relative_to(fixture.repo)),
                          ('conformance', 'check'), ('verify',), ('done',)]:
                 rc, out = fixture.run_cli(*args)
