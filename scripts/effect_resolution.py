@@ -19,6 +19,15 @@ def settle(repo, work, args):
     path = repo_file(repo, args.evidence)
     if not path.is_file() or not path.read_bytes().strip():
         raise ValueError('EFFECT_INSPECTION_EVIDENCE_REQUIRED')
+    try:
+        inspection = json.loads(path.read_text())
+    except (ValueError, UnicodeError):
+        raise ValueError('EFFECT_INSPECTION_IDENTITY_REQUIRED: evidence must be JSON with host, session_id, tool_call_id, resolution and observations')
+    if not isinstance(inspection, dict) or any(inspection.get(field) != value for field, value in
+            [('host', args.host), ('session_id', args.session), ('tool_call_id', args.call), ('resolution', args.resolution)]):
+        raise ValueError('EFFECT_INSPECTION_IDENTITY_MISMATCH')
+    if not isinstance(inspection.get('observations'), str) or not inspection['observations'].strip():
+        raise ValueError('EFFECT_INSPECTION_OBSERVATIONS_REQUIRED')
     row = {'event': 'tool.effect.settled', 'work_item_id': work['id'], 'host': args.host,
            'session_id': args.session, 'tool_call_id': args.call, 'source': 'agent_declaration',
            'resolution': args.resolution, 'reason': args.reason,

@@ -32,7 +32,7 @@ class SwitchHostChain(unittest.TestCase):
         self.hook('pre_tool', toolName='write', toolCallId='old', input={'path': '.orchestrator/requirements/note.md'})
         self.hook('post_tool', toolName='write', toolCallId='old', isError=True)
         for index, target in enumerate((self.target, self.first)):
-            command = f"'{ROOT / 'cao'}' switch --to {target}"
+            command = f"cd '{self.repo}' && '{ROOT / 'cao'}' switch --to {target}"
             out = self.hook('pre_tool', toolName='bash', toolCallId=f'switch-{index}', input={'command': command})
             self.assertEqual('allow', out['decision'])
             rc, result = self.f.run_cli('switch', '--to', target)
@@ -68,6 +68,49 @@ class SwitchHostChain(unittest.TestCase):
             self.assertTrue(_meaningful({'toolName': 'bash', 'input': {'command': command}}, self.repo))
         for suffix in ['delegation show', 'delegation --help']:
             self.assertEqual('allow', self.hook('pre_tool', toolName='bash', input={'command': f'{ROOT / "cao"} {suffix}'})['decision'])
+
+    def test_observed_child_blocks_switch_until_ended(self):
+        from scripts.cao_sessions import register_session, end_session
+        register_session(self.repo, load_work(self.repo, self.first), 'child', 'pi',
+                         event='subagent_start', kind='subagent', parent_session_id='current-pi')
+        rc, result = self.f.run_cli('switch', '--to', self.target)
+        self.assertEqual(2, rc, result)
+        self.assertIn('SOURCE_CHILD_SESSION_UNRESOLVED', result['blockers'])
+        end_session(self.repo, 'child', 'pi', 'observed completion')
+        self.assertEqual(0, self.f.run_cli('switch', '--to', self.target)[0])
+
+    def test_settlement_requires_evidence_for_exact_call(self):
+        raw = {'toolName': 'write', 'toolCallId': 'unresolved', 'input': {'path': 'feature.py'}}
+        observe(self.repo, load_work(self.repo, self.first), raw, 'pi', 'current-pi', 'pre_tool', {'decision': 'allow'})
+        path = self.repo / '_bmad-output/inspection.json'
+        path.parent.mkdir(exist_ok=True)
+        args = Namespace(host='pi', session='current-pi', call='unresolved', reason='inspected',
+                         evidence='_bmad-output/inspection.json', resolution='observed-stopped')
+        path.write_text('unrelated successful test log')
+        with self.assertRaisesRegex(ValueError, 'IDENTITY_REQUIRED'):
+            settle(self.repo, load_work(self.repo, self.first), args)
+        record = dict(host='pi', session_id='current-pi', tool_call_id='wrong',
+                      resolution='observed-stopped', observations='Inspected the plugin execution handle and confirmed termination.')
+        path.write_text(json.dumps(record))
+        with self.assertRaisesRegex(ValueError, 'IDENTITY_MISMATCH'):
+            settle(self.repo, load_work(self.repo, self.first), args)
+        record['tool_call_id'] = 'unresolved'
+        path.write_text(json.dumps(record))
+        settle(self.repo, load_work(self.repo, self.first), args)
+        self.assertFalse(effects(self.repo, self.first, True))
+
+    def test_plugin_registration_remains_reachable_before_classification(self):
+        import io
+        from contextlib import redirect_stdout
+        from scripts.cao_host_events import host_event
+        for operation in ('show', '--help', 'register --manifest adapter.json'):
+            payload = {'event': 'pre_tool', 'session_id': 'current-pi', 'toolName': 'bash',
+                       'toolCallId': operation, 'input': {'command': f'{ROOT / "cao"} delegation {operation}'}}
+            out = io.StringIO()
+            with patch('sys.stdin', io.StringIO(json.dumps(payload))), redirect_stdout(out), patch(
+                    'scripts.native_obligations.dispatch_patch_state', return_value={'ready': False, 'reason': 'NATIVE_REVIEW_CLASSIFY_REQUIRED'}):
+                host_event(Namespace(repo=str(self.repo), host='pi'))
+            self.assertEqual('allow', json.loads(out.getvalue())['decision'])
 
     def test_compact_preview_preserves_full_snapshot_on_request(self):
         rc, small = self.f.run_cli('switch', '--to', self.target, '--check')

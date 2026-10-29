@@ -65,6 +65,7 @@ class DelegationAdapters(unittest.TestCase):
         self.assertIsNone(launch_guard(self.repo, self.work, {'toolName': 'write', 'input': {'content': self.prompt}}))
 
     def test_single_request_plugin_does_not_require_batch_or_workflow(self):
+        atomic_json(self.repo / REGISTRY, [])
         row = {'version': 1, 'plugin': 'single-fixture', 'tool': 'subagent',
                'match': {'agent': 'reviewer'}, 'task_mode': 'single',
                'prompt_field': 'task', 'agent_field': 'agent',

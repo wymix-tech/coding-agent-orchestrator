@@ -146,3 +146,41 @@ Do not infer DDD merely from Spring Boot. Plans must place files by responsibili
 provider review must cite applicable ARCH rule IDs and assess semantic boundaries.
 Resume, switching and child agents preserve the Work architecture binding. Changed
 rules require reviewed `project bind --refresh`; never reset Work progress.
+
+## Switch diagnostics and invocation identity
+
+Trusted CAO control invocations use lifecycle records rather than ordinary
+pending product effects. Absolute installed launchers follow the same recognition
+rules as the tool gate. Compound commands containing product operations still
+retain their effects; a basename alone does not establish trust.
+
+A switch invoked through host hooks retains its observed coordinator identity
+for the transaction. Without that context use `--host <host> --session <native-id>`
+or an existing host session environment identity. Multiple invoking candidates
+require an explicit choice. Idle sessions alone never establish the caller.
+Source suspension, target activation and session binding share the recoverable
+operation. Do not end the coordinator session before switching. Old results keep
+their original start-time Work binding.
+
+Inspect exact pending calls with:
+
+```sh
+cao runtime effects --work <source-id> --pending --limit 20
+cao switch --to <target-id> --check
+```
+
+`runtime status` also includes pending-effect counts. An ended session does not
+prove a call stopped. A known live execution must finish or be cancelled using
+its actual executor/plugin capability. An unknown legacy call requires explicit
+inspection; no arbitrary test log can settle it. `settle-effect --evidence` now
+requires a JSON inspection record matching `host`, `session_id`, `tool_call_id`,
+`resolution` and a nonempty `observations` string describing the exact checks.
+The record is an agent declaration, not a process-termination certificate or
+passing execution receipt. Already finished/settled calls return
+`already_resolved` without changing state.
+
+Switch/handoff previews and handoff creation show bounded summaries by default.
+Use `--full-json` to inspect complete snapshots; full durable handoffs and operation
+journals retain original manifests. Installation files and unrelated historical
+files may remain in conservative freshness manifests; hiding them in the summary
+does not remove them from evidence or silently relax invalidation rules.

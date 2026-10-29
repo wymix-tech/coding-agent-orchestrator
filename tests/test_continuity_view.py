@@ -4,6 +4,18 @@ from scripts.continuity_view import view
 
 
 class ContinuityTests(RepairCase):
+    def test_presentation_does_not_mutate_durable_evidence(self):
+        from scripts.continuity_view import bounded_output
+        raw = {'product_files': ['source' + str(i) for i in range(1000)],
+               'findings': ['x' * 10000 for _ in range(30)]}
+        result = bounded_output(raw)
+        self.assertEqual(1000, result['product_files']['count'])
+        self.assertEqual(30, result['findings_total'])
+        self.assertEqual(20, len(result['findings']))
+        self.assertLess(len(result['findings'][0]), 4100)
+        self.assertEqual(10000, len(raw['findings'][0]))
+        self.assertEqual(1000, len(raw['product_files']))
+
     def test_resume_displays_completed_pending_and_handoff(self):
         wid = self.start()
         self.assertEqual(self.run_cli('checkpoint', '--completed', 'slice completed',

@@ -102,13 +102,18 @@ def bounded_output(value):
     if isinstance(value, list):
         return [bounded_output(row) for row in value[:20]]
     if not isinstance(value, dict):
+        if isinstance(value, str) and len(value) > 4000:
+            return value[:4000] + '\n[Truncated; use --full-json for complete text.]'
         return value
     result = {}
     for key, item in value.items():
-        if key in {'product_files', 'evidence_domains', 'provider_skills'}:
+        if key in {'product_files', 'evidence_domains', 'provider_skills', 'dirty_paths'}:
             result[key] = {'count': len(item or []), 'detail': 'Use --full-json to inspect complete evidence.'}
         elif key in {'source', 'target'} and isinstance(item, dict):
             result[key] = {k: item.get(k) for k in ('id', 'title', 'status', 'execution_generation')}
         else:
             result[key] = bounded_output(item)
+            if isinstance(item, list) and len(item) > 20:
+                result[key + '_total'] = len(item)
+                result[key + '_omitted'] = len(item) - 20
     return result

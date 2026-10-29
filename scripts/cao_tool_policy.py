@@ -854,3 +854,21 @@ def cao_control_tokens(tokens, cwd=None):
         "switch", "amend", "diagnose", "delegation", "lifecycle", "evidence", "conformance", "knowledge", "project", "acceptance", "runtime", "context", "artifact", "host", "host-event", "requirement", "language", "gate", "reopen", "verification", "instructions",
     }
     return bool(command_tokens and (command_tokens[0] in safe_control_commands or command_tokens in (["--help"], ["-h"])))
+
+
+def control_shell_segments(command, cwd):
+    """Return trusted controls after literal cwd changes; reject pipelines/background."""
+    lexer = shlex.shlex(command, posix=True, punctuation_chars=';&|<>()')
+    lexer.whitespace_split = True
+    if any(token and all(c in ';&|<>()' for c in token) and token not in {';', '&&'} for token in lexer):
+        return None
+    directory = cwd or Path.cwd()
+    controls = []
+    for tokens in _shell_segments(command):
+        if tokens[0] == 'cd' and len(tokens) == 2 and not any(c in tokens[1] for c in '$`'):
+            directory = (directory / tokens[1]).resolve()
+        elif cao_control_tokens(tokens, directory):
+            controls.append(tokens)
+        else:
+            return None
+    return controls or None

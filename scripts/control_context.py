@@ -5,17 +5,26 @@ from scripts.runtime_store import event_key, read_record
 
 
 def observe(repo, raw, host, session, event):
-    from scripts.cao_tool_policy import _event_key, _shell_segments, cao_control_tokens
+    from scripts.cao_tool_policy import _event_key, control_shell_segments
     if _event_key(raw, 'toolName', 'tool_name', 'tool', 'name').lower() not in {'bash', 'shell'}:
         return
     payload = raw.get('input') or raw.get('tool_input') or raw.get('arguments') or {}
     command = payload.get('command') if isinstance(payload, dict) else None
     call = _event_key(raw, 'tool_call_id', 'toolCallId', 'tool_use_id', 'call_id')
-    if not command or not call or not session:
+    if not call or not session:
+        return
+    folder = repo / '.orchestrator/control-calls'
+    path = folder / (event_key(host, session, call) + '.json')
+    if folder.is_symlink() or path.is_symlink():
+        raise ValueError('CONTROL_CONTEXT_SYMLINK')
+    if event == 'post_tool':
+        path.unlink(missing_ok=True)
+        return
+    if not command:
         return
     try:
-        parts = _shell_segments(command)
-        if len(parts) != 1 or not cao_control_tokens(parts[0], repo):
+        parts = control_shell_segments(command, repo)
+        if not parts or len(parts) != 1:
             return
         tokens = parts[0]
         if 'switch' not in tokens or '--to' not in tokens or '--check' in tokens:

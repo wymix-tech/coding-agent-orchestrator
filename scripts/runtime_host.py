@@ -37,16 +37,16 @@ def _meaningful(raw: dict, repo=None) -> bool:
             commands = [payload]
     if commands:
         try:
-            segments = [part for command in commands for part in _shell_segments(command)]
             # Control commands create their own lifecycle/run records. No recursion.
-            from scripts.cao_tool_policy import cao_control_tokens
-            if segments and all(cao_control_tokens(part, repo) for part in segments):
+            from scripts.cao_tool_policy import control_shell_segments
+            if all(control_shell_segments(command, repo) for command in commands):
                 return False
         except ValueError:
             pass
         if any(re.search(r"\b(test|pytest|unittest|build|verify|mvn|gradle|openspec|specify|bmad)\b", c) for c in commands):
             return True
-    return tool_is_mutating(raw)
+    # Unknown plugin tools may launch work; their name/action is no read-only proof.
+    return tool_is_mutating(raw) or tool not in {'bash', 'shell', 'exec_command', 'read', 'ls', 'grep', 'find', 'search_code', 'contact_supervisor'}
 
 
 def observe(repo: Path, work: dict | None, raw: dict, host: str, session: str,

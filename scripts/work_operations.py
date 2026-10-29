@@ -82,6 +82,7 @@ def preview(repo, target_id):
     from scripts.cao_runtime import sha256_file
     if sha256_file(repo / target['requirement']['path']) != target['requirement']['sha256']:
         blockers.append('REQUIREMENT_CHANGED_REANCHOR_REQUIRED')
+    active_children = []
     if source:
         from scripts.recovery_plan import plan as recovery_plan
         if recovery_plan(repo, source).get('unresolved_runs'):
@@ -91,10 +92,15 @@ def preview(repo, target_id):
         unresolved_effects = effects(repo, source['id'], pending_only=True)
         if unresolved_effects:
             blockers.append('SOURCE_HOST_EFFECT_UNRESOLVED')
+        from scripts.cao_sessions import list_sessions
+        active_children = [{k: row.get(k) for k in ('id', 'host', 'host_session_id', 'parent_session_id', 'last_event_at')} for row in list_sessions(repo)
+                           if row.get('kind') == 'subagent' and row.get('status') == 'active' and row.get('work_item_id') == source['id']]
+        if active_children:
+            blockers.append('SOURCE_CHILD_SESSION_UNRESOLVED')
     else:
         unresolved_effects = []
     return {'source': source, 'target': target, 'recovery': recovery,
-            'unresolved_effects': unresolved_effects, 'blockers': blockers, 'ready': not blockers, 'pending_operations': pending(repo)}
+            'active_children': active_children, 'unresolved_effects': unresolved_effects, 'blockers': blockers, 'ready': not blockers, 'pending_operations': pending(repo)}
 
 
 def switch(repo, target_id, reason, session=None, host=None):
@@ -119,11 +125,12 @@ def switch(repo, target_id, reason, session=None, host=None):
                 register_session(repo, target, session, host, event='resume')
             return {'ok': True, 'status': 'unchanged', 'work_id': target_id}
         if not state['ready']:
-            return {'ok': False, 'error': state['blockers'][0], 'blockers': state['blockers'], 'unresolved_effects': state['unresolved_effects'], 'next': 'Inspect cao runtime effects --work ' + source['id'] + ' --pending'}
+            return {'ok': False, 'error': state['blockers'][0], 'blockers': state['blockers'], 'unresolved_effects': state['unresolved_effects'], 'active_children': state['active_children'], 'next': 'Inspect cao runtime effects --work ' + source['id'] + ' --pending'}
         if target.get('blockers'):
             return {'ok': False, 'error': 'TARGET_BLOCKERS_UNRESOLVED'}
         from scripts.cao_providers import host_session_identity
         from scripts.cao_sessions import list_sessions, load_session
+        explicit_session = bool(session)
         if not session:
             from scripts.control_context import identity as control_identity
             identity = control_identity(repo, target_id)
@@ -134,9 +141,13 @@ def switch(repo, target_id, reason, session=None, host=None):
                 host, session = identity
         if session:
             observed = load_session(repo, session, host)
-            if not observed or observed.get('kind') != 'primary' or observed.get('work_item_id') not in {target_id, (source or {}).get('id')}:
-                raise ValueError('SWITCH_OBSERVED_COORDINATOR_REQUIRED')
-            host, session = observed['host'], observed['host_session_id']
+            if not observed:
+                if not explicit_session or not host:
+                    raise ValueError('SWITCH_OBSERVED_COORDINATOR_REQUIRED')
+            else:
+                if observed.get('kind') != 'primary' or observed.get('work_item_id') not in {None, target_id, (source or {}).get('id')}:
+                    raise ValueError('SWITCH_OBSERVED_COORDINATOR_REQUIRED')
+                host, session = observed['host'], observed['host_session_id']
         handoff = create_handoff(repo, source, session, host, reason) if source else None
         if source:
             source = load_work(repo, source['id'])
