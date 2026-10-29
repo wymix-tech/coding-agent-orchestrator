@@ -103,6 +103,30 @@ def preview(repo, target_id):
             'active_children': active_children, 'unresolved_effects': unresolved_effects, 'blockers': blockers, 'ready': not blockers, 'pending_operations': pending(repo)}
 
 
+def blocked_next(state):
+    """Explain the actual blocker, including when there is no active source."""
+    code = state['blockers'][0]
+    target = state['target']
+    source = state['source']
+    if code == 'PROJECT_PREPARATION_REQUIRED':
+        return state['recovery'].get('next') or 'Inspect cao project inspect and complete project preparation.'
+    if code == 'REQUIREMENT_CHANGED_REANCHOR_REQUIRED':
+        return ('Inspect changed requirement ' + target['requirement']['path'] + ' for Work ' + target['id']
+                + '; preserve the edited candidate and reconcile the anchored requirement before switching.')
+    if code == 'HOST_RESTART_REQUIRED':
+        return 'Restart the configured host, then retry cao switch --to ' + target['id']
+    if code == 'SDD_NOT_INSTALLED':
+        return 'Inspect cao status --work ' + target['id'] + ' and complete SDD installation before switching.'
+    if source:
+        if code == 'SOURCE_HOST_EFFECT_UNRESOLVED':
+            return 'Inspect cao runtime effects --work ' + source['id'] + ' --pending'
+        if code == 'SOURCE_CHILD_SESSION_UNRESOLVED':
+            return 'Inspect cao sessions list --work ' + source['id'] + ' --status active and collect the child execution results.'
+        if code == 'SOURCE_RUN_UNRESOLVED':
+            return 'Inspect cao runtime runs --work ' + source['id'] + ' and resolve the existing execution before switching.'
+    return 'Inspect cao switch --to ' + target['id'] + ' --check --full-json'
+
+
 def switch(repo, target_id, reason, session=None, host=None):
     from scripts.state_store import repo_transaction, atomic_json
     from scripts.cao_sessions import create_handoff
@@ -125,7 +149,7 @@ def switch(repo, target_id, reason, session=None, host=None):
                 register_session(repo, target, session, host, event='resume')
             return {'ok': True, 'status': 'unchanged', 'work_id': target_id}
         if not state['ready']:
-            return {'ok': False, 'error': state['blockers'][0], 'blockers': state['blockers'], 'unresolved_effects': state['unresolved_effects'], 'active_children': state['active_children'], 'next': 'Inspect cao runtime effects --work ' + source['id'] + ' --pending'}
+            return {'ok': False, 'error': state['blockers'][0], 'blockers': state['blockers'], 'unresolved_effects': state['unresolved_effects'], 'active_children': state['active_children'], 'next': blocked_next(state)}
         if target.get('blockers'):
             return {'ok': False, 'error': 'TARGET_BLOCKERS_UNRESOLVED'}
         from scripts.cao_providers import host_session_identity

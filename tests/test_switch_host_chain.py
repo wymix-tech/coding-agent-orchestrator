@@ -52,8 +52,9 @@ class SwitchHostChain(unittest.TestCase):
                 option = f'--to={target}' if index % 2 == 0 else f'--to {target}'
                 command = f'{ROOT / "cao"} status && {ROOT / "cao"} switch {option}'
                 field = 'cmd' if index % 2 == 0 else 'command'
+                payload = command if index % 3 == 0 else {field: command}
                 self.assertEqual('allow', self.hook('pre_tool', toolName=tool,
-                    toolCallId=f'alias-{index}', input={field: command})['decision'])
+                    toolCallId=f'alias-{index}', input=payload)['decision'])
                 self.assertEqual(('pi', 'current-pi'), identity(self.repo, target))
                 rc, result = self.f.run_cli('switch', f'--to={target}')
                 self.assertEqual(0, rc, result)
@@ -100,7 +101,7 @@ class SwitchHostChain(unittest.TestCase):
         self.assertEqual(0, self.f.run_cli('switch', '--to', self.target)[0])
         command = f'{ROOT / "cao"} --full-json switch --to={self.first}'
         self.assertEqual('allow', self.hook('pre_tool', toolName='exec_command',
-            toolCallId='reattach', input={'command': command})['decision'])
+            toolCallId='reattach', input=command)['decision'])
         rc, result = self.f.run_cli('--full-json', 'switch', f'--to={self.first}')
         self.assertEqual(0, rc, result)
         self.assertEqual(self.first, load_session(self.repo, 'current-pi', 'pi')['work_item_id'])
@@ -115,6 +116,7 @@ class SwitchHostChain(unittest.TestCase):
         self.assertEqual(2, rc, out)
         self.assertEqual('pending', out['unresolved_effects'][0]['tool_call_id'])
         self.assertEqual('current-pi', out['unresolved_effects'][0]['session_id'])
+        self.assertIn('cao runtime effects --work ' + self.first, out['next'])
         rc, listing = self.f.run_cli('runtime', 'effects', '--work', self.first, '--pending')
         self.assertEqual(0, rc, listing)
         self.assertEqual(1, len(listing['items']))
@@ -152,6 +154,7 @@ class SwitchHostChain(unittest.TestCase):
         rc, result = self.f.run_cli('switch', '--to', self.target)
         self.assertEqual(2, rc, result)
         self.assertIn('SOURCE_CHILD_SESSION_UNRESOLVED', result['blockers'])
+        self.assertIn('cao sessions list --work ' + self.first, result['next'])
         end_session(self.repo, 'child', 'pi', 'observed completion')
         self.assertEqual(0, self.f.run_cli('switch', '--to', self.target)[0])
 

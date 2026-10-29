@@ -6,7 +6,7 @@ import time
 import uuid
 from pathlib import Path
 
-from scripts.cao_tool_policy import _collect_values_for_keys, _event_key, _shell_segments, tool_is_mutating
+from scripts.cao_tool_policy import _collect_values_for_keys, _event_key, SHELL_TOOLS, tool_is_mutating
 from scripts.runtime_store import event_key, observation, read_record, safe_path, settings
 
 
@@ -31,8 +31,8 @@ def _put(repo: Path, wid: str, identity: str, record: dict) -> None:
 def _meaningful(raw: dict, repo=None) -> bool:
     tool = _event_key(raw, "tool_name", "toolName", "toolname", "tool", "name").lower()
     commands = _collect_values_for_keys(raw, {"command", "cmd"})
-    if not commands and tool in {"bash", "shell"}:
-        payload = raw.get("input") or raw.get("arguments")
+    if not commands and tool in SHELL_TOOLS:
+        payload = raw.get("input") or raw.get("tool_input") or raw.get("arguments") or raw.get("params")
         if isinstance(payload, str):
             commands = [payload]
     if commands:

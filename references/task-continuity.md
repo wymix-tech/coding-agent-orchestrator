@@ -186,6 +186,12 @@ The record is an agent declaration, not a process-termination certificate or
 passing execution receipt. Already finished/settled calls return
 `already_resolved` without changing state.
 
+A blocked switch returns structured JSON even when every prior Work is suspended
+and no source Work is active. Its next step follows the first actual blocker:
+requirement reconciliation, project preparation, SDD installation, host restart,
+runtime run inspection, exact host effects, or active child sessions. Inspecting
+host effects is only relevant when that is the recorded blocker.
+
 Switch/handoff previews and handoff creation show bounded summaries by default.
 Use `--full-json` to inspect complete snapshots; full durable handoffs and operation
 journals retain original manifests. Installation files and unrelated historical
