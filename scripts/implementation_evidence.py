@@ -98,7 +98,9 @@ def command(args):
         if args.kind in {'test', 'acceptance'}:
             from scripts.native_reports import read
             try:
-                observation = read(repo, work, path)
+                candidate = deepcopy(work)
+                candidate['sdd'].setdefault('implementation_evidence', []).append({'path': path.relative_to(repo).as_posix()})
+                observation = read(repo, candidate, path)
             except (ValueError, OSError, UnicodeError) as exc:
                 observation = {'outcome': 'failed' if str(exc).startswith('NATIVE_COMPLETION_REPORT_NOT_PASSED') else 'unknown', 'diagnostic': str(exc)[:1200]}
         record = {'work_id': work['id'], 'provider': work['sdd']['provider'],

@@ -53,7 +53,7 @@ def command(args):
         work = resolve_work(repo, args.work)
         if not work or not enabled(work) or work.get('status') != 'active':
             raise ValueError('ACTIVE_CONTRACT_2_WORK_REQUIRED')
-        validate_command(work, args.command)
+        validate_command(work, args.command, repo)
         path = provider_artifact(repo, args.report, provider_output_dirs(work['sdd']['provider'], repo))
         if path.suffix.lower() not in {'.md', '.txt', '.log', '.json', '.yaml', '.yml'} or not path.parent.is_dir():
             raise ValueError('NATIVE_EXECUTION_LOG_PATH_REQUIRED')
@@ -103,7 +103,8 @@ def command(args):
                 path = provider_artifact(repo, args.report, provider_output_dirs(work['sdd']['provider'], repo))
                 path.write_text(body, encoding='utf-8')
                 try:
-                    read(repo, work, path)
+                    observation = read(repo, work, path, execution=row)
+                    row['observation'] = observation
                     if inputs(repo, work) != captured or material_inputs(repo, work) != row['domains']:
                         raise ValueError('NATIVE_EXECUTION_INPUT_CHANGED')
                     work['sdd'].pop('completion_binding_failure', None)
@@ -160,7 +161,7 @@ def repair(args):
     return 0
 
 
-def validate_command(work, command):
+def validate_command(work, command, repo=None):
     """Only replay a recorded native invocation, never cat/echo an old result."""
     import shlex
     from pathlib import Path
@@ -175,5 +176,11 @@ def validate_command(work, command):
     recorded = ((sdd.get('workflow') or {}).get('execution') or {}).get('command')
     if recorded:
         expected.append(recorded)
+    if repo is not None:
+        from scripts.cao_runtime import config
+        from scripts.completion_policy import normalize_scripts
+        expected.extend(row['command'] for row in normalize_scripts(config(repo).get('verification', {}).get('scripts', [])))
+        from scripts.native_validation import commands
+        expected.extend(commands(repo, work))
     if not expected or not any(identity(command) == identity(value) for value in expected):
-        raise ValueError('NATIVE_EXECUTION_COMMAND_UNBOUND: use the recorded native workflow/report command; restoring a report with cat/echo is not native execution')
+        raise ValueError('NATIVE_EXECUTION_COMMAND_UNBOUND: use a recorded native command, accepted project check, or declare a command from the bound native specification with cao lifecycle declare')

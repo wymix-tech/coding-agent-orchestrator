@@ -216,6 +216,12 @@ class Integrity(unittest.TestCase):
             rc, out = fixture.run_cli('lifecycle', 'bind', '--report', report.relative_to(fixture.repo))
             self.assertEqual(2, rc, out)
             fixture.tasks.write_text(fixture.tasks.read_text().replace('[ ]', '[x]'))
+            from copy import deepcopy
+            from scripts.lifecycle_contract import inputs
+            candidate = deepcopy(fixture.read_work(fixture.wid))
+            candidate['sdd']['completion_evidence'] = {'reports': [{'path': report.relative_to(fixture.repo).as_posix()}]}
+            result = subprocess.run([sys.executable, '-m', 'unittest', 'discover', '-s', 'acceptance-tests'], cwd=fixture.repo, capture_output=True, text=True, check=True)
+            report.write_text(f"work_id: {fixture.wid}\ncode_snapshot: {inputs(fixture.repo, candidate)['code_snapshot']}\n" + result.stdout + result.stderr)
             for args in [('lifecycle', 'bind', '--report', report.relative_to(fixture.repo)),
                          ('conformance', 'check'), ('verify',), ('done',)]:
                 rc, out = fixture.run_cli(*args)

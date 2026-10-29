@@ -26,7 +26,9 @@ class NativeLifecycle(unittest.TestCase):
         self.report = self.repo / 'openspec/completion.md'
         run = subprocess.run([sys.executable, 'preparation_suite.py'], cwd=self.repo,
                              capture_output=True, text=True, check=True)
-        self.report.write_text('# Native fixture completion\n\nCommand: python preparation_suite.py\n'
+        from scripts.lifecycle_contract import inputs
+        snapshot = inputs(self.repo, self.work())['code_snapshot']
+        self.report.write_text(f'work_id: {self.wid}\ncode_snapshot: {snapshot}\n' + '# Native fixture completion\n\nCommand: python preparation_suite.py\n'
                                'Exit: 0\n\n' + run.stdout + run.stderr)
 
     def check(self, *args):
@@ -131,6 +133,12 @@ class NativeLifecycle(unittest.TestCase):
         self.assertEqual('NATIVE_COMPLETION_REQUIRED', result['error'])
         self.assertNotIn('completion_evidence', self.work()['sdd'])
         second.write_text('# Tasks\n- [x] 1.1 Native fixture task\n')
+        from scripts.lifecycle_contract import inputs
+        from copy import deepcopy
+        candidate = deepcopy(self.work())
+        candidate['sdd']['completion_evidence'] = {'reports': [{'path': 'openspec/completion.md'}]}
+        result = subprocess.run([sys.executable, 'preparation_suite.py'], cwd=self.repo, capture_output=True, text=True, check=True)
+        self.report.write_text(f"work_id: {self.wid}\ncode_snapshot: {inputs(self.repo, candidate)['code_snapshot']}\nCommand: python preparation_suite.py\nExit: 0\n" + result.stdout + result.stderr)
         self.bind()
         self.check('conformance', 'check')
         second.write_text('# Tasks\n- [ ] 1.1 Native fixture task\n')
@@ -158,7 +166,13 @@ class NativeLifecycle(unittest.TestCase):
         self.assertEqual(2, rc, out)
         self.assertEqual(['security_verification'], out['native_completion_evidence']['pending_gates'])
         config_before = (self.repo / '.orchestrator/config.json').read_bytes()
-        self.check('lifecycle', 'bind', '--report', 'openspec/completion.md', '--gate', 'security_verification')
+        from scripts.lifecycle_contract import inputs
+        security = self.repo / 'openspec/security.json'
+        security.write_text(json.dumps({'status': 'passed', 'evidence_type': 'security_result',
+            'work_id': self.wid, 'code_snapshot': inputs(self.repo, self.work())['code_snapshot'],
+            'checks': [{'id': 'security-1', 'description': 'Fixture security acceptance', 'status': 'passed',
+                        'evidence': 'Native fixture security check result', 'gates': ['security_verification']}]}))
+        self.check('lifecycle', 'bind', '--report', 'openspec/completion.md', '--report', 'openspec/security.json', '--gate', 'security_verification')
         self.check('conformance', 'check')
         self.assertEqual(config_before, (self.repo / '.orchestrator/config.json').read_bytes())
 
@@ -219,7 +233,7 @@ class NativeLifecycle(unittest.TestCase):
         self.check('sdd', 'spec', 'bind', '--spec', 'openspec/spec.md', '--criteria-section', 'Acceptance')
         rc, out = self.cli('lifecycle', 'bind', '--report', 'openspec/completion.md')
         self.assertEqual(2, rc, out)
-        self.assertIn('NATIVE_COMPLETION_REPORT_OTHER_WORK', out['error'])
+        self.assertIn(out['error'], {'NATIVE_COMPLETION_REPORT_OTHER_WORK', 'NATIVE_COMPLETION_REPORT_WRONG_SCOPE'})
 
     def test_invalid_or_failed_native_json_cannot_be_bound_as_completion(self):
         path = self.repo / 'openspec/result.json'

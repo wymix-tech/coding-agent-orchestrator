@@ -20,15 +20,21 @@ def outcome(value):
     return 'unknown'
 
 
-def read(repo, work, path):
+def read(repo, work, path, *, execution=None):
+    if execution is None:
+        from scripts.cao_runtime import sha256_file
+        relative = path.relative_to(repo).as_posix()
+        execution = next((row for row in reversed((work.get('sdd') or {}).get('completion_executions', []))
+                          if row.get('status') == 'passed' and {'path': relative, 'sha256': sha256_file(path)} in row.get('reports', [])), None)
     text = path.read_text(encoding='utf-8-sig')
-    if not text.strip() or len(text.encode()) > 8 * 1024 * 1024:
+    if (not text.strip() and not execution) or len(text.encode()) > 8 * 1024 * 1024:
         raise ValueError('NATIVE_COMPLETION_REPORT_INVALID: empty or oversized report')
     provider = work['sdd']['provider']
     if provider not in {'bmad', 'openspec', 'speckit'}:
         raise ValueError('NATIVE_COMPLETION_PROVIDER_UNSUPPORTED')
     declarations, identities, exit_codes, commands = [], {}, [], []
     checks = 0
+    check_records, declared_types = [], []
     if path.suffix.lower() == '.json':
         payload = json.loads(text)
         if not isinstance(payload, (dict, list)) or not payload:
@@ -42,6 +48,8 @@ def read(repo, work, path):
                     if key in identities and identities[key] != row[key]:
                         raise ValueError('NATIVE_COMPLETION_REPORT_IDENTITY_CONFLICT')
                     identities[key] = row[key]
+            if row.get('evidence_type'):
+                declared_types.append(str(row['evidence_type']))
             for key in ('status', 'outcome', 'result'):
                 if key in row:
                     if not isinstance(row[key], str):
@@ -57,6 +65,7 @@ def read(repo, work, path):
                         if isinstance(item, dict) and 'status' in item:
                             declarations.append(outcome(item['status']))
                             checks += 1
+                            check_records.append(item)
                 elif isinstance(row.get(key), dict):
                     tests = row[key]
                     count = tests.get('count', tests.get('total'))
@@ -83,11 +92,13 @@ def read(repo, work, path):
             if fence:
                 continue
             outside.append(line)
-            match = re.match(r'^\s*(?:[-*]\s+)?(?:\*\*)?(status|outcome|result|状态|结果|work_id|work_item_id|provider|requirement_sha256|code_snapshot|exit_code|exit|command|命令)(?:\*\*)?\s*[:：](?:\*\*)?\s*(.+?)\s*$', line, re.I)
+            match = re.match(r'^\s*(?:[-*]\s+)?(?:\*\*)?(evidence_type|status|outcome|result|状态|结果|work_id|work_item_id|provider|requirement_sha256|code_snapshot|exit_code|exit|command|命令)(?:\*\*)?\s*[:：](?:\*\*)?\s*(.+?)\s*$', line, re.I)
             if match:
                 fields.append((match[1].casefold(), match[2].strip().strip('`')))
         for key, value in fields:
-            if key in {'status', 'outcome', 'result', '状态', '结果'}:
+            if key == 'evidence_type':
+                declared_types.append(value.strip("\"'"))
+            elif key in {'status', 'outcome', 'result', '状态', '结果'}:
                 declarations.append(outcome(value))
             elif key in {'exit', 'exit_code'}:
                 if not re.fullmatch(r'-?\d+', value):
@@ -125,13 +136,16 @@ def read(repo, work, path):
         if re.search(r'(?m)^FAILED\b|\bBUILD FAILURE\b|^FAILURES!\s*$', text):
             declarations.append('failed')
         adapter = provider + ':native-text-v1'
+    if execution:
+        commands = list(dict.fromkeys([*commands, execution['command']]))
+        exit_codes.append(execution['exit_code'])
     if any(code != 0 for code in exit_codes) or 'failed' in declarations:
         raise ValueError('NATIVE_COMPLETION_REPORT_NOT_PASSED')
     if 'unknown' in declarations or not (declarations or exit_codes):
         raise ValueError('NATIVE_COMPLETION_REPORT_UNSUPPORTED: no recognized native result; bind the original native test/result output, not an unclassified prose summary')
     # An exit-only report must still be attached to recorded native execution.
     workflow = (work.get('sdd') or {}).get('workflow') or {}
-    if not declarations and not (workflow.get('execution') or {}).get('command'):
+    if not declarations and not execution and not (workflow.get('execution') or {}).get('command'):
         raise ValueError('NATIVE_COMPLETION_EXECUTION_SOURCE_REQUIRED')
     expected = {'work_id': work['id'], 'work_item_id': work['id'], 'provider': provider,
                 'requirement_sha256': work['requirement']['sha256']}
@@ -142,6 +156,40 @@ def read(repo, work, path):
         from scripts.lifecycle_contract import inputs
         if identities['code_snapshot'] != inputs(repo, work)['code_snapshot']:
             raise ValueError('NATIVE_COMPLETION_REPORT_WRONG_SNAPSHOT')
+    types = sorted(set(declared_types)) or ['test_result' if checks else 'execution_result' if execution and not declarations else 'workflow_declaration']
+    coverage = {'verification'} if checks else set()
+    for item in check_records:
+        gates = item.get('gates', [])
+        if not isinstance(gates, list) or not all(isinstance(g, str) for g in gates):
+            raise ValueError('NATIVE_COMPLETION_CHECK_GATES_INVALID')
+        if (item.get('id') and item.get('description') and outcome(item.get('status')) == 'passed'
+                and item.get('evidence')):
+            coverage.update(gates)
     return {'adapter': adapter, 'outcome': 'passed', 'identities': identities,
+            'evidence_types': types, 'gate_coverage': sorted(coverage),
+            'check_records': check_records,
             'checks_observed': checks, 'exit_codes': exit_codes, 'commands': commands,
             'source': path.relative_to(repo).as_posix()}
+
+
+def validate_coverage(repo, work, reports, observations, gates):
+    """Result declarations cannot be promoted to checks by CLI gate flags."""
+    from scripts.native_execution import receipt_matches
+    covered = set()
+    for ref, row in zip(reports, observations):
+        if 'workflow_declaration' in row['evidence_types'] and not row['check_records']:
+            raise ValueError('NATIVE_COMPLETION_CHECK_EVIDENCE_REQUIRED: document/workflow status is not a verification result')
+        observed = receipt_matches(repo, work, [ref])
+        identities = row['identities']
+        scoped = identities.get('work_id', identities.get('work_item_id')) == work['id']
+        from scripts.lifecycle_contract import inputs
+        scoped = scoped and identities.get('code_snapshot') == inputs(repo, work)['code_snapshot']
+        if not observed and not scoped:
+            raise ValueError('NATIVE_COMPLETION_EXECUTION_SOURCE_REQUIRED: capture actual output with cao lifecycle execute, or supply a native check report identifying this Work and code_snapshot')
+        covered.update(row['gate_coverage'])
+        if observed and row['exit_codes'] and row['commands']:
+            covered.add('verification')
+    missing = sorted(set(gates) - covered)
+    if missing:
+        raise ValueError('NATIVE_COMPLETION_GATE_EVIDENCE_REQUIRED: checks with id, description, status, evidence and gates are required for ' + ', '.join(missing))
+    return sorted(covered)
