@@ -256,3 +256,19 @@ def require_collected(repo, work):
         session = load_session(repo, binding.get('session_id'), host=binding.get('host')) or {}
         if not session.get('review_output_sha256'):
             raise ValueError('NATIVE_REVIEW_ALL_OUTPUTS_REQUIRED: wait for final output from ' + layer)
+
+
+def launch_payload(repo, work):
+    """Build one blocking Pi batch from frozen prompt bytes."""
+    records = (work.get('sdd') or {}).get('native_reviews') or {}
+    layers = (records.get('_contract') or {}).get('layers', [])
+    if not layers or any(not (records.get(layer) or {}).get('context_package') for layer in layers):
+        return None
+    tasks = []
+    for layer in layers:
+        run = records[layer]
+        if run.get('status') != 'running' or run.get('execution_binding'):
+            return None
+        package = policy(repo, run, check_claims=False)
+        tasks.append({'task': (repo / package['prompt']).read_text()})
+    return {'async': False, 'worktree': False, 'tasks': tasks}
