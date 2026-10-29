@@ -94,7 +94,7 @@ def dispatch_review_next(records, layers, inputs):
         unbound = [layer for layer in running if not records[layer].get('execution_binding')]
         return ('Run `cao sdd review resume` to recover existing tickets for ' + ', '.join(running) + '. '
                 + ('Bind each NEW observed child via coordinator --reviewer-session or child reviewer_start for ' + ', '.join(unbound) + '. ' if unbound else '')
-                + 'Collect native findings and `cao sdd review classify` ALL layers before product patches, then `cao sdd review resolve`. Do not begin again; use --restart only to explicitly replace a failed ticket.')
+                + 'Collect original native findings; run `cao sdd review draft --layer <layer>` for each layer, preserve generated source references and fill judgments, then `cao sdd review classify` ALL layers before product patches, then `cao sdd review resolve`. Do not begin again; use --restart only to explicitly replace a failed ticket.')
     classified = [layer for layer in layers if records[layer].get('status') == 'classified']
     # Classified reviews deliberately retain the pre-patch code snapshot.
     if classified and all(all(record.get('inputs', {}).get(k) == v for k, v in inputs.items() if k != 'code_snapshot')

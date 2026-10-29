@@ -419,7 +419,7 @@ def draft_report(repo, work, layer, source=None):
     root.mkdir(parents=True, exist_ok=True)
     path = root / 'report.json'
     if path.exists() and json.loads(path.read_text()).get('findings'):
-        invalid('NATIVE_REVIEW_DRAFT_EXISTS', 'report', 'reuse the existing triage; never overwrite judgments', str(path.relative_to(repo)))
+        return {'ok': True, 'status': 'existing', 'report': path.relative_to(repo).as_posix(), 'next': 'Preserve existing judgments; classify this report when complete.'}
     report = {'run_id': run['id'], 'input_sha256': run['input_sha256'], 'reviewer': binding['reviewer'],
               'findings_file': raw.relative_to(repo).as_posix(), 'source_sha256': hashlib.sha256(raw.read_bytes()).hexdigest(), 'intent_conflicts': [],
               'findings': [{'id': item['id'], 'content_sha256': native_digest(item), 'verdict': None, 'disposition': None, 'evidence': ''} for item in findings]}
