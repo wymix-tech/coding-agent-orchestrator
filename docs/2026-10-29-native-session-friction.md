@@ -19,3 +19,14 @@ Remaining integration scope (not claimed complete):
 - Real installed third-party Pi subagent workflow capability discovery, execution and retained-child ID mapping have not been exercised in this environment. The generated tasks batch is guarded locally, not proof that every installed plugin accepts this interface.
 - Native criterion semantic coverage, metadata-only findings extraction, tool-role product inventory filtering, and a dedicated legacy evidence migration remain to be completed before declaring the original six-stage plan fully implemented.
 - No live macOS/Java/LLM end-to-end session was executed.
+
+## Follow-up review fixes
+
+- All declared check gates now require current native receipt provenance, including acceptance and targeted/compatibility/data checks. Structured check rows no longer imply general verification coverage.
+- Both Surefire `- in` and `-- in` class rows are excluded when aggregates exist.
+- Native command discovery supports bare pytest, python -m pytest and shell-fenced commands, retaining requirement/source hash checks.
+- Blocking workflow generation uses the documented runs.run interface and an installed agent definition; already-bound layers are preserved. Returned runId recovery guidance distinguishes run ids from mission/session ids.
+- Added executable Node script contract coverage and a CLI security failure-to-success fixture with declared report outputs and an actual native execution receipt.
+- Revalidated 29 focused tests, 19 lifecycle/session replay tests (before the additional security success assertion), and the dedicated security success test. No live third-party Pi subagent runtime is available here; the Node workflow check uses a controlled runs.run implementation.
+
+The earlier remaining integration scope still applies where not superseded above. This remains a draft; do not treat workflow contract testing as a real live Pi run.
