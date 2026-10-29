@@ -35,9 +35,11 @@ def inspect(repo, work_id=None):
             return None
     owner = read(repo / '.orchestrator/state-lock-owner.json')
     index = read(repo / '.orchestrator/index.json') or {}
+    if not isinstance(index, dict):
+        index = {}
     wid = work_id or index.get('active_work')
     work = None
-    if wid and all(c.isalnum() or c in '._-' for c in wid) and wid not in {'.', '..'}:
+    if isinstance(wid, str) and wid and all(c.isalnum() or c in '._-' for c in wid) and wid not in {'.', '..'}:
         from scripts.cao_defaults import WORK_DIR
         # Read committed bytes only: load_work also locks, drains events and migrates.
         work = read(repo / WORK_DIR / (wid + '.json'))

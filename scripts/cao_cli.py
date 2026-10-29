@@ -401,6 +401,8 @@ def main(argv: list[str] | None = None) -> int:
         from scripts.lock_diagnostics import command as lock_diagnose
         if args.fn == lock_diagnose:
             return lock_diagnose(args)
+        if getattr(args, 'lifecycle_command', None) == 'recover' and args.check:
+            return args.fn(args)
         repair_or_read = args.fn in {
             cmd_init, cmd_bootstrap, cmd_host, host_event, cmd_language_show,
             cmd_language_set, cmd_language_apply, cmd_instructions_update,

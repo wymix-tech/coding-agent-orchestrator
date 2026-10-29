@@ -182,13 +182,18 @@ def command(args):
     from scripts.cao_work_store import work_path
     repo = repo_root(args.repo)
     ensure_initialized(repo)
-    with repo_transaction(repo):
+    from contextlib import nullcontext
+    preview = args.lifecycle_command == 'recover' and args.check
+    with nullcontext() if preview else repo_transaction(repo):
+        # Recovery preview is advisory and lock-independent; mutation revalidates.
         # Avoid load_index/reconcile: --check/preflight must be read-only.
         wid = args.work or (load_json(repo / '.orchestrator/index.json', {}) or {}).get('active_work')
         if not wid:
             raise ValueError('NO_WORK_ITEM')
         if args.lifecycle_command == 'recover':
             result = recover(repo, wid, check=args.check)
+            if preview:
+                result.update(inspection_only=True, completion_certified=False)
         else:
             guard = read_guard(repo, wid)
             work = load_json(work_path(repo, wid), None)

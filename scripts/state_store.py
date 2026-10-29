@@ -63,9 +63,6 @@ def repo_transaction(repo: Path, timeout: float = 5.0):
                 try:
                     _lock(fd)
                     acquired = True
-                    atomic_json(folder / 'state-lock-owner.json', {'pid': os.getpid(), 'host': socket.gethostname(),
-                        'acquired_at': time.time(), 'thread': threading.get_ident(),
-                        'operation': __import__('sys').argv[1:4], 'advisory_only': True})
                     break
                 except OSError as exc:
                     if exc.errno not in (errno.EACCES, errno.EAGAIN, errno.EDEADLK):
@@ -73,6 +70,14 @@ def repo_transaction(repo: Path, timeout: float = 5.0):
                     if time.monotonic() >= deadline:
                         raise RuntimeError("STATE_LOCK_TIMEOUT") from exc
                     time.sleep(.025)
+            # Ownership metadata is advisory. Its write failure must neither
+            # masquerade as lock contention nor make an acquired lock unusable.
+            try:
+                atomic_json(folder / 'state-lock-owner.json', {'pid': os.getpid(), 'host': socket.gethostname(),
+                'acquired_at': time.time(), 'thread': threading.get_ident(),
+                'operation': __import__('sys').argv[1:4], 'advisory_only': True})
+            except OSError:
+                pass
         depths[key] = depths.get(key, 0) + 1
         try:
             yield

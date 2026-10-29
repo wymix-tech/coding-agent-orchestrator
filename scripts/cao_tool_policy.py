@@ -585,9 +585,8 @@ def inspection_tool(repo: Path, raw: dict) -> bool:
         return True
     if tool in {'read', 'ls', 'grep', 'find', 'search_code', 'contact_supervisor'}:
         return True
-    payload = raw.get('tool_input') or raw.get('input') or raw.get('arguments') or {}
-    return (tool == 'subagent' and isinstance(payload, dict)
-            and payload.get('action') == 'status' and set(payload) <= {'action', 'id'})
+    # Plugin names and action labels do not attest read-only behavior.
+    return False
 
 
 def _shell_segments(command: str) -> list[list[str]]:
