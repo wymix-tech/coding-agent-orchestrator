@@ -272,3 +272,23 @@ def bind_fixture_finding_content(repo, report_path):
     for finding in report['findings']:
         finding['content_sha256'] = originals[finding['id']]
     path.write_text(json.dumps(report))
+
+
+def bind_fixture_resolution(repo, work, layer, report_path, changed_paths, assertion):
+    """An explicit native manual check for synthetic lifecycle fixtures."""
+    import hashlib
+    from scripts.native_obligations import review_inputs
+    from scripts.cao_snapshot import code_snapshot
+    repo = pathlib.Path(repo)
+    current = review_inputs(repo, work, code_snapshot)['code_snapshot']
+    run = work['sdd']['native_reviews'][layer]
+    refs = [{'path': name, 'sha256': hashlib.sha256((repo / name).read_bytes()).hexdigest(),
+             'reason': assertion} for name in changed_paths]
+    path = pathlib.Path(report_path)
+    report = json.loads(path.read_text())
+    report['code_snapshot'] = current
+    report['resolutions'] = [{'id': f['id'], 'content_sha256': f['content_sha256'], 'changes': refs,
+        'verification': [{'kind': 'manual', 'code_snapshot': current, 'assertion': assertion,
+                          'observed': 'Inspected the exact changed fixture bytes', 'evidence': refs}]}
+        for f in run['findings'] if f['disposition'] == 'patch']
+    path.write_text(json.dumps(report))

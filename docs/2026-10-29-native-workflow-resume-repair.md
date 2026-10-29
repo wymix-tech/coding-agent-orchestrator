@@ -40,6 +40,12 @@ Direct Build resolves independent plan scope at route acceptance and active-sess
 
 Validation: 52-case plan/provider/route suite passed except one old test expecting late rejection; that test now asserts early rejection and passes. Four additional route/no-plan/migration/ambiguity tests pass.
 
-## Remaining stages
+## Stage 5
 
-Stages 5–6 are pending; this checkpoint is not a completion claim.
+New tickets require per-finding original content identity, actual changed product references, current snapshot and verification assertions/results/evidence. Test/static claims require current native execution receipts; manual checks remain labeled native declarations. Both dispatch resolve and oneshot submit use the same validator. Resolution drafts are generated without inventing judgments. IDs-only historical tickets are explicitly labeled legacy when resolved, never recertified.
+
+Validation: six resolution-specific cases and 27 protocol/session integration cases pass. A targeted loopback test confirms intent-conflict precedence over metadata recovery. The earlier round suite found this precedence regression and it was corrected.
+
+## Remaining stage
+
+Stage 6 (migration, compact agent output and full replay/regression) is pending; this checkpoint is not a completion claim.

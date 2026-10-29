@@ -603,11 +603,15 @@ def resolve_review(repo, work, layer, report_path, code_snapshot):
     current = review_inputs(repo, work, code_snapshot)
     if any(current.get(k) != run['inputs'].get(k) for k in current if k != 'code_snapshot'):
         raise ValueError('NATIVE_REVIEW_SOURCE_STALE')
-    run.update(status='passed', inputs=current, evidence_hashes={**run['triage_hashes'], path.relative_to(repo).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()})
+    from scripts.review_resolution import validate as validate_resolution
+    resolution_hashes, resolution = validate_resolution(repo, work, run, report, current)
+    run.update(status='passed', inputs=current, resolution_evidence=resolution, evidence_hashes={**run['triage_hashes'], **resolution_hashes, path.relative_to(repo).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()})
     return run
 
 
 def submit_review(repo, work, layer, report_path, code_snapshot):
+    from scripts.review_packages import require_collected
+    require_collected(repo, work)
     if dispatch(work):
         raise ValueError('NATIVE_REVIEW_CLASSIFY_REQUIRED: dispatch uses classify before patches, then resolve')
     require_review_integrity(repo, work, code_snapshot)
@@ -669,8 +673,10 @@ def submit_review(repo, work, layer, report_path, code_snapshot):
                 or (finding['disposition'] == 'patch' and finding.get('resolved') is not True)):
             raise ValueError('NATIVE_REVIEW_TRIAGE_INVALID_OR_UNRESOLVED')
         ids.add(finding['id'])
-    run.update(status='passed', inputs=current, report=report_file.relative_to(repo.resolve()).as_posix(), reviewer=reviewer,
-               evidence_hashes={**(run.get('triage_hashes') or {}), **{path.relative_to(repo.resolve()).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()
+    from scripts.review_resolution import validate as validate_resolution
+    resolution_hashes, resolution = validate_resolution(repo, work, run, report, current)
+    run.update(status='passed', inputs=current, resolution_evidence=resolution, report=report_file.relative_to(repo.resolve()).as_posix(), reviewer=reviewer,
+               evidence_hashes={**(run.get('triage_hashes') or {}), **resolution_hashes, **{path.relative_to(repo.resolve()).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()
                                 for path in (report_file, findings_file)}})
     return run
 

@@ -36,6 +36,9 @@ class ProtocolConsistency(RepairCase):
         data['findings'][0]['resolved'] = True
         final = report.parent / 'final.json'
         final.write_text(json.dumps(data))
+        from tests.helpers import bind_fixture_resolution
+        self.assertEqual('value = 2\n', (self.repo / 'product.py').read_text())
+        bind_fixture_resolution(self.repo, self.read_work(self.wid), 'blind-hunter', final, ['product.py'], 'Product fixture now assigns value 2')
         rc, out = self.run_cli('sdd', 'review', 'submit', '--layer', 'blind-hunter', '--report', final.relative_to(self.repo))
         self.assertEqual(0, rc, out)
 

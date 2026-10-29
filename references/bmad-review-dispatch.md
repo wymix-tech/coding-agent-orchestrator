@@ -99,9 +99,19 @@ does not resolve a contradiction. Use the native human clarification loopback.
 
 ## Resolve report fields
 
-Supply `{run_id, resolved_ids}` with the current layer's run ID and ALL its
-`patch` finding IDs after real fixes and checks. CAO fingerprints the original
-raw, classify and resolve evidence and binds the repaired code snapshot.
+For new tickets, use `cao sdd review resolution-draft --layer <layer>`, then
+complete `{run_id, code_snapshot, resolved_ids, resolutions}`. Each resolution
+contains the original `{id, content_sha256}`, `changes` and `verification`.
+Changes are actual modified product references `{path, sha256, reason}`; deletion
+uses `{path, deleted: true, previous_sha256, reason}`. Verification entries contain
+`{kind: test|static|manual, code_snapshot, assertion, observed, evidence}`; evidence
+references are `{path, sha256}`. Test/static evidence requires a current observed
+native execution receipt; manual checks retain their declared authority explicitly.
+One native check may support multiple findings when its assertions cover them.
+An IDs-only declaration cannot resolve a new patch finding. Legacy tickets retain
+an explicit legacy protocol label; they are never silently recertified.
+CAO fingerprints the original raw, classify, resolve and supporting evidence and
+binds the repaired code snapshot.
 A review round is not a loopback count. Changed sources/evidence require the
 applicable fresh review; a manual `implementation_review` gate cannot substitute.
 

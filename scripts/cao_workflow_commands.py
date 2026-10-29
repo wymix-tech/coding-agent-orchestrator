@@ -404,6 +404,10 @@ def _cmd_sdd_review_locked(args: argparse.Namespace) -> int:
                       'next': 'Read the frozen review input and native instructions. Return actual findings; do not patch product code.'}
             from scripts.review_dispatch import stamp_report
             stamp_report(repo, work, args.layer, attached)
+        elif args.review_action == 'resolution-draft':
+            from scripts.review_resolution import draft
+            output = draft(repo, work, args.layer)
+            print(json.dumps(output, ensure_ascii=False)); return 0
         elif args.review_action == 'resume':
             from scripts.review_resume import resume
             output = resume(repo, work, getattr(args, 'layer', None), args.transcript)

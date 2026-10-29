@@ -101,6 +101,8 @@ def begin_review(repo, work, args, identity):
         observed = diagnose(repo, work, args.layer)
         if (target.get('inputs') == review_inputs(repo, work, code_snapshot)
                 and (observed['artifacts'] or observed.get('original_message_sha256'))
+                and not any(record.get('loopback_required') or record.get('intent_conflicts')
+                            for key, record in records.items() if key != '_contract')
                 and not str(getattr(args, 'restart_reason', '') or '').strip()):
             invalid('NATIVE_REVIEW_EVIDENCE_RECOVERY_REQUIRED', 'review',
                     'run review resume first; replacing observed unchanged-input evidence requires --restart-reason')
@@ -176,7 +178,7 @@ def begin_review(repo, work, args, identity):
         work['sdd'].setdefault('native_review_history', []).append({'layer': args.layer, 'review': existing, 'replacement_reason': getattr(args, 'restart_reason', None) or 'explicit restart'})
     run = existing if reused else {"id": new_id("review"), "status": "running", "inputs": inputs,
            "input_sha256": native_digest(inputs), "model": args.model,
-           "task_binding_version": 1, "finding_binding_version": 1, "layer": args.layer,
+           "task_binding_version": 1, "finding_binding_version": 1, "resolution_binding_version": 1, "layer": args.layer,
            "round_id": proposed['round_id'],
            "model_source": model_source,
            "existing_session_ids": [session['id'] for session in list_sessions(repo)],

@@ -151,7 +151,7 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--repo", default="."); sp.add_argument("--work"); sp.set_defaults(fn=cmd_sdd_sync)
     review = sdd_sub.add_parser("review", help="Record independent native reviews and pre-patch dispatch classification")
     review_sub = review.add_subparsers(dest="review_action", required=True)
-    for name in ("begin", "attach", "submit", "classify", "resolve", "findings", "prepare", "import", "status", "check", "draft", "classify-batch", "loopback", "diagnose", "recover", "resume"):
+    for name in ("begin", "attach", "submit", "classify", "resolve", "findings", "prepare", "import", "status", "check", "draft", "classify-batch", "loopback", "diagnose", "recover", "resume", "resolution-draft"):
         sp = review_sub.add_parser(name)
         sp.add_argument("--repo", default="."); sp.add_argument("--work")
         if name not in {'findings', 'prepare', 'status', 'classify-batch', 'loopback', 'resume'}:
@@ -173,6 +173,8 @@ def build_parser() -> argparse.ArgumentParser:
             sp.add_argument('--reason', required=True)
             sp.add_argument('--keep', required=True, help='Native KEEP instructions retained before reverting')
             sp.add_argument('--path', action='append', required=True, help='Exact product file to revert/reimplement; repeat for all affected files')
+        elif name == 'resolution-draft':
+            pass
         elif name == 'resume':
             sp.add_argument('--layer', action='append', help='Recover only these layers; default is all active layers')
             sp.add_argument('--transcript', action='append', default=[], help='Bound native session archive to search by observed final-message hash')
