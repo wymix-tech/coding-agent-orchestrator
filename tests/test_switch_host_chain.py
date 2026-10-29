@@ -69,6 +69,20 @@ class SwitchHostChain(unittest.TestCase):
         for suffix in ['delegation show', 'delegation --help']:
             self.assertEqual('allow', self.hook('pre_tool', toolName='bash', input={'command': f'{ROOT / "cao"} {suffix}'})['decision'])
 
+    def test_invocation_identity_survives_observation_off_and_ambiguous_calls_require_selection(self):
+        from scripts.control_context import identity
+        raw = {'toolName': 'bash', 'toolCallId': 'control-one', 'input': {'command': f'{ROOT / "cao"} switch --to {self.target}'}}
+        with patch('scripts.runtime_host.settings', return_value={'host_observation': 'off'}):
+            observe(self.repo, load_work(self.repo, self.first), raw, 'pi', 'current-pi', 'pre_tool', {'decision': 'allow'})
+        self.assertEqual(('pi', 'current-pi'), identity(self.repo, self.target))
+        raw2 = {**raw, 'toolCallId': 'control-two'}
+        observe(self.repo, load_work(self.repo, self.first), raw2, 'pi', 'other-session', 'pre_tool', {'decision': 'allow'})
+        with self.assertRaisesRegex(ValueError, 'AMBIGUOUS'):
+            identity(self.repo, self.target)
+        # Result notifications can omit the original arguments.
+        observe(self.repo, load_work(self.repo, self.first), {'toolName': 'bash', 'toolCallId': 'control-two'}, 'pi', 'other-session', 'post_tool', {'decision': 'allow'})
+        self.assertEqual(('pi', 'current-pi'), identity(self.repo, self.target))
+
     def test_observed_child_blocks_switch_until_ended(self):
         from scripts.cao_sessions import register_session, end_session
         register_session(self.repo, load_work(self.repo, self.first), 'child', 'pi',

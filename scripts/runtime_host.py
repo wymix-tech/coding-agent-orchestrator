@@ -46,7 +46,7 @@ def _meaningful(raw: dict, repo=None) -> bool:
         if any(re.search(r"\b(test|pytest|unittest|build|verify|mvn|gradle|openspec|specify|bmad)\b", c) for c in commands):
             return True
     # Unknown plugin tools may launch work; their name/action is no read-only proof.
-    return tool_is_mutating(raw) or tool not in {'bash', 'shell', 'exec_command', 'read', 'ls', 'grep', 'find', 'search_code', 'contact_supervisor'}
+    return tool_is_mutating(raw) or tool not in {'bash', 'shell', 'exec_command', 'read', 'ls', 'grep', 'find', 'search_code', 'contact_supervisor', 'ask_user_question', 'askuserquestion', 'request_user_input'}
 
 
 def observe(repo: Path, work: dict | None, raw: dict, host: str, session: str,
@@ -54,11 +54,11 @@ def observe(repo: Path, work: dict | None, raw: dict, host: str, session: str,
     if event not in {"pre_tool", "post_tool"}:
         return None
     try:
-        if settings(repo)["host_observation"] == "off":
-            return None
         from scripts.control_context import observe as observe_control
         if result.get('decision') != 'deny':
             observe_control(repo, raw, host, session, event)
+        if settings(repo)["host_observation"] == "off":
+            return None
         key = call_key(raw, host, session)
         route = binding(repo, raw, host, session) if key else None
         denied = result.get("decision") == "deny"
