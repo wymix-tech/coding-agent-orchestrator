@@ -18,6 +18,32 @@ def sources(work):
     return names
 
 
+
+def execution_command(command):
+    """Do not admit literal report replay or inline result synthesis as a check."""
+    from pathlib import Path
+    try:
+        tokens = shlex.split(command)
+    except ValueError:
+        return False
+    if not tokens or re.search(r'[\n\r;&|<>`$]', command):
+        return False
+    if Path(tokens[0]).name == 'env':
+        tokens = [token for token in tokens[1:] if '=' not in token]
+    if not tokens:
+        return False
+    program = Path(tokens[0]).name
+    data_tools = {'cat', 'echo', 'printf', 'cp', 'tee', 'head', 'tail', 'sed', 'awk', 'jq', 'true', 'false', 'sleep', 'ls', 'find', 'pwd', 'wc', 'touch'}
+    if program in data_tools:
+        return False
+    if program in {'sh', 'bash', 'zsh', 'dash'} and len(tokens) > 1 and tokens[1].startswith('-') and 'c' in tokens[1]:
+        return False
+    if program.startswith('python') and len(tokens) > 1 and tokens[1].startswith('-') and 'c' in tokens[1]:
+        return False
+    if program in {'node', 'perl', 'ruby'} and any(token in {'-e', '--eval', '-p', '--print'} for token in tokens[1:2]):
+        return False
+    return True
+
 def literal(text, command):
     # A whole line or code span is an explicit command, prose substrings are not.
     normalized = shlex.split(command)
@@ -59,7 +85,7 @@ def declare(args):
             raise ValueError('ACTIVE_CONTRACT_2_WORK_REQUIRED')
         path = provider_artifact(repo, args.source, provider_output_dirs(work['sdd']['provider'], repo))
         source = path.relative_to(repo).as_posix()
-        if source not in sources(work) or not args.reason.strip() or not literal(path.read_text(), args.command):
+        if source not in sources(work) or not args.reason.strip() or not execution_command(args.command) or not literal(path.read_text(), args.command):
             raise ValueError('NATIVE_VALIDATION_SOURCE_REQUIRED: command must be literal in a bound native specification/plan')
         row = {'command': args.command, 'source': source, 'source_sha256': hashlib.sha256(path.read_bytes()).hexdigest(),
                'requirement_sha256': work['requirement']['sha256'], 'reason': args.reason, 'at': now()}

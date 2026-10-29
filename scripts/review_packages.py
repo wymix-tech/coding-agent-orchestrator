@@ -108,9 +108,36 @@ def targets(raw):
             return tool, [], False
         if not words or words[0] not in {'cat', 'sed', 'head', 'tail', 'wc', 'rg', 'grep', 'ls', 'find'}:
             return tool, [], False
-        # Path arguments must be explicit; validate every non-option that resolves.
-        values = [word for word in words[1:] if not word.startswith('-')]
-        return tool, values, True
+        program, args = words[0], words[1:]
+        if program == 'sed':
+            if len(args) < 3 or args[0] != '-n' or not re.fullmatch(r'[1-9][0-9]*(?:,[1-9][0-9]*)?p', args[1]):
+                return tool, [], False
+            return tool, args[2:], True
+        if program in {'rg', 'grep'}:
+            flags = {'-n', '-i', '-F', '-S', '-l', '--fixed-strings', '--line-number', '--ignore-case', '--files-with-matches'}
+            while args and args[0] in flags:
+                args = args[1:]
+            if len(args) < 2 or args[0].startswith('-'):
+                return tool, [], False
+            paths = args[1:]
+            return tool, paths, not any(p.startswith('-') for p in paths)
+        if program not in {'cat', 'head', 'tail', 'wc'}:
+            return tool, [], False
+        paths, index = [], 0
+        while index < len(args):
+            word = args[index]
+            if program in {'head', 'tail'} and word in {'-n', '-c'}:
+                index += 1
+                if index >= len(args) or not re.fullmatch(r'[1-9][0-9]*', args[index]):
+                    return tool, [], False
+            elif word.startswith('-'):
+                allowed = {'--'} | ({'-n', '-b', '-E', '-T'} if program == 'cat' else {'-l', '-c', '-m'} if program == 'wc' else set())
+                if word not in allowed:
+                    return tool, [], False
+            else:
+                paths.append(word)
+            index += 1
+        return tool, paths, True
     return tool, _collect_path_strings(payload), True
 
 

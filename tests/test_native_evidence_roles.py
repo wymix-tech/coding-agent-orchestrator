@@ -67,3 +67,10 @@ class EvidenceRoles(unittest.TestCase):
         self.assertTrue(literal('Run `mvn -B test`.', 'mvn -B test'))
         self.assertFalse(literal('mvn test && cat old.log', 'mvn test && cat old.log'))
         self.assertFalse(literal('mvn -B test', 'mvn test'))
+
+    def test_declared_report_replay_or_inline_output_is_not_native_execution(self):
+        from scripts.native_validation import execution_command
+        for command in ('cat old.log', 'env cat old.log', 'echo passed', 'python -c "print(123)"', 'bash -lc "cat old.log"'):
+            self.assertFalse(execution_command(command), command)
+        self.assertTrue(execution_command('mvn -B test'))
+        self.assertTrue(execution_command('bash .orchestrator/scripts/verification/native.sh'))

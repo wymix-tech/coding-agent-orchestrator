@@ -112,3 +112,23 @@ class ContextPackages(unittest.TestCase):
         raw['input']['tasks'][0].pop('worktree')
         raw['input']['tasks'][0]['task'] += '\nRead SPEC and previous findings first.'
         self.assertIn('PACKAGE_REQUIRED', launch_guard(self.repo, self.work, raw))
+
+    def test_shell_inspectors_cannot_execute_or_read_hidden_secondary_inputs(self):
+        run, output, session = self.package('blind-hunter')
+        for command in ("sed -n 'r _bmad-output/spec.md' " + output['diff_file'],
+                        'rg --pre python pattern ' + output['diff_file'],
+                        'find src -exec python inspect.py {} +'):
+            reason = guard(self.repo, self.work, session, {'toolName': 'bash', 'input': {'command': command}})
+            self.assertIn('UNSUPPORTED', reason)
+        self.assertIsNone(guard(self.repo, self.work, session, {'toolName': 'bash', 'input': {'command': 'cat ' + output['diff_file']}}))
+
+    def test_missing_newline_and_hash_only_legacy_baseline_are_explicit(self):
+        import json
+        (self.repo / 'src/app.py').write_text('answer = 42')
+        (self.repo / 'baseline.json').write_text(json.dumps({'files': [{'path': 'src/app.py', 'sha256': 'old'}]}))
+        manifest = {'baseline': {'kind': 'work_start', 'reference': {'path': 'baseline.json'}},
+                    'changes': [{'status': 'M', 'path': 'src/app.py'}]}
+        diff = unified_diff(self.repo, self.work, manifest)
+        self.assertIn('baseline unavailable', diff)
+        self.assertIn('No newline at end of file', diff)
+        self.assertIn('+answer = 42', diff)

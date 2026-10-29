@@ -108,7 +108,7 @@ class WorkflowContractTests(unittest.TestCase):
             rc, out, _ = run(repo, "sdd", "workflow", "execute", "--command", "bmad workflow implement", "--exit-code", "0")
             self.assertEqual(rc, 0)
             self.assertEqual(out["workflow"]["execution"]["command"], "bmad workflow implement")
-            rc, out, _ = run(repo, "sdd", "workflow", "complete", "--artifact", "_bmad-output/spec.md")
+            rc, out, _ = run(repo, "sdd", "workflow", "complete", "--artifact", "_bmad-output/spec.md", "--no-plan")
             self.assertEqual(rc, 0)
 
     def test_allow_unverified_records_an_auditable_trace(self):

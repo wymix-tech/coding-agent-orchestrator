@@ -157,7 +157,7 @@ def read(repo, work, path, *, execution=None):
         from scripts.lifecycle_contract import inputs
         if identities['code_snapshot'] != inputs(repo, work)['code_snapshot']:
             raise ValueError('NATIVE_COMPLETION_REPORT_WRONG_SNAPSHOT')
-    types = sorted(set(declared_types)) or ['test_result' if checks else 'execution_result' if execution and not declarations else 'workflow_declaration']
+    types = sorted(set(declared_types)) or ['test_result' if checks else 'execution_result' if execution else 'workflow_declaration']
     if set(types) - {'test_result', 'execution_result', 'acceptance_result', 'security_result', 'manual_result', 'workflow_declaration'}:
         raise ValueError('NATIVE_COMPLETION_EVIDENCE_TYPE_UNSUPPORTED')
     coverage = {'verification'} if checks else set()

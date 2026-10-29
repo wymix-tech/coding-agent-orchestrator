@@ -39,7 +39,10 @@ class DashboardCompletionTests(RepairCase):
         if exit_code:
             args += ["--allow-unverified", "--reason", "accepted environment failure"]
         rc, out = self.run_cli("sdd", "workflow", "complete", "--artifact", "_bmad-output/story.md", *args)
-        self.assertEqual(rc, 0, out)
+        self.assertEqual(rc, 0 if no_plan else 2, out)
+        if not no_plan:
+            self.assertEqual('PLAN_SCOPE_UNRESOLVED', out['error'])
+            self.assertTrue(out['next'])
         if profile == "light":
             rc, out = self.run_cli("sdd", "spec", "bind", "--spec", "_bmad-output/story.md", "--criteria-section", "Acceptance")
             self.assertEqual(rc, 0, out)
@@ -103,7 +106,7 @@ class DashboardCompletionTests(RepairCase):
         self.assertEqual(rc, 0, out)
         unresolved = self.view()
         self.assertFalse(unresolved["completion"]["ready"])
-        self.assertIn("PLAN_SCOPE_UNRESOLVED", unresolved["completion"]["reason"])
+        self.assertNotEqual('completed', unresolved['sdd']['workflow']['status'])
         self.run_cli("sdd", "workflow", "complete", "--artifact", "_bmad-output/story.md", "--no-plan")
         wid = self.read_work(unresolved["id"])["id"]
         confirm_artifact(self.repo, wid, "_bmad-output/story.md")

@@ -30,11 +30,16 @@ def receipt_matches(repo, work, reports):
         if 'execution_boundary' not in repair:
             return False
         excluded = set(repair['execution_boundary'])
+    binding = (work.get('sdd') or {}).get('completion_evidence') or {}
+    # Switching sessions invalidates in-flight admission, not an already bound
+    # successful result whose exact material inputs and bytes remain unchanged.
+    bound_current = (binding.get('evidence_protocol') == 2 and binding.get('inputs') == current
+                     and all(ref in binding.get('reports', []) for ref in reports))
     accepted = []
     for row in reversed(rows):
         if row.get('run_id') in excluded:
             continue
-        if row.get('generation') != work.get('execution_generation', 0) or row.get('inputs') != current or row.get('domains') != material_inputs(repo, work):
+        if (row.get('generation') != work.get('execution_generation', 0) and not bound_current) or row.get('inputs') != current or row.get('domains') != material_inputs(repo, work):
             continue
         if row.get('status') != 'passed':
             break
@@ -170,6 +175,9 @@ def validate_command(work, command, repo=None):
     """Only replay a recorded native invocation, never cat/echo an old result."""
     import shlex
     from pathlib import Path
+    from scripts.native_validation import execution_command
+    if not execution_command(command):
+        raise ValueError('NATIVE_EXECUTION_COMMAND_UNBOUND: report replay and inline result synthesis are not native verification commands')
     def identity(value):
         tokens = shlex.split(value)
         if tokens and Path(tokens[0]).name.startswith('python'):

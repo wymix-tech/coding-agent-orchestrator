@@ -110,10 +110,12 @@ def unified_diff(repo, work, manifest):
         before = json.loads(repo_file(repo, baseline['reference']['path']).read_text())
         bodies = before.get('bodies') or {}
     chunks = []
+    incomplete = baseline['kind'] == 'legacy_current_tree'
     for change in manifest['changes']:
         name = change['path']
         previous = change.get('previous_path', name)
         old = b''
+        unavailable = False
         added = change['status'].startswith('A') or change['status'] == 'current'
         if not added:
             if baseline['kind'] == 'git_commit':
@@ -127,23 +129,33 @@ def unified_diff(repo, work, manifest):
                 if expected and hashlib.sha256(old).hexdigest() != expected:
                     raise ValueError('NATIVE_REVIEW_BASELINE_STALE')
             else:
-                raise ValueError('NATIVE_REVIEW_DIFF_BASELINE_UNAVAILABLE: restore the original baseline bytes or explicitly establish a native comparison baseline; ' + previous)
+                unavailable = True
+                incomplete = True
         path = repo_file(repo, name)
         new = path.read_bytes() if path.is_file() else b''
         header = 'diff --git a/' + previous + ' b/' + name + '\n'
         try:
             a, b = old.decode('utf-8').splitlines(keepends=True), new.decode('utf-8').splitlines(keepends=True)
-            delta = ''.join(difflib.unified_diff(a, b, fromfile='/dev/null' if added else 'a/' + previous,
-                tofile='/dev/null' if change['status'].startswith('D') else 'b/' + name))
+            lines = difflib.unified_diff(a, b, fromfile='/dev/null' if added else 'a/' + previous + (' (baseline unavailable)' if unavailable else ''),
+                tofile='/dev/null' if change['status'].startswith('D') else 'b/' + name)
+            delta = ''.join(line if line.endswith('\n') else line + '\n\\ No newline at end of file\n' for line in lines)
+            if unavailable and not delta:
+                delta = 'Baseline content unavailable; ' + ('file deleted' if not path.exists() else 'current file metadata') + '\n'
             if not delta and previous != name:
                 delta = 'rename from ' + previous + '\nrename to ' + name + '\n'
             if not delta and change.get('before') != change.get('after'):
                 delta = 'file mode or metadata changed\n'
         except UnicodeError:
             delta = 'Binary files differ\n'
+        if baseline['kind'] == 'git_commit' and path.is_file() and not added:
+            mode = subprocess.run(['git', 'ls-tree', baseline['commit'], '--', previous], cwd=repo, capture_output=True, text=True, timeout=10)
+            old_mode = mode.stdout.split(' ', 1)[0] if mode.returncode == 0 and mode.stdout else None
+            new_mode = '100755' if path.stat().st_mode & 0o111 else '100644'
+            if old_mode in {'100644', '100755'} and old_mode != new_mode:
+                delta = 'old mode ' + old_mode + '\nnew mode ' + new_mode + '\n' + delta
         if delta:
             chunks.append(header + delta + ('\n' if not delta.endswith('\n') else ''))
     if not chunks:
         raise ValueError('NATIVE_REVIEW_DIFF_EMPTY: no product changes to review')
-    limitation = '# Baseline unavailable: best-effort current product content; this is not proof of historical additions.\n' if baseline['kind'] == 'legacy_current_tree' else ''
+    limitation = '# Baseline unavailable: best-effort current product content; this is not proof of historical additions.\n' if incomplete else ''
     return limitation + ''.join(chunks)

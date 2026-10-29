@@ -55,3 +55,9 @@ Purpose-built Pi bash receipts preserve only declared commands with correlated c
 The sanitized BMAD replay passes: three layers, NO_VCS diff, interrupted legacy output recovery into a new primary session, one preserved review round, per-finding repair backed by real tests, SPEC-only evidence rejection, native acceptance binding, project baseline and explicit done. Reviewer findings are fixtures; this does not claim to rerun the original macOS model session or certify model semantics. Three real host-result reuse/incomplete-result tests pass.
 
 Full Python and Pi regression is running. This is a durable implementation checkpoint; final validation is still pending.
+
+## Full-regression corrections
+
+The first full run covered all 107 Python test modules and Pi's 39 adapter/runtime cases (all Pi cases passed). Four Python modules exposed older fixtures expecting late plan failure or status-only reports, plus a real session-switch freshness issue: an already bound successful native receipt must survive a generation change when its exact inputs/material domains/report bytes remain current. In-flight admission still rejects changed generations. These cases were corrected and targeted checks pass.
+
+Reviewer shell inspection now rejects secondary-file/evaluation escapes (sed read/execute, find -exec, rg pre-processors). Missing-newline diff rendering and hash-only legacy NO_VCS baselines have explicit representations and regression coverage. Report replay commands and inline output synthesis are not admissible native execution commands. Final full regression is pending after these corrections.
