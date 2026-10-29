@@ -37,6 +37,7 @@ class RecoveryClosure(unittest.TestCase):
         self.assertEqual(0, resumed.returncode, resumed.stdout + resumed.stderr)
         self.check('switch', '--to', target)
         self.check('switch', '--to', self.wid)
+        self.assertEqual('unchanged', self.bind()['status'])
         self.check('verify')
         self.check('done')
         self.assertEqual('completed', self.work()['status'])
@@ -341,7 +342,9 @@ class RecoveryClosure(unittest.TestCase):
 
     def test_multiple_reports_require_post_repair_receipt_for_each(self):
         self.prepare_product_repair()
-        self.check('lifecycle', 'execute', '--command', sys.executable + ' preparation_suite.py', '--report', 'openspec/second.log')
+        from scripts.cao_runtime import config
+        command = config(self.repo)['verification']['scripts'][0]['command']
+        self.check('lifecycle', 'execute', '--command', command, '--report', 'openspec/second.log')
         self.assertNotEqual(0, self.cli('lifecycle', 'bind', '--report', 'openspec/completion.md', '--report', 'openspec/second.log')[0])
         self.execute()
         self.check('lifecycle', 'bind', '--report', 'openspec/completion.md', '--report', 'openspec/second.log')

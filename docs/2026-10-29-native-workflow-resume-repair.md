@@ -46,7 +46,7 @@ New tickets require per-finding original content identity, actual changed produc
 
 Validation: six resolution-specific cases and 27 protocol/session integration cases pass. A targeted loopback test confirms intent-conflict precedence over metadata recovery. The earlier round suite found this precedence regression and it was corrected.
 
-## Stage 6 implementation checkpoint
+## Stage 6
 
 Active review protocol upgrades now have explicit preview/apply, immutable checkpoints and rollback refusing later progress. Pi navigation defaults to bounded agent JSON while full machine JSON and explicit history remain available. Session/host schemas document collected artifacts, input observations and archive recovery.
 
@@ -54,10 +54,22 @@ Purpose-built Pi bash receipts preserve only declared commands with correlated c
 
 The sanitized BMAD replay passes: three layers, NO_VCS diff, interrupted legacy output recovery into a new primary session, one preserved review round, per-finding repair backed by real tests, SPEC-only evidence rejection, native acceptance binding, project baseline and explicit done. Reviewer findings are fixtures; this does not claim to rerun the original macOS model session or certify model semantics. Three real host-result reuse/incomplete-result tests pass.
 
-Full Python and Pi regression is running. This is a durable implementation checkpoint; final validation is still pending.
+All six stages are implemented. Final regression results and remaining environment limits are recorded below.
 
 ## Full-regression corrections
 
 The first full run covered all 107 Python test modules and Pi's 39 adapter/runtime cases (all Pi cases passed). Four Python modules exposed older fixtures expecting late plan failure or status-only reports, plus a real session-switch freshness issue: an already bound successful native receipt must survive a generation change when its exact inputs/material domains/report bytes remain current. In-flight admission still rejects changed generations. These cases were corrected and targeted checks pass.
 
-Reviewer shell inspection now rejects secondary-file/evaluation escapes (sed read/execute, find -exec, rg pre-processors). Missing-newline diff rendering and hash-only legacy NO_VCS baselines have explicit representations and regression coverage. Report replay commands and inline output synthesis are not admissible native execution commands. Final full regression is pending after these corrections.
+Reviewer shell inspection now rejects secondary-file/evaluation escapes (sed read/execute, find -exec, rg pre-processors). Missing-newline diff rendering and hash-only legacy NO_VCS baselines have explicit representations and regression coverage. Report replay commands and inline output synthesis are not admissible native execution commands. The full rerun and the final affected-module rerun pass after these corrections.
+
+
+## Final acceptance (2026-10-29)
+
+- All 107 Python test modules were run as discovery shards. The final discovery has 1,273 entries and 1,249 unique identities (24 imported duplicates). All identities are covered: 1,245 unique passes, four explicit environment skips, no failures or missing identities.
+- Fourteen affected modules were rerun after final receipt/recovery corrections; all exited zero. Tests cover session-switch reuse and idempotent rebinding, rejection of pre-repair/old-generation receipts, every report requiring its own post-repair execution, Pi host receipts, canonical source-pointer repair without judgment changes, multi-layer failure diagnostics, migration/rollback, isolated tool input paths, and the complete NO_VCS BMAD replay.
+- Pi: `npm run test:pi` passed all 39 cases, including real Pi runtime event integration. `npm run check:pi`, `make check`, and `git diff --check` passed. Native execution receipt listing/freshness and invalid cursor handling also passed real CLI smoke checks.
+- The four Python skips are real Maven/JDK, Gradle/JDK and Go toolchain integration, plus optional cross-source verification against an official BMAD v6.12.4 checkout. These are not counted as passes. The original macOS/Java/model conversation was not rerun live; the sanitized control-flow replay executes real local product assertions with fixture reviewer findings.
+
+All review/acceptance ownership remains native. CAO checks the declared process, exact evidence identity, scope, observed execution and gate coverage; it does not certify the semantic completeness of native assertions or invisible backend context. Host capability output names those limits and requires fresh context-free reviewer sessions.
+
+Completed Work is preserved as history. Active old tickets can preview/apply a resolution-protocol upgrade; missing original binding/manifest/content identities produce explicit blockers instead of retrospective certification. New reviews use all current checks by default.

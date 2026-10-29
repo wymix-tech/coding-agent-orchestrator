@@ -14,7 +14,7 @@ def receipts(work):
     return sorted([*sdd.get('completion_executions', []), *sdd.get('native_host_executions', [])], key=lambda row: row.get('at', 0))
 
 
-def receipt_matches(repo, work, reports):
+def receipt_matches(repo, work, reports, *, binding=None):
     from scripts.lifecycle_contract import inputs
     from scripts.cao_runtime import sha256_file
     from scripts.path_guard import repo_file
@@ -30,10 +30,10 @@ def receipt_matches(repo, work, reports):
         if 'execution_boundary' not in repair:
             return False
         excluded = set(repair['execution_boundary'])
-    binding = (work.get('sdd') or {}).get('completion_evidence') or {}
+    binding = binding if binding is not None else (work.get('sdd') or {}).get('completion_evidence') or {}
     # Switching sessions invalidates in-flight admission, not an already bound
     # successful result whose exact material inputs and bytes remain unchanged.
-    bound_current = (binding.get('evidence_protocol') == 2 and binding.get('inputs') == current
+    bound_current = (repair.get('kind') != 'product' and binding.get('evidence_protocol') == 2 and binding.get('inputs') == current
                      and all(ref in binding.get('reports', []) for ref in reports))
     accepted = []
     for row in reversed(rows):
@@ -79,7 +79,7 @@ def command(args):
         rows = work['sdd'].setdefault('completion_executions', [])
         repair = work['sdd'].get('completion_repair') or {}
         if repair.get('kind') == 'product' and 'execution_boundary' not in repair:
-            repair['execution_boundary'] = [row['run_id'] for row in rows]
+            repair['execution_boundary'] = [row['run_id'] for row in receipts(work)]
         if rows and rows[-1]['status'] == 'running':
             previous = rows[-1]['run_id']
             if owner_status(repo, work['id'], previous) == 'running' or args.retry_of != previous:
@@ -161,7 +161,7 @@ def repair(args):
             work['sdd'].setdefault('completion_repair_history', []).append(previous)
         row = {'kind': args.kind, 'reason': args.reason, 'run_id': run.get('run_id'), 'at': now(), 'source': run.get('source', 'work_verification')}
         if args.kind == 'product':
-            row['execution_boundary'] = [item['run_id'] for item in work['sdd'].get('completion_executions', [])]
+            row['execution_boundary'] = [item['run_id'] for item in receipts(work)]
         work['sdd']['completion_repair'] = row
         work['execution'].update(phase='implementation' if args.kind == 'product' else 'verification',
                                  step='implementation' if args.kind == 'product' else 'verification')
@@ -204,14 +204,19 @@ def inspect_executions(args):
     from scripts.cao_work_store import resolve_work
     from scripts.lifecycle_contract import inputs
     repo = repo_root(args.repo)
+    if not 0 <= args.cursor <= 100000:
+        raise ValueError('NATIVE_EXECUTION_CURSOR_INVALID')
     work = resolve_work(repo, args.work)
     if not work:
         raise ValueError('NO_WORK_ITEM')
     rows = list(reversed(receipts(work)))
-    current = inputs(repo, work)
+    try:
+        current, input_error = inputs(repo, work), None
+    except (ValueError, OSError, RuntimeError) as exc:
+        current, input_error = None, str(exc)
     selected = rows[args.cursor:args.cursor + args.limit]
     result = [{**{k: row.get(k) for k in ('run_id', 'status', 'source', 'command', 'exit_code', 'reason', 'reports')},
-               'fresh': row.get('inputs') == current and row.get('domains') == material_inputs(repo, work)} for row in selected]
-    print(json.dumps({'ok': True, 'executions': result, 'total': len(rows),
+               'fresh': current is not None and row.get('inputs') == current and row.get('domains') == material_inputs(repo, work)} for row in selected]
+    print(json.dumps({'ok': True, 'executions': result, 'total': len(rows), 'input_error': input_error,
                       'next_cursor': args.cursor + len(selected) if args.cursor + len(selected) < len(rows) else None}))
     return 0

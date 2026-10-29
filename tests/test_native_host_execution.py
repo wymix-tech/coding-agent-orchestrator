@@ -54,3 +54,20 @@ class NativeHostExecution(unittest.TestCase):
     def test_post_without_correlated_start_does_not_create_a_receipt(self):
         self.finish(call='unknown-call')
         self.assertFalse(self.n.work()['sdd'].get('native_host_executions'))
+
+    def test_pre_repair_host_receipts_cannot_resolve_a_new_product_repair(self):
+        from scripts.cao_work_store import load_work, save_work
+        self.start()
+        self.finish()
+        before = self.n.work()['sdd']['native_host_executions'][-1]
+        self.n.check('lifecycle', 'bind', '--report', before['reports'][0]['path'])
+        work = load_work(self.repo, self.n.wid)
+        work['verification'] = {'status': 'failed', 'run_id': 'failed-product-check'}
+        save_work(self.repo, work)
+        self.n.check('lifecycle', 'repair', '--kind', 'product', '--reason', 'Native assertion needs a fresh check')
+        self.assertEqual(2, self.n.cli('lifecycle', 'bind', '--report', before['reports'][0]['path'])[0])
+        self.start(call='post-repair-check')
+        self.finish(call='post-repair-check')
+        after = self.n.work()['sdd']['native_host_executions'][-1]
+        self.n.check('lifecycle', 'bind', '--report', after['reports'][0]['path'])
+        self.assertNotIn('completion_repair', self.n.work()['sdd'])

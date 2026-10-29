@@ -175,14 +175,14 @@ def read(repo, work, path, *, execution=None):
             'source': path.relative_to(repo).as_posix()}
 
 
-def validate_coverage(repo, work, reports, observations, gates):
+def validate_coverage(repo, work, reports, observations, gates, *, previous_binding=None):
     """Result declarations cannot be promoted to checks by CLI gate flags."""
     from scripts.native_execution import receipt_matches
     covered = set()
     for ref, row in zip(reports, observations):
         if 'workflow_declaration' in row['evidence_types'] and not row['check_records']:
             raise ValueError('NATIVE_COMPLETION_CHECK_EVIDENCE_REQUIRED: document/workflow status is not a verification result')
-        observed = receipt_matches(repo, work, [ref])
+        observed = receipt_matches(repo, work, [ref], binding=previous_binding)
         identities = row['identities']
         scoped = identities.get('work_id', identities.get('work_item_id')) == work['id']
         from scripts.lifecycle_contract import inputs

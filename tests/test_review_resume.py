@@ -7,7 +7,7 @@ from pathlib import Path
 from unittest.mock import patch
 from scripts.review_resume import archived_message, canonical_source
 from scripts.review_observation import artifact_record
-from tests.test_conformance_knowledge import SessionConformance
+from tests import test_conformance_knowledge as fixtures
 
 
 class ArchiveRecovery(unittest.TestCase):
@@ -29,7 +29,7 @@ class ArchiveRecovery(unittest.TestCase):
 
 class ResumeCLI(unittest.TestCase):
     def setUp(self):
-        self.fixture = SessionConformance()
+        self.fixture = fixtures.SessionConformance()
         self.fixture.setUp()
         self.addCleanup(self.fixture.doCleanups)
         self.t = self.fixture.t
@@ -81,3 +81,30 @@ class ResumeCLI(unittest.TestCase):
         self.collect(package, '- Original output')
         out = self.t.run_cli('sdd', 'review', 'draft', '--layer', package['layer'])
         self.assertEqual(1, len(out['findings']))
+
+    def test_resume_repairs_source_pointer_without_changing_judgments(self):
+        package = self.packages[0]
+        self.collect(package, '- Original output')
+        drafted = self.t.run_cli('sdd', 'review', 'draft', '--layer', package['layer'])
+        path = self.t.repo / drafted['report']
+        report = json.loads(path.read_text())
+        report['findings'][0].update(verdict='false', disposition='reject', evidence='Original claim refuted by guard')
+        copied = self.t.repo / '_bmad-output/copied.md'
+        copied.write_text('- Original output')
+        report['findings_file'] = copied.relative_to(self.t.repo).as_posix()
+        path.write_text(json.dumps(report))
+        copied.write_text('damaged external copy')
+        result = self.t.run_cli('sdd', 'review', 'resume', '--layer', package['layer'])
+        updated = json.loads(path.read_text())
+        self.assertEqual(report['findings'], updated['findings'])
+        self.assertEqual(result['layers'][0]['source'], updated['findings_file'])
+        self.assertNotEqual(report['findings_file'], updated['findings_file'])
+
+    def test_multi_layer_resume_failure_returns_a_diagnostic_instead_of_crashing(self):
+        from scripts.cao_work_store import load_work, save_work
+        work = load_work(self.t.repo, self.t.wid)
+        work['sdd']['native_reviews']['_contract']['sources'] = ['missing-native-instructions.md']
+        save_work(self.t.repo, work)
+        result = self.t.run_cli('sdd', 'review', 'resume', '--layer', self.packages[0]['layer'], expected=2)
+        self.assertFalse(result['ok'])
+        self.assertIn('error', result)

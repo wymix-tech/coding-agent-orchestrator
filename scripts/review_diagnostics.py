@@ -51,7 +51,7 @@ def report_shape(report, *, dispatch):
 def request_identity(repo, work, args):
     from scripts.path_guard import repo_file
     from scripts.cao_providers import host_session_identity
-    run = ((work.get('sdd') or {}).get('native_reviews') or {}).get(getattr(args, 'layer', None)) or {}
+    run = ((work.get('sdd') or {}).get('native_reviews') or {}).get(getattr(args, 'layer', None) if isinstance(getattr(args, 'layer', None), str) else None) or {}
     value = {'request': {key: val for key, val in vars(args).items() if not callable(val)},
              'session': host_session_identity(None), 'run': run}
     try:
@@ -109,7 +109,7 @@ def failure(repo, work, args, exc):
     from scripts.runtime_store import read_record, safe_path, write_record
     diagnostics = getattr(exc, 'diagnostics', None) or [{'code': str(exc), 'field': 'review',
                                                         'expected': 'current native review contract and evidence'}]
-    run = ((work.get('sdd') or {}).get('native_reviews') or {}).get(getattr(args, 'layer', None)) or {}
+    run = ((work.get('sdd') or {}).get('native_reviews') or {}).get(getattr(args, 'layer', None) if isinstance(getattr(args, 'layer', None), str) else None) or {}
     fault = {'work': work['id'], 'input': run.get('input_sha256'),
              'layer': getattr(args, 'layer', None),
              'diagnostics': [{key: row.get(key) for key in ('code', 'field')} for row in diagnostics]}
@@ -127,6 +127,17 @@ def failure(repo, work, args, exc):
                 'retry_count': count, 'pause_retry': count >= 2,
                 'retry_when': 'Correct the named prerequisite or judgment with evidence. Identical failed requests are paused; report cosmetics do not reset the fault count.',
                 'next': ('Use `cao sdd review diagnose --layer <layer>` to inspect bound artifacts and hashes. For legacy output, `cao sdd review recover --layer <layer> --source <original-message>` requires the exact observed full message. Reuse findings; do not restart reviewers for metadata repair. ' + ('Dispatch route: draft, classify ALL layers, patch, then resolve.' if (work.get('sdd', {}).get('route_decision') or {}).get('build_route') == 'dispatch' else 'Oneshot route: draft, classify ALL layers, patch, then submit a resolved JSON report.'))}
+    code = str(exc).split(':', 1)[0]
+    if code.startswith('NATIVE_REVIEW_RESOLUTION_'):
+        response['next'] = ('Inspect the named per-finding resolution field. Use `cao sdd review resolution-draft --layer <layer>` and preserve its existing report; fill original content hashes, actual changed-file references and current verification assertions/results. Inspect `cao lifecycle executions` for reusable current native checks; run only missing checks. Refresh code_snapshot after edits, then resolve (dispatch) or submit (oneshot). Do not restart reviewers for resolution metadata.')
+    elif code == 'NATIVE_REVIEW_ALL_OUTPUTS_REQUIRED':
+        response['next'] = 'Wait for every bound reviewer final output. Run `cao sdd review resume` to collect existing evidence, then classify all layers before patches; do not start another round.'
+    elif code in {'NATIVE_REVIEW_PROMPT_PACKAGE_REQUIRED', 'NATIVE_REVIEW_SYNCHRONOUS_REQUIRED', 'NATIVE_REVIEW_HOST_ARGUMENT_INVALID', 'NATIVE_REVIEW_CONTEXT_PATH_FORBIDDEN', 'NATIVE_REVIEW_CONTEXT_TOOL_UNSUPPORTED'}:
+        response['next'] = 'Use the current prepared prompt_file verbatim in a context-free reviewer task. Set async:false and await all layers. Use scoped read tools and only the inputs allowed by that layer; ask the coordinator for checks requiring other tools. Preserve current tickets.'
+    elif code == 'NATIVE_REVIEW_DRAFT_EXISTS':
+        response['next'] = 'Run `cao sdd review resume` and complete the existing report.json judgments; do not overwrite triage or rewrite original findings.'
+    elif code == 'NATIVE_REVIEW_SOURCE_AMBIGUOUS':
+        response['next'] = 'Inspect `cao sdd review diagnose --layer <layer>`, select the actual attested findings artifact, then run `cao sdd review draft --layer <layer> --source <attested-path>`; do not reconstruct findings.'
     if path:
         history[repair_id] = count
         try:

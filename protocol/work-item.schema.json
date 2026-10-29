@@ -48,6 +48,129 @@
     "sdd": {
       "type": "object",
       "properties": {
+        "native_reviews": {
+          "type": "object",
+          "description": "Current native reviewer tickets. Missing protocol versions denote historical evidence; they are not recertified.",
+          "properties": {
+            "_contract": {
+              "type": "object"
+            }
+          },
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "task_binding_version": {
+                "type": "integer"
+              },
+              "finding_binding_version": {
+                "type": "integer"
+              },
+              "resolution_binding_version": {
+                "type": "integer"
+              },
+              "context_package": {
+                "type": "object",
+                "required": [
+                  "path",
+                  "sha256"
+                ],
+                "properties": {
+                  "path": {
+                    "type": "string"
+                  },
+                  "sha256": {
+                    "type": "string"
+                  }
+                },
+                "additionalProperties": true
+              },
+              "input_manifest": {
+                "type": "object"
+              },
+              "resolution_evidence": {
+                "type": "object"
+              }
+            },
+            "additionalProperties": true
+          }
+        },
+        "completion_evidence": {
+          "type": "object",
+          "properties": {
+            "evidence_protocol": {
+              "type": "integer"
+            },
+            "covered_gates": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "reports": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": [
+                  "path",
+                  "sha256"
+                ],
+                "properties": {
+                  "path": {
+                    "type": "string"
+                  },
+                  "sha256": {
+                    "type": "string"
+                  }
+                },
+                "additionalProperties": true
+              }
+            },
+            "provenance": {
+              "type": "object"
+            }
+          },
+          "additionalProperties": true
+        },
+        "native_completion_report_outputs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "native_execution_reports": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "native_host_executions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": true
+          }
+        },
+        "completion_executions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": true
+          }
+        },
+        "native_validation_commands": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": true
+          }
+        },
+        "review_protocol_migrations": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": true
+          }
+        },
         "native_loopback": {"type": "object", "required": ["id", "status", "paths", "source", "requirement_sha256"], "properties": {"id": {"type": "string"}, "status": {"enum": ["reimplementing", "reviewing"]}, "paths": {"type": "array", "minItems": 1, "items": {"type": "string"}}, "source": {"type": "string"}, "requirement_sha256": {"type": "string"}, "keep": {"type": "string"}, "reason": {"type": "string"}, "baseline_commit": {"type": ["string", "null"]}, "human_resolution_required": {"type": "boolean"}}, "additionalProperties": true},
         "native_loopback_history": {"type": "array", "items": {"type": "object"}},
         "native_units": {"type": "object", "additionalProperties": {"type": "object", "required": ["source", "route", "reviews", "evidence_hashes", "requirement_sha256"], "additionalProperties": true}},

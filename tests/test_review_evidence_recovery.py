@@ -126,3 +126,12 @@ class ReviewEvidenceRecovery(unittest.TestCase):
             auto_bind(self.repo, work, self.child)
             attach.assert_called_once()
             save.assert_called_once_with(self.repo, work)
+
+    def test_resolution_errors_navigate_to_resolution_instead_of_restarting_reviews(self):
+        import argparse
+        from scripts.review_diagnostics import failure
+        work = {'id': 'work-1', 'sdd': {'native_reviews': {'blind-hunter': self.run}}}
+        args = argparse.Namespace(review_action='resolve', layer='blind-hunter')
+        out = failure(self.repo, work, args, ValueError('NATIVE_REVIEW_RESOLUTION_EVIDENCE_REQUIRED'))
+        self.assertIn('resolution-draft', out['next'])
+        self.assertIn('lifecycle executions', out['next'])

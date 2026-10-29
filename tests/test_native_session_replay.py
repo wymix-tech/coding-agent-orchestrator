@@ -116,4 +116,7 @@ class NativeSessionReplay(unittest.TestCase):
         t.run_cli('verify')
         t.run_cli('done')
         self.assertEqual('completed', t.work()['status'])
-        self.assertEqual(1, t.run_cli('sdd', 'review', 'status', expected=2).get('review_counts', counts)['observed_round_count'])
+        from scripts.review_dispatch import review_counts
+        final_counts = review_counts(t.work())
+        self.assertEqual(1, final_counts['observed_round_count'])
+        self.assertEqual(3, final_counts['total_task_count'])

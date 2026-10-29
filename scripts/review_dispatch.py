@@ -268,7 +268,10 @@ def agent_capability(repo, definition, host):
             'task_contract': {'role': 'reviewer', 'product_writes': False,
                               'evidence': ['original-findings', 'review-input', 'reviewer-identity']},
             'launch_preflight': ['verify effective runtime tools/extensions', 'verify backend executable and model-override support'],
-            'model_override': 'only when supported by the selected host backend'}
+            'model_override': 'only when supported by the selected host backend',
+            'context_isolation': {'required': 'fresh independent session without parent transcript',
+                                  'enforced': 'exact native task prompt and observed tool paths/order',
+                                  'backend_hidden_context': 'not attested by CAO; do not claim semantic isolation beyond observations'}}
 
 
 def prepare_batch(repo, work, args, identity):
@@ -285,7 +288,7 @@ def prepare_batch(repo, work, args, identity):
         invalid('TASK_ACCEPTANCE_COVERAGE_INCOMPLETE', 'acceptance.coverage', preflight['next'], preflight['coverage'])
     host = identity[0] if identity else detect_current_host()
     if getattr(args, 'external_session', False):
-        capability = {'mode': 'external-session', 'requires': ['new session per layer', 'shell', 'CAO host adapter'],
+        capability = {'mode': 'external-session', 'requires': ['new context-free session per layer', 'read/search tools', 'CAO host adapter'],
                       'verified_at': 'attach; preparation does not certify external execution'}
     elif getattr(args, 'agent_definition', None):
         capability = agent_capability(repo, args.agent_definition, host)

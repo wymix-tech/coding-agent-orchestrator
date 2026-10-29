@@ -36,6 +36,10 @@ def observe(repo, work, session, raw, host, event, decision):
         reports = work['sdd'].setdefault('native_execution_reports', [])
         if output not in reports:
             reports.append(output)
+        repair = work['sdd'].get('completion_repair') or {}
+        if repair.get('kind') == 'product' and 'execution_boundary' not in repair:
+            from scripts.native_execution import receipts
+            repair['execution_boundary'] = [r['run_id'] for r in receipts(work)]
         row = {'run_id': key, 'source': 'pi_bash_structured_result_v1', 'status': 'running',
                'host': host, 'session_id': session['host_session_id'], 'command': command,
                'generation': work.get('execution_generation', 0), 'at': time.time(),

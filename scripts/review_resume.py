@@ -67,6 +67,8 @@ def archived_message(repo, session, explicit=()):
                 header = json.loads(stream.readline(2 * 1024 * 1024))
             except (ValueError, UnicodeError):
                 continue
+            if not isinstance(header, dict):
+                continue
             identified = header.get('type') == 'session' and header.get('id') == native_id
             if not identified and native_id not in path.name:
                 continue
@@ -127,7 +129,14 @@ def resume(repo, work, layers=None, transcripts=()):
                 previous = json.loads(report.read_text())
                 if previous.get('findings'):
                     from scripts.native_obligations import load_findings, validate_finding_content
+                    if previous.get('run_id') != run.get('id') or previous.get('input_sha256') != run.get('input_sha256'):
+                        raise ValueError('NATIVE_REVIEW_RUN_STALE_OR_MISMATCH: preserve this report as historical; it belongs to another ticket')
                     validate_finding_content(run, previous, repo_file(repo, source), load_findings(repo_file(repo, source)))
+                    if previous.get('findings_file') != source:
+                        # Correct only the attested source pointer; preserve judgments.
+                        from scripts.state_store import atomic_json
+                        previous['findings_file'] = source
+                        atomic_json(report, previous)
                     row.update(phase='drafted', source=source, report=report.relative_to(repo).as_posix(), next='Reuse the existing triage judgments; classify after all outputs are collected.')
                     outputs.append(row)
                     continue

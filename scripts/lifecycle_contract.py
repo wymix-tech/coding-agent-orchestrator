@@ -281,13 +281,16 @@ def binding_command(args):
         material_changes = set(changed_domains(previous.get('domains', {}), record['domains'])['changed_domains']) & {'product', 'native_sources', 'native_scope', 'native_dependencies', 'policy'}
         changed_native_inputs = bool(previous and (previous.get('inputs') != record['inputs'] or material_changes))
         from scripts.native_reports import validate_coverage
-        record['covered_gates'] = validate_coverage(repo, candidate, reports, observations, gates)
+        record['covered_gates'] = validate_coverage(repo, candidate, reports, observations, gates, previous_binding=previous)
         record['evidence_protocol'] = 2
         execution_reports = [ref for ref, observation in zip(reports, observations)
                              if not (observation.get('check_records') and set(observation['evidence_types']) <= {'acceptance_result', 'security_result', 'manual_result'})]
         if (execution_reports and (changed_native_inputs or receipts(candidate) or (sdd.get('completion_repair') or {}).get('kind') == 'product')
-                and not receipt_matches(repo, candidate, execution_reports)):
+                and not receipt_matches(repo, candidate, execution_reports, binding=previous)):
             raise ValueError('NATIVE_COMPLETION_REEXECUTION_REQUIRED: run the affected native command with cao lifecycle execute --command <native-command> --report <native-log>, then bind its actual output')
+        record['provenance']['report_authorities'] = [
+            {'path': ref['path'], 'authority': 'observed_execution' if receipt_matches(repo, candidate, [ref], binding=previous) else 'native_result_declaration'}
+            for ref in reports]
         from scripts.evidence_archive import validate_manifest
         record['selected_evidence_ids'] = validate_manifest(repo, candidate, reports, getattr(args, 'evidence', None) or [])
         old = sdd.get('completion_evidence')
@@ -380,7 +383,7 @@ def register(sub):
             parser.add_argument('--check', action='store_true', help='Read-only preflight; do not change Work or guard state')
         if name == 'executions':
             parser.add_argument('--limit', type=int, choices=range(1, 101), default=20)
-            parser.add_argument('--cursor', type=int, choices=range(0, 100001), default=0)
+            parser.add_argument('--cursor', type=int, default=0)
         if name == 'declare':
             parser.add_argument('--command', required=True)
             parser.add_argument('--source', required=True)
