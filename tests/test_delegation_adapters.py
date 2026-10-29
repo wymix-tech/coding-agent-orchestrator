@@ -64,6 +64,15 @@ class DelegationAdapters(unittest.TestCase):
         self.assertIsNone(launch_guard(self.repo, self.work, raw))
         self.assertIsNone(launch_guard(self.repo, self.work, {'toolName': 'write', 'input': {'content': self.prompt}}))
 
+    def test_ticket_text_in_search_or_parent_message_is_not_delegation(self):
+        for tool, payload in [('grep', {'pattern': 'CAO_REVIEW_TICKET'}),
+                              ('contact_supervisor', {'message': self.prompt, 'reason': 'progress_update'})]:
+            self.assertIsNone(launch_guard(self.repo, self.work, {'toolName': tool, 'input': payload}))
+
+    def test_forbidden_task_field_is_rejected_even_when_null(self):
+        raw = {'toolName': 'subagent', 'input': {'tasks': [{'task': self.prompt, 'async': None}], 'async': False}}
+        self.assertIn('ARGUMENT_INVALID', launch_guard(self.repo, self.work, raw))
+
     def test_ambiguous_and_invalid_contracts_rejected(self):
         rows = json.loads((self.repo / REGISTRY).read_text())
         rows.append({**deepcopy(rows[0]), 'plugin': 'other'})

@@ -14,6 +14,14 @@ def get(value, path):
     return value
 
 
+def has(value, path):
+    for key in path.split('.'):
+        if not isinstance(value, dict) or key not in value:
+            return False
+        value = value[key]
+    return True
+
+
 def put(value, path, item):
     keys = path.split('.')
     for key in keys[:-1]:
@@ -70,7 +78,7 @@ def normalize(repo, tool, payload):
         raise ValueError('DELEGATION_TASKS_REQUIRED')
     if any(not isinstance(task, dict) or not isinstance(get(task, row['prompt_field']), str) for task in tasks):
         raise ValueError('DELEGATION_PROMPT_REQUIRED')
-    if any(get(task, path) is not None for task in tasks for path in row.get('forbidden_task_fields', [])):
+    if any(has(task, path) for task in tasks for path in row.get('forbidden_task_fields', [])):
         raise ValueError('NATIVE_REVIEW_HOST_ARGUMENT_INVALID: plugin task field is forbidden')
     return [{'task': get(task, row['prompt_field'])} for task in tasks]
 

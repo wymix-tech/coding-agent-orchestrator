@@ -219,7 +219,8 @@ def launch_guard(repo, work, raw):
     tool = _event_key(raw, 'tool_name', 'toolName', 'tool', 'name').lower()
     payload = raw.get('tool_input') or raw.get('input') or raw.get('arguments') or {}
     # Ordinary artifact writes and non-review plugin operations are not launches.
-    if tool in {'read', 'write', 'edit', 'apply_patch', 'bash', 'exec_command'} or 'CAO_REVIEW_TICKET' not in json.dumps(payload):
+    if tool in {'read', 'write', 'edit', 'apply_patch', 'bash', 'exec_command',
+                'ls', 'grep', 'find', 'search_code', 'contact_supervisor'} or 'CAO_REVIEW_TICKET' not in json.dumps(payload):
         return None
     from scripts.delegation_adapters import normalize
     try:
