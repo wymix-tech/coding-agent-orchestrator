@@ -158,6 +158,13 @@ A switch invoked through host hooks retains its observed coordinator identity
 for the transaction. Without that context use `--host <host> --session <native-id>`
 or an existing host session environment identity. Multiple invoking candidates
 require an explicit choice. Idle sessions alone never establish the caller.
+All supported shell tool aliases use the same trusted-launcher parsing, including
+`exec_command` and `shell_command`. Both `--to <id>` and `--to=<id>` work in a
+compound control command such as `cao status && cao switch --to=<id>`. Global
+JSON presentation flags may precede or follow the command. The observed working
+directory and explicit `--repo` select the project; another project's command
+does not rebind this project's session. Expired invocation context requires an
+explicit `--host/--session` instead of silently omitting the session binding.
 Source suspension, target activation and session binding share the recoverable
 operation. Do not end the coordinator session before switching. Old results keep
 their original start-time Work binding.

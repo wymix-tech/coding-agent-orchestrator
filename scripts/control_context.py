@@ -1,15 +1,44 @@
 """Observed invocation identity for a switch; never inferred from idle sessions."""
 import time
+import argparse
 from scripts.state_store import atomic_json
 from scripts.runtime_store import event_key, read_record
 
 
+class _SwitchParser(argparse.ArgumentParser):
+    def error(self, message):
+        raise ValueError(message)
+
+
+def switch_targets(repo, command, cwd):
+    """Use the actual switch grammar after trusted shell/launcher parsing."""
+    from scripts.cao_tool_policy import control_shell_invocations
+    from scripts.work_operations import register_parser
+    calls = control_shell_invocations(command, cwd)
+    if not calls:
+        return []
+    parser = _SwitchParser(add_help=False)
+    register_parser(parser.add_subparsers())
+    targets = []
+    for call in calls:
+        arguments = call['arguments']
+        if arguments[0] != 'switch' or any(flag in arguments for flag in ('--help', '-h')):
+            continue
+        try:
+            args = parser.parse_args(arguments)
+        except ValueError:
+            continue
+        if not args.switch_action and args.to and not args.check and (call['cwd'] / args.repo).resolve() == repo.resolve():
+            targets.append(args.to)
+    return sorted(set(targets))
+
+
 def observe(repo, raw, host, session, event):
-    from scripts.cao_tool_policy import _event_key, control_shell_segments
-    if _event_key(raw, 'toolName', 'tool_name', 'tool', 'name').lower() not in {'bash', 'shell'}:
+    from scripts.cao_tool_policy import _event_key, SHELL_TOOLS, tool_cwd
+    if _event_key(raw, 'toolName', 'tool_name', 'tool', 'name').lower() not in SHELL_TOOLS:
         return
-    payload = raw.get('input') or raw.get('tool_input') or raw.get('arguments') or {}
-    command = payload.get('command') if isinstance(payload, dict) else None
+    payload = raw.get('input') or raw.get('tool_input') or raw.get('arguments') or raw.get('params') or {}
+    command = _event_key(payload, 'command', 'cmd') if isinstance(payload, dict) else payload
     call = _event_key(raw, 'tool_call_id', 'toolCallId', 'tool_use_id', 'call_id')
     if not call or not session:
         return
@@ -20,28 +49,14 @@ def observe(repo, raw, host, session, event):
     if event == 'post_tool':
         path.unlink(missing_ok=True)
         return
-    if not command:
+    if not isinstance(command, str) or not command:
         return
     try:
-        parts = control_shell_segments(command, repo)
-        if not parts or len(parts) != 1:
-            return
-        tokens = parts[0]
-        if 'switch' not in tokens or '--to' not in tokens or '--check' in tokens:
-            return
-        target = tokens[tokens.index('--to') + 1]
-    except (ValueError, IndexError):
+        targets = switch_targets(repo, command, tool_cwd(raw, repo))
+    except (ValueError, OSError):
         return
-    folder = repo / '.orchestrator/control-calls'
-    if folder.is_symlink():
-        raise ValueError('CONTROL_CONTEXT_SYMLINK')
-    path = folder / (event_key(host, session, call) + '.json')
-    if path.is_symlink():
-        raise ValueError('CONTROL_CONTEXT_SYMLINK')
-    if event == 'post_tool':
-        path.unlink(missing_ok=True)
-    elif event == 'pre_tool':
-        atomic_json(path, {'host': host, 'session': session, 'target': target, 'at': time.time()})
+    if targets and event == 'pre_tool':
+        atomic_json(path, {'host': host, 'session': session, 'targets': targets, 'at': time.time()})
 
 
 def identity(repo, target):
@@ -51,7 +66,9 @@ def identity(repo, target):
         raise ValueError('CONTROL_CONTEXT_SYMLINK')
     for path in folder.glob('*.json'):
         row = read_record(path)
-        if row and row.get('target') == target and 0 <= time.time() - row.get('at', 0) < 120:
+        if row and target in row.get('targets', [row.get('target')]):
+            if not 0 <= time.time() - row.get('at', 0) < 120:
+                raise ValueError('SWITCH_INVOCATION_EXPIRED: supply --host and --session')
             rows.append((row['host'], row['session']))
     if len(rows) > 1:
         raise ValueError('SWITCH_SESSION_AMBIGUOUS: supply --host and --session')

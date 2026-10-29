@@ -1,6 +1,13 @@
 """Compact JSON presentation with original status, errors and process exit code."""
 import json
 
+OUTPUT_FLAGS = frozenset({'--compact-json', '--agent-json', '--full-json'})
+
+
+def strip_output_flags(arguments):
+    """Global presentation flags are accepted anywhere by the CLI."""
+    return [item for item in arguments if item not in OUTPUT_FLAGS]
+
 
 def summarize(value):
     if not isinstance(value, dict):

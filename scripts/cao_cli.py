@@ -384,7 +384,8 @@ def main(argv: list[str] | None = None) -> int:
         import os
         compact = '--compact-json' in arguments
         agent_output = ('--agent-json' in arguments or os.environ.get('CAO_OUTPUT_MODE') == 'agent') and '--full-json' not in arguments
-        arguments = [item for item in arguments if item not in {'--compact-json', '--agent-json', '--full-json'}]
+        from scripts.cli_output import strip_output_flags
+        arguments = strip_output_flags(arguments)
         args = build_parser().parse_args(arguments)
         args.full_json = '--full-json' in list(sys.argv[1:] if argv is None else argv)
         if getattr(args, "check", False) and args.command == "switch":

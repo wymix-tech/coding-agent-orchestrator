@@ -38,8 +38,8 @@ def _meaningful(raw: dict, repo=None) -> bool:
     if commands:
         try:
             # Control commands create their own lifecycle/run records. No recursion.
-            from scripts.cao_tool_policy import control_shell_segments
-            if all(control_shell_segments(command, repo) for command in commands):
+            from scripts.cao_tool_policy import control_shell_segments, tool_cwd
+            if all(control_shell_segments(command, tool_cwd(raw, repo)) for command in commands):
                 return False
         except ValueError:
             pass
