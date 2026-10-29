@@ -205,7 +205,7 @@ def begin_review(repo, work, args, identity):
         package = policy(repo, run, check_claims=False)
         output['prompt_file'] = package['prompt']
         output['diff_file'] = package['diff']
-        output['launch'] = {'mode': 'synchronous', 'wait_for_all': True, 'async': False}
+        output['launch'] = {'mode': 'synchronous', 'wait_for_all': True, 'transport': 'explicit_plugin_adapter'}
     output['next'] = ('Use the generated prompt_file verbatim as the child task; do not add whole-step/spec/history context. Include task_marker as an exact standalone line in the actual reviewer task prompt. Never bind by session order. Begin ALL active layers before launching reviewers. The host automatically binds each ticket-marked observed child before inspection using parent/model/tools metadata. Use reviewer_start or coordinator --reviewer-session only for compatible manual/external attachment; never attach after inspection. '
         'to acknowledge this ticket and frozen input, then inspect that exact code without product writes. '
         + ('Preserve unmodified native Markdown/JSON findings for each layer; classify ALL layers before patches, then resolve ALL layers. '
@@ -359,10 +359,10 @@ def prepare_batch(repo, work, args, identity):
         elif run.get('context_package'):
             from scripts.review_packages import policy
             frozen = policy(repo, run, check_claims=False)
-            package.update(prompt_file=frozen['prompt'], diff_file=frozen['diff'], launch={'mode': 'synchronous', 'wait_for_all': True, 'async': False})
+            package.update(prompt_file=frozen['prompt'], diff_file=frozen['diff'], launch={'mode': 'synchronous', 'wait_for_all': True, 'transport': 'explicit_plugin_adapter'})
         atomic_json(root / 'dispatch.json', package)
         outputs.append(package)
-    return {'ok': True, 'reviews': outputs, 'owner': 'sdd_provider', 'transport': {'state': 'adapter_required', 'next': 'Select the installed delegation plugin adapter; no universal Pi workflow is assumed.'},
+    return {'ok': True, 'reviews': outputs, 'owner': 'sdd_provider', 'transport': {'state': 'adapter_required', 'next': 'Inspect cao delegation show; register the installed plugin contract with cao delegation register --manifest <file>, then cao delegation launch --plugin <id> --agent <name>. Pi supplies no universal workflow schema.'},
             'next': review_next(repo, work, review_inputs(repo, work, code_snapshot))}
 
 

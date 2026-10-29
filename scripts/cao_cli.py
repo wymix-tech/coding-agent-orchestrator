@@ -254,6 +254,16 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--allow-unverified", action="store_true", help="Record a documented native-entrypoint or failed-execution exception; output ownership is still required")
     sp.add_argument("--reason", default=None, help="Why this completion needs an exception; required with --allow-unverified")
     sp.set_defaults(fn=cmd_sdd_workflow)
+    from scripts.delegation_adapters import command as delegation_command
+    delegation = sub.add_parser('delegation').add_subparsers(dest='delegation_action', required=True)
+    for operation in ('register', 'show', 'launch', 'decode'):
+        sp = delegation.add_parser(operation); sp.add_argument('--repo', default='.')
+        if operation == 'register': sp.add_argument('--manifest', required=True)
+        if operation in {'launch', 'decode'}: sp.add_argument('--plugin', required=True)
+        if operation == 'launch':
+            sp.add_argument('--work'); sp.add_argument('--agent', required=True)
+        if operation == 'decode': sp.add_argument('--result', required=True)
+        sp.set_defaults(fn=delegation_command)
     lifecycle = sub.add_parser("lifecycle", help="Inspect persisted CAO lifecycle events")
     lifecycle_sub = lifecycle.add_subparsers(dest="lifecycle_command", required=True)
     from scripts.lifecycle_contract import register as register_lifecycle_contract
@@ -261,8 +271,11 @@ def build_parser() -> argparse.ArgumentParser:
     from scripts.native_report_draft import command as native_report_draft
     sp = lifecycle_sub.add_parser('report-draft')
     sp.add_argument('--repo', default='.'); sp.add_argument('--work'); sp.add_argument('--log', required=True)
-    sp.add_argument('--check-id', required=True); sp.add_argument('--description', required=True)
+    sp.add_argument('--output', required=True); sp.add_argument('--check-id', required=True); sp.add_argument('--description', required=True)
     sp.add_argument('--gate', action='append', required=True); sp.set_defaults(fn=native_report_draft)
+    sp = lifecycle_sub.add_parser('report-prepare')
+    sp.add_argument('--repo', default='.'); sp.add_argument('--work'); sp.add_argument('--output', required=True)
+    sp.set_defaults(fn=native_report_draft, prepare=True)
     sp = lifecycle_sub.add_parser("events", help="List lifecycle events from native SDD reconciliation and CAO transitions")
     sp.add_argument("--repo", default="."); sp.add_argument("--work"); sp.add_argument("--limit", type=int, default=100); sp.set_defaults(fn=cmd_lifecycle_events)
     sp = sub.add_parser("start"); sp.add_argument("--defer", action="store_true"); sp.add_argument("--repo", default="."); sp.add_argument("--requirement"); sp.add_argument("--title", default=None, help="Human-readable Work Item title; overrides the requirement filename"); sp.add_argument("--sdd-ref"); sp.add_argument("--sdd-provider", choices=sorted(SDD_CATALOG)); sp.add_argument("--host", choices=["claude-code", "codex", "pi"], default=None, help="Current coding-agent host; used to attach the runtime Session"); sp.add_argument("--replace", action="store_true"); sp.add_argument("--reopen", action="store_true"); sp.add_argument("--scope", action="append"); sp.set_defaults(fn=cmd_start)

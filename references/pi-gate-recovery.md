@@ -17,22 +17,25 @@ not install a gate automatically. Restarting after deleting all state loses
 this in-memory enrollment; use normal filesystem permissions to protect state.
 
 When the bridge is unavailable, `read`, `ls`, `grep`, `find`, `search_code`,
-bounded `contact_supervisor` messages (`need_decision`/`progress_update`) and
-`subagent` status requests remain available. These exact bash commands also have
+bounded `contact_supervisor` messages (`need_decision`/`progress_update`)
+remain available. Plugin tools, including `subagent`, have no implicit offline
+exception: their names do not prove read-only behavior. These exact bash commands also have
 an offline exception:
 
 ```text
 pwd
 cao --help
 cao status
+cao diagnose
+cao lifecycle recover --check
 cao host status
 cao host status --host pi
 cao host install --host pi
 ```
 
 The running adapter's own absolute bundled `cao` launcher (direct or through
-`sh`, with literal path quoting) accepts the same exact CAO suffixes. `status
---work <id>` also accepts a literal alphanumeric/dot/underscore/hyphen Work ID.
+`sh`, with literal path quoting) accepts the same exact CAO suffixes. `status --work <id>`, `diagnose --work <id>` and
+`lifecycle recover --check --work <id>` also accept a literal alphanumeric/dot/underscore/hyphen Work ID.
 An arbitrary path with the basename `cao` is not trusted.
 
 There is no general shell parser, alternate working-directory or environment
@@ -43,7 +46,10 @@ broader command classifier. A normal `deny` never uses the offline exception.
 The commands may still fail if the CLI is broken, but are permitted so repaired
 installations can be inspected/rewired without bypassing product gates.
 
-- `STATE_LOCK_TIMEOUT`: let the owning operation finish and retry. Do not delete
+- `STATE_LOCK_TIMEOUT`: run exact `cao diagnose` (without `cd &&`) for a
+  lock-independent advisory snapshot. Owner metadata is a hint, not permission
+  to kill a process. Recovery preview is inspection only; mutations still need
+  the normal transaction lock. Let the owning operation finish and retry. Do not delete
   `state.lock`; its persistent filename is not ownership evidence.
 - Missing CLI/interpreter: inspect using read tools and repair the installation
   from the host terminal, then inspect status and reinstall host wiring if needed.
