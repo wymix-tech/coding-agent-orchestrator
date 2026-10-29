@@ -804,6 +804,13 @@ def _readonly_tokens(tokens: list[str], cwd: Path | None = None) -> bool:
         return sed_effect(tokens)[0] == "read"
     # Build/test commands write caches and reports. Use registered preparation
     # or formal execution; never authorize them as generic read-only shell.
+    return cao_control_tokens(tokens, cwd)
+
+
+def cao_control_tokens(tokens, cwd=None):
+    if not tokens or any(token in {'>', '>>', '<', '|', '&&', ';'} or any(c in token for c in '$`\n\r') for token in tokens):
+        return False
+    python_probe = re.fullmatch(r'python(?:3(?:\.\d+)?)?(?:\.exe)?', Path(tokens[0]).name.lower())
     # Standalone CAO commands own their state mutations; their arguments are not hand edits.
     command_tokens = tokens
     if python_probe:
@@ -844,6 +851,6 @@ def _readonly_tokens(tokens: list[str], cwd: Path | None = None) -> bool:
     safe_control_commands = {
         "init", "bootstrap", "sdd", "start", "path", "list", "status", "next", "resume",
         "checkpoint", "decision", "block", "unblock", "handoff", "sessions", "verify", "done",
-        "switch", "amend", "lifecycle", "evidence", "conformance", "knowledge", "project", "acceptance", "runtime", "context", "artifact", "host", "host-event", "requirement", "language", "gate", "reopen", "verification", "instructions",
+        "switch", "amend", "diagnose", "delegation", "lifecycle", "evidence", "conformance", "knowledge", "project", "acceptance", "runtime", "context", "artifact", "host", "host-event", "requirement", "language", "gate", "reopen", "verification", "instructions",
     }
     return bool(command_tokens and (command_tokens[0] in safe_control_commands or command_tokens in (["--help"], ["-h"])))

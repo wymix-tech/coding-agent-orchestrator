@@ -28,7 +28,7 @@ def _put(repo: Path, wid: str, identity: str, record: dict) -> None:
                                     "recorded_at": occurred, "idempotency_key": identity})
 
 
-def _meaningful(raw: dict) -> bool:
+def _meaningful(raw: dict, repo=None) -> bool:
     tool = _event_key(raw, "tool_name", "toolName", "toolname", "tool", "name").lower()
     commands = _collect_values_for_keys(raw, {"command", "cmd"})
     if not commands and tool in {"bash", "shell"}:
@@ -39,10 +39,8 @@ def _meaningful(raw: dict) -> bool:
         try:
             segments = [part for command in commands for part in _shell_segments(command)]
             # Control commands create their own lifecycle/run records. No recursion.
-            def control(tokens):
-                return (tokens[0] == "cao" or (tokens[0] == "sh" and len(tokens) > 1 and Path(tokens[1]).name == "cao")
-                        or (Path(tokens[0]).name.startswith("python") and any(Path(t).name == "cao.py" for t in tokens[1:3])))
-            if segments and all(control(part) or part[0] == "cd" for part in segments):
+            from scripts.cao_tool_policy import cao_control_tokens
+            if segments and all(cao_control_tokens(part, repo) for part in segments):
                 return False
         except ValueError:
             pass
@@ -62,7 +60,7 @@ def observe(repo: Path, work: dict | None, raw: dict, host: str, session: str,
         route = binding(repo, raw, host, session) if key else None
         denied = result.get("decision") == "deny"
         failed = bool(raw.get("isError", raw.get("is_error", False)))
-        if not route and not denied and not failed and not _meaningful(raw):
+        if not route and not denied and not failed and not _meaningful(raw, repo):
             return None
         wid = route["bound_work_id"] if route else work["id"] if work and event == "pre_tool" else "_unassigned"
         tool = _event_key(raw, "tool_name", "toolName", "toolname", "tool", "name")[:100]
