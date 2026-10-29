@@ -131,6 +131,21 @@ def host_event(args: argparse.Namespace) -> int:
         bound_work = (known_session or parent_session or {}).get('work_item_id')
         if bound_work:
             work = load_work(repo, bound_work)
+    if event == 'pre_tool' and work:
+        from scripts.review_packages import launch_guard
+        launch_error = launch_guard(repo, work, raw)
+        if launch_error:
+            print(json.dumps(native_hook_output(args.host, event, {'decision': 'deny', 'reason': launch_error}), ensure_ascii=False))
+            return 0
+    if event == 'pre_tool' and known_session and work:
+        from scripts.review_packages import guard as review_context_guard
+        try:
+            context_error = review_context_guard(repo, work, known_session, raw)
+        except (ValueError, OSError, KeyError) as exc:
+            context_error = str(exc)
+        if context_error:
+            print(json.dumps(native_hook_output(args.host, event, {'decision': 'deny', 'reason': context_error}), ensure_ascii=False))
+            return 0
     if event == 'pre_tool' and inspection_tool(repo, raw):
         # Evidence calculation can fail on a broken output declaration. Reads,
         # parent communication and CAO's own guarded commands must still reach
@@ -178,6 +193,11 @@ def host_event(args: argparse.Namespace) -> int:
             parent = load_session(repo, parent_ref, host=args.host) if parent_ref else None
             bound = (parent or {}).get("work_item_id")
             observed_work = load_work(repo, bound) if bound else None
+        try:
+            from scripts.native_host_execution import observe as observe_native_execution
+            observe_native_execution(repo, observed_work, session, raw, args.host, event, result.get('decision'))
+        except (ValueError, OSError, KeyError, RuntimeError):
+            result['diagnostic'] = 'NATIVE_HOST_EXECUTION_CAPTURE_UNAVAILABLE: preserve native output or use cao lifecycle execute'
         diagnostic = observe_runtime(repo, observed_work, raw, args.host, host_session_id, event, result)
         if diagnostic:
             result["diagnostic"] = diagnostic
@@ -239,8 +259,9 @@ def host_event(args: argparse.Namespace) -> int:
     if event in {"session_start", "subagent_start"}:
         if kind == "primary":
             expose_approval_context(repo, work, args.host, host_session_id)
-        context = render_context(repo, work, session_id=host_session_id, host=args.host)
-        if kind == 'subagent' and work:
+        context = ('Follow only your assigned native task and its supplied input paths. Do not load coordinator context, other review layers or historical findings.'
+                   if kind == 'subagent' else render_context(repo, work, session_id=host_session_id, host=args.host))
+        if kind == 'subagent' and work and not (session or {}).get('review_ticket'):
             context += ('\nContinue only the assigned native step in the current Work. '
                         'An implementation child works from the approved SPEC; do not restart '
                         'intake or re-register the coordinator\'s workflow execution. '
@@ -272,7 +293,7 @@ def host_event(args: argparse.Namespace) -> int:
                 save_work(repo, work)
                 reconcile_native_sdd_state(repo, work)
             expose_approval_context(repo, work, args.host, host_session_id)
-        return respond({"decision": "allow", "additional_context": render_context(repo, work, session_id=host_session_id, host=args.host)})
+        return respond({"decision": "allow", "additional_context": ('Follow only the exact assigned native task and supplied input paths; preserve independent review context.' if kind == 'subagent' else render_context(repo, work, session_id=host_session_id, host=args.host))})
 
     if event == "pre_tool":
         if work and session and session.get('review_ticket'):

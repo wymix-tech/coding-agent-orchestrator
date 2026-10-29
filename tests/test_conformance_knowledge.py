@@ -108,7 +108,7 @@ class SessionConformance(unittest.TestCase):
         for package in packages:
             layer = package['layer']
             child = 'child-' + layer
-            t.hook('subagent_start', subagent_id=child, prompt=package['task_marker'], model='fixture-model')
+            t.hook('subagent_start', subagent_id=child, prompt=(t.repo / package['prompt_file']).read_text(), model='fixture-model')
             t.env['PI_SESSION_ID'] = child
             out = t.run_cli('sdd', 'review', 'attach', '--layer', layer, '--run', package['run_id'],
                             '--input-sha256', package['input_sha256'], '--model', 'fixture-model')
@@ -124,7 +124,8 @@ class SessionConformance(unittest.TestCase):
             from tests.helpers import bind_fixture_finding_content
             bind_fixture_finding_content(t.repo, report_path)
             t.env['PI_SESSION_ID'] = 'primary-fixture'
-            t.run_cli('sdd', 'review', 'import', '--layer', layer, '--report', package['report'])
+        for package in packages:
+            t.run_cli('sdd', 'review', 'import', '--layer', package['layer'], '--report', package['report'])
         for package in packages:
             report = Path(package['report']).parent / 'resolved.json'
             t.write(report, json.dumps({'run_id': package['run_id'], 'resolved_ids': []}))

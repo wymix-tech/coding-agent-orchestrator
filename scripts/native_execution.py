@@ -9,12 +9,17 @@ def material_inputs(repo, work):
     return {key: domains[key] for key in ('product', 'native_sources', 'native_scope', 'native_dependencies', 'policy')}
 
 
-def receipt_matches(repo, work, reports):
+def receipts(work):
+    sdd = work.get('sdd') or {}
+    return sorted([*sdd.get('completion_executions', []), *sdd.get('native_host_executions', [])], key=lambda row: row.get('at', 0))
+
+
+def receipt_matches(repo, work, reports, *, binding=None):
     from scripts.lifecycle_contract import inputs
     from scripts.cao_runtime import sha256_file
     from scripts.path_guard import repo_file
     current = inputs(repo, work)
-    rows = (work.get('sdd') or {}).get('completion_executions') or []
+    rows = receipts(work)
     if not rows or rows[-1].get('status') != 'passed':
         return False
     repair = (work.get('sdd') or {}).get('completion_repair') or {}
@@ -25,11 +30,16 @@ def receipt_matches(repo, work, reports):
         if 'execution_boundary' not in repair:
             return False
         excluded = set(repair['execution_boundary'])
+    binding = binding if binding is not None else (work.get('sdd') or {}).get('completion_evidence') or {}
+    # Switching sessions invalidates in-flight admission, not an already bound
+    # successful result whose exact material inputs and bytes remain unchanged.
+    bound_current = (repair.get('kind') != 'product' and binding.get('evidence_protocol') == 2 and binding.get('inputs') == current
+                     and all(ref in binding.get('reports', []) for ref in reports))
     accepted = []
     for row in reversed(rows):
         if row.get('run_id') in excluded:
             continue
-        if row.get('generation') != work.get('execution_generation', 0) or row.get('inputs') != current or row.get('domains') != material_inputs(repo, work):
+        if (row.get('generation') != work.get('execution_generation', 0) and not bound_current) or row.get('inputs') != current or row.get('domains') != material_inputs(repo, work):
             continue
         if row.get('status') != 'passed':
             break
@@ -53,7 +63,7 @@ def command(args):
         work = resolve_work(repo, args.work)
         if not work or not enabled(work) or work.get('status') != 'active':
             raise ValueError('ACTIVE_CONTRACT_2_WORK_REQUIRED')
-        validate_command(work, args.command)
+        validate_command(work, args.command, repo)
         path = provider_artifact(repo, args.report, provider_output_dirs(work['sdd']['provider'], repo))
         if path.suffix.lower() not in {'.md', '.txt', '.log', '.json', '.yaml', '.yml'} or not path.parent.is_dir():
             raise ValueError('NATIVE_EXECUTION_LOG_PATH_REQUIRED')
@@ -69,7 +79,7 @@ def command(args):
         rows = work['sdd'].setdefault('completion_executions', [])
         repair = work['sdd'].get('completion_repair') or {}
         if repair.get('kind') == 'product' and 'execution_boundary' not in repair:
-            repair['execution_boundary'] = [row['run_id'] for row in rows]
+            repair['execution_boundary'] = [row['run_id'] for row in receipts(work)]
         if rows and rows[-1]['status'] == 'running':
             previous = rows[-1]['run_id']
             if owner_status(repo, work['id'], previous) == 'running' or args.retry_of != previous:
@@ -103,7 +113,8 @@ def command(args):
                 path = provider_artifact(repo, args.report, provider_output_dirs(work['sdd']['provider'], repo))
                 path.write_text(body, encoding='utf-8')
                 try:
-                    read(repo, work, path)
+                    observation = read(repo, work, path, execution=row)
+                    row['observation'] = observation
                     if inputs(repo, work) != captured or material_inputs(repo, work) != row['domains']:
                         raise ValueError('NATIVE_EXECUTION_INPUT_CHANGED')
                     work['sdd'].pop('completion_binding_failure', None)
@@ -150,7 +161,7 @@ def repair(args):
             work['sdd'].setdefault('completion_repair_history', []).append(previous)
         row = {'kind': args.kind, 'reason': args.reason, 'run_id': run.get('run_id'), 'at': now(), 'source': run.get('source', 'work_verification')}
         if args.kind == 'product':
-            row['execution_boundary'] = [item['run_id'] for item in work['sdd'].get('completion_executions', [])]
+            row['execution_boundary'] = [item['run_id'] for item in receipts(work)]
         work['sdd']['completion_repair'] = row
         work['execution'].update(phase='implementation' if args.kind == 'product' else 'verification',
                                  step='implementation' if args.kind == 'product' else 'verification')
@@ -160,10 +171,13 @@ def repair(args):
     return 0
 
 
-def validate_command(work, command):
+def validate_command(work, command, repo=None):
     """Only replay a recorded native invocation, never cat/echo an old result."""
     import shlex
     from pathlib import Path
+    from scripts.native_validation import execution_command
+    if not execution_command(command):
+        raise ValueError('NATIVE_EXECUTION_COMMAND_UNBOUND: report replay and inline result synthesis are not native verification commands')
     def identity(value):
         tokens = shlex.split(value)
         if tokens and Path(tokens[0]).name.startswith('python'):
@@ -171,9 +185,38 @@ def validate_command(work, command):
         return tokens
     sdd = work.get('sdd') or {}
     expected = [value for row in (sdd.get('completion_evidence') or {}).get('observations', []) for value in row.get('commands', [])]
-    expected.extend(row['command'] for row in sdd.get('completion_executions', []) if row.get('status') == 'passed' and row.get('command'))
+    expected.extend(row['command'] for row in receipts(work) if row.get('status') == 'passed' and row.get('command'))
     recorded = ((sdd.get('workflow') or {}).get('execution') or {}).get('command')
     if recorded:
         expected.append(recorded)
+    if repo is not None:
+        from scripts.cao_runtime import config
+        from scripts.completion_policy import normalize_scripts
+        expected.extend(row['command'] for row in normalize_scripts(config(repo).get('verification', {}).get('scripts', [])))
+        from scripts.native_validation import commands
+        expected.extend(commands(repo, work))
     if not expected or not any(identity(command) == identity(value) for value in expected):
-        raise ValueError('NATIVE_EXECUTION_COMMAND_UNBOUND: use the recorded native workflow/report command; restoring a report with cat/echo is not native execution')
+        raise ValueError('NATIVE_EXECUTION_COMMAND_UNBOUND: use a recorded native command, accepted project check, or declare a command from the bound native specification with cao lifecycle declare')
+
+
+def inspect_executions(args):
+    from scripts.cao_runtime import repo_root
+    from scripts.cao_work_store import resolve_work
+    from scripts.lifecycle_contract import inputs
+    repo = repo_root(args.repo)
+    if not 0 <= args.cursor <= 100000:
+        raise ValueError('NATIVE_EXECUTION_CURSOR_INVALID')
+    work = resolve_work(repo, args.work)
+    if not work:
+        raise ValueError('NO_WORK_ITEM')
+    rows = list(reversed(receipts(work)))
+    try:
+        current, input_error = inputs(repo, work), None
+    except (ValueError, OSError, RuntimeError) as exc:
+        current, input_error = None, str(exc)
+    selected = rows[args.cursor:args.cursor + args.limit]
+    result = [{**{k: row.get(k) for k in ('run_id', 'status', 'source', 'command', 'exit_code', 'reason', 'reports')},
+               'fresh': current is not None and row.get('inputs') == current and row.get('domains') == material_inputs(repo, work)} for row in selected]
+    print(json.dumps({'ok': True, 'executions': result, 'total': len(rows), 'input_error': input_error,
+                      'next_cursor': args.cursor + len(selected) if args.cursor + len(selected) < len(rows) else None}))
+    return 0

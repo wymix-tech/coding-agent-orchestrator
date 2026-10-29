@@ -99,9 +99,19 @@ does not resolve a contradiction. Use the native human clarification loopback.
 
 ## Resolve report fields
 
-Supply `{run_id, resolved_ids}` with the current layer's run ID and ALL its
-`patch` finding IDs after real fixes and checks. CAO fingerprints the original
-raw, classify and resolve evidence and binds the repaired code snapshot.
+For new tickets, use `cao sdd review resolution-draft --layer <layer>`, then
+complete `{run_id, code_snapshot, resolved_ids, resolutions}`. Each resolution
+contains the original `{id, content_sha256}`, `changes` and `verification`.
+Changes are actual modified product references `{path, sha256, reason}`; deletion
+uses `{path, deleted: true, previous_sha256, reason}`. Verification entries contain
+`{kind: test|static|manual, code_snapshot, assertion, observed, evidence}`; evidence
+references are `{path, sha256}`. Test/static evidence requires a current observed
+native execution receipt; manual checks retain their declared authority explicitly.
+One native check may support multiple findings when its assertions cover them.
+An IDs-only declaration cannot resolve a new patch finding. Legacy tickets retain
+an explicit legacy protocol label; they are never silently recertified.
+CAO fingerprints the original raw, classify, resolve and supporting evidence and
+binds the repaired code snapshot.
 A review round is not a loopback count. Changed sources/evidence require the
 applicable fresh review; a manual `implementation_review` gate cannot substitute.
 
@@ -155,3 +165,41 @@ historical baselines are labeled explicitly. Manifest tampering blocks affected
 reviews. Context provided to each layer still follows its native independence
 contract. Review status and acceptance summary expose layer, task and observed
 round counts; historical tasks without a round are reported separately.
+
+## Executable native input packages
+
+New tickets expose `prompt_file`, `diff_file` and a hashed context policy. Send the
+exact prompt file as the independent child task. Do not ask every child to read
+the whole review step, SPEC, architecture or earlier findings. The layer's native
+prompt is preserved after runtime path substitution. Pi launch calls must set
+`async: false`; `worktree`, when supported, is a top-level host argument. Launch
+all blocking reviewers and await all final outputs before classification.
+
+Blind reads only its frozen diff and own prompt. Other layers may read declared
+product files and their own instruction files. Edge claims remain unavailable
+until observed diff/instruction/product reads. Broad shell interpreters and
+unscoped searches cannot enforce this boundary; use explicit scoped read tools
+and ask the coordinator for disposable native checks. Tool path/order checks
+are process evidence, not proof of semantic tracing quality. The host does not
+inject the coordinator's project/requirement/history context into child sessions.
+
+NO_VCS Work records retain baseline bytes in the bounded runtime archive. Legacy
+current-tree fallback is explicitly labeled best-effort when no historical
+baseline exists; it never claims a reconstructed historical change set.
+
+## Cross-session resume
+
+Run `cao sdd review resume` before restarting interrupted reviews. It reuses
+current tickets, selects immutable collected findings and creates missing drafts.
+Existing triage judgments, classified layers and resolved layers are retained.
+`draft --layer <layer>` defaults to canonical collected bytes; `--source` remains
+available for an explicit attested artifact.
+
+For older bound sessions with only an observed final-message hash, resume searches
+the recorded Pi archive or that repository's native Pi session directory. Use
+`--transcript <bound-session.jsonl>` for an exported archive. Only assistant text
+from the identified session matching the original full-message hash can recover
+findings. Missing original/binding reports a layer-specific blocker; it cannot
+retroactively bind identities. Inspect those gaps before restarting only the
+unrecoverable layer. Replacing observed evidence for unchanged inputs requires
+`--restart-reason`; the reason is retained in history.

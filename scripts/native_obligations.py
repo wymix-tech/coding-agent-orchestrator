@@ -92,7 +92,7 @@ def dispatch_review_next(records, layers, inputs):
     running = [layer for layer in layers if records[layer].get('status') == 'running']
     if running:
         unbound = [layer for layer in running if not records[layer].get('execution_binding')]
-        return ('Continue existing tickets for ' + ', '.join(running) + '. '
+        return ('Run `cao sdd review resume` to recover existing tickets for ' + ', '.join(running) + '. '
                 + ('Bind each NEW observed child via coordinator --reviewer-session or child reviewer_start for ' + ', '.join(unbound) + '. ' if unbound else '')
                 + 'Collect native findings and `cao sdd review classify` ALL layers before product patches, then `cao sdd review resolve`. Do not begin again; use --restart only to explicitly replace a failed ticket.')
     classified = [layer for layer in layers if records[layer].get('status') == 'classified']
@@ -116,6 +116,12 @@ def review_integrity(repo, work, snapshot=None, inputs=None):
     from scripts.cao_snapshot import code_snapshot
     for layer in layers:
         run = records.get(layer) or {}
+        if run.get('context_package'):
+            try:
+                from scripts.review_packages import policy
+                policy(repo, run, check_claims=run.get('status') == 'running')
+            except (ValueError, OSError, RuntimeError, KeyError) as exc:
+                return {'ready': False, 'reason': str(exc).split(':')[0], 'layer': layer}
         if not run.get('input_manifest'):
             continue
         ref = run['input_manifest']
@@ -515,6 +521,8 @@ def validate_judgments(report, dispatch_route):
 
 
 def classify_review(repo, work, layer, report_path, code_snapshot):
+    from scripts.review_packages import require_collected
+    require_collected(repo, work)
     require_review_integrity(repo, work, code_snapshot)
     if layer not in active_layers(repo, work):
         raise ValueError('NATIVE_REVIEW_LAYER_NOT_ACTIVE')
@@ -595,11 +603,15 @@ def resolve_review(repo, work, layer, report_path, code_snapshot):
     current = review_inputs(repo, work, code_snapshot)
     if any(current.get(k) != run['inputs'].get(k) for k in current if k != 'code_snapshot'):
         raise ValueError('NATIVE_REVIEW_SOURCE_STALE')
-    run.update(status='passed', inputs=current, evidence_hashes={**run['triage_hashes'], path.relative_to(repo).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()})
+    from scripts.review_resolution import validate as validate_resolution
+    resolution_hashes, resolution = validate_resolution(repo, work, run, report, current)
+    run.update(status='passed', inputs=current, resolution_evidence=resolution, evidence_hashes={**run['triage_hashes'], **resolution_hashes, path.relative_to(repo).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()})
     return run
 
 
 def submit_review(repo, work, layer, report_path, code_snapshot):
+    from scripts.review_packages import require_collected
+    require_collected(repo, work)
     if dispatch(work):
         raise ValueError('NATIVE_REVIEW_CLASSIFY_REQUIRED: dispatch uses classify before patches, then resolve')
     require_review_integrity(repo, work, code_snapshot)
@@ -661,8 +673,10 @@ def submit_review(repo, work, layer, report_path, code_snapshot):
                 or (finding['disposition'] == 'patch' and finding.get('resolved') is not True)):
             raise ValueError('NATIVE_REVIEW_TRIAGE_INVALID_OR_UNRESOLVED')
         ids.add(finding['id'])
-    run.update(status='passed', inputs=current, report=report_file.relative_to(repo.resolve()).as_posix(), reviewer=reviewer,
-               evidence_hashes={**(run.get('triage_hashes') or {}), **{path.relative_to(repo.resolve()).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()
+    from scripts.review_resolution import validate as validate_resolution
+    resolution_hashes, resolution = validate_resolution(repo, work, run, report, current)
+    run.update(status='passed', inputs=current, resolution_evidence=resolution, report=report_file.relative_to(repo.resolve()).as_posix(), reviewer=reviewer,
+               evidence_hashes={**(run.get('triage_hashes') or {}), **resolution_hashes, **{path.relative_to(repo.resolve()).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()
                                 for path in (report_file, findings_file)}})
     return run
 

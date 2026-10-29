@@ -75,3 +75,16 @@ All associated native tasks, testing, reviews, acceptance and required native Co
 ## If blocked
 
 Inspect `native_sync` diagnostics and associate the actual source. Source sync does not refresh acceptance hashes: review changed SPEC/criteria, explicitly rebind if needed, and reverify. Never invent entrypoints, reports or historical execution.
+
+## Independent plan scope
+
+An accepted Direct Build route resolves the absence of a separate plan early,
+with the route and primary artifact recorded as its basis. Native inline tasks
+remain subject to their own checks. Existing independent plans and shared story
+inventories are never waived. Ambiguous task inventories require explicit current
+requirement associations before implementation; inspect the returned candidates.
+
+Use `cao sdd plan bind --no-plan` only when no associated independent plan exists
+and the route permits it. Full planning cannot use this to remove sprint/story
+obligations. Workflow completion preserves a valid existing scope and rejects an
+unresolved scope immediately. Do not bind SPEC as tasks or invent a SPEC#item.

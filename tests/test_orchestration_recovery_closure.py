@@ -13,7 +13,9 @@ class RecoveryClosure(unittest.TestCase):
     bind = lifecycle_fixture.NativeLifecycle.bind
 
     def execute(self):
-        return self.check('lifecycle', 'execute', '--command', sys.executable + ' preparation_suite.py', '--report', 'openspec/completion.md')
+        from scripts.cao_runtime import config
+        command = config(self.repo)['verification']['scripts'][0]['command']
+        return self.check('lifecycle', 'execute', '--command', command, '--report', 'openspec/completion.md')
 
     def test_native_success_is_resolved_and_resumable(self):
         from scripts.runtime_queries import inspect_run
@@ -35,6 +37,7 @@ class RecoveryClosure(unittest.TestCase):
         self.assertEqual(0, resumed.returncode, resumed.stdout + resumed.stderr)
         self.check('switch', '--to', target)
         self.check('switch', '--to', self.wid)
+        self.assertEqual('unchanged', self.bind()['status'])
         self.check('verify')
         self.check('done')
         self.assertEqual('completed', self.work()['status'])
@@ -47,8 +50,6 @@ class RecoveryClosure(unittest.TestCase):
     def test_wrapper_execution_keeps_dependencies_without_command_in_log(self):
         from scripts.cao_runtime import config
         command = config(self.repo)['verification']['scripts'][0]['command']
-        self.report.write_text('Command: ' + command + '\nstatus: passed\n')
-        self.bind()
         self.check('lifecycle', 'execute', '--command', command, '--report', 'openspec/completion.md')
         self.bind()
         self.check('conformance', 'check')
@@ -58,6 +59,7 @@ class RecoveryClosure(unittest.TestCase):
         (self.repo / 'preparation_suite.py').write_text("import unittest,sys\nclass T(unittest.TestCase):\n def test_real(self): self.assertEqual(2+2,4)\nr=unittest.TestResult()\nunittest.defaultTestLoader.loadTestsFromTestCase(T).run(r)\nprint('Ran 1 test in native execution\\nOK' if r.wasSuccessful() else 'FAILED')\nsys.exit(not r.wasSuccessful())\n")
         self.check('verification', 'check', '--project')
         self.check('reopen', '--reanchor', '--reason', 'deterministic runner')
+        self.execute()
         self.bind()
         self.execute()
         self.bind()
@@ -79,6 +81,7 @@ class RecoveryClosure(unittest.TestCase):
         (self.repo / 'preparation_suite.py').write_text('import unittest,feature\nclass T(unittest.TestCase):\n def test_behavior(self):self.assertTrue(feature.valid)\nunittest.main()\n')
         self.check('verification', 'check', '--project')
         self.check('reopen', '--reanchor', '--reason', 'reviewed product test suite')
+        self.execute()
         self.bind()
         raw = {'event': 'pre_tool', 'session_id': 'writer', 'toolName': 'write', 'input': {'path': 'feature.py', 'content': 'valid = True\n'}}
         self.assertEqual('allow', self.fixture.cli('host-event', '--host', 'pi', payload=raw)[1]['decision'])
@@ -339,7 +342,9 @@ class RecoveryClosure(unittest.TestCase):
 
     def test_multiple_reports_require_post_repair_receipt_for_each(self):
         self.prepare_product_repair()
-        self.check('lifecycle', 'execute', '--command', sys.executable + ' preparation_suite.py', '--report', 'openspec/second.log')
+        from scripts.cao_runtime import config
+        command = config(self.repo)['verification']['scripts'][0]['command']
+        self.check('lifecycle', 'execute', '--command', command, '--report', 'openspec/second.log')
         self.assertNotEqual(0, self.cli('lifecycle', 'bind', '--report', 'openspec/completion.md', '--report', 'openspec/second.log')[0])
         self.execute()
         self.check('lifecycle', 'bind', '--report', 'openspec/completion.md', '--report', 'openspec/second.log')
@@ -395,8 +400,10 @@ class RecoveryClosure(unittest.TestCase):
         (folder / 'native-wrapper.sh').write_text('source .orchestrator/scripts/verification/native-helper.sh\n' + sys.executable + ' preparation_suite.py\n')
         self.check('verification', 'check', '--project')
         self.check('reopen', '--reanchor', '--reason', 'accepted static helper')
-        self.report.write_text('Command: ' + command + '\nstatus: passed\n')
-        self.bind()
+        spec = self.repo / 'openspec/spec.md'
+        spec.write_text(spec.read_text() + '\n## Native Verification\n`' + command + '`\n')
+        self.check('sdd', 'spec', 'bind', '--spec', 'openspec/spec.md', '--criteria-section', 'Acceptance', '--replace')
+        self.check('lifecycle', 'declare', '--source', 'openspec/spec.md', '--command', command, '--reason', 'Native static helper verification')
         self.check('lifecycle', 'execute', '--command', command, '--report', 'openspec/completion.md')
         self.bind()
         helper.write_text('# helper changed after execution\n')

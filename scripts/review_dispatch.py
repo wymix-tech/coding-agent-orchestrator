@@ -97,9 +97,19 @@ def begin_review(repo, work, args, identity):
     target = records.get(args.layer) or {}
     round_id = old_contract.get('round_id') or new_id('review-round')
     if args.restart and target:
+        from scripts.review_observation import diagnose
+        observed = diagnose(repo, work, args.layer)
+        if (target.get('inputs') == review_inputs(repo, work, code_snapshot)
+                and (observed['artifacts'] or observed.get('original_message_sha256'))
+                and not any(record.get('loopback_required') or record.get('intent_conflicts')
+                            for key, record in records.items() if key != '_contract')
+                and not str(getattr(args, 'restart_reason', '') or '').strip()):
+            invalid('NATIVE_REVIEW_EVIDENCE_RECOVERY_REQUIRED', 'review',
+                    'run review resume first; replacing observed unchanged-input evidence requires --restart-reason')
         from scripts.runtime_store import read_record, safe_path
         previous = read_record(safe_path(repo, work['id'], 'review-retry.json')) or {}
-        if (previous.get('count', 0) >= 2 and previous.get('layer') == args.layer
+        if (not str(getattr(args, 'restart_reason', '') or '').strip()
+                and previous.get('count', 0) >= 2 and previous.get('layer') == args.layer
                 and previous.get('input_sha256') == target.get('input_sha256')
                 and target.get('inputs') == review_inputs(repo, work, code_snapshot)
                 and str((previous.get('response') or {}).get('error', '')).startswith(
@@ -165,10 +175,10 @@ def begin_review(repo, work, args, identity):
     if existing and not reused and not args.restart:
         invalid('NATIVE_REVIEW_RESTART_REQUIRED', 'review', 'review changed inputs/model/evidence and explicitly use --restart; previous ticket is retained', existing.get('id'))
     if existing and not reused:
-        work['sdd'].setdefault('native_review_history', []).append({'layer': args.layer, 'review': existing, 'replacement_reason': 'explicit restart'})
+        work['sdd'].setdefault('native_review_history', []).append({'layer': args.layer, 'review': existing, 'replacement_reason': getattr(args, 'restart_reason', None) or 'explicit restart'})
     run = existing if reused else {"id": new_id("review"), "status": "running", "inputs": inputs,
            "input_sha256": native_digest(inputs), "model": args.model,
-           "task_binding_version": 1, "finding_binding_version": 1, "layer": args.layer,
+           "task_binding_version": 1, "finding_binding_version": 1, "resolution_binding_version": 1, "layer": args.layer,
            "round_id": proposed['round_id'],
            "model_source": model_source,
            "existing_session_ids": [session['id'] for session in list_sessions(repo)],
@@ -181,6 +191,8 @@ def begin_review(repo, work, args, identity):
         manifest_path = root / 'input-manifest.json'
         run['input_manifest'] = {'path': manifest_path.relative_to(repo).as_posix(), 'content_sha256': native_digest(manifest)}
         atomic_json(manifest_path, manifest)
+        from scripts.review_packages import render
+        render(repo, work, run, args.instructions, manifest)
     if loopback.get('status') == 'reimplementing':
         loopback['status'] = 'reviewing'
         loopback['review_round_id'] = proposed['round_id']
@@ -188,7 +200,13 @@ def begin_review(repo, work, args, identity):
     output['reviewer_start'] = (f'{cao_invocation()["command"]} sdd review attach --work {work["id"]} '
         f'--layer {args.layer} --run {run["id"]} --input-sha256 {run["input_sha256"]} --model {shlex.quote(args.model)}')
     output['task_marker'] = task_marker(run, args.layer)
-    output['next'] = ('Include task_marker as an exact standalone line in the actual reviewer task prompt. Never bind by session order. Begin ALL active layers before launching reviewers. The host automatically binds each ticket-marked observed child before inspection using parent/model/tools metadata. Use reviewer_start or coordinator --reviewer-session only for compatible manual/external attachment; never attach after inspection. '
+    if run.get('context_package'):
+        from scripts.review_packages import policy
+        package = policy(repo, run, check_claims=False)
+        output['prompt_file'] = package['prompt']
+        output['diff_file'] = package['diff']
+        output['launch'] = {'mode': 'synchronous', 'wait_for_all': True, 'async': False}
+    output['next'] = ('Use the generated prompt_file verbatim as the child task; do not add whole-step/spec/history context. Include task_marker as an exact standalone line in the actual reviewer task prompt. Never bind by session order. Begin ALL active layers before launching reviewers. The host automatically binds each ticket-marked observed child before inspection using parent/model/tools metadata. Use reviewer_start or coordinator --reviewer-session only for compatible manual/external attachment; never attach after inspection. '
         'to acknowledge this ticket and frozen input, then inspect that exact code without product writes. '
         + ('Preserve unmodified native Markdown/JSON findings for each layer; classify ALL layers before patches, then resolve ALL layers. '
            'Use `cao sdd review classify --layer <layer> --report <triage.json>`, then `cao sdd review resolve --layer <layer> --report <resolved.json>`.'
@@ -250,7 +268,10 @@ def agent_capability(repo, definition, host):
             'task_contract': {'role': 'reviewer', 'product_writes': False,
                               'evidence': ['original-findings', 'review-input', 'reviewer-identity']},
             'launch_preflight': ['verify effective runtime tools/extensions', 'verify backend executable and model-override support'],
-            'model_override': 'only when supported by the selected host backend'}
+            'model_override': 'only when supported by the selected host backend',
+            'context_isolation': {'required': 'fresh independent session without parent transcript',
+                                  'enforced': 'exact native task prompt and observed tool paths/order',
+                                  'backend_hidden_context': 'not attested by CAO; do not claim semantic isolation beyond observations'}}
 
 
 def prepare_batch(repo, work, args, identity):
@@ -267,7 +288,7 @@ def prepare_batch(repo, work, args, identity):
         invalid('TASK_ACCEPTANCE_COVERAGE_INCOMPLETE', 'acceptance.coverage', preflight['next'], preflight['coverage'])
     host = identity[0] if identity else detect_current_host()
     if getattr(args, 'external_session', False):
-        capability = {'mode': 'external-session', 'requires': ['new session per layer', 'shell', 'CAO host adapter'],
+        capability = {'mode': 'external-session', 'requires': ['new context-free session per layer', 'read/search tools', 'CAO host adapter'],
                       'verified_at': 'attach; preparation does not certify external execution'}
     elif getattr(args, 'agent_definition', None):
         capability = agent_capability(repo, args.agent_definition, host)
@@ -323,11 +344,19 @@ def prepare_batch(repo, work, args, identity):
                    'task_marker': output['task_marker'],
                    'round_id': run.get('round_id'),
                    'input_manifest': run.get('input_manifest'),
-                   'context_boundary': 'Follow only this layer\'s actual native instructions. Blind diff-only roles receive product changes without SPEC content; this manifest contains product paths/hashes, never requirement text.',
+                   'prompt_file': None,
+                'context_boundary': 'Follow only this layer\'s actual native instructions. Blind diff-only roles receive product changes without SPEC content; this manifest contains product paths/hashes, never requirement text.',
                    'report': report.relative_to(repo).as_posix(), 'capability': capability,
                    'task_contract': {'role': 'reviewer', 'product_writes': False, 'evidence': ['original-findings', 'review-input', 'reviewer-identity']},
                    'next': output['next'], 'status': run['status'],
                    'reviewer': (run.get('execution_binding') or {}).get('reviewer')}
+        if not output.get('reused'):
+            from scripts.review_packages import render
+            package.update(render(repo, work, run, args.instructions, manifest))
+        elif run.get('context_package'):
+            from scripts.review_packages import policy
+            frozen = policy(repo, run, check_claims=False)
+            package.update(prompt_file=frozen['prompt'], diff_file=frozen['diff'], launch={'mode': 'synchronous', 'wait_for_all': True, 'async': False})
         atomic_json(root / 'dispatch.json', package)
         outputs.append(package)
     return {'ok': True, 'reviews': outputs, 'owner': 'sdd_provider',
@@ -366,7 +395,7 @@ def import_review(repo, work, layer, report):
     return submit_review(repo, work, layer, report, code_snapshot)
 
 
-def draft_report(repo, work, layer, source):
+def draft_report(repo, work, layer, source=None):
     """Mechanical conversion only: never infer verdicts or disposition."""
     from scripts.native_obligations import load_findings, validate_reviewer
     run = ((work.get('sdd') or {}).get('native_reviews') or {}).get(layer) or {}
@@ -374,6 +403,9 @@ def draft_report(repo, work, layer, source):
     validate_reviewer(run, {'reviewer': binding.get('reviewer')})
     if run.get('status') != 'running' or run.get('inputs') != review_inputs(repo, work, code_snapshot):
         raise ValueError('NATIVE_REVIEW_RUN_STALE_OR_MISMATCH')
+    if source is None:
+        from scripts.review_resume import canonical_source
+        source = canonical_source(repo, work, layer)
     raw = provider_artifact(repo, source, bmad_output_dirs(repo))
     validate_source(repo, run, raw)
     findings = load_findings(raw)

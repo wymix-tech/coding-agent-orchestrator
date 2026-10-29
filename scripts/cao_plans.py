@@ -202,6 +202,10 @@ def bind_plan_scope(repo: Path, work: dict, plan_paths: list[str],
                     ambiguous = True
     old = sdd.get("plan_scope") or {}
     if no_plan:
+        route = sdd.get('route_decision') or {}
+        if sdd.get('provider') == 'bmad' and (route.get('route') == 'full-planning' or route.get('planning_duties')
+                or any(row.get('role') in {'sprint', 'stories', 'tasks', 'plan'} for row in route.get('required_artifacts', []))):
+            raise ValueError('PLAN_SCOPE_REQUIRED_BY_ROUTE')
         if paths or discovered or old.get("mode") == "bound":
             raise ValueError("PLAN_SCOPE_REMOVAL_REQUIRES_REANCHOR")
         return {"version": 1, "mode": "none", "plans": []}
@@ -216,9 +220,11 @@ def bind_plan_scope(repo: Path, work: dict, plan_paths: list[str],
     if not paths and any(Path(value).name in SPRINT_STATUS_NAMES for value in discovered):
         raise ValueError("SHARED_PLAN_ITEM_BINDING_REQUIRED: " + ", ".join(sorted(discovered)))
     if not paths and ambiguous:
-        return {"version": 1, "mode": "unresolved", "plans": []}
+        return {"version": 1, "mode": "unresolved", "plans": [], "candidates": sorted(discovered)}
     paths = paths or discovered
     if not paths:
+        if old.get('mode') == 'none' and old.get('requirement_sha256') in {None, work['requirement']['sha256']}:
+            return dict(old)
         return {"version": 1, "mode": "unresolved", "plans": []}
     plans = []
     for value in sorted(paths):
@@ -495,15 +501,28 @@ def cmd_sdd_plan_bind(args: argparse.Namespace) -> int:
             if not path or not item:
                 raise ValueError("PLAN_ITEM_INVALID")
             selections.setdefault(path, []).append(item)
-        if not args.plan and not args.plan_item:
+        if not args.plan and not args.plan_item and not getattr(args, 'no_plan', False):
             raise ValueError("PLAN_SCOPE_REQUIRED")
-        scope = bind_plan_scope(repo, work, list(selections) + (args.plan or []), selections, False)
+        scope = bind_plan_scope(repo, work, list(selections) + (args.plan or []), selections, bool(getattr(args, 'no_plan', False)))
         scope["requirement_sha256"] = work["requirement"]["sha256"]
     except (ValueError, OSError, UnicodeError) as exc:
-        print(json.dumps({"ok": False, "error": str(exc).split(":", 1)[0], "reason": str(exc)})); return 2
+        from scripts.plan_navigation import repair
+        print(json.dumps({"ok": False, "error": str(exc).split(":", 1)[0], "reason": str(exc), "next": repair(repo, work)})); return 2
     sdd["plan_scope"] = scope
     queue_event(work, {"event": "sdd.plan.bound", "work_item_id": work["id"], "source": "cao",
                        "plan_scope": scope, "occurred_at": now()})
     save_work(repo, work)
     reconcile_native_sdd_state(repo, work)
     print(json.dumps({"ok": True, "plan_scope": scope, "verification_plan": provider_verification_plan_state(repo, work)}, ensure_ascii=False)); return 0
+
+
+def cmd_sdd_plan_show(args):
+    repo = repo_root(args.repo)
+    ensure_initialized(repo)
+    work = resolve_work(repo, args.work)
+    if not work:
+        raise ValueError('NO_WORK_ITEM')
+    from scripts.plan_navigation import repair
+    print(json.dumps({'ok': True, 'plan_scope': work.get('sdd', {}).get('plan_scope'),
+                      'native_state': provider_verification_plan_state(repo, work), 'next': repair(repo, work)}, ensure_ascii=False))
+    return 0

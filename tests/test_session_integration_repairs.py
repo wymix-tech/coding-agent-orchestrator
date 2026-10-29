@@ -166,6 +166,11 @@ class ReviewLaunchAndRecovery(unittest.TestCase):
         self.assertTrue(again['reused'])
         self.assertIn('Do not begin or classify again', again['next'])
         t.write('_bmad-output/resolve.json', json.dumps({'run_id': ticket['id'], 'resolved_ids': ['finding-1', 'finding-2']}))
+        rejected = t.run_cli('sdd', 'review', 'resolve', '--layer', 'blind-hunter', '--report', '_bmad-output/resolve.json', expected=2)
+        self.assertIn('RESOLUTION_EVIDENCE_REQUIRED', rejected['error'])
+        from tests.helpers import bind_fixture_resolution
+        self.assertEqual('patched = True\n', (t.repo / 'product.py').read_text())
+        bind_fixture_resolution(t.repo, t.work(), 'blind-hunter', t.repo / '_bmad-output/resolve.json', ['product.py'], 'Product fixture records the patched flag')
         t.run_cli('sdd', 'review', 'resolve', '--layer', 'blind-hunter', '--report', '_bmad-output/resolve.json')
         self.assertEqual(raw, (t.repo / path).read_text())
         self.assertTrue(native.review_state(t.repo, t.work(), cao.code_snapshot)['ready'])

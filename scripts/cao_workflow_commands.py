@@ -260,6 +260,9 @@ def cmd_sdd_workflow(args: argparse.Namespace) -> int:
         except ValueError as exc:
             print(json.dumps({"ok": False, "error": str(exc).split(":", 1)[0], "reason": str(exc),
                               "next": "Supply associated --plan <path> and shared --plan-item <path>#<story-id>; --no-plan cannot remove an existing valid plan scope."}, ensure_ascii=False)); return 2
+        if scope['mode'] == 'unresolved':
+            from scripts.plan_navigation import repair
+            print(json.dumps({'ok': False, 'error': 'PLAN_SCOPE_UNRESOLVED', 'next': repair(repo, work)}, ensure_ascii=False)); return 2
         sdd["plan_scope"] = scope
         if scope["mode"] == "none":
             queue_event(work, {"event": "workflow.no_plan_declared", "work_item_id": work["id"],
@@ -354,7 +357,7 @@ def _cmd_sdd_review_locked(args: argparse.Namespace) -> int:
         if work.get('sdd', {}).get('provider') != 'bmad':
             raise ValueError('NATIVE_REVIEW_NOT_APPLICABLE')
         from scripts.native_obligations import require_review_integrity
-        if args.review_action not in {'begin', 'prepare', 'status', 'diagnose', 'recover', 'loopback'}:
+        if args.review_action not in {'begin', 'prepare', 'status', 'diagnose', 'recover', 'resume', 'migrate', 'loopback'}:
             require_review_integrity(repo, work)
         records = work.setdefault("sdd", {}).setdefault("native_reviews", {})
         identity = host_session_identity(None)
@@ -401,6 +404,18 @@ def _cmd_sdd_review_locked(args: argparse.Namespace) -> int:
                       'next': 'Read the frozen review input and native instructions. Return actual findings; do not patch product code.'}
             from scripts.review_dispatch import stamp_report
             stamp_report(repo, work, args.layer, attached)
+        elif args.review_action == 'migrate':
+            from scripts.review_migration import migrate
+            output = migrate(repo, work, apply=args.apply, rollback=args.rollback)
+            print(json.dumps(output, ensure_ascii=False)); return 0 if output['ok'] else 2
+        elif args.review_action == 'resolution-draft':
+            from scripts.review_resolution import draft
+            output = draft(repo, work, args.layer)
+            print(json.dumps(output, ensure_ascii=False)); return 0
+        elif args.review_action == 'resume':
+            from scripts.review_resume import resume
+            output = resume(repo, work, getattr(args, 'layer', None), args.transcript)
+            print(json.dumps(output, ensure_ascii=False)); return 0 if output['ok'] else 2
         elif args.review_action in {'diagnose', 'recover'}:
             from scripts.review_observation import diagnose, recover
             output = (diagnose(repo, work, args.layer) if args.review_action == 'diagnose'
@@ -416,8 +431,12 @@ def _cmd_sdd_review_locked(args: argparse.Namespace) -> int:
             from scripts.review_dispatch import review_counts
             output = {'ok': True, 'review_counts': review_counts(work), 'acceptance_preflight': acceptance_preflight(repo, work), 'state': review_state(repo, work, code_snapshot),
                       'layers': {key: {field: value.get(field) for field in
-                          ('id', 'round_id', 'status', 'execution_binding', 'raw_count', 'classified_count', 'input_manifest', 'model_source')}
+                          ('id', 'round_id', 'status', 'execution_binding', 'raw_count', 'classified_count', 'input_manifest', 'model_source', 'context_package', 'resolution_binding_version', 'resolution_evidence')}
                                  for key, value in records.items() if key != '_contract'}}
+            if getattr(args, 'history', False):
+                history = work['sdd'].get('native_review_history', [])
+                output['history'] = history[-args.limit:]
+                output['history_total'] = len(history)
             print(json.dumps(output, ensure_ascii=False)); return 0
         elif args.review_action == 'findings':
             source = provider_artifact(repo, args.source, bmad_output_dirs(repo))

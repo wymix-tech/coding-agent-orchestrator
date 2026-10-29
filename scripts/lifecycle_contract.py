@@ -3,7 +3,7 @@ from copy import deepcopy
 
 
 VERSION = 2
-NATIVE_VERIFICATION_GATES = {"security_verification", "integration_verification",
+NATIVE_VERIFICATION_GATES = {"sdd_acceptance", "security_verification", "integration_verification",
                              "compatibility_verification", "data_verification"}
 
 
@@ -54,7 +54,8 @@ def evidence_state(repo, work, *, evaluation=None):
         return {**pending, 'state': 'stale', 'reason': 'NATIVE_PRODUCT_REPAIR_REQUIRED',
                 'changed_inputs': ['native_product_repair'],
                 'next': 'Reopen the affected native task, repair and complete its native review/acceptance. Capture its actual command output with cao lifecycle execute, then bind that report.'}
-    executions = (work.get('sdd') or {}).get('completion_executions') or []
+    from scripts.native_execution import receipts
+    executions = receipts(work)
     if executions and executions[-1].get('status') != 'passed':
         return {**pending, 'state': 'blocked', 'reason': 'NATIVE_EXECUTION_NOT_PASSED',
                 'next': 'Inspect the native execution runtime and resolve its failure before explicitly rerunning the native command.'}
@@ -94,11 +95,13 @@ def evidence_state(repo, work, *, evaluation=None):
         parsed = []
         for ref in reports:
             path = provider_artifact(repo, ref['path'], provider_output_dirs(provider, repo))
-            if not path.read_bytes().strip() or sha256_file(path) != ref['sha256']:
+            if sha256_file(path) != ref['sha256']:
                 return {**pending, 'state': 'stale', 'reason': 'NATIVE_COMPLETION_REPORT_CHANGED',
                         'changed_paths': [ref['path']]}
             from scripts.native_reports import read as read_native_report
             parsed.append(read_native_report(repo, work, path))
+        from scripts.native_reports import validate_coverage
+        validate_coverage(repo, work, reports, parsed, record.get('gates', []))
         from scripts.evidence_archive import validate_manifest
         validate_manifest(repo, work, reports, record.get('selected_evidence_ids') or [])
         if parsed != record.get('observations'):
@@ -229,13 +232,17 @@ def binding_command(args):
             args.report = list(dict.fromkeys(args.report + select(repo, work, args.evidence)))
         if not args.report:
             raise ValueError('NATIVE_COMPLETION_REPORT_REQUIRED')
+        from scripts.native_execution import receipts
         reports = []
         candidate = deepcopy(work)
+        old_reports = [ref['path'] for ref in (work['sdd'].get('completion_evidence') or {}).get('reports', [])]
+        retained = sorted(set(work['sdd'].get('native_completion_report_outputs', [])) | set(old_reports))
+        candidate['sdd']['native_completion_report_outputs'] = retained
         candidate['sdd']['completion_evidence'] = {'reports': [{'path': name} for name in args.report]}
         observations = []
         for name in args.report:
             path = provider_artifact(repo, name, provider_output_dirs(work['sdd']['provider'], repo))
-            if path.suffix.lower() not in {'.md', '.json', '.yaml', '.yml', '.txt', '.log'} or not path.read_bytes().strip():
+            if path.suffix.lower() not in {'.md', '.json', '.yaml', '.yml', '.txt', '.log'} or (not path.read_bytes().strip() and not any(ref.get('path') == path.relative_to(repo).as_posix() for row in receipts(work) for ref in row.get('reports', []))):
                 raise ValueError('NATIVE_COMPLETION_REPORT_INVALID')
             from scripts.native_reports import read as read_native_report
             observations.append(read_native_report(repo, candidate, path))
@@ -268,13 +275,22 @@ def binding_command(args):
                   'provenance': {'kind': 'native_workflow_binding', 'workflow': workflow.get('name'),
                                  'execution': deepcopy(workflow.get('execution')),
                                  'review_ids': [v.get('id') for v in (sdd.get('native_reviews') or {}).values() if isinstance(v, dict) and v.get('id')]}}
-        from scripts.native_execution import receipt_matches
+        from scripts.native_execution import receipt_matches, receipts
         previous = sdd.get('completion_evidence') or {}
         from scripts.evidence_domains import changed as changed_domains
         material_changes = set(changed_domains(previous.get('domains', {}), record['domains'])['changed_domains']) & {'product', 'native_sources', 'native_scope', 'native_dependencies', 'policy'}
         changed_native_inputs = bool(previous and (previous.get('inputs') != record['inputs'] or material_changes))
-        if (changed_native_inputs or sdd.get('completion_executions') or (sdd.get('completion_repair') or {}).get('kind') == 'product') and not receipt_matches(repo, candidate, reports):
+        from scripts.native_reports import validate_coverage
+        record['covered_gates'] = validate_coverage(repo, candidate, reports, observations, gates, previous_binding=previous)
+        record['evidence_protocol'] = 2
+        execution_reports = [ref for ref, observation in zip(reports, observations)
+                             if not (observation.get('check_records') and set(observation['evidence_types']) <= {'acceptance_result', 'security_result', 'manual_result'})]
+        if (execution_reports and (changed_native_inputs or receipts(candidate) or (sdd.get('completion_repair') or {}).get('kind') == 'product')
+                and not receipt_matches(repo, candidate, execution_reports, binding=previous)):
             raise ValueError('NATIVE_COMPLETION_REEXECUTION_REQUIRED: run the affected native command with cao lifecycle execute --command <native-command> --report <native-log>, then bind its actual output')
+        record['provenance']['report_authorities'] = [
+            {'path': ref['path'], 'authority': 'observed_execution' if receipt_matches(repo, candidate, [ref], binding=previous) else 'native_result_declaration'}
+            for ref in reports]
         from scripts.evidence_archive import validate_manifest
         record['selected_evidence_ids'] = validate_manifest(repo, candidate, reports, getattr(args, 'evidence', None) or [])
         old = sdd.get('completion_evidence')
@@ -293,6 +309,7 @@ def binding_command(args):
         sdd.pop('completion_binding_failure', None)
         if (sdd.get('completion_repair') or {}).get('kind') == 'product':
             sdd.setdefault('completion_repair_history', []).append(sdd.pop('completion_repair'))
+        sdd['native_completion_report_outputs'] = sorted(set(retained) | {ref['path'] for ref in reports})
         sdd['completion_evidence'] = record
         queue_event(work, {'event': 'sdd.completion.bound', 'work_item_id': work['id'],
                            'reports': reports, 'occurred_at': now()})
@@ -302,6 +319,12 @@ def binding_command(args):
 
 
 def command(args):
+    if args.lifecycle_command == 'executions':
+        from scripts.native_execution import inspect_executions
+        return inspect_executions(args)
+    if args.lifecycle_command == 'declare':
+        from scripts.native_validation import declare
+        return declare(args)
     if args.lifecycle_command == 'repair':
         from scripts.native_execution import repair
         return repair(args)
@@ -347,15 +370,24 @@ def register(sub):
         'recover': 'Restore last authorized Work and quarantine unsupported writer output',
         'repair': 'Record diagnosis of a failed project baseline',
         'execute': 'Capture an actual native command result for current inputs',
+        'executions': 'Inspect current and historical native execution receipts',
+        'declare': 'Declare a literal verification command from a bound native source',
         'dependencies': 'Declare shared inputs used by native execution or reviewers',
         'bind': 'Bind original native test/acceptance completion reports',
     }
-    for name in ('preflight', 'migrate', 'rollback', 'protect', 'recover', 'dependencies', 'repair', 'execute', 'bind'):
+    for name in ('preflight', 'migrate', 'rollback', 'protect', 'recover', 'dependencies', 'declare', 'executions', 'repair', 'execute', 'bind'):
         parser = sub.add_parser(name, help=descriptions[name])
         parser.add_argument('--repo', default='.')
         parser.add_argument('--work')
         if name in {'migrate', 'rollback', 'recover'}:
             parser.add_argument('--check', action='store_true', help='Read-only preflight; do not change Work or guard state')
+        if name == 'executions':
+            parser.add_argument('--limit', type=int, choices=range(1, 101), default=20)
+            parser.add_argument('--cursor', type=int, default=0)
+        if name == 'declare':
+            parser.add_argument('--command', required=True)
+            parser.add_argument('--source', required=True)
+            parser.add_argument('--reason', required=True)
         if name == 'repair':
             parser.add_argument('--kind', choices=('product', 'environment', 'baseline', 'unknown'), required=True)
             parser.add_argument('--reason', required=True)

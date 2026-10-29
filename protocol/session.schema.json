@@ -21,23 +21,198 @@
     "last_handoff_id"
   ],
   "properties": {
-    "schema_version": {"const": 2},
-    "id": {"type": "string", "pattern": "^session-[a-f0-9]{16}$"},
-    "host": {"type": "string", "minLength": 1},
-    "host_session_id": {"type": "string", "minLength": 1},
-    "work_item_id": {"type": ["string", "null"]},
-    "kind": {"enum": ["primary", "subagent"]},
-    "parent_session_id": {"type": ["string", "null"]},
-    "status": {"enum": ["active", "ended"]},
-    "started_at": {"type": "integer", "minimum": 0},
-    "last_event": {"type": "string", "minLength": 1},
-    "last_event_at": {"type": "integer", "minimum": 0},
-    "updated_at": {"type": "integer", "minimum": 0},
-    "ended_at": {"type": ["integer", "null"]},
-    "end_reason": {"type": ["string", "null"]},
-    "last_handoff_id": {"type": ["string", "null"]},
-    "observed_model": {"type": ["string", "null"], "description": "Host-observed current model ID for delegated review attachment."},
-    "observed_tools": {"type": ["array", "null"], "items": {"type": "string"}, "description": "Actual enabled tools observed in this session."}
+    "schema_version": {
+      "const": 2
+    },
+    "id": {
+      "type": "string",
+      "pattern": "^session-[a-f0-9]{16}$"
+    },
+    "host": {
+      "type": "string",
+      "minLength": 1
+    },
+    "host_session_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "work_item_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "kind": {
+      "enum": [
+        "primary",
+        "subagent"
+      ]
+    },
+    "parent_session_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "status": {
+      "enum": [
+        "active",
+        "ended"
+      ]
+    },
+    "started_at": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "last_event": {
+      "type": "string",
+      "minLength": 1
+    },
+    "last_event_at": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "updated_at": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "ended_at": {
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "end_reason": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "last_handoff_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "observed_model": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "Host-observed current model ID for delegated review attachment."
+    },
+    "observed_tools": {
+      "type": [
+        "array",
+        "null"
+      ],
+      "items": {
+        "type": "string"
+      },
+      "description": "Actual enabled tools observed in this session."
+    },
+    "observed_provider": {
+      "type": "string"
+    },
+    "native_session_file": {
+      "type": "string"
+    },
+    "review_ticket": {
+      "type": "object",
+      "required": [
+        "run_id",
+        "layer",
+        "input_sha256"
+      ],
+      "properties": {
+        "run_id": {
+          "type": "string"
+        },
+        "layer": {
+          "type": "string"
+        },
+        "input_sha256": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "review_output_sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "review_binding_error": {
+      "type": "string"
+    },
+    "review_read_paths": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "review_trace_paths": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "review_artifacts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "path",
+          "sha256",
+          "collector_version"
+        ],
+        "properties": {
+          "path": {
+            "type": "string"
+          },
+          "sha256": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          },
+          "collector_version": {
+            "type": "integer"
+          },
+          "source_path": {
+            "type": "string"
+          },
+          "recovered_from_sha256": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "review_message_artifact": {
+      "type": "object",
+      "required": [
+        "path",
+        "sha256",
+        "collector_version"
+      ],
+      "properties": {
+        "path": {
+          "type": "string"
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "collector_version": {
+          "type": "integer"
+        },
+        "source_path": {
+          "type": "string"
+        },
+        "recovered_from_sha256": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    }
   },
   "additionalProperties": false
 }

@@ -48,6 +48,9 @@ def summarize(repo, work, lifecycle):
     for item in lifecycle.get('obligations', []):
         name = item['obligation']
         native = name.startswith('native_') or name in {'workflow', 'plan_scope', 'light_spec'}
+        if not item.get('ready') and not item.get('next') and (name in {'plan_scope', 'native_plan_complete'} or str(item.get('reason', '')).startswith('PLAN_')):
+            from scripts.plan_navigation import repair
+            item = {**item, 'next': repair(repo, work)}
         state = item.get('state')
         status = ('not_applicable' if item.get('ready') and state == 'not_applicable' else
                   'passed' if item.get('ready') else 'stale' if state == 'stale' else 'blocked')

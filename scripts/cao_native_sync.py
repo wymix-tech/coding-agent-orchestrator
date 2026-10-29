@@ -346,6 +346,9 @@ def implementation_preflight(repo: Path, work: dict) -> dict:
             if state.get("reason") == "requirement changed since work started":
                 next_step = completion_next_instruction(repo, work, state) + " " + next_step
             return {**state, "next": next_step}
+    if ((work.get('sdd') or {}).get('plan_scope') or {}).get('mode') == 'unresolved':
+        from scripts.plan_navigation import repair
+        return {'ready': False, 'reason': 'PLAN_SCOPE_UNRESOLVED', 'next': repair(repo, work)}
     route = native_route_state(repo, work)
     return {**route, "next": route_preparation_action(repo, work, route)["instruction"]} if not route["ready"] else route
 
@@ -504,6 +507,8 @@ def cmd_sdd_route(args: argparse.Namespace) -> int:
         work["sdd"].setdefault("route_history", []).append(decision)
         work["sdd"]["route_decision"] = decision
         work["sdd"]["native_ref"] = decision["primary_artifact"]
+        from scripts.plan_navigation import establish
+        establish(repo, work)
         work["sdd"].pop("spec_approval", None)
         work["sdd"].pop("spec_task_scope", None)
         work["verification"] = {}
@@ -661,13 +666,17 @@ def reconcile_native_sdd_state(repo: Path, work: dict[str, Any]) -> bool:
     from scripts.cao_guidance import work_prerequisite_action
 
     _refresh_work(repo, work)
+    from scripts.plan_navigation import establish
+    scope_resolved = establish(repo, work)
+    if scope_resolved:
+        save_work(repo, work)
     sdd = work.get("sdd") if isinstance(work.get("sdd"), dict) else {}
     provider = str(sdd.get("provider") or "").lower()
     if provider not in {"bmad", "openspec", "speckit"} or work.get("status") not in {"active", "suspended"}:
         return False
     if provider == 'bmad' and (sdd.get('native_loopback') or {}).get('status') == 'reimplementing':
         return False  # The old native terminal status cannot undo an explicit loopback.
-    changed = False
+    changed = scope_resolved
     native_ref = str(sdd.get("native_ref") or "").strip()
     candidates, anchor = _native_candidates(repo, provider, work, native_ref)
     if isinstance(sdd.get("spec_binding"), dict) and anchor and candidates:

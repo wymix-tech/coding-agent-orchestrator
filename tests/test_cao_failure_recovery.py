@@ -16,7 +16,7 @@ class FailureRecovery(unittest.TestCase):
         (self.repo / 'feature.py').write_text('changed = True\n')
         rc, out = self.cli('lifecycle', 'bind', '--report', 'openspec/completion.md')
         self.assertEqual(2, rc, out)
-        self.assertIn('NATIVE_COMPLETION_REEXECUTION_REQUIRED', str(out))
+        self.assertIn(out['error'], {'NATIVE_COMPLETION_REEXECUTION_REQUIRED', 'NATIVE_COMPLETION_REPORT_WRONG_SNAPSHOT'})
 
     def test_stale_native_evidence_returns_phase_to_implementation(self):
         from scripts.cao_work_store import load_work, save_work

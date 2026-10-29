@@ -115,9 +115,13 @@ def bind_fixture_reviewer(repo, ticket, layer, model, reviewer_cli=None):
                                 text=True, capture_output=True, env=env, timeout=30)
         assert result.returncode == 0, (result.stdout, result.stderr)
         return json.loads(result.stdout)
+    prompt = __import__('scripts.review_observation', fromlist=['task_marker']).task_marker(ticket, layer)
+    if ticket.get('context_package'):
+        from scripts.review_packages import policy
+        prompt = (pathlib.Path(repo) / policy(pathlib.Path(repo), ticket)['prompt']).read_text()
     invoke('host-event', '--host', 'pi', payload={'event': 'subagent_start',
            'session_id': 'fixture-parent', 'subagent_id': session_id, 'model': model,
-           'prompt': __import__('scripts.review_observation', fromlist=['task_marker']).task_marker(ticket, layer)})
+           'prompt': prompt})
     out = invoke('sdd', 'review', 'attach', '--layer', layer, '--run', ticket['id'],
                  '--input-sha256', ticket['input_sha256'], '--model', model)
     return out['review']['execution_binding']['reviewer']
@@ -267,4 +271,24 @@ def bind_fixture_finding_content(repo, report_path):
     originals = {f['id']: digest(f) for f in load_findings(source)}
     for finding in report['findings']:
         finding['content_sha256'] = originals[finding['id']]
+    path.write_text(json.dumps(report))
+
+
+def bind_fixture_resolution(repo, work, layer, report_path, changed_paths, assertion):
+    """An explicit native manual check for synthetic lifecycle fixtures."""
+    import hashlib
+    from scripts.native_obligations import review_inputs
+    from scripts.cao_snapshot import code_snapshot
+    repo = pathlib.Path(repo)
+    current = review_inputs(repo, work, code_snapshot)['code_snapshot']
+    run = work['sdd']['native_reviews'][layer]
+    refs = [{'path': name, 'sha256': hashlib.sha256((repo / name).read_bytes()).hexdigest(),
+             'reason': assertion} for name in changed_paths]
+    path = pathlib.Path(report_path)
+    report = json.loads(path.read_text())
+    report['code_snapshot'] = current
+    report['resolutions'] = [{'id': f['id'], 'content_sha256': f['content_sha256'], 'changes': refs,
+        'verification': [{'kind': 'manual', 'code_snapshot': current, 'assertion': assertion,
+                          'observed': 'Inspected the exact changed fixture bytes', 'evidence': refs}]}
+        for f in run['findings'] if f['disposition'] == 'patch']
     path.write_text(json.dumps(report))

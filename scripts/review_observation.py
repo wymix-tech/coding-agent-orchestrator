@@ -22,6 +22,10 @@ def task_marker(run, layer):
 def observe(repo, work, session, raw, event):
     if not work or not session:
         return
+    native_file = raw.get('native_session_file')
+    if isinstance(native_file, str) and native_file and len(native_file) < 4096:
+        session['native_session_file'] = native_file
+        save_session(repo, session)
     if event in {'prompt_submit', 'subagent_start'}:
         prompt = raw.get('prompt')
         if not isinstance(prompt, str) or len(prompt.encode()) > 128 * 1024:
@@ -41,6 +45,11 @@ def observe(repo, work, session, raw, event):
             return
         if session['id'] in run.get('existing_session_ids', []):
             return
+        from scripts.review_packages import prompt_matches
+        if not prompt_matches(repo, run, prompt):
+            session['review_binding_error'] = 'NATIVE_REVIEW_PROMPT_PACKAGE_REQUIRED'
+            save_session(repo, session)
+            return
         previous = session.get('review_ticket')
         if previous and previous != value:
             return  # An existing task cannot be relabeled by a later prompt.
@@ -50,6 +59,8 @@ def observe(repo, work, session, raw, event):
         auto_bind(repo, work, session)
         if event == 'post_tool' and not raw.get('isError', raw.get('is_error', False)):
             collect_written_artifact(repo, work, session, raw)
+            from scripts.review_packages import observe_reads
+            observe_reads(repo, work, session, raw)
     if event in {'turn_end', 'stop', 'subagent_stop'} and session.get('review_ticket'):
         message = raw.get('last_assistant_message')
         if isinstance(message, str) and message.strip() and len(message.encode()) <= 1024 * 1024:
@@ -210,6 +221,19 @@ def recover(repo, work, layer, source):
     if path.stat().st_size > 1024 * 1024:
         raise ValueError('NATIVE_REVIEW_OUTPUT_TOO_LARGE')
     message = path.read_text(encoding='utf-8-sig')
+    return recover_message(repo, work, layer, message)
+
+
+def recover_message(repo, work, layer, message):
+    from scripts.cao_sessions import load_session
+    from scripts.review_dispatch import bundle_root
+    run = (work.get('sdd', {}).get('native_reviews') or {}).get(layer) or {}
+    binding = run.get('execution_binding') or {}
+    session = load_session(repo, binding.get('session_id'), host=binding.get('host')) or {}
+    if not binding or session.get('review_ticket') != ticket(run, layer):
+        raise ValueError('NATIVE_REVIEW_EXECUTION_UNBOUND')
+    if len(message.encode()) > 1024 * 1024:
+        raise ValueError('NATIVE_REVIEW_OUTPUT_TOO_LARGE')
     expected = session.get('review_output_sha256')
     if not expected or hashlib.sha256(message.strip().encode()).hexdigest() != expected:
         raise ValueError('NATIVE_REVIEW_OUTPUT_SOURCE_MISMATCH: recovery requires the exact observed original message')
