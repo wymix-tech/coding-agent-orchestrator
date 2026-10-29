@@ -41,12 +41,13 @@ class EvidenceRoles(unittest.TestCase):
     def test_manual_native_checks_need_scope_and_per_gate_evidence(self):
         payload = {'evidence_type': 'acceptance_result', 'work_id': 'work-1', 'requirement_sha256': 'req', 'code_snapshot': 'snapshot',
                    'status': 'passed', 'checks': [{'id': 'auth-1', 'description': 'Unauthorized request is rejected',
-                     'status': 'passed', 'evidence': 'HTTP 401 captured by native acceptance', 'gates': ['sdd_acceptance', 'security_verification']}]}
+                     'status': 'passed', 'evidence': [{'path': 'http.log', 'sha256': __import__('hashlib').sha256(b'HTTP 401').hexdigest()}], 'gates': ['sdd_acceptance', 'security_verification']}]}
+        (self.repo / 'http.log').write_text('HTTP 401')
         self.path.write_text(json.dumps(payload))
-        self.assertIn('security_verification', self.coverage(['sdd_acceptance', 'security_verification']))
+        self.assertIn('security_verification', self.coverage(['sdd_acceptance', 'security_verification'], observed=True))
         payload['checks'][0].pop('evidence')
         self.path.write_text(json.dumps(payload))
-        with self.assertRaisesRegex(ValueError, 'GATE_EVIDENCE_REQUIRED'):
+        with self.assertRaisesRegex(ValueError, 'REFERENCE_REQUIRED'):
             self.coverage(['security_verification'])
 
     def test_actual_silent_execution_can_prove_verification(self):
@@ -74,3 +75,83 @@ class EvidenceRoles(unittest.TestCase):
             self.assertFalse(execution_command(command), command)
         self.assertTrue(execution_command('mvn -B test'))
         self.assertTrue(execution_command('bash .orchestrator/scripts/verification/native.sh'))
+
+
+class ReferenceValidation(unittest.TestCase):
+    def test_missing_tampered_and_unobserved_references(self):
+        from scripts.native_reports import validate_references
+        import hashlib
+        with tempfile.TemporaryDirectory() as root:
+            repo = Path(root)
+            ref = {'path': 'test.log', 'sha256': hashlib.sha256(b'passed').hexdigest()}
+            observation = {'check_records': [{'gates': ['integration_verification'], 'evidence': [ref]}]}
+            with self.assertRaisesRegex(ValueError, 'REFERENCE_MISSING'):
+                validate_references(repo, {}, observation)
+            (repo / 'test.log').write_text('tampered')
+            with self.assertRaisesRegex(ValueError, 'REFERENCE_CHANGED'):
+                validate_references(repo, {}, observation)
+            (repo / 'test.log').write_text('passed')
+            with patch('scripts.native_execution.receipt_matches', return_value=False):
+                with self.assertRaisesRegex(ValueError, 'REFERENCE_EXECUTION_REQUIRED'):
+                    validate_references(repo, {}, observation)
+            with patch('scripts.native_execution.receipt_matches', return_value=True):
+                validate_references(repo, {}, observation)
+
+class SessionStatistics(unittest.TestCase):
+    def test_maven_class_rows_and_aggregate_count_once(self):
+        with tempfile.TemporaryDirectory() as root:
+            repo = Path(root)
+            path = repo / 'maven.log'
+            path.write_text('[INFO] Tests run: 12, Failures: 0, Errors: 0 - in FirstTest\n[INFO] Tests run: 22, Failures: 0, Errors: 0 - in SecondTest\n[INFO] Tests run: 34, Failures: 0, Errors: 0\nBUILD SUCCESS\n')
+            result = read(repo, {'id': 'w', 'requirement': {'sha256': 'r'}, 'sdd': {'provider': 'bmad'}}, path)
+            self.assertEqual(34, result['checks_observed'])
+
+    def test_bound_spec_command_discovery_invalidates_on_source_change(self):
+        import hashlib
+        from scripts.native_validation import commands
+        with tempfile.TemporaryDirectory() as root:
+            repo = Path(root)
+            path = repo / 'spec.md'
+            path.write_text('Validate using `mvn test`. Never run `npm publish`.')
+            work = {'requirement': {'sha256': 'req'}, 'sdd': {'spec_binding': {'requirement_sha256': 'req', 'spec': {'path': 'spec.md', 'sha256': hashlib.sha256(path.read_bytes()).hexdigest()}}}}
+            self.assertEqual(['mvn test'], commands(repo, work))
+            path.write_text('Changed `mvn test`.')
+            self.assertEqual([], commands(repo, work))
+
+class ReviewRegression(unittest.TestCase):
+    def test_arbitrary_file_cannot_cover_acceptance_or_other_gates(self):
+        from scripts.native_reports import validate_references
+        import hashlib
+        with tempfile.TemporaryDirectory() as root:
+            repo = Path(root)
+            (repo / 'old.log').write_text('unrelated')
+            for gate in ['sdd_acceptance', 'targeted_verification', 'compatibility_verification', 'data_verification']:
+                observation = {'check_records': [{'gates': [gate], 'evidence': [{'path': 'old.log', 'sha256': hashlib.sha256(b'unrelated').hexdigest()}]}]}
+                with patch('scripts.native_execution.receipt_matches', return_value=False):
+                    with self.assertRaisesRegex(ValueError, 'REFERENCE_EXECUTION_REQUIRED'):
+                        validate_references(repo, {}, observation)
+                with patch('scripts.native_execution.receipt_matches', return_value=True):
+                    validate_references(repo, {}, observation)
+
+    def test_acceptance_rows_do_not_imply_verification(self):
+        with tempfile.TemporaryDirectory() as root:
+            repo = Path(root)
+            p = repo / 'acceptance.json'
+            p.write_text(json.dumps({'status': 'passed', 'evidence_type': 'acceptance_result', 'checks': [{'id': 'one', 'description': 'one', 'status': 'passed', 'evidence': 'example', 'gates': ['sdd_acceptance']}]}))
+            row = read(repo, {'id': 'w', 'requirement': {'sha256': 'r'}, 'sdd': {'provider': 'bmad'}}, p)
+            self.assertEqual(['sdd_acceptance'], row['gate_coverage'])
+
+    def test_modern_maven_class_rows_do_not_double_count(self):
+        with tempfile.TemporaryDirectory() as root:
+            repo = Path(root)
+            p = repo / 'test.log'
+            p.write_text('Tests run: 34, Failures: 0, Errors: 0, Time elapsed: 1 s -- in Test\nTests run: 34, Failures: 0, Errors: 0\nBUILD SUCCESS\n')
+            self.assertEqual(34, read(repo, {'id': 'w', 'requirement': {'sha256': 'r'}, 'sdd': {'provider': 'bmad'}}, p)['checks_observed'])
+
+    def test_inline_and_fenced_pytest_commands_are_discovered(self):
+        from scripts.native_validation import command_candidates, native_check
+        import shlex
+        text = 'Run `pytest`.\n```sh\npython -m pytest tests\n```\n'
+        candidates = command_candidates(text)
+        self.assertEqual(['pytest', 'python -m pytest tests'], candidates)
+        self.assertTrue(all(native_check(shlex.split(c)) for c in candidates))

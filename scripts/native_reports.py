@@ -120,7 +120,11 @@ def read(repo, work, path, *, execution=None):
             declarations.append('passed' if checks else 'failed')
         maven = re.findall(r'Tests run:\s*(\d+),\s*Failures:\s*(\d+),\s*Errors:\s*(\d+)', text)
         if maven:
-            checks += sum(int(row[0]) for row in maven)
+            # Surefire prints class rows and an aggregate per module.
+            summaries = re.findall(r'Tests run:\s*\d+,\s*Failures:\s*\d+,\s*Errors:\s*\d+[^\n]*', text)
+            aggregate = [row for row in summaries if not re.search(r'\s-{1,2}\s+in\s', row)]
+            selected = aggregate or summaries
+            checks += sum(int(re.search(r'Tests run:\s*(\d+)', row)[1]) for row in selected)
             declarations.append('failed' if not checks or any(int(f) or int(e) for _, f, e in maven) else 'passed')
         pytest = re.findall(r'(?m)^[= ]*(\d+) passed(?:[^\n]*) in [^\n]+$', text)
         if pytest:
@@ -160,7 +164,7 @@ def read(repo, work, path, *, execution=None):
     types = sorted(set(declared_types)) or ['test_result' if checks else 'execution_result' if execution else 'workflow_declaration']
     if set(types) - {'test_result', 'execution_result', 'acceptance_result', 'security_result', 'manual_result', 'workflow_declaration'}:
         raise ValueError('NATIVE_COMPLETION_EVIDENCE_TYPE_UNSUPPORTED')
-    coverage = {'verification'} if checks else set()
+    coverage = {'verification'} if checks and not check_records else set()
     for item in check_records:
         gates = item.get('gates', [])
         if not isinstance(gates, list) or not all(isinstance(g, str) for g in gates):
@@ -179,6 +183,8 @@ def validate_coverage(repo, work, reports, observations, gates, *, previous_bind
     """Result declarations cannot be promoted to checks by CLI gate flags."""
     from scripts.native_execution import receipt_matches
     covered = set()
+    for observation in observations:
+        validate_references(repo, work, observation, previous_binding=previous_binding)
     for ref, row in zip(reports, observations):
         if 'workflow_declaration' in row['evidence_types'] and not row['check_records']:
             raise ValueError('NATIVE_COMPLETION_CHECK_EVIDENCE_REQUIRED: document/workflow status is not a verification result')
@@ -197,3 +203,33 @@ def validate_coverage(repo, work, reports, observations, gates, *, previous_bind
     if missing:
         raise ValueError('NATIVE_COMPLETION_GATE_EVIDENCE_REQUIRED: checks with id, description, status, evidence and gates are required for ' + ', '.join(missing))
     return sorted(covered)
+
+
+def validate_references(repo, work, observation, *, previous_binding=None):
+    """Dereference check evidence before granting declared gate coverage."""
+    from scripts.path_guard import repo_file
+    from scripts.cao_runtime import sha256_file
+    from scripts.native_execution import receipt_matches
+    # Every declared gate needs current provenance, including task acceptance.
+    # File identity alone does not establish Work/execution identity.
+    for index, check in enumerate(observation['check_records']):
+        if not check.get('gates'):
+            continue
+        location = f'checks[{index}].evidence'
+        refs = check.get('evidence')
+        if not isinstance(refs, list) or not refs:
+            raise ValueError('NATIVE_COMPLETION_REFERENCE_REQUIRED: ' + location + ' must be a nonempty array')
+        verified = []
+        for offset, ref in enumerate(refs):
+            field = f'{location}[{offset}]'
+            if not isinstance(ref, dict) or not isinstance(ref.get('path'), str) or not isinstance(ref.get('sha256'), str):
+                raise ValueError('NATIVE_COMPLETION_REFERENCE_REQUIRED: ' + field)
+            path = repo_file(repo, ref['path'])
+            if not path.is_file():
+                raise ValueError('NATIVE_COMPLETION_REFERENCE_MISSING: ' + field + '.path')
+            actual = sha256_file(path)
+            if actual != ref['sha256']:
+                raise ValueError(f'NATIVE_COMPLETION_REFERENCE_CHANGED: {field}.sha256 expected={ref["sha256"]} actual={actual}')
+            verified.append({'path': path.relative_to(repo).as_posix(), 'sha256': actual})
+        if not receipt_matches(repo, work, verified, binding=previous_binding):
+            raise ValueError('NATIVE_COMPLETION_REFERENCE_EXECUTION_REQUIRED: ' + location)

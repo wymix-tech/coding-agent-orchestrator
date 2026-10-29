@@ -109,7 +109,7 @@ class NativeSessionReplay(unittest.TestCase):
         acceptance = {'evidence_type': 'acceptance_result', 'status': 'passed', 'work_id': t.wid,
                       'requirement_sha256': t.work()['requirement']['sha256'], 'code_snapshot': current['code_snapshot'],
                       'checks': [{'id': 'credentials', 'description': 'Correct credentials succeed and incorrect passwords are rejected',
-                                  'status': 'passed', 'gates': ['sdd_acceptance'], 'evidence': 'Login.test_credentials passed in native-tests.log'}]}
+                                  'status': 'passed', 'gates': ['sdd_acceptance'], 'evidence': [{'path': '_bmad-output/native-tests.log', 'sha256': __import__('hashlib').sha256((t.repo / '_bmad-output/native-tests.log').read_bytes()).hexdigest()}]}]}
         t.write('_bmad-output/acceptance.json', json.dumps(acceptance))
         t.run_cli('lifecycle', 'bind', '--report', '_bmad-output/native-tests.log', '--report', '_bmad-output/acceptance.json', '--gate', 'sdd_acceptance')
         t.run_cli('conformance', 'check')

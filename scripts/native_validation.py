@@ -69,7 +69,20 @@ def commands(repo, work):
         path = repo_file(repo, row['source'])
         if path.is_file() and hashlib.sha256(path.read_bytes()).hexdigest() == row['source_sha256'] and literal(path.read_text(), row['command']):
             result.append(row['command'])
-    return result
+    # Bound, unchanged SPEC commands are available before the first host run.
+    binding = (work.get('sdd') or {}).get('spec_binding') or {}
+    ref = binding.get('spec') or {}
+    if binding.get('requirement_sha256') == work['requirement']['sha256'] and ref.get('path') and ref.get('sha256'):
+        path = repo_file(repo, ref['path'])
+        if path.is_file() and hashlib.sha256(path.read_bytes()).hexdigest() == ref['sha256']:
+            for candidate in command_candidates(path.read_text()):
+                try:
+                    tokens = shlex.split(candidate) if execution_command(candidate) else []
+                except ValueError:
+                    continue
+                if native_check(tokens):
+                    result.append(candidate)
+    return list(dict.fromkeys(result))
 
 
 def declare(args):
@@ -96,3 +109,25 @@ def declare(args):
             save_work(repo, work)
     print(json.dumps({'ok': True, 'declaration': row, 'next': 'Run cao lifecycle execute with this command to collect its actual output.'}))
     return 0
+
+
+def command_candidates(text):
+    """Inline commands and complete lines in shell fences."""
+    result = re.findall(r'(?<!`)`([^`\n]+)`(?!`)', text)
+    for block in re.findall(r'(?ms)^```(?:bash|sh|shell|console)?[ \t]*\n(.*?)^```', text):
+        result.extend(line.strip().removeprefix('$ ') for line in block.splitlines() if line.strip() and not line.lstrip().startswith('#'))
+    return list(dict.fromkeys(result))
+
+
+def native_check(tokens):
+    if not tokens:
+        return False
+    from pathlib import Path
+    program = Path(tokens[0]).name
+    if program == 'pytest':
+        return True
+    if program.startswith('python') and tokens[1:3] == ['-m', 'pytest']:
+        return True
+    if program in {'mvn', 'mvnw', 'gradle', 'gradlew', 'go', 'cargo', 'npm', 'pnpm', 'yarn', 'dotnet'}:
+        return any(token in {'test', 'verify', 'check', 'build', 'compile', 'package', 'lint', 'audit', 'test:unit', 'test:integration'} for token in tokens[1:])
+    return False

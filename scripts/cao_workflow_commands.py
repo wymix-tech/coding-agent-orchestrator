@@ -410,7 +410,7 @@ def _cmd_sdd_review_locked(args: argparse.Namespace) -> int:
             print(json.dumps(output, ensure_ascii=False)); return 0 if output['ok'] else 2
         elif args.review_action == 'resolution-draft':
             from scripts.review_resolution import draft
-            output = draft(repo, work, args.layer)
+            output = draft(repo, work, args.layer, refresh=args.refresh)
             print(json.dumps(output, ensure_ascii=False)); return 0
         elif args.review_action == 'resume':
             from scripts.review_resume import resume

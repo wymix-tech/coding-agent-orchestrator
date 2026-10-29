@@ -209,12 +209,15 @@ def begin_review(repo, work, args, identity):
     output['next'] = ('Use the generated prompt_file verbatim as the child task; do not add whole-step/spec/history context. Include task_marker as an exact standalone line in the actual reviewer task prompt. Never bind by session order. Begin ALL active layers before launching reviewers. The host automatically binds each ticket-marked observed child before inspection using parent/model/tools metadata. Use reviewer_start or coordinator --reviewer-session only for compatible manual/external attachment; never attach after inspection. '
         'to acknowledge this ticket and frozen input, then inspect that exact code without product writes. '
         + ('Preserve unmodified native Markdown/JSON findings for each layer; classify ALL layers before patches, then resolve ALL layers. '
-           'Use `cao sdd review classify --layer <layer> --report <triage.json>`, then `cao sdd review resolve --layer <layer> --report <resolved.json>`.'
+           'First use `cao sdd review draft --layer <layer>` from collected originals; fill only judgments, then use `cao sdd review classify --layer <layer> --report <triage.json>`, then `cao sdd review resolve --layer <layer> --report <resolved.json>`.'
            if dispatch_review(work) else
            'Preserve raw Markdown findings. Classify all layers before patches and keep that file unchanged; submit a separate resolved report with `cao sdd review submit --layer <layer> --report <report.json>`.')
         + ' Before launch, inspect the installed agent definitions and effective tools/model/backend; read-only children use coordinator attachment and all children need the CAO host adapter. '
         'Use an available agent name; do not assume task/general-purpose exist. Preserve native prompts/output formats, including Markdown. '
         'If no capable subagent is available, use a new independent external host session with its CAO adapter. Never reuse results from before this ticket.')
+    from scripts.review_packages import launch_payload
+    output['launch_payload'] = launch_payload(repo, work)
+    output['launch_capability'] = 'Use one Pi tasks batch only if the installed subagent schema supports tasks; set each agent from installed definitions. Otherwise inspect the installed workflow fan-out capability before launch.'
     if reused:
         output['next'] = review_next(repo, work, inputs)
     return output
@@ -359,7 +362,9 @@ def prepare_batch(repo, work, args, identity):
             package.update(prompt_file=frozen['prompt'], diff_file=frozen['diff'], launch={'mode': 'synchronous', 'wait_for_all': True, 'async': False})
         atomic_json(root / 'dispatch.json', package)
         outputs.append(package)
-    return {'ok': True, 'reviews': outputs, 'owner': 'sdd_provider',
+    from scripts.review_packages import workflow_launch
+    launch = workflow_launch(repo, work, args.agent_definition) if host == 'pi' and getattr(args, 'agent_definition', None) else None
+    return {'ok': True, 'reviews': outputs, 'owner': 'sdd_provider', 'workflow_launch': launch,
             'next': review_next(repo, work, review_inputs(repo, work, code_snapshot))}
 
 
@@ -416,7 +421,7 @@ def draft_report(repo, work, layer, source=None):
     root.mkdir(parents=True, exist_ok=True)
     path = root / 'report.json'
     if path.exists() and json.loads(path.read_text()).get('findings'):
-        invalid('NATIVE_REVIEW_DRAFT_EXISTS', 'report', 'reuse the existing triage; never overwrite judgments', str(path.relative_to(repo)))
+        return {'ok': True, 'status': 'existing', 'report': path.relative_to(repo).as_posix(), 'next': 'Preserve existing judgments; classify this report when complete.'}
     report = {'run_id': run['id'], 'input_sha256': run['input_sha256'], 'reviewer': binding['reviewer'],
               'findings_file': raw.relative_to(repo).as_posix(), 'source_sha256': hashlib.sha256(raw.read_bytes()).hexdigest(), 'intent_conflicts': [],
               'findings': [{'id': item['id'], 'content_sha256': native_digest(item), 'verdict': None, 'disposition': None, 'evidence': ''} for item in findings]}
