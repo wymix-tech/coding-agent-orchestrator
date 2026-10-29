@@ -69,7 +69,17 @@ def commands(repo, work):
         path = repo_file(repo, row['source'])
         if path.is_file() and hashlib.sha256(path.read_bytes()).hexdigest() == row['source_sha256'] and literal(path.read_text(), row['command']):
             result.append(row['command'])
-    return result
+    # Bound, unchanged SPEC commands are available before the first host run.
+    binding = (work.get('sdd') or {}).get('spec_binding') or {}
+    ref = binding.get('spec') or {}
+    if ref.get('path') and ref.get('sha256'):
+        path = repo_file(repo, ref['path'])
+        if path.is_file() and hashlib.sha256(path.read_bytes()).hexdigest() == ref['sha256']:
+            for candidate in re.findall(r'`([^`\n]+)`', path.read_text()):
+                tokens = shlex.split(candidate) if execution_command(candidate) else []
+                if tokens and tokens[0].split('/')[-1] in {'mvn', 'mvnw', 'gradle', 'gradlew', 'pytest', 'go', 'cargo', 'npm', 'pnpm', 'yarn', 'dotnet'}:
+                    result.append(candidate)
+    return list(dict.fromkeys(result))
 
 
 def declare(args):
