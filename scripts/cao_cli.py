@@ -408,7 +408,7 @@ def main(argv: list[str] | None = None) -> int:
         # Data-authoring and host protocol responses retain their complete schema.
         viewable = (args.fn in {cmd_next, cmd_status, cmd_done, cmd_gate, cmd_sdd_sync, cmd_sdd_workflow, cmd_sdd_route}
                     or getattr(args, 'conformance_action', None) in {'show', 'check'}
-                    or getattr(args, 'lifecycle_command', None) == 'bind'
+                    or getattr(args, 'lifecycle_command', None) in {'bind', 'execute', 'executions'}
                     or (args.fn == cmd_sdd_review and args.review_action == 'status' and not args.history))
         if compact or (agent_output and viewable):
             from scripts.cli_output import emit_summary, emit_agent

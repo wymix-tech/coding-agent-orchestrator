@@ -120,7 +120,11 @@ def read(repo, work, path, *, execution=None):
             declarations.append('passed' if checks else 'failed')
         maven = re.findall(r'Tests run:\s*(\d+),\s*Failures:\s*(\d+),\s*Errors:\s*(\d+)', text)
         if maven:
-            checks += sum(int(row[0]) for row in maven)
+            # Surefire prints class rows and an aggregate per module.
+            summaries = re.findall(r'Tests run:\s*\d+,\s*Failures:\s*\d+,\s*Errors:\s*\d+[^\n]*', text)
+            aggregate = [row for row in summaries if ' - in ' not in row]
+            selected = aggregate or summaries
+            checks += sum(int(re.search(r'Tests run:\s*(\d+)', row)[1]) for row in selected)
             declarations.append('failed' if not checks or any(int(f) or int(e) for _, f, e in maven) else 'passed')
         pytest = re.findall(r'(?m)^[= ]*(\d+) passed(?:[^\n]*) in [^\n]+$', text)
         if pytest:
