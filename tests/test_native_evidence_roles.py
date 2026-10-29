@@ -41,12 +41,13 @@ class EvidenceRoles(unittest.TestCase):
     def test_manual_native_checks_need_scope_and_per_gate_evidence(self):
         payload = {'evidence_type': 'acceptance_result', 'work_id': 'work-1', 'requirement_sha256': 'req', 'code_snapshot': 'snapshot',
                    'status': 'passed', 'checks': [{'id': 'auth-1', 'description': 'Unauthorized request is rejected',
-                     'status': 'passed', 'evidence': 'HTTP 401 captured by native acceptance', 'gates': ['sdd_acceptance', 'security_verification']}]}
+                     'status': 'passed', 'evidence': [{'path': 'http.log', 'sha256': __import__('hashlib').sha256(b'HTTP 401').hexdigest()}], 'gates': ['sdd_acceptance', 'security_verification']}]}
+        (self.repo / 'http.log').write_text('HTTP 401')
         self.path.write_text(json.dumps(payload))
-        self.assertIn('security_verification', self.coverage(['sdd_acceptance', 'security_verification']))
+        self.assertIn('security_verification', self.coverage(['sdd_acceptance', 'security_verification'], observed=True))
         payload['checks'][0].pop('evidence')
         self.path.write_text(json.dumps(payload))
-        with self.assertRaisesRegex(ValueError, 'GATE_EVIDENCE_REQUIRED'):
+        with self.assertRaisesRegex(ValueError, 'REFERENCE_REQUIRED'):
             self.coverage(['security_verification'])
 
     def test_actual_silent_execution_can_prove_verification(self):
@@ -74,3 +75,24 @@ class EvidenceRoles(unittest.TestCase):
             self.assertFalse(execution_command(command), command)
         self.assertTrue(execution_command('mvn -B test'))
         self.assertTrue(execution_command('bash .orchestrator/scripts/verification/native.sh'))
+
+
+class ReferenceValidation(unittest.TestCase):
+    def test_missing_tampered_and_unobserved_references(self):
+        from scripts.native_reports import validate_references
+        import hashlib
+        with tempfile.TemporaryDirectory() as root:
+            repo = Path(root)
+            ref = {'path': 'test.log', 'sha256': hashlib.sha256(b'passed').hexdigest()}
+            observation = {'check_records': [{'gates': ['integration_verification'], 'evidence': [ref]}]}
+            with self.assertRaisesRegex(ValueError, 'REFERENCE_MISSING'):
+                validate_references(repo, {}, observation)
+            (repo / 'test.log').write_text('tampered')
+            with self.assertRaisesRegex(ValueError, 'REFERENCE_CHANGED'):
+                validate_references(repo, {}, observation)
+            (repo / 'test.log').write_text('passed')
+            with patch('scripts.native_execution.receipt_matches', return_value=False):
+                with self.assertRaisesRegex(ValueError, 'REFERENCE_EXECUTION_REQUIRED'):
+                    validate_references(repo, {}, observation)
+            with patch('scripts.native_execution.receipt_matches', return_value=True):
+                validate_references(repo, {}, observation)

@@ -179,6 +179,8 @@ def validate_coverage(repo, work, reports, observations, gates, *, previous_bind
     """Result declarations cannot be promoted to checks by CLI gate flags."""
     from scripts.native_execution import receipt_matches
     covered = set()
+    for observation in observations:
+        validate_references(repo, work, observation, previous_binding=previous_binding)
     for ref, row in zip(reports, observations):
         if 'workflow_declaration' in row['evidence_types'] and not row['check_records']:
             raise ValueError('NATIVE_COMPLETION_CHECK_EVIDENCE_REQUIRED: document/workflow status is not a verification result')
@@ -197,3 +199,32 @@ def validate_coverage(repo, work, reports, observations, gates, *, previous_bind
     if missing:
         raise ValueError('NATIVE_COMPLETION_GATE_EVIDENCE_REQUIRED: checks with id, description, status, evidence and gates are required for ' + ', '.join(missing))
     return sorted(covered)
+
+
+def validate_references(repo, work, observation, *, previous_binding=None):
+    """Dereference check evidence before granting declared gate coverage."""
+    from scripts.path_guard import repo_file
+    from scripts.cao_runtime import sha256_file
+    from scripts.native_execution import receipt_matches
+    execution_gates = {'verification', 'integration_verification', 'security_verification'}
+    for index, check in enumerate(observation['check_records']):
+        if not check.get('gates'):
+            continue
+        location = f'checks[{index}].evidence'
+        refs = check.get('evidence')
+        if not isinstance(refs, list) or not refs:
+            raise ValueError('NATIVE_COMPLETION_REFERENCE_REQUIRED: ' + location + ' must be a nonempty array')
+        verified = []
+        for offset, ref in enumerate(refs):
+            field = f'{location}[{offset}]'
+            if not isinstance(ref, dict) or not isinstance(ref.get('path'), str) or not isinstance(ref.get('sha256'), str):
+                raise ValueError('NATIVE_COMPLETION_REFERENCE_REQUIRED: ' + field)
+            path = repo_file(repo, ref['path'])
+            if not path.is_file():
+                raise ValueError('NATIVE_COMPLETION_REFERENCE_MISSING: ' + field + '.path')
+            actual = sha256_file(path)
+            if actual != ref['sha256']:
+                raise ValueError(f'NATIVE_COMPLETION_REFERENCE_CHANGED: {field}.sha256 expected={ref["sha256"]} actual={actual}')
+            verified.append({'path': path.relative_to(repo).as_posix(), 'sha256': actual})
+        if execution_gates.intersection(check['gates']) and not receipt_matches(repo, work, verified, binding=previous_binding):
+            raise ValueError('NATIVE_COMPLETION_REFERENCE_EXECUTION_REQUIRED: ' + location)
