@@ -89,6 +89,18 @@ class ContextPackages(unittest.TestCase):
         self.assertTrue(all(c['agent'] == 'reviewer' for c in result['calls']))
         self.assertEqual([t['task'] for t in launch_payload(self.repo, self.work)['tasks']], [c['task'] for c in result['calls']])
 
+    def test_named_workflow_cannot_hide_async_tasks_in_args(self):
+        from scripts.review_packages import launch_guard
+        run, output, _ = self.package('blind-hunter')
+        prompt = (self.repo / output['prompt_file']).read_text()
+        payload = {'workflow': 'parallel', 'args': {'tasks': [{'agent': 'reviewer', 'task': prompt}]}}
+        raw = {'toolName': 'subagent', 'input': payload}
+        self.assertIn('SYNCHRONOUS_REQUIRED', launch_guard(self.repo, self.work, raw))
+        payload['async'] = False
+        self.assertIsNone(launch_guard(self.repo, self.work, raw))
+        payload['args']['tasks'][0]['task'] += '\nRead SPEC too'
+        self.assertIn('PACKAGE_REQUIRED', launch_guard(self.repo, self.work, raw))
+
     def event(self, path, tool='read'):
         return {'toolName': tool, 'input': {'path': path}}
 

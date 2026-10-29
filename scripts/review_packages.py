@@ -221,6 +221,8 @@ def launch_guard(repo, work, raw):
         return None
     payload = raw.get('tool_input') or raw.get('input') or raw.get('arguments') or {}
     nested = payload.get('args') if isinstance(payload.get('args'), dict) else {}
+    if 'CAO_REVIEW_TICKET' in json.dumps(payload) and payload.get('async') is not False:
+        return 'NATIVE_REVIEW_SYNCHRONOUS_REQUIRED: reviewer workflows require top-level async:false'
     tasks = payload.get('tasks') or nested.get('tasks') or [payload]
     if not isinstance(tasks, list):
         return None
