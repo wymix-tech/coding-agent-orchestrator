@@ -79,7 +79,7 @@ def validate(repo, work, run, report, current):
     return hashes, {'protocol': 1, 'code_snapshot': current['code_snapshot'], 'items': summary}
 
 
-def draft(repo, work, layer):
+def draft(repo, work, layer, *, refresh=False):
     from scripts.native_obligations import review_inputs
     from scripts.cao_snapshot import code_snapshot
     from scripts.review_dispatch import bundle_root
@@ -91,6 +91,16 @@ def draft(repo, work, layer):
     current = review_inputs(repo, work, code_snapshot)
     if path.exists():
         existing = json.loads(path.read_text())
+        if refresh and existing.get('code_snapshot') != current['code_snapshot']:
+            existing.setdefault('previous_verification', []).append({'code_snapshot': existing.get('code_snapshot'),
+                'resolutions': existing.get('resolutions', [])})
+            from copy import deepcopy
+            existing['resolutions'] = deepcopy(existing.get('resolutions', []))
+            existing['code_snapshot'] = current['code_snapshot']
+            for resolution in existing['resolutions']:
+                for check in resolution.get('verification', []):
+                    check.update(code_snapshot=current['code_snapshot'], observed='', evidence=[])
+            atomic_json(path, existing)
         return {'ok': True, 'report': path.relative_to(repo).as_posix(), 'status': 'existing', 'review_code_snapshot': current['code_snapshot'], 'draft_code_snapshot': existing.get('code_snapshot'), 'snapshot_fresh': existing.get('code_snapshot') == current['code_snapshot'], 'verification_example': verification_example(current['code_snapshot']), 'next': 'Preserve and complete the existing per-finding resolution evidence.'}
     current = review_inputs(repo, work, code_snapshot)
     findings = [f for f in run['findings'] if f['disposition'] == 'patch']

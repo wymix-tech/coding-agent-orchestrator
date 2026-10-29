@@ -181,7 +181,7 @@ def build_parser() -> argparse.ArgumentParser:
             mode.add_argument('--apply', action='store_true')
             mode.add_argument('--rollback', help='Restore an unchanged upgrade checkpoint by migration ID')
         elif name == 'resolution-draft':
-            pass
+            sp.add_argument('--refresh', action='store_true', help='Refresh review snapshot and require new verification while preserving assertions')
         elif name == 'resume':
             sp.add_argument('--layer', action='append', help='Recover only these layers; default is all active layers')
             sp.add_argument('--transcript', action='append', default=[], help='Bound native session archive to search by observed final-message hash')
