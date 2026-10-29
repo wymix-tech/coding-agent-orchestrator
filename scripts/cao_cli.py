@@ -343,6 +343,8 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--plan-only", action="store_true", help="Save a non-executable plan before a Work exists")
     sp.add_argument("--scope", action="append", help="Affected project module; repeat for shared verification")
     sp.set_defaults(fn=cmd_verification_configure)
+    from scripts.lock_diagnostics import command as lock_diagnose
+    sp = sub.add_parser('diagnose'); sp.add_argument('--repo', default='.'); sp.add_argument('--work'); sp.set_defaults(fn=lock_diagnose)
     sp = sub.add_parser("verify"); sp.add_argument("--repo", default="."); sp.add_argument("--work"); sp.add_argument("--script", action="append", help="Engineering diagnostic only, never grants done eligibility; repeat for multiple scripts"); sp.add_argument("--command", action="append", help=argparse.SUPPRESS); sp.set_defaults(fn=cmd_verify)
     sp = sub.add_parser("done"); sp.add_argument("--repo", default="."); sp.add_argument("--work"); sp.set_defaults(fn=cmd_done)
     sp = sub.add_parser("reopen", help="Reopen a completed Work Item that should not have been closed"); sp.add_argument("--repo", default="."); sp.add_argument("--work"); sp.add_argument("--reason", help="Why the completion was wrong, e.g. which part of the requirement is missing"); sp.add_argument("--reanchor", action="store_true", help="Explicitly accept the current verification standard and clear gates/verification; also supports active Work Items"); sp.set_defaults(fn=cmd_reopen)
@@ -378,6 +380,9 @@ def main(argv: list[str] | None = None) -> int:
         # installed host resources await reload. Work advancement must wait.
         # Dispatch by handler: several existing subcommands also use the
         # argparse destination `command` for a shell command or a list of them.
+        from scripts.lock_diagnostics import command as lock_diagnose
+        if args.fn == lock_diagnose:
+            return lock_diagnose(args)
         repair_or_read = args.fn in {
             cmd_init, cmd_bootstrap, cmd_host, host_event, cmd_language_show,
             cmd_language_set, cmd_language_apply, cmd_instructions_update,

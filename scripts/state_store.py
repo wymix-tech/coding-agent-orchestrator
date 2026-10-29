@@ -6,6 +6,7 @@ import errno
 import json
 import os
 import shutil
+import socket
 import tempfile
 import threading
 import time
@@ -62,6 +63,9 @@ def repo_transaction(repo: Path, timeout: float = 5.0):
                 try:
                     _lock(fd)
                     acquired = True
+                    atomic_json(folder / 'state-lock-owner.json', {'pid': os.getpid(), 'host': socket.gethostname(),
+                        'acquired_at': time.time(), 'thread': threading.get_ident(),
+                        'operation': __import__('sys').argv[1:4], 'advisory_only': True})
                     break
                 except OSError as exc:
                     if exc.errno not in (errno.EACCES, errno.EAGAIN, errno.EDEADLK):

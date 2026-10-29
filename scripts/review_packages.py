@@ -220,7 +220,8 @@ def launch_guard(repo, work, raw):
     if _event_key(raw, 'tool_name', 'toolName', 'tool', 'name').lower() != 'subagent':
         return None
     payload = raw.get('tool_input') or raw.get('input') or raw.get('arguments') or {}
-    tasks = payload.get('tasks') or [payload]
+    nested = payload.get('args') if isinstance(payload.get('args'), dict) else {}
+    tasks = payload.get('tasks') or nested.get('tasks') or [payload]
     if not isinstance(tasks, list):
         return None
     records = (work.get('sdd') or {}).get('native_reviews') or {}
@@ -240,7 +241,7 @@ def launch_guard(repo, work, raw):
             return 'NATIVE_REVIEW_PROMPT_PACKAGE_REQUIRED: use prompt_file verbatim'
         if payload.get('async') is not False or task.get('async') is True or payload.get('mode') in {'async', 'detached', 'background'}:
             return 'NATIVE_REVIEW_SYNCHRONOUS_REQUIRED: launch blocking reviewer calls and await all results'
-        if 'tasks' in payload and 'worktree' in task:
+        if ('tasks' in payload or 'tasks' in nested) and 'worktree' in task:
             return 'NATIVE_REVIEW_HOST_ARGUMENT_INVALID: worktree belongs at the host top level'
     return None
 

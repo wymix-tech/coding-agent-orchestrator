@@ -254,12 +254,13 @@ def overall_verification_status(results: list[dict[str, Any]]) -> str:
     return required_verification_status(results)
 
 
-@locked_command
 def _prepare_verification(args: argparse.Namespace):
     from scripts.cao_tool_policy import verification_baseline_state
 
     repo = repo_root(args.repo); ensure_initialized(repo)
     index = load_index(repo); wid = args.work or index.get("active_work"); work = load_work(repo, wid) if wid else None
+    from copy import deepcopy
+    original_work = deepcopy(work)
     if not work:
         print(json.dumps(record_denial(repo, work, "verify", {"ok": False, "error": "NO_ACTIVE_WORK_ITEM"}), ensure_ascii=False, indent=2)); return 2
 
@@ -345,16 +346,23 @@ def _prepare_verification(args: argparse.Namespace):
            "sequence": int(work.get("verification_sequence", 0)) + 1,
            "generation": int(work.get("execution_generation", 0)), "status": "running", "at": now(),
            "inputs": inputs, "source": source}
-    previous = work.get("verification") or {}
-    if previous:
-        work.setdefault("verification_history", []).append(previous)
-    work["verification_sequence"] = run["sequence"]
-    work["verification"] = run
-    start_runtime_run(repo, wid, run["run_id"], "verification", inputs,
-                      retry_of=previous.get("run_id"), generation=run["generation"], sequence=run["sequence"])
-    queue_record(repo, work, "verification.started", {"run_id": run["run_id"],
-                 "sequence": run["sequence"], "generation": run["generation"], "inputs": inputs})
-    save_work(repo, work)
+    with repo_transaction(repo):
+        # Expensive conformance/snapshot reads happen before admission. A changed
+        # Work/config invalidates this preparation; finalization also checks inputs.
+        if load_work(repo, wid) != original_work or config(repo) != cfg:
+            print(json.dumps({'ok': False, 'error': 'VERIFICATION_PREPARATION_CHANGED',
+                              'next': 'Inspect changed Work/configuration and retry verification.'}))
+            return 2
+        previous = work.get("verification") or {}
+        if previous:
+            work.setdefault("verification_history", []).append(previous)
+        work["verification_sequence"] = run["sequence"]
+        work["verification"] = run
+        start_runtime_run(repo, wid, run["run_id"], "verification", inputs,
+                          retry_of=previous.get("run_id"), generation=run["generation"], sequence=run["sequence"])
+        queue_record(repo, work, "verification.started", {"run_id": run["run_id"],
+                     "sequence": run["sequence"], "generation": run["generation"], "inputs": inputs})
+        save_work(repo, work)
     return repo, work["id"], scripts, source, inputs, verification_timeout(cfg), run
 
 
