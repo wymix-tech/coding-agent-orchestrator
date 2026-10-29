@@ -38,11 +38,11 @@ def inspect(repo, work_id=None):
     wid = work_id or index.get('active_work')
     work = None
     if wid and all(c.isalnum() or c in '._-' for c in wid) and wid not in {'.', '..'}:
-        from scripts.cao_work_store import load_work
-        try:
-            work = load_work(repo, wid)
-        except (OSError, ValueError):
-            pass
+        from scripts.cao_defaults import WORK_DIR
+        # Read committed bytes only: load_work also locks, drains events and migrates.
+        work = read(repo / WORK_DIR / (wid + '.json'))
+        if not isinstance(work, dict):
+            work = None
     return {'ok': True, 'inspection_only': True, 'completion_certified': False,
             'lock': {'held': locked, 'owner_hint': owner, 'owner_hint_authoritative': False},
             'work_id': wid, 'verification': (work or {}).get('verification'),

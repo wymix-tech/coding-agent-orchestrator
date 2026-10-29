@@ -16,12 +16,22 @@ def hold(root, ready, release):
 class LockDiagnostics(unittest.TestCase):
     def test_inspection_survives_lock_and_owner_exit(self):
         with tempfile.TemporaryDirectory() as root:
+            from scripts.cao_defaults import WORK_DIR
+            folder = Path(root) / WORK_DIR
+            folder.mkdir(parents=True)
+            (folder / 'work-1.json').write_text(json.dumps({'id': 'work-1', 'verification': {'status': 'running'}}))
+            (Path(root) / '.orchestrator/index.json').write_text(json.dumps({'active_work': 'work-1'}))
             ready, release = multiprocessing.Event(), multiprocessing.Event()
             proc = multiprocessing.Process(target=hold, args=(root, ready, release))
             proc.start()
             try:
                 self.assertTrue(ready.wait(5))
+                import time
+                started = time.monotonic()
+                explicit = inspect(Path(root), 'work-1')
                 state = inspect(Path(root))
+                self.assertLess(time.monotonic() - started, 1)
+                self.assertEqual({'status': 'running'}, explicit['verification'])
                 self.assertTrue(state['lock']['held'])
                 self.assertEqual(proc.pid, state['lock']['owner_hint']['pid'])
                 self.assertFalse(state['completion_certified'])
