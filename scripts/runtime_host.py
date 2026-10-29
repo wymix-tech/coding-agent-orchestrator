@@ -56,6 +56,9 @@ def observe(repo: Path, work: dict | None, raw: dict, host: str, session: str,
     try:
         if settings(repo)["host_observation"] == "off":
             return None
+        from scripts.control_context import observe as observe_control
+        if result.get('decision') != 'deny':
+            observe_control(repo, raw, host, session, event)
         key = call_key(raw, host, session)
         route = binding(repo, raw, host, session) if key else None
         denied = result.get("decision") == "deny"
