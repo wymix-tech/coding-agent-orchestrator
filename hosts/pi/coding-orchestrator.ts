@@ -213,7 +213,7 @@ export default function (pi: ExtensionAPI) {
       }
       const reason = `[CAO] GATE_UNAVAILABLE: ${result.diagnostic || "missing decision"}. ` +
         "Operation blocked because CAO could not authorize it. Use the read tool to inspect state, " +
-        "or exact `cao status` / `cao host status --host pi` commands (the bundled absolute launcher is also supported). " +
+        "or exact `cao diagnose` (without cd/chaining) / `cao host status --host pi` commands (the bundled absolute launcher is also supported). " +
         "Parent communication and subagent status remain available. " +
         "For lock contention, wait for the owner to finish and retry; do not delete state.lock. " +
         "Restore the CLI/dependencies or run exact `cao host install --host pi` to repair host wiring, then retry. " +

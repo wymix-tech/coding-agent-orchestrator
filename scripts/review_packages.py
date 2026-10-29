@@ -68,8 +68,7 @@ def render(repo, work, run, instructions, manifest):
     atomic_json(policy_path, policy)
     run['context_package'] = {'path': policy_path.relative_to(repo).as_posix(), 'sha256': hashlib.sha256(policy_path.read_bytes()).hexdigest()}
     return {'prompt_file': policy['prompt'], 'prompt_sha256': policy['prompt_sha256'],
-            'diff_file': policy['diff'], 'native_diff_file': (root / 'current-changes.diff').relative_to(repo).as_posix(), 'launch': {'mode': 'synchronous', 'wait_for_all': True,
-            'pi': {'mode': 'parallel', 'async': False, 'worktree_argument': 'top-level-only'}},
+            'diff_file': policy['diff'], 'native_diff_file': (root / 'current-changes.diff').relative_to(repo).as_posix(), 'launch': {'mode': 'synchronous', 'wait_for_all': True, 'transport': 'explicit_plugin_adapter'},
             'context_package': run['context_package']}
 
 
@@ -217,12 +216,19 @@ def observe_reads(repo, work, session, raw):
 def launch_guard(repo, work, raw):
     """Validate reviewer subagent payloads before handing them to the host."""
     from scripts.cao_tool_policy import _event_key
-    if _event_key(raw, 'tool_name', 'toolName', 'tool', 'name').lower() != 'subagent':
-        return None
+    tool = _event_key(raw, 'tool_name', 'toolName', 'tool', 'name').lower()
     payload = raw.get('tool_input') or raw.get('input') or raw.get('arguments') or {}
-    tasks = payload.get('tasks') or [payload]
-    if not isinstance(tasks, list):
+    # Ordinary artifact writes and non-review plugin operations are not launches.
+    if tool in {'read', 'write', 'edit', 'apply_patch', 'bash', 'exec_command',
+                'ls', 'grep', 'find', 'search_code', 'contact_supervisor'} or 'CAO_REVIEW_TICKET' not in json.dumps(payload):
         return None
+    from scripts.delegation_adapters import normalize
+    try:
+        tasks = normalize(repo, tool, payload)
+    except ValueError as exc:
+        return str(exc)
+    if tasks is None:
+        return 'NATIVE_REVIEW_PLUGIN_ADAPTER_REQUIRED: use cao delegation register with the installed plugin contract'
     records = (work.get('sdd') or {}).get('native_reviews') or {}
     for task in tasks:
         if not isinstance(task, dict):
@@ -238,10 +244,6 @@ def launch_guard(repo, work, raw):
             return 'NATIVE_REVIEW_TASK_MISMATCH'
         if not prompt_matches(repo, run, prompt):
             return 'NATIVE_REVIEW_PROMPT_PACKAGE_REQUIRED: use prompt_file verbatim'
-        if payload.get('async') is not False or task.get('async') is True or payload.get('mode') in {'async', 'detached', 'background'}:
-            return 'NATIVE_REVIEW_SYNCHRONOUS_REQUIRED: launch blocking reviewer calls and await all results'
-        if 'tasks' in payload and 'worktree' in task:
-            return 'NATIVE_REVIEW_HOST_ARGUMENT_INVALID: worktree belongs at the host top level'
     return None
 
 
@@ -259,7 +261,7 @@ def require_collected(repo, work):
 
 
 def launch_payload(repo, work):
-    """Build one blocking Pi batch from frozen prompt bytes."""
+    """Build host-neutral review tasks from frozen prompt bytes."""
     records = (work.get('sdd') or {}).get('native_reviews') or {}
     layers = (records.get('_contract') or {}).get('layers', [])
     if not layers or any(not (records.get(layer) or {}).get('context_package') for layer in layers):
@@ -271,25 +273,5 @@ def launch_payload(repo, work):
             continue
         package = policy(repo, run, check_claims=False)
         tasks.append({'task': (repo / package['prompt']).read_text()})
-    return {'async': False, 'worktree': False, 'tasks': tasks} if tasks else None
+    return {'tasks': tasks} if tasks else None
 
-
-def workflow_launch(repo, work, definition):
-    """Use the documented Pi workflow runs.run API in one blocking call."""
-    from scripts.review_dispatch import agent_capability
-    capability = agent_capability(repo, definition, 'pi')
-    path = Path(definition)
-    if not path.is_absolute():
-        path = repo / path
-    header = re.match(r'\A---\s*\n(.*?)\n---', path.read_text(), re.S)
-    name = re.search(r'(?m)^name:[ \t]*([^\n]+)', header[1]) if header else None
-    if not name:
-        raise ValueError('NATIVE_REVIEW_AGENT_NAME_REQUIRED')
-    agent = name[1].strip().strip('"\'')
-    batch = launch_payload(repo, work)
-    if not batch:
-        return None
-    calls = [f'runs.run({json.dumps("review-" + str(index))}, {json.dumps({"agent": agent, "task": task["task"]})})'
-             for index, task in enumerate(batch['tasks'])]
-    return {'async': False, 'script': 'return await Promise.all([' + ','.join(calls) + ']);',
-            'capability': capability, 'resume_policy': 'Use returned runId, never a mission/session id. Inspect status by exact runId; resume eligibility is authoritative. Await workflow runs.run with resume for blocking recovery.'}

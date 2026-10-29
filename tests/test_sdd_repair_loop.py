@@ -84,7 +84,6 @@ class SddRepairLoop(unittest.TestCase):
             ('read', {'path': 'target/undeclared-source.py'}),
             ('search_code', {'pattern': 'source'}),
             ('contact_supervisor', {'reason': 'need_decision', 'message': 'Snapshot recovery needed'}),
-            ('subagent', {'action': 'status', 'id': 'implementation-child'}),
             ('bash', {'command': f'{ROOT / "cao"} status --work {f.wid}'}),
             ('bash', {'command': f'{ROOT / "cao"} host install --host pi'}),
             ('bash', {'command': 'nl -ba pom.xml | sed -n 1,20p'}),
@@ -92,7 +91,8 @@ class SddRepairLoop(unittest.TestCase):
             result = f.hook('pre_tool', tool_name=tool, tool_input=payload)
             self.assertEqual('allow', result['decision'], (tool, payload, result))
         # Mutations and unrecognized lookalike launchers still fail closed.
-        for tool, payload in [('edit', {'path': 'src/auth.py', 'new_string': 'changed'}),
+        for tool, payload in [('subagent', {'action': 'status', 'id': 'implementation-child'}),
+                              ('edit', {'path': 'src/auth.py', 'new_string': 'changed'}),
                               ('bash', {'command': launcher + ' status'}),
                               ('bash', {'command': 'cao status > src/auth.py'})]:
             result = f.run_cli('host-event', '--host', 'pi', expected=2,

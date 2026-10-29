@@ -846,24 +846,24 @@ test('offline recovery accepts the installed absolute launcher and bounded paren
     const ctx = f.context('snapshot-recovery');
     const launcher = path.resolve(import.meta.dirname, '../cao');
     for (const prefix of [launcher, `'${launcher}'`, `"${launcher}"`, `sh '${launcher}'`]) {
-      for (const suffix of ['status', 'status --work work-001', 'host status --host pi', 'host install --host pi']) {
+      for (const suffix of ['diagnose', 'diagnose --work work-001', 'lifecycle recover --check', 'lifecycle recover --check --work work-001', 'status', 'status --work work-001', 'host status --host pi', 'host install --host pi']) {
         assert.equal(await f.handlers.get('tool_call')({toolName: 'bash', input: {command: `${prefix} ${suffix}`}}, ctx), undefined);
       }
     }
     for (const [toolName, input] of [
       ['contact_supervisor', {reason: 'need_decision', message: 'Cannot recover snapshot scope'}],
       ['contact_supervisor', {reason: 'progress_update', message: 'Build failed, repair pending'}],
-      ['subagent', {action: 'status', id: 'actual-mission'}],
       ['search_code', {pattern: 'application.yml', project: 'demo'}],
     ]) {
       assert.equal(await f.handlers.get('tool_call')({toolName, input}, ctx), undefined);
     }
-    for (const command of [`${f.dir}/cao status`, `${launcher} done`,
+    for (const command of [`${f.dir}/cao status`, `${launcher} done`, `${launcher} lifecycle recover`, `${launcher} lifecycle recover --check; touch product.py`,
       `${launcher} status --work work-001; touch product.py`,
       `${launcher} status --work $(touch product.py)`, `${launcher} status > product.py`]) {
       assert.equal((await f.handlers.get('tool_call')({toolName: 'bash', input: {command}}, ctx)).block, true, command);
     }
     for (const [toolName, input] of [
+      ['subagent', {action: 'status', id: 'actual-mission'}],
       ['subagent', {action: 'spawn', task: 'edit product'}],
       ['subagent', {action: 'status', id: 'mission', task: 'edit product'}],
       ['contact_supervisor', {reason: 'need_decision', message: 'help', command: 'touch product.py'}],

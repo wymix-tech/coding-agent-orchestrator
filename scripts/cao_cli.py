@@ -254,10 +254,28 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--allow-unverified", action="store_true", help="Record a documented native-entrypoint or failed-execution exception; output ownership is still required")
     sp.add_argument("--reason", default=None, help="Why this completion needs an exception; required with --allow-unverified")
     sp.set_defaults(fn=cmd_sdd_workflow)
+    from scripts.delegation_adapters import command as delegation_command
+    delegation = sub.add_parser('delegation').add_subparsers(dest='delegation_action', required=True)
+    for operation in ('register', 'show', 'launch', 'decode'):
+        sp = delegation.add_parser(operation); sp.add_argument('--repo', default='.')
+        if operation == 'register': sp.add_argument('--manifest', required=True)
+        if operation in {'launch', 'decode'}: sp.add_argument('--plugin', required=True)
+        if operation == 'launch':
+            sp.add_argument('--work'); sp.add_argument('--agent', required=True)
+        if operation == 'decode': sp.add_argument('--result', required=True)
+        sp.set_defaults(fn=delegation_command)
     lifecycle = sub.add_parser("lifecycle", help="Inspect persisted CAO lifecycle events")
     lifecycle_sub = lifecycle.add_subparsers(dest="lifecycle_command", required=True)
     from scripts.lifecycle_contract import register as register_lifecycle_contract
     register_lifecycle_contract(lifecycle_sub)
+    from scripts.native_report_draft import command as native_report_draft
+    sp = lifecycle_sub.add_parser('report-draft')
+    sp.add_argument('--repo', default='.'); sp.add_argument('--work'); sp.add_argument('--log', required=True)
+    sp.add_argument('--output', required=True); sp.add_argument('--check-id', required=True); sp.add_argument('--description', required=True)
+    sp.add_argument('--gate', action='append', required=True); sp.set_defaults(fn=native_report_draft)
+    sp = lifecycle_sub.add_parser('report-prepare')
+    sp.add_argument('--repo', default='.'); sp.add_argument('--work'); sp.add_argument('--output', required=True)
+    sp.set_defaults(fn=native_report_draft, prepare=True)
     sp = lifecycle_sub.add_parser("events", help="List lifecycle events from native SDD reconciliation and CAO transitions")
     sp.add_argument("--repo", default="."); sp.add_argument("--work"); sp.add_argument("--limit", type=int, default=100); sp.set_defaults(fn=cmd_lifecycle_events)
     sp = sub.add_parser("start"); sp.add_argument("--defer", action="store_true"); sp.add_argument("--repo", default="."); sp.add_argument("--requirement"); sp.add_argument("--title", default=None, help="Human-readable Work Item title; overrides the requirement filename"); sp.add_argument("--sdd-ref"); sp.add_argument("--sdd-provider", choices=sorted(SDD_CATALOG)); sp.add_argument("--host", choices=["claude-code", "codex", "pi"], default=None, help="Current coding-agent host; used to attach the runtime Session"); sp.add_argument("--replace", action="store_true"); sp.add_argument("--reopen", action="store_true"); sp.add_argument("--scope", action="append"); sp.set_defaults(fn=cmd_start)
@@ -343,6 +361,8 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--plan-only", action="store_true", help="Save a non-executable plan before a Work exists")
     sp.add_argument("--scope", action="append", help="Affected project module; repeat for shared verification")
     sp.set_defaults(fn=cmd_verification_configure)
+    from scripts.lock_diagnostics import command as lock_diagnose
+    sp = sub.add_parser('diagnose'); sp.add_argument('--repo', default='.'); sp.add_argument('--work'); sp.set_defaults(fn=lock_diagnose)
     sp = sub.add_parser("verify"); sp.add_argument("--repo", default="."); sp.add_argument("--work"); sp.add_argument("--script", action="append", help="Engineering diagnostic only, never grants done eligibility; repeat for multiple scripts"); sp.add_argument("--command", action="append", help=argparse.SUPPRESS); sp.set_defaults(fn=cmd_verify)
     sp = sub.add_parser("done"); sp.add_argument("--repo", default="."); sp.add_argument("--work"); sp.set_defaults(fn=cmd_done)
     sp = sub.add_parser("reopen", help="Reopen a completed Work Item that should not have been closed"); sp.add_argument("--repo", default="."); sp.add_argument("--work"); sp.add_argument("--reason", help="Why the completion was wrong, e.g. which part of the requirement is missing"); sp.add_argument("--reanchor", action="store_true", help="Explicitly accept the current verification standard and clear gates/verification; also supports active Work Items"); sp.set_defaults(fn=cmd_reopen)
@@ -378,6 +398,11 @@ def main(argv: list[str] | None = None) -> int:
         # installed host resources await reload. Work advancement must wait.
         # Dispatch by handler: several existing subcommands also use the
         # argparse destination `command` for a shell command or a list of them.
+        from scripts.lock_diagnostics import command as lock_diagnose
+        if args.fn == lock_diagnose:
+            return lock_diagnose(args)
+        if getattr(args, 'lifecycle_command', None) == 'recover' and args.check:
+            return args.fn(args)
         repair_or_read = args.fn in {
             cmd_init, cmd_bootstrap, cmd_host, host_event, cmd_language_show,
             cmd_language_set, cmd_language_apply, cmd_instructions_update,

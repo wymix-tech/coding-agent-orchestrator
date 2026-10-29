@@ -254,12 +254,18 @@ def overall_verification_status(results: list[dict[str, Any]]) -> str:
     return required_verification_status(results)
 
 
-@locked_command
 def _prepare_verification(args: argparse.Namespace):
     from scripts.cao_tool_policy import verification_baseline_state
 
     repo = repo_root(args.repo); ensure_initialized(repo)
     index = load_index(repo); wid = args.work or index.get("active_work"); work = load_work(repo, wid) if wid else None
+    from copy import deepcopy
+    # Reconcile plan metadata before freezing the preparation snapshot. The
+    # observation may save Work, so it cannot run after expensive validation.
+    with repo_transaction(repo):
+        plan_state = observe_plan_scope(repo, work) if work else None
+        original_work = deepcopy(work)
+        cfg = config(repo)
     if not work:
         print(json.dumps(record_denial(repo, work, "verify", {"ok": False, "error": "NO_ACTIVE_WORK_ITEM"}), ensure_ascii=False, indent=2)); return 2
 
@@ -289,12 +295,16 @@ def _prepare_verification(args: argparse.Namespace):
         print(json.dumps(record_denial(repo, work, "verify", {"ok": False, "error": route["reason"], "next": route["next"]}))); return 2
 
     from scripts.lifecycle_contract import enabled, conformance
+    prepared_inputs = verification_inputs(repo, work, cfg)
     if enabled(work):
         report = conformance(repo, work)
         if not report['ready']:
             print(json.dumps({'ok': False, 'error': 'CONFORMANCE_NOT_READY', 'conformance': report}, ensure_ascii=False))
             return 2
-    plan_state = observe_plan_scope(repo, work)
+    if config(repo) != cfg:
+        print(json.dumps({'ok': False, 'error': 'VERIFICATION_PREPARATION_CHANGED',
+                          'next': 'Configuration changed during preparation; inspect and retry.'}))
+        return 2
     if not plan_state["ready"]:
         print(json.dumps(record_denial(repo, work, "verify", {"ok": False, "error": str(plan_state["reason"]).split(":", 1)[0],
                           "verification_plan": plan_state, "next": plan_state["next"]}), ensure_ascii=False, indent=2)); return 2
@@ -305,7 +315,6 @@ def _prepare_verification(args: argparse.Namespace):
     if not planning['ready']:
         print(json.dumps(record_denial(repo, work, "verify", {'ok': False, 'error': planning['reason'].split(':', 1)[0], **planning}))); return 2
 
-    cfg = config(repo)
     cfg_scripts = verification_scripts(cfg)
     cli_values = args.script or args.command or []
     cli_override = normalize_scripts([
@@ -341,20 +350,31 @@ def _prepare_verification(args: argparse.Namespace):
     if not req.exists():
         print(json.dumps(record_denial(repo, work, "verify", {"ok": False, "error": "REQUIREMENT_FILE_MISSING"}), ensure_ascii=False, indent=2)); return 2
     inputs = verification_inputs(repo, work, cfg)
+    if inputs != prepared_inputs:
+        print(json.dumps({'ok': False, 'error': 'VERIFICATION_PREPARATION_CHANGED',
+                          'next': 'Inputs changed during preparation; inspect and retry.'}))
+        return 2
     run = {"run_id": "verify-" + uuid.uuid4().hex,
            "sequence": int(work.get("verification_sequence", 0)) + 1,
            "generation": int(work.get("execution_generation", 0)), "status": "running", "at": now(),
            "inputs": inputs, "source": source}
-    previous = work.get("verification") or {}
-    if previous:
-        work.setdefault("verification_history", []).append(previous)
-    work["verification_sequence"] = run["sequence"]
-    work["verification"] = run
-    start_runtime_run(repo, wid, run["run_id"], "verification", inputs,
-                      retry_of=previous.get("run_id"), generation=run["generation"], sequence=run["sequence"])
-    queue_record(repo, work, "verification.started", {"run_id": run["run_id"],
-                 "sequence": run["sequence"], "generation": run["generation"], "inputs": inputs})
-    save_work(repo, work)
+    with repo_transaction(repo):
+        # Expensive conformance/snapshot reads happen before admission. A changed
+        # Work/config invalidates this preparation; finalization also checks inputs.
+        if load_work(repo, wid) != original_work or config(repo) != cfg:
+            print(json.dumps({'ok': False, 'error': 'VERIFICATION_PREPARATION_CHANGED',
+                              'next': 'Inspect changed Work/configuration and retry verification.'}))
+            return 2
+        previous = work.get("verification") or {}
+        if previous:
+            work.setdefault("verification_history", []).append(previous)
+        work["verification_sequence"] = run["sequence"]
+        work["verification"] = run
+        start_runtime_run(repo, wid, run["run_id"], "verification", inputs,
+                          retry_of=previous.get("run_id"), generation=run["generation"], sequence=run["sequence"])
+        queue_record(repo, work, "verification.started", {"run_id": run["run_id"],
+                     "sequence": run["sequence"], "generation": run["generation"], "inputs": inputs})
+        save_work(repo, work)
     return repo, work["id"], scripts, source, inputs, verification_timeout(cfg), run
 
 

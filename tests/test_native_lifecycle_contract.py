@@ -176,19 +176,39 @@ class NativeLifecycle(unittest.TestCase):
         self.assertEqual(2, rc)
         self.assertEqual('NATIVE_COMPLETION_REFERENCE_EXECUTION_REQUIRED', rejected['error'])
         import shlex
-        work = load_work(self.repo, self.wid)
-        work['sdd'].setdefault('native_completion_report_outputs', []).append('openspec/security.json')
-        save_work(self.repo, work)
+        # Old unsupported reports are retained; new drafts use a reserved output.
+        security = self.repo / 'openspec/security-v2.json'
+        self.check('lifecycle', 'report-prepare', '--output', 'openspec/security-v2.json')
+        self.check('lifecycle', 'report-prepare', '--output', 'openspec/security-v2.json')
         result = self.check('lifecycle', 'execute', '--command', f'{shlex.quote(sys.executable)} preparation_suite.py', '--report', 'openspec/security-run.log')
-        ref = result['execution']['reports'][0]
+        snapshot = inputs(self.repo, self.work())['code_snapshot']
+        self.check('lifecycle', 'report-draft', '--output', 'openspec/security-v2.json',
+                   '--log', 'openspec/security-run.log', '--check-id', 'security-1',
+                   '--description', 'Fixture security acceptance', '--gate', 'security_verification')
         payload = json.loads(security.read_text())
-        payload['code_snapshot'] = inputs(self.repo, self.work())['code_snapshot']
-        payload['checks'][0]['evidence'] = [ref]
+        self.assertEqual('pending', payload['status'])
+        self.assertEqual('pending', payload['checks'][0]['status'])
+        self.assertEqual(snapshot, inputs(self.repo, self.work())['code_snapshot'])
+        payload['status'] = payload['checks'][0]['status'] = 'passed'
         security.write_text(json.dumps(payload))
-        self.check('lifecycle', 'bind', '--report', 'openspec/security-run.log', '--report', 'openspec/security.json', '--gate', 'security_verification')
+        self.assertEqual(snapshot, inputs(self.repo, self.work())['code_snapshot'])
+        self.check('lifecycle', 'bind', '--report', 'openspec/security-run.log', '--report', 'openspec/security-v2.json', '--gate', 'security_verification')
         self.check('conformance', 'check')
 
         self.assertEqual(config_before, (self.repo / '.orchestrator/config.json').read_bytes())
+
+    def test_report_prepare_cannot_exclude_existing_sources_or_draft_without_receipt(self):
+        for output in ('openspec/spec.md', 'openspec/completion.md'):
+            self.assertEqual(2, self.cli('lifecycle', 'report-prepare', '--output', output)[0])
+        existing = self.repo / 'openspec/existing.json'
+        existing.write_text('{}')
+        self.assertEqual(2, self.cli('lifecycle', 'report-prepare', '--output', 'openspec/existing.json')[0])
+        args = ('lifecycle', 'report-draft', '--output', 'openspec/draft.json', '--log', 'openspec/completion.md',
+                '--check-id', 'test', '--description', 'No receipt', '--gate', 'tests')
+        self.assertIn('UNREGISTERED', self.cli(*args)[1]['error'])
+        self.check('lifecycle', 'report-prepare', '--output', 'openspec/draft.json')
+        self.assertIn('EXECUTION_REQUIRED', self.cli(*args)[1]['error'])
+        self.assertFalse((self.repo / 'openspec/draft.json').exists())
 
     def test_project_baseline_transport_change_preserves_native_completion(self):
         from scripts.cao_work_store import load_work
