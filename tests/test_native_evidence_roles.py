@@ -117,3 +117,41 @@ class SessionStatistics(unittest.TestCase):
             self.assertEqual(['mvn test'], commands(repo, work))
             path.write_text('Changed `mvn test`.')
             self.assertEqual([], commands(repo, work))
+
+class ReviewRegression(unittest.TestCase):
+    def test_arbitrary_file_cannot_cover_acceptance_or_other_gates(self):
+        from scripts.native_reports import validate_references
+        import hashlib
+        with tempfile.TemporaryDirectory() as root:
+            repo = Path(root)
+            (repo / 'old.log').write_text('unrelated')
+            for gate in ['sdd_acceptance', 'targeted_verification', 'compatibility_verification', 'data_verification']:
+                observation = {'check_records': [{'gates': [gate], 'evidence': [{'path': 'old.log', 'sha256': hashlib.sha256(b'unrelated').hexdigest()}]}]}
+                with patch('scripts.native_execution.receipt_matches', return_value=False):
+                    with self.assertRaisesRegex(ValueError, 'REFERENCE_EXECUTION_REQUIRED'):
+                        validate_references(repo, {}, observation)
+                with patch('scripts.native_execution.receipt_matches', return_value=True):
+                    validate_references(repo, {}, observation)
+
+    def test_acceptance_rows_do_not_imply_verification(self):
+        with tempfile.TemporaryDirectory() as root:
+            repo = Path(root)
+            p = repo / 'acceptance.json'
+            p.write_text(json.dumps({'status': 'passed', 'evidence_type': 'acceptance_result', 'checks': [{'id': 'one', 'description': 'one', 'status': 'passed', 'evidence': 'example', 'gates': ['sdd_acceptance']}]}))
+            row = read(repo, {'id': 'w', 'requirement': {'sha256': 'r'}, 'sdd': {'provider': 'bmad'}}, p)
+            self.assertEqual(['sdd_acceptance'], row['gate_coverage'])
+
+    def test_modern_maven_class_rows_do_not_double_count(self):
+        with tempfile.TemporaryDirectory() as root:
+            repo = Path(root)
+            p = repo / 'test.log'
+            p.write_text('Tests run: 34, Failures: 0, Errors: 0, Time elapsed: 1 s -- in Test\nTests run: 34, Failures: 0, Errors: 0\nBUILD SUCCESS\n')
+            self.assertEqual(34, read(repo, {'id': 'w', 'requirement': {'sha256': 'r'}, 'sdd': {'provider': 'bmad'}}, p)['checks_observed'])
+
+    def test_inline_and_fenced_pytest_commands_are_discovered(self):
+        from scripts.native_validation import command_candidates, native_check
+        import shlex
+        text = 'Run `pytest`.\n```sh\npython -m pytest tests\n```\n'
+        candidates = command_candidates(text)
+        self.assertEqual(['pytest', 'python -m pytest tests'], candidates)
+        self.assertTrue(all(native_check(shlex.split(c)) for c in candidates))

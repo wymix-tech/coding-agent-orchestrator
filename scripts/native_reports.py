@@ -122,7 +122,7 @@ def read(repo, work, path, *, execution=None):
         if maven:
             # Surefire prints class rows and an aggregate per module.
             summaries = re.findall(r'Tests run:\s*\d+,\s*Failures:\s*\d+,\s*Errors:\s*\d+[^\n]*', text)
-            aggregate = [row for row in summaries if ' - in ' not in row]
+            aggregate = [row for row in summaries if not re.search(r'\s-{1,2}\s+in\s', row)]
             selected = aggregate or summaries
             checks += sum(int(re.search(r'Tests run:\s*(\d+)', row)[1]) for row in selected)
             declarations.append('failed' if not checks or any(int(f) or int(e) for _, f, e in maven) else 'passed')
@@ -164,7 +164,7 @@ def read(repo, work, path, *, execution=None):
     types = sorted(set(declared_types)) or ['test_result' if checks else 'execution_result' if execution else 'workflow_declaration']
     if set(types) - {'test_result', 'execution_result', 'acceptance_result', 'security_result', 'manual_result', 'workflow_declaration'}:
         raise ValueError('NATIVE_COMPLETION_EVIDENCE_TYPE_UNSUPPORTED')
-    coverage = {'verification'} if checks else set()
+    coverage = {'verification'} if checks and not check_records else set()
     for item in check_records:
         gates = item.get('gates', [])
         if not isinstance(gates, list) or not all(isinstance(g, str) for g in gates):
@@ -210,7 +210,8 @@ def validate_references(repo, work, observation, *, previous_binding=None):
     from scripts.path_guard import repo_file
     from scripts.cao_runtime import sha256_file
     from scripts.native_execution import receipt_matches
-    execution_gates = {'verification', 'integration_verification', 'security_verification'}
+    # Every declared gate needs current provenance, including task acceptance.
+    # File identity alone does not establish Work/execution identity.
     for index, check in enumerate(observation['check_records']):
         if not check.get('gates'):
             continue
@@ -230,5 +231,5 @@ def validate_references(repo, work, observation, *, previous_binding=None):
             if actual != ref['sha256']:
                 raise ValueError(f'NATIVE_COMPLETION_REFERENCE_CHANGED: {field}.sha256 expected={ref["sha256"]} actual={actual}')
             verified.append({'path': path.relative_to(repo).as_posix(), 'sha256': actual})
-        if execution_gates.intersection(check['gates']) and not receipt_matches(repo, work, verified, binding=previous_binding):
+        if not receipt_matches(repo, work, verified, binding=previous_binding):
             raise ValueError('NATIVE_COMPLETION_REFERENCE_EXECUTION_REQUIRED: ' + location)
