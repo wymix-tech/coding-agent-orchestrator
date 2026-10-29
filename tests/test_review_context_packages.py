@@ -53,6 +53,21 @@ class ContextPackages(unittest.TestCase):
             output = render(self.repo, self.work, run, self.instructions, self.manifest)
         return run, output, {'id': 'child', 'review_ticket': {'layer': layer}}
 
+    def test_launch_payload_contains_exact_frozen_prompts_in_one_batch(self):
+        from scripts.review_packages import launch_payload, launch_guard
+        layers = ['blind-hunter', 'edge-case-hunter', 'verification-gap']
+        originals = []
+        for layer in layers:
+            run, output, _ = self.package(layer)
+            run['status'] = 'running'
+            run.pop('execution_binding')
+            originals.append((self.repo / output['prompt_file']).read_text())
+        self.work['sdd']['native_reviews']['_contract'] = {'layers': layers}
+        payload = launch_payload(self.repo, self.work)
+        self.assertFalse(payload['async'])
+        self.assertEqual(originals, [task['task'] for task in payload['tasks']])
+        self.assertIsNone(launch_guard(self.repo, self.work, {'toolName': 'subagent', 'input': payload}))
+
     def event(self, path, tool='read'):
         return {'toolName': tool, 'input': {'path': path}}
 

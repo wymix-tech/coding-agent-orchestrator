@@ -96,3 +96,24 @@ class ReferenceValidation(unittest.TestCase):
                     validate_references(repo, {}, observation)
             with patch('scripts.native_execution.receipt_matches', return_value=True):
                 validate_references(repo, {}, observation)
+
+class SessionStatistics(unittest.TestCase):
+    def test_maven_class_rows_and_aggregate_count_once(self):
+        with tempfile.TemporaryDirectory() as root:
+            repo = Path(root)
+            path = repo / 'maven.log'
+            path.write_text('[INFO] Tests run: 12, Failures: 0, Errors: 0 - in FirstTest\n[INFO] Tests run: 22, Failures: 0, Errors: 0 - in SecondTest\n[INFO] Tests run: 34, Failures: 0, Errors: 0\nBUILD SUCCESS\n')
+            result = read(repo, {'id': 'w', 'requirement': {'sha256': 'r'}, 'sdd': {'provider': 'bmad'}}, path)
+            self.assertEqual(34, result['checks_observed'])
+
+    def test_bound_spec_command_discovery_invalidates_on_source_change(self):
+        import hashlib
+        from scripts.native_validation import commands
+        with tempfile.TemporaryDirectory() as root:
+            repo = Path(root)
+            path = repo / 'spec.md'
+            path.write_text('Validate using `mvn test`. Never run `npm publish`.')
+            work = {'requirement': {'sha256': 'req'}, 'sdd': {'spec_binding': {'requirement_sha256': 'req', 'spec': {'path': 'spec.md', 'sha256': hashlib.sha256(path.read_bytes()).hexdigest()}}}}
+            self.assertEqual(['mvn test'], commands(repo, work))
+            path.write_text('Changed `mvn test`.')
+            self.assertEqual([], commands(repo, work))

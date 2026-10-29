@@ -171,9 +171,10 @@ class NativeLifecycle(unittest.TestCase):
         security.write_text(json.dumps({'status': 'passed', 'evidence_type': 'security_result',
             'work_id': self.wid, 'requirement_sha256': self.work()['requirement']['sha256'], 'code_snapshot': inputs(self.repo, self.work())['code_snapshot'],
             'checks': [{'id': 'security-1', 'description': 'Fixture security acceptance', 'status': 'passed',
-                        'evidence': 'Native fixture security check result', 'gates': ['security_verification']}]}))
-        self.check('lifecycle', 'bind', '--report', 'openspec/completion.md', '--report', 'openspec/security.json', '--gate', 'security_verification')
-        self.check('conformance', 'check')
+                        'evidence': [{'path': 'openspec/completion.md', 'sha256': __import__('hashlib').sha256(self.report.read_bytes()).hexdigest()}], 'gates': ['security_verification']}]}))
+        rc, rejected = self.cli('lifecycle', 'bind', '--report', 'openspec/completion.md', '--report', 'openspec/security.json', '--gate', 'security_verification')
+        self.assertEqual(2, rc)
+        self.assertEqual('NATIVE_COMPLETION_REFERENCE_EXECUTION_REQUIRED', rejected['error'])
         self.assertEqual(config_before, (self.repo / '.orchestrator/config.json').read_bytes())
 
     def test_project_baseline_transport_change_preserves_native_completion(self):
