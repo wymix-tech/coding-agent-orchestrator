@@ -216,8 +216,8 @@ def begin_review(repo, work, args, identity):
         'Use an available agent name; do not assume task/general-purpose exist. Preserve native prompts/output formats, including Markdown. '
         'If no capable subagent is available, use a new independent external host session with its CAO adapter. Never reuse results from before this ticket.')
     from scripts.review_packages import launch_payload
-    output['launch_payload'] = launch_payload(repo, work)
-    output['launch_capability'] = 'Use one Pi tasks batch only if the installed subagent schema supports tasks; set each agent from installed definitions. Otherwise inspect the installed workflow fan-out capability before launch.'
+    output['review_tasks'] = (launch_payload(repo, work) or {}).get('tasks', [])
+    output['launch_capability'] = 'Review tasks are host-neutral data, not an executable request. Inspect the installed delegation plugin and select its explicit adapter; Pi itself does not define workflow syntax.'
     if reused:
         output['next'] = review_next(repo, work, inputs)
     return output
@@ -362,9 +362,7 @@ def prepare_batch(repo, work, args, identity):
             package.update(prompt_file=frozen['prompt'], diff_file=frozen['diff'], launch={'mode': 'synchronous', 'wait_for_all': True, 'async': False})
         atomic_json(root / 'dispatch.json', package)
         outputs.append(package)
-    from scripts.review_packages import workflow_launch
-    launch = workflow_launch(repo, work, args.agent_definition) if host == 'pi' and getattr(args, 'agent_definition', None) else None
-    return {'ok': True, 'reviews': outputs, 'owner': 'sdd_provider', 'workflow_launch': launch,
+    return {'ok': True, 'reviews': outputs, 'owner': 'sdd_provider', 'transport': {'state': 'adapter_required', 'next': 'Select the installed delegation plugin adapter; no universal Pi workflow is assumed.'},
             'next': review_next(repo, work, review_inputs(repo, work, code_snapshot))}
 
 

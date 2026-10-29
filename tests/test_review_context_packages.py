@@ -69,7 +69,7 @@ class ContextPackages(unittest.TestCase):
         self.assertIsNone(launch_guard(self.repo, self.work, {'toolName': 'subagent', 'input': payload}))
 
     def test_partial_launch_preserves_bound_layers_and_generates_workflow(self):
-        from scripts.review_packages import launch_payload, workflow_launch
+        from scripts.review_packages import launch_payload, pi_subagents_workflow_launch
         import json, subprocess
         layers = ['blind-hunter', 'edge-case-hunter', 'verification-gap']
         for layer in layers:
@@ -82,24 +82,20 @@ class ContextPackages(unittest.TestCase):
         definition = self.repo / 'reviewer.md'
         definition.write_text('---\nname: reviewer\ntools: read\n---\n')
         with patch('scripts.review_dispatch.agent_capability', return_value={'host': 'pi'}):
-            output = workflow_launch(self.repo, self.work, str(definition))
+            output = pi_subagents_workflow_launch(self.repo, self.work, str(definition))
         script = 'const calls=[]; const runs={run:async(key,args)=>{calls.push(args);return {runId:key}}}; const f=async()=>{' + output['script'] + '}; f().then(result=>console.log(JSON.stringify({result,calls})));'
         result = json.loads(subprocess.check_output(['node', '-e', script], text=True))
         self.assertEqual(2, len(result['result']))
         self.assertTrue(all(c['agent'] == 'reviewer' for c in result['calls']))
         self.assertEqual([t['task'] for t in launch_payload(self.repo, self.work)['tasks']], [c['task'] for c in result['calls']])
 
-    def test_named_workflow_cannot_hide_async_tasks_in_args(self):
+    def test_workflow_requires_plugin_adapter_instead_of_assuming_pi_schema(self):
         from scripts.review_packages import launch_guard
-        run, output, _ = self.package('blind-hunter')
+        _, output, _ = self.package('blind-hunter')
         prompt = (self.repo / output['prompt_file']).read_text()
-        payload = {'workflow': 'parallel', 'args': {'tasks': [{'agent': 'reviewer', 'task': prompt}]}}
-        raw = {'toolName': 'subagent', 'input': payload}
-        self.assertIn('SYNCHRONOUS_REQUIRED', launch_guard(self.repo, self.work, raw))
-        payload['async'] = False
-        self.assertIsNone(launch_guard(self.repo, self.work, raw))
-        payload['args']['tasks'][0]['task'] += '\nRead SPEC too'
-        self.assertIn('PACKAGE_REQUIRED', launch_guard(self.repo, self.work, raw))
+        for payload in [{'workflow': 'parallel', 'args': {'tasks': [{'task': prompt}]}},
+                        {'workflow': 'custom-other-plugin', 'async': False, 'task': prompt}]:
+            self.assertIn('PLUGIN_ADAPTER_REQUIRED', launch_guard(self.repo, self.work, {'toolName': 'subagent', 'input': payload}))
 
     def event(self, path, tool='read'):
         return {'toolName': tool, 'input': {'path': path}}

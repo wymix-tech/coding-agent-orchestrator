@@ -221,6 +221,8 @@ def launch_guard(repo, work, raw):
         return None
     payload = raw.get('tool_input') or raw.get('input') or raw.get('arguments') or {}
     nested = payload.get('args') if isinstance(payload.get('args'), dict) else {}
+    if payload.get('workflow') and 'CAO_REVIEW_TICKET' in json.dumps(payload):
+        return 'NATIVE_REVIEW_PLUGIN_ADAPTER_REQUIRED: identify the installed delegation plugin and validate its workflow contract before launch'
     if 'CAO_REVIEW_TICKET' in json.dumps(payload) and payload.get('async') is not False:
         return 'NATIVE_REVIEW_SYNCHRONOUS_REQUIRED: reviewer workflows require top-level async:false'
     tasks = payload.get('tasks') or nested.get('tasks') or [payload]
@@ -277,8 +279,8 @@ def launch_payload(repo, work):
     return {'async': False, 'worktree': False, 'tasks': tasks} if tasks else None
 
 
-def workflow_launch(repo, work, definition):
-    """Use the documented Pi workflow runs.run API in one blocking call."""
+def pi_subagents_workflow_launch(repo, work, definition):
+    """Explicit pi-subagents adapter helper; never selected from host=pi alone."""
     from scripts.review_dispatch import agent_capability
     capability = agent_capability(repo, definition, 'pi')
     path = Path(definition)
