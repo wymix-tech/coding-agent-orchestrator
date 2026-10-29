@@ -92,7 +92,7 @@ def dispatch_review_next(records, layers, inputs):
     running = [layer for layer in layers if records[layer].get('status') == 'running']
     if running:
         unbound = [layer for layer in running if not records[layer].get('execution_binding')]
-        return ('Continue existing tickets for ' + ', '.join(running) + '. '
+        return ('Run `cao sdd review resume` to recover existing tickets for ' + ', '.join(running) + '. '
                 + ('Bind each NEW observed child via coordinator --reviewer-session or child reviewer_start for ' + ', '.join(unbound) + '. ' if unbound else '')
                 + 'Collect native findings and `cao sdd review classify` ALL layers before product patches, then `cao sdd review resolve`. Do not begin again; use --restart only to explicitly replace a failed ticket.')
     classified = [layer for layer in layers if records[layer].get('status') == 'classified']

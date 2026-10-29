@@ -97,9 +97,17 @@ def begin_review(repo, work, args, identity):
     target = records.get(args.layer) or {}
     round_id = old_contract.get('round_id') or new_id('review-round')
     if args.restart and target:
+        from scripts.review_observation import diagnose
+        observed = diagnose(repo, work, args.layer)
+        if (target.get('inputs') == review_inputs(repo, work, code_snapshot)
+                and (observed['artifacts'] or observed.get('original_message_sha256'))
+                and not str(getattr(args, 'restart_reason', '') or '').strip()):
+            invalid('NATIVE_REVIEW_EVIDENCE_RECOVERY_REQUIRED', 'review',
+                    'run review resume first; replacing observed unchanged-input evidence requires --restart-reason')
         from scripts.runtime_store import read_record, safe_path
         previous = read_record(safe_path(repo, work['id'], 'review-retry.json')) or {}
-        if (previous.get('count', 0) >= 2 and previous.get('layer') == args.layer
+        if (not str(getattr(args, 'restart_reason', '') or '').strip()
+                and previous.get('count', 0) >= 2 and previous.get('layer') == args.layer
                 and previous.get('input_sha256') == target.get('input_sha256')
                 and target.get('inputs') == review_inputs(repo, work, code_snapshot)
                 and str((previous.get('response') or {}).get('error', '')).startswith(
@@ -165,7 +173,7 @@ def begin_review(repo, work, args, identity):
     if existing and not reused and not args.restart:
         invalid('NATIVE_REVIEW_RESTART_REQUIRED', 'review', 'review changed inputs/model/evidence and explicitly use --restart; previous ticket is retained', existing.get('id'))
     if existing and not reused:
-        work['sdd'].setdefault('native_review_history', []).append({'layer': args.layer, 'review': existing, 'replacement_reason': 'explicit restart'})
+        work['sdd'].setdefault('native_review_history', []).append({'layer': args.layer, 'review': existing, 'replacement_reason': getattr(args, 'restart_reason', None) or 'explicit restart'})
     run = existing if reused else {"id": new_id("review"), "status": "running", "inputs": inputs,
            "input_sha256": native_digest(inputs), "model": args.model,
            "task_binding_version": 1, "finding_binding_version": 1, "layer": args.layer,
@@ -382,7 +390,7 @@ def import_review(repo, work, layer, report):
     return submit_review(repo, work, layer, report, code_snapshot)
 
 
-def draft_report(repo, work, layer, source):
+def draft_report(repo, work, layer, source=None):
     """Mechanical conversion only: never infer verdicts or disposition."""
     from scripts.native_obligations import load_findings, validate_reviewer
     run = ((work.get('sdd') or {}).get('native_reviews') or {}).get(layer) or {}
@@ -390,6 +398,9 @@ def draft_report(repo, work, layer, source):
     validate_reviewer(run, {'reviewer': binding.get('reviewer')})
     if run.get('status') != 'running' or run.get('inputs') != review_inputs(repo, work, code_snapshot):
         raise ValueError('NATIVE_REVIEW_RUN_STALE_OR_MISMATCH')
+    if source is None:
+        from scripts.review_resume import canonical_source
+        source = canonical_source(repo, work, layer)
     raw = provider_artifact(repo, source, bmad_output_dirs(repo))
     validate_source(repo, run, raw)
     findings = load_findings(raw)

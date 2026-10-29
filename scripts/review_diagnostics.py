@@ -97,7 +97,7 @@ def paused_failure(repo, work, args):
     from scripts.runtime_store import read_record, safe_path
     try:
         record = read_record(safe_path(repo, work['id'], 'review-retry.json')) or {}
-        if args.review_action not in {'status', 'diagnose', 'recover'} and record.get('request_id') == request_identity(repo, work, args) and record.get('count', 0) >= 2:
+        if args.review_action not in {'status', 'diagnose', 'recover', 'resume'} and record.get('request_id') == request_identity(repo, work, args) and record.get('count', 0) >= 2:
             return record.get('response')
     except (ValueError, OSError, RuntimeError):
         pass

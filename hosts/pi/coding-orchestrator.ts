@@ -152,6 +152,7 @@ export default function (pi: ExtensionAPI) {
     const hostTools = typeof pi.getActiveTools === "function" ? pi.getActiveTools()
       : typeof pi.getAllTools === "function" ? pi.getAllTools().map(tool => tool.name) : undefined;
     const result = await callCao(mapped, { ...payload, ...lineage, session_id: id,
+      native_session_file: (ctx.sessionManager as unknown as { getSessionFile?: () => string | undefined }).getSessionFile?.(),
       host_tools: hostTools, model: ctx.model?.id, provider: ctx.model?.provider }, ctx.cwd);
     presentation.show(result, ctx);
     if (result.diagnostic) {

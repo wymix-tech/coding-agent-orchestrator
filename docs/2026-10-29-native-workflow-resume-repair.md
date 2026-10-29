@@ -28,6 +28,12 @@ Per-layer native prompts, actual unified diff files, immutable context policies 
 
 Validation: 61-case review/conformance/round suite found two old sequential-collection fixtures incompatible with the native all-output barrier; corrected both to collect before classify. Five package/launch/boundary cases and both corrected CLI flows pass. Full regression follows in stage 6.
 
+## Stage 3
+
+`review resume` reuses ticket identity, canonical collected files, hash-verified legacy Pi assistant messages and existing triage. Pi reports its session archive path; bounded repository-specific discovery and explicit exported archives are supported. Unrecoverable layers report precise gaps. Draft source selection is automatic; replacing observed unchanged-input evidence requires an audited restart reason.
+
+Validation: 20 recovery/conformance tests passed, including real CLI resume, judgment/round preservation, legacy envelope recovery and default draft selection. Pi TypeScript check passed.
+
 ## Remaining stages
 
-Stages 3–6 are pending; this checkpoint is not a completion claim.
+Stages 4–6 are pending; this checkpoint is not a completion claim.

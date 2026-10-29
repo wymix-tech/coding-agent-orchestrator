@@ -151,14 +151,15 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--repo", default="."); sp.add_argument("--work"); sp.set_defaults(fn=cmd_sdd_sync)
     review = sdd_sub.add_parser("review", help="Record independent native reviews and pre-patch dispatch classification")
     review_sub = review.add_subparsers(dest="review_action", required=True)
-    for name in ("begin", "attach", "submit", "classify", "resolve", "findings", "prepare", "import", "status", "check", "draft", "classify-batch", "loopback", "diagnose", "recover"):
+    for name in ("begin", "attach", "submit", "classify", "resolve", "findings", "prepare", "import", "status", "check", "draft", "classify-batch", "loopback", "diagnose", "recover", "resume"):
         sp = review_sub.add_parser(name)
         sp.add_argument("--repo", default="."); sp.add_argument("--work")
-        if name not in {'findings', 'prepare', 'status', 'classify-batch', 'loopback'}:
+        if name not in {'findings', 'prepare', 'status', 'classify-batch', 'loopback', 'resume'}:
             sp.add_argument("--layer", required=True)
         if name in {"begin", "prepare"}:
             sp.add_argument("--model", help="Explicit supported reviewer model; default is the current host-observed coordinator model"); sp.add_argument("--instructions", required=True)
             sp.add_argument('--restart', action='store_true', help='Explicitly replace a failed current dispatch ticket')
+            sp.add_argument('--restart-reason', help='Required to replace recoverable unchanged-input evidence')
             if name == 'prepare':
                 capability = sp.add_mutually_exclusive_group()
                 capability.add_argument('--agent-definition', help='Actual installed agent definition under .pi/agents or .agents/agents')
@@ -166,12 +167,15 @@ def build_parser() -> argparse.ArgumentParser:
         elif name == 'findings':
             sp.add_argument('--source', required=True, help='Unmodified native Markdown list or JSON findings under _bmad-output')
         elif name in {'draft', 'recover'}:
-            sp.add_argument('--source', required=True, help='Original native Markdown/JSON findings; generates triage skeleton')
+            sp.add_argument('--source', required=name == 'recover', help='Original findings; draft defaults to canonical collected evidence')
         elif name == 'loopback':
             sp.add_argument('--extend', action='store_true', help='Record additional exact files discovered during the active native replan; preserves the old round')
             sp.add_argument('--reason', required=True)
             sp.add_argument('--keep', required=True, help='Native KEEP instructions retained before reverting')
             sp.add_argument('--path', action='append', required=True, help='Exact product file to revert/reimplement; repeat for all affected files')
+        elif name == 'resume':
+            sp.add_argument('--layer', action='append', help='Recover only these layers; default is all active layers')
+            sp.add_argument('--transcript', action='append', default=[], help='Bound native session archive to search by observed final-message hash')
         elif name in {'status', 'diagnose'}:
             pass
         elif name == 'check':

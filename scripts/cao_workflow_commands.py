@@ -354,7 +354,7 @@ def _cmd_sdd_review_locked(args: argparse.Namespace) -> int:
         if work.get('sdd', {}).get('provider') != 'bmad':
             raise ValueError('NATIVE_REVIEW_NOT_APPLICABLE')
         from scripts.native_obligations import require_review_integrity
-        if args.review_action not in {'begin', 'prepare', 'status', 'diagnose', 'recover', 'loopback'}:
+        if args.review_action not in {'begin', 'prepare', 'status', 'diagnose', 'recover', 'resume', 'loopback'}:
             require_review_integrity(repo, work)
         records = work.setdefault("sdd", {}).setdefault("native_reviews", {})
         identity = host_session_identity(None)
@@ -401,6 +401,10 @@ def _cmd_sdd_review_locked(args: argparse.Namespace) -> int:
                       'next': 'Read the frozen review input and native instructions. Return actual findings; do not patch product code.'}
             from scripts.review_dispatch import stamp_report
             stamp_report(repo, work, args.layer, attached)
+        elif args.review_action == 'resume':
+            from scripts.review_resume import resume
+            output = resume(repo, work, getattr(args, 'layer', None), args.transcript)
+            print(json.dumps(output, ensure_ascii=False)); return 0 if output['ok'] else 2
         elif args.review_action in {'diagnose', 'recover'}:
             from scripts.review_observation import diagnose, recover
             output = (diagnose(repo, work, args.layer) if args.review_action == 'diagnose'

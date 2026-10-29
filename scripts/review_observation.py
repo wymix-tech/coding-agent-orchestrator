@@ -22,6 +22,10 @@ def task_marker(run, layer):
 def observe(repo, work, session, raw, event):
     if not work or not session:
         return
+    native_file = raw.get('native_session_file')
+    if isinstance(native_file, str) and native_file and len(native_file) < 4096:
+        session['native_session_file'] = native_file
+        save_session(repo, session)
     if event in {'prompt_submit', 'subagent_start'}:
         prompt = raw.get('prompt')
         if not isinstance(prompt, str) or len(prompt.encode()) > 128 * 1024:
@@ -217,6 +221,19 @@ def recover(repo, work, layer, source):
     if path.stat().st_size > 1024 * 1024:
         raise ValueError('NATIVE_REVIEW_OUTPUT_TOO_LARGE')
     message = path.read_text(encoding='utf-8-sig')
+    return recover_message(repo, work, layer, message)
+
+
+def recover_message(repo, work, layer, message):
+    from scripts.cao_sessions import load_session
+    from scripts.review_dispatch import bundle_root
+    run = (work.get('sdd', {}).get('native_reviews') or {}).get(layer) or {}
+    binding = run.get('execution_binding') or {}
+    session = load_session(repo, binding.get('session_id'), host=binding.get('host')) or {}
+    if not binding or session.get('review_ticket') != ticket(run, layer):
+        raise ValueError('NATIVE_REVIEW_EXECUTION_UNBOUND')
+    if len(message.encode()) > 1024 * 1024:
+        raise ValueError('NATIVE_REVIEW_OUTPUT_TOO_LARGE')
     expected = session.get('review_output_sha256')
     if not expected or hashlib.sha256(message.strip().encode()).hexdigest() != expected:
         raise ValueError('NATIVE_REVIEW_OUTPUT_SOURCE_MISMATCH: recovery requires the exact observed original message')

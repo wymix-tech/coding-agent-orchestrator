@@ -176,3 +176,20 @@ inject the coordinator's project/requirement/history context into child sessions
 NO_VCS Work records retain baseline bytes in the bounded runtime archive. Legacy
 current-tree fallback is explicitly labeled best-effort when no historical
 baseline exists; it never claims a reconstructed historical change set.
+
+## Cross-session resume
+
+Run `cao sdd review resume` before restarting interrupted reviews. It reuses
+current tickets, selects immutable collected findings and creates missing drafts.
+Existing triage judgments, classified layers and resolved layers are retained.
+`draft --layer <layer>` defaults to canonical collected bytes; `--source` remains
+available for an explicit attested artifact.
+
+For older bound sessions with only an observed final-message hash, resume searches
+the recorded Pi archive or that repository's native Pi session directory. Use
+`--transcript <bound-session.jsonl>` for an exported archive. Only assistant text
+from the identified session matching the original full-message hash can recover
+findings. Missing original/binding reports a layer-specific blocker; it cannot
+retroactively bind identities. Inspect those gaps before restarting only the
+unrecoverable layer. Replacing observed evidence for unchanged inputs requires
+`--restart-reason`; the reason is retained in history.

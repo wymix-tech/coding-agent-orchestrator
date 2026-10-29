@@ -368,7 +368,7 @@ def register_session(
         "observed_model": (existing or {}).get("observed_model"),
         "observed_provider": (existing or {}).get("observed_provider"),
         "observed_tools": (existing or {}).get("observed_tools"),
-        **{key: existing[key] for key in ('review_ticket', 'review_output_sha256', 'review_artifacts', 'review_message_artifact', 'review_binding_error', 'review_read_paths', 'review_trace_paths') if existing and key in existing},
+        **{key: existing[key] for key in ('review_ticket', 'review_output_sha256', 'review_artifacts', 'review_message_artifact', 'review_binding_error', 'review_read_paths', 'review_trace_paths', 'native_session_file') if existing and key in existing},
     }
     save_session(repo, session)
     if previous_internal_id and previous_internal_id != internal_id:
