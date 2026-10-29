@@ -362,7 +362,9 @@ def prepare_batch(repo, work, args, identity):
             package.update(prompt_file=frozen['prompt'], diff_file=frozen['diff'], launch={'mode': 'synchronous', 'wait_for_all': True, 'async': False})
         atomic_json(root / 'dispatch.json', package)
         outputs.append(package)
-    return {'ok': True, 'reviews': outputs, 'owner': 'sdd_provider',
+    from scripts.review_packages import workflow_launch
+    launch = workflow_launch(repo, work, args.agent_definition) if host == 'pi' and getattr(args, 'agent_definition', None) else None
+    return {'ok': True, 'reviews': outputs, 'owner': 'sdd_provider', 'workflow_launch': launch,
             'next': review_next(repo, work, review_inputs(repo, work, code_snapshot))}
 
 

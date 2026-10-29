@@ -268,7 +268,28 @@ def launch_payload(repo, work):
     for layer in layers:
         run = records[layer]
         if run.get('status') != 'running' or run.get('execution_binding'):
-            return None
+            continue
         package = policy(repo, run, check_claims=False)
         tasks.append({'task': (repo / package['prompt']).read_text()})
-    return {'async': False, 'worktree': False, 'tasks': tasks}
+    return {'async': False, 'worktree': False, 'tasks': tasks} if tasks else None
+
+
+def workflow_launch(repo, work, definition):
+    """Use the documented Pi workflow runs.run API in one blocking call."""
+    from scripts.review_dispatch import agent_capability
+    capability = agent_capability(repo, definition, 'pi')
+    path = Path(definition)
+    if not path.is_absolute():
+        path = repo / path
+    header = re.match(r'\A---\s*\n(.*?)\n---', path.read_text(), re.S)
+    name = re.search(r'(?m)^name:[ \t]*([^\n]+)', header[1]) if header else None
+    if not name:
+        raise ValueError('NATIVE_REVIEW_AGENT_NAME_REQUIRED')
+    agent = name[1].strip().strip('"\'')
+    batch = launch_payload(repo, work)
+    if not batch:
+        return None
+    calls = [f'runs.run({json.dumps("review-" + str(index))}, {json.dumps({"agent": agent, "task": task["task"]})})'
+             for index, task in enumerate(batch['tasks'])]
+    return {'async': False, 'script': 'return await Promise.all([' + ','.join(calls) + ']);',
+            'capability': capability, 'resume_policy': 'Use returned runId, never a mission/session id. Inspect status by exact runId; resume eligibility is authoritative. Await workflow runs.run with resume for blocking recovery.'}

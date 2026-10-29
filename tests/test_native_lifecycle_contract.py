@@ -175,6 +175,19 @@ class NativeLifecycle(unittest.TestCase):
         rc, rejected = self.cli('lifecycle', 'bind', '--report', 'openspec/completion.md', '--report', 'openspec/security.json', '--gate', 'security_verification')
         self.assertEqual(2, rc)
         self.assertEqual('NATIVE_COMPLETION_REFERENCE_EXECUTION_REQUIRED', rejected['error'])
+        import shlex
+        work = load_work(self.repo, self.wid)
+        work['sdd'].setdefault('native_completion_report_outputs', []).append('openspec/security.json')
+        save_work(self.repo, work)
+        result = self.check('lifecycle', 'execute', '--command', f'{shlex.quote(sys.executable)} preparation_suite.py', '--report', 'openspec/security-run.log')
+        ref = result['execution']['reports'][0]
+        payload = json.loads(security.read_text())
+        payload['code_snapshot'] = inputs(self.repo, self.work())['code_snapshot']
+        payload['checks'][0]['evidence'] = [ref]
+        security.write_text(json.dumps(payload))
+        self.check('lifecycle', 'bind', '--report', 'openspec/security-run.log', '--report', 'openspec/security.json', '--gate', 'security_verification')
+        self.check('conformance', 'check')
+
         self.assertEqual(config_before, (self.repo / '.orchestrator/config.json').read_bytes())
 
     def test_project_baseline_transport_change_preserves_native_completion(self):

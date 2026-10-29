@@ -68,6 +68,27 @@ class ContextPackages(unittest.TestCase):
         self.assertEqual(originals, [task['task'] for task in payload['tasks']])
         self.assertIsNone(launch_guard(self.repo, self.work, {'toolName': 'subagent', 'input': payload}))
 
+    def test_partial_launch_preserves_bound_layers_and_generates_workflow(self):
+        from scripts.review_packages import launch_payload, workflow_launch
+        import json, subprocess
+        layers = ['blind-hunter', 'edge-case-hunter', 'verification-gap']
+        for layer in layers:
+            run, _, _ = self.package(layer)
+            run['status'] = 'running'
+            if layer != 'blind-hunter':
+                run.pop('execution_binding')
+        self.work['sdd']['native_reviews']['_contract'] = {'layers': layers}
+        self.assertEqual(2, len(launch_payload(self.repo, self.work)['tasks']))
+        definition = self.repo / 'reviewer.md'
+        definition.write_text('---\nname: reviewer\ntools: read\n---\n')
+        with patch('scripts.review_dispatch.agent_capability', return_value={'host': 'pi'}):
+            output = workflow_launch(self.repo, self.work, str(definition))
+        script = 'const calls=[]; const runs={run:async(key,args)=>{calls.push(args);return {runId:key}}}; const f=async()=>{' + output['script'] + '}; f().then(result=>console.log(JSON.stringify({result,calls})));'
+        result = json.loads(subprocess.check_output(['node', '-e', script], text=True))
+        self.assertEqual(2, len(result['result']))
+        self.assertTrue(all(c['agent'] == 'reviewer' for c in result['calls']))
+        self.assertEqual([t['task'] for t in launch_payload(self.repo, self.work)['tasks']], [c['task'] for c in result['calls']])
+
     def event(self, path, tool='read'):
         return {'toolName': tool, 'input': {'path': path}}
 
