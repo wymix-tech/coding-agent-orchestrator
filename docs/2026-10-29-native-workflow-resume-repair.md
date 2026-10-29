@@ -34,6 +34,12 @@ Validation: 61-case review/conformance/round suite found two old sequential-coll
 
 Validation: 20 recovery/conformance tests passed, including real CLI resume, judgment/round preservation, legacy envelope recovery and default draft selection. Pi TypeScript check passed.
 
+## Stage 4
+
+Direct Build resolves independent plan scope at route acceptance and active-session sync, with an audited native-route basis. Ambiguous inventories become explicit blockers; native tasks and shared plans cannot disappear behind no-plan. Completion preserves an existing valid no-plan scope and rejects unresolved scope immediately. `sdd plan bind --no-plan` provides a dedicated repair path; conformance blockers provide concrete commands or identify the missing association decision.
+
+Validation: 52-case plan/provider/route suite passed except one old test expecting late rejection; that test now asserts early rejection and passes. Four additional route/no-plan/migration/ambiguity tests pass.
+
 ## Remaining stages
 
-Stages 4–6 are pending; this checkpoint is not a completion claim.
+Stages 5–6 are pending; this checkpoint is not a completion claim.

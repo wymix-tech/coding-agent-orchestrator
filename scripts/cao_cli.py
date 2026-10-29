@@ -210,6 +210,7 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--repo", default="."); sp.add_argument("--work")
     sp.add_argument("--plan", action="append", help="Associated native task file or quoted OpenSpec tracked-file glob; repeat for ALL changes/features")
     sp.add_argument("--plan-item", action="append", help="BMAD plan path#story-id or path#epic-N; repeat for ALL requirement items; adds to existing scope")
+    sp.add_argument("--no-plan", action="store_true", help="Declare no associated independent plan when the native route permits it")
     sp.set_defaults(fn=cmd_sdd_plan_bind)
     sp = sdd_sub.add_parser("list"); sp.add_argument("--repo", default="."); sp.set_defaults(fn=cmd_sdd_list)
     sp = sdd_sub.add_parser("select"); sp.add_argument("--repo", default="."); sp.add_argument("--provider", required=True, choices=sorted(SDD_CATALOG)); sp.set_defaults(fn=cmd_sdd_select)

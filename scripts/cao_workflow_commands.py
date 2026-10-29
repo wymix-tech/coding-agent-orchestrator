@@ -260,6 +260,9 @@ def cmd_sdd_workflow(args: argparse.Namespace) -> int:
         except ValueError as exc:
             print(json.dumps({"ok": False, "error": str(exc).split(":", 1)[0], "reason": str(exc),
                               "next": "Supply associated --plan <path> and shared --plan-item <path>#<story-id>; --no-plan cannot remove an existing valid plan scope."}, ensure_ascii=False)); return 2
+        if scope['mode'] == 'unresolved':
+            from scripts.plan_navigation import repair
+            print(json.dumps({'ok': False, 'error': 'PLAN_SCOPE_UNRESOLVED', 'next': repair(repo, work)}, ensure_ascii=False)); return 2
         sdd["plan_scope"] = scope
         if scope["mode"] == "none":
             queue_event(work, {"event": "workflow.no_plan_declared", "work_item_id": work["id"],

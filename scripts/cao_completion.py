@@ -368,6 +368,9 @@ def lifecycle_status(repo, work, *, pre_verification=False):
             pending = provider_pending_plan_items(repo, work)
             return {'ready': not pending, 'reason': 'native plan has unfinished items', 'pending_plan_items': pending}
         check('native_plan_complete', pending_plan)
+        if not states[-1]['ready']:
+            from scripts.plan_navigation import repair
+            states[-1]['next'] = repair(repo, work)
     def manual_gates():
         gates = gate_state(work, True, True, repo=repo)
         pending = gates['pending']
